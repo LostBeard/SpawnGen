@@ -7,12 +7,14 @@
 @using System.Text.Json.Nodes
 @using SpawnGen.Engine.Graph
 @using SpawnGen.Studio.Run
+@using SpawnGen.Nodes.Core
 @using SpawnGen.Engine.Nodes
 @using SpawnGen.Studio.Canvas
 @inject SpawnJSRuntime JS
 @inject IJSRuntime Interop
 @inject NodeRegistry Registry
 @inject ServerClient Server
+@inject BrowserEngine Browser
 @implements IDisposable
 
 <div class="studio">
@@ -34,9 +36,20 @@
         }
         else
         {
-            <button class="primary" disabled="@(!_serverAvailable)" @onclick="QueueAsync"
-                    title="@(_serverAvailable ? "Run the graph on the server (Ctrl+Enter)" : "No SpawnGen server: this page is editing only. Run the server to queue.")">Queue</button>
+            <button class="primary" disabled="@(_engine is null)" @onclick="QueueAsync"
+                    title="@(_engine is null ? "No engine: this browser has no WebGPU and there is no SpawnGen server." : $"Run the graph on: {_engine.Name} (Ctrl+Enter)")">Queue</button>
         }
+        <select class="engine" title="Where graphs run" @onchange="OnEngineChosen">
+            @foreach (var engine in _engines)
+            {
+                <option value="@engine.Name" selected="@(ReferenceEquals(engine, _engine))">@engine.Name</option>
+            }
+            @if (_engines.Count == 0)
+            {
+                <option>No engine available</option>
+            }
+        </select>
+        <label class="button" title="Upload a PNG for Load Image nodes">Upload<InputFile OnChange="OnUploadChosen" accept=".png" hidden /></label>
         <label class="check" title="Pick a new random seed for the seed widgets every time you queue, like ComfyUI"><input type="checkbox" @bind="_randomizeSeeds" /> random seed</label>
         <span class="status">@RunStatus()@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
     </div>
@@ -152,6 +165,7 @@
         _view = new EditorView(_doc, text => _renderer!.MeasureText(text));
         _renderer = new NodeRenderer(_view, _visuals, _images);
         Server.EventReceived += OnServerEvent;
+        Browser.EventReceived += OnServerEvent;
         Server.ConnectionChanged += RefreshUi;
 
         // Blazor only re-renders the toolbar and overlays; the canvas repaints itself. Throttled so a drag does not re-render on every move.
@@ -449,16 +463,64 @@
 
     readonly RunVisuals _visuals = new();
     readonly ImageCache _images = new();
-    bool _serverAvailable, _running, _randomizeSeeds = true;
+    bool _running, _randomizeSeeds = true;
     int _queueRemaining;
     string? _statusText;
     string? _executingTitle;
+    IEngineClient? _engine;
+    readonly List<IEngineClient> _engines = [];
 
+    /// <summary>Finds the engines this page can use: a SpawnGen server (when the page was served by one) and this browser's own WebGPU.</summary>
     async Task StartServerAsync()
     {
-        _serverAvailable = await Server.ProbeAsync();
-        if (_serverAvailable) Server.Start();
+        if (await Server.ProbeAsync())
+        {
+            Server.Start();
+            _engines.Add(Server); // a native GPU is the faster choice when there is one, so it is the default
+        }
+        if (Browser.WebGpuAvailable) _engines.Add(Browser);
+        _engine = _engines.FirstOrDefault();
+        await RefreshInputImagesAsync();
         await InvokeAsync(StateHasChanged);
+    }
+
+    async Task OnEngineChosen(ChangeEventArgs e)
+    {
+        _engine = _engines.FirstOrDefault(x => x.Name == e.Value?.ToString()) ?? _engine;
+        await RefreshInputImagesAsync();
+        ShowMessage($"Running on: {_engine?.Name}.");
+    }
+
+    /// <summary>Load Image offers the pictures of the engine in use; the page shows that engine's list through the shared input store.</summary>
+    async Task RefreshInputImagesAsync()
+    {
+        if (_engine is null) return;
+        var names = await _engine.ListInputImagesAsync();
+        if (_engine is not BrowserEngine) InputFiles.Store = new ListedInputStore(names); // the server's pictures stay on the server; this is only the choice list
+        _view.Invalidate();
+    }
+
+    async Task OnUploadChosen(InputFileChangeEventArgs e)
+    {
+        if (_engine is null) { ShowMessage("There is no engine to upload to."); return; }
+        try
+        {
+            await using var stream = e.File.OpenReadStream(32 * 1024 * 1024);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            var stored = await _engine.UploadImageAsync(e.File.Name, memory.ToArray());
+            await RefreshInputImagesAsync();
+            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG pictures can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image node.");
+        }
+        catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
+    }
+
+    /// <summary>The picture names of a remote engine, shown in Load Image's combo (the pictures themselves are read on that engine).</summary>
+    sealed class ListedInputStore(IReadOnlyList<string> names) : IInputStore
+    {
+        public IReadOnlyList<string> List() => names;
+        public Task<byte[]> ReadAsync(string name) => throw new InvalidOperationException("Pictures are read by the engine that runs the graph.");
+        public Task<string> SaveAsync(string name, byte[] bytes) => throw new InvalidOperationException("Upload goes through the engine.");
     }
 
     string RunStatus()
@@ -472,14 +534,14 @@
 
     async Task QueueAsync()
     {
-        if (!_serverAvailable) { ShowMessage("There is no SpawnGen server behind this page: run the server to queue."); return; }
+        if (_engine is null) { ShowMessage("There is no engine: this browser has no WebGPU and no SpawnGen server serves this page."); return; }
         if (_randomizeSeeds) RandomizeSeeds();
 
         var compiled = GraphCompiler.Compile(_doc.Graph, Registry);
         if (compiled.Graph.Nodes.Count == 0) { ShowMessage(compiled.Notes.FirstOrDefault() ?? "There is nothing to run."); return; }
         _visuals.Errors.Clear();
 
-        var result = await Server.QueueAsync(PromptJson.ToJson(compiled.Graph));
+        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph));
         if (!result.Queued)
         {
             foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;
@@ -494,7 +556,7 @@
 
     async Task InterruptAsync()
     {
-        await Server.InterruptAsync();
+        await (_engine?.InterruptAsync() ?? Task.CompletedTask);
         _studio?.Focus();
     }
 
@@ -546,7 +608,7 @@
             case "executed" when node is { } shownId && _doc.Graph.FindNode(shownId) is { } shown:
                 if (data["output"]?["images"] is JsonArray images)
                     shown.Previews = images.OfType<JsonObject>()
-                        .Select(i => new NodePreview(Server.ViewUrl((string)i["filename"]!, (string?)i["subfolder"], (string?)i["type"]))).ToList();
+                        .Select(i => new NodePreview(_engine!.ViewUrl((string)i["filename"]!, (string?)i["subfolder"], (string?)i["type"]))).ToList();
                 break;
             case "execution_error":
                 int? failedNode = node;
@@ -575,6 +637,7 @@
     public void Dispose()
     {
         Server.EventReceived -= OnServerEvent;
+        Browser.EventReceived -= OnServerEvent;
         Server.ConnectionChanged -= RefreshUi;
         _images.Dispose();
         _studio?.Dispose();

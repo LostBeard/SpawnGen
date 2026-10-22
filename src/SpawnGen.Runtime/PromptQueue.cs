@@ -5,7 +5,7 @@ using SpawnGen.Engine.Execution;
 using SpawnGen.Engine.Graph;
 using SpawnGen.Engine.Nodes;
 
-namespace SpawnGen.Server;
+namespace SpawnGen.Runtime;
 
 public sealed record QueuedPrompt(int Number, string Id, PromptGraph Graph, string? ClientId);
 
@@ -25,7 +25,7 @@ public sealed class HistoryEntry
 }
 
 /// <summary>
-/// Runs submitted prompts one at a time through the engine (a GPU can only do one job at once) and reports progress as <see cref="ServerEvent"/>s
+/// Runs submitted prompts one at a time through the engine (a GPU can only do one job at once) and reports progress as <see cref="RunEvent"/>s
 /// shaped like ComfyUI's. The executor is shared, so a re-run with a changed seed only recomputes what depends on it.
 /// </summary>
 public sealed class PromptQueue : IDisposable
@@ -33,7 +33,7 @@ public sealed class PromptQueue : IDisposable
     const int HistoryLimit = 200;
 
     readonly PromptExecutor _executor;
-    readonly EventHub _events;
+    readonly IRunEvents _events;
     readonly Channel<QueuedPrompt> _channel = Channel.CreateUnbounded<QueuedPrompt>();
     readonly List<QueuedPrompt> _pending = [];
     readonly List<HistoryEntry> _history = [];
@@ -44,7 +44,7 @@ public sealed class PromptQueue : IDisposable
     CancellationTokenSource? _runCancel;
     int _number;
 
-    public PromptQueue(NodeRegistry registry, IServiceProvider services, EventHub events)
+    public PromptQueue(NodeRegistry registry, IServiceProvider services, IRunEvents events)
     {
         Registry = registry;
         _events = events;
@@ -124,7 +124,7 @@ public sealed class PromptQueue : IDisposable
         _stop.Dispose();
     }
 
-    public ServerEvent StatusEvent() =>
+    public RunEvent StatusEvent() =>
         new("status", new JsonObject { ["status"] = new JsonObject { ["exec_info"] = new JsonObject { ["queue_remaining"] = Remaining } } });
 
     void PublishStatus() => _events.Publish(StatusEvent());
@@ -169,7 +169,7 @@ public sealed class PromptQueue : IDisposable
         catch (OperationCanceledException)
         {
             status = "interrupted";
-            _events.Publish(new ServerEvent("execution_interrupted", new JsonObject { ["prompt_id"] = item.Id }));
+            _events.Publish(new RunEvent("execution_interrupted", new JsonObject { ["prompt_id"] = item.Id }));
         }
         catch (Exception ex)
         {
@@ -190,11 +190,11 @@ public sealed class PromptQueue : IDisposable
             if (_history.Count > HistoryLimit) _history.RemoveAt(0);
         }
         if (status == "success")
-            _events.Publish(new ServerEvent("execution_success", new JsonObject { ["prompt_id"] = item.Id }));
+            _events.Publish(new RunEvent("execution_success", new JsonObject { ["prompt_id"] = item.Id }));
     }
 
     /// <summary>Turns the engine's run events into the websocket events a ComfyUI client expects, and keeps the UI outputs for the history.</summary>
-    sealed class RunObserver(QueuedPrompt item, EventHub events) : IExecutionObserver
+    sealed class RunObserver(QueuedPrompt item, IRunEvents events) : IExecutionObserver
     {
         public Dictionary<string, JsonObject> Outputs { get; } = [];
         public List<string> CachedNodes { get; } = [];

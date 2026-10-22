@@ -5,15 +5,15 @@ using System.Text.Json.Nodes;
 
 namespace SpawnGen.Studio.Run;
 
-/// <summary>The result of asking the server to run a prompt: queued, or refused with a message and per-node reasons.</summary>
-public sealed record QueueResult(bool Queued, string? PromptId, string? Message, IReadOnlyDictionary<int, string> NodeErrors);
 
 /// <summary>Talks to the SpawnGen server that served this page: queues prompts over HTTP and receives progress over a WebSocket (the ComfyUI protocol).</summary>
-public sealed class ServerClient(HttpClient http) : IAsyncDisposable
+public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposable
 {
     readonly CancellationTokenSource _stop = new();
     ClientWebSocket? _socket;
     Task? _loop;
+
+    public string Name => "Server (CUDA / OpenCL)";
 
     public string ClientId { get; } = Guid.NewGuid().ToString("N");
     public bool Connected => _socket?.State == WebSocketState.Open;
@@ -97,6 +97,27 @@ public sealed class ServerClient(HttpClient http) : IAsyncDisposable
     }
 
     public Task InterruptAsync() => http.PostAsync("interrupt", null, _stop.Token);
+
+    public async Task<string?> UploadImageAsync(string name, byte[] png)
+    {
+        using var form = new MultipartFormDataContent { { new ByteArrayContent(png), "image", name } };
+        using var response = await http.PostAsync("upload/image", form, _stop.Token);
+        if (!response.IsSuccessStatusCode) return null;
+        return (string?)(await response.Content.ReadFromJsonAsync<JsonObject>(_stop.Token))?["name"];
+    }
+
+    /// <summary>The Load Image choices the server offers, read from its node catalogue (<c>/object_info</c>).</summary>
+    public async Task<IReadOnlyList<string>> ListInputImagesAsync()
+    {
+        try
+        {
+            var info = await http.GetFromJsonAsync<JsonObject>("object_info", _stop.Token);
+            return info?["LoadImage"]?["input"]?["required"]?["image"]?[0] is JsonArray options
+                ? options.Select(o => (string?)o ?? "").Where(o => o.Length > 0).ToList()
+                : [];
+        }
+        catch (HttpRequestException) { return []; }
+    }
 
     /// <summary>The URL of a result file the server holds (a SaveImage or PreviewImage output).</summary>
     public string ViewUrl(string filename, string? subfolder, string? type) =>

@@ -3,23 +3,23 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>Where <see cref="SaveImage"/> writes. Register an instance as a service to change it (default: <c>./output</c>).</summary>
-public sealed class OutputOptions
-{
-    public string Directory { get; init; } = Path.Combine(AppContext.BaseDirectory, "output");
-    /// <summary>Where <see cref="PreviewImage"/> writes its throw-away files.</summary>
-    public string TempDirectory { get; init; } = Path.Combine(AppContext.BaseDirectory, "temp");
-}
-
-/// <summary>Where <see cref="LoadImage"/> reads from. Set <see cref="Directory"/> at startup (default: <c>./input</c>); the combo lists its PNG files.</summary>
+/// <summary>Where <see cref="LoadImage"/> reads from. Hosts set <see cref="Store"/> (folder on the desktop, memory in the browser); the combo lists what it holds.</summary>
 public static class InputFiles
 {
+    /// <summary>The input folder used by the default disk store.</summary>
     public static string Directory { get; set; } = Path.Combine(AppContext.BaseDirectory, "input");
 
-    public static string[] List() =>
-        System.IO.Directory.Exists(Directory)
-            ? System.IO.Directory.EnumerateFiles(Directory, "*.png").Select(Path.GetFileName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray()!
-            : [];
+    public static IInputStore Store { get; set; } = new DiskInputStore(() => Directory);
+
+    public static string[] List() => [.. Store.List()];
+}
+
+internal static class Results
+{
+    /// <summary>The result store a host registered, or a disk store over the output options (so the nodes also work with no host setup).</summary>
+    public static IResultStore For(IServiceProvider services) =>
+        services.GetService(typeof(IResultStore)) as IResultStore
+        ?? new DiskResultStore(services.GetService(typeof(OutputOptions)) as OutputOptions ?? new OutputOptions());
 }
 
 [Node(Category = "image", DisplayName = "Load Image")]
@@ -27,63 +27,33 @@ public sealed class LoadImage
 {
     public static string[] ImageNames() => InputFiles.List();
 
-    public ImageBatch Execute([Input(OptionsProvider = nameof(ImageNames))] string image)
-    {
-        // The file name only: a node must not be able to read outside the input folder.
-        var path = Path.Combine(InputFiles.Directory, Path.GetFileName(image));
-        return PngReader.Decode(File.ReadAllBytes(path));
-    }
+    public async Task<ImageBatch> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames))] string image) =>
+        PngReader.Decode(await InputFiles.Store.ReadAsync(image));
 }
 
 [Node(Category = "image", DisplayName = "Save Image", IsOutput = true)]
 public sealed class SaveImage
 {
-    public UiOutput Execute(ImageBatch images, IServiceProvider services, string filenamePrefix = "ComfyUI")
+    public async Task<UiOutput> ExecuteAsync(ImageBatch images, IServiceProvider services, string filenamePrefix = "ComfyUI")
     {
-        var dir = (services.GetService(typeof(OutputOptions)) as OutputOptions ?? new OutputOptions()).Directory;
-        Directory.CreateDirectory(dir);
-
+        var store = Results.For(services);
         var saved = new List<object>();
         for (int i = 0; i < images.Batch; i++)
-        {
-            // Counter continues after the highest existing file so reruns never overwrite.
-            int n = NextCounter(dir, filenamePrefix);
-            var name = $"{filenamePrefix}_{n:D5}_.png";
-            File.WriteAllBytes(Path.Combine(dir, name), PngWriter.Encode(images, i));
-            saved.Add(new { filename = name, subfolder = "", type = "output" });
-        }
+            saved.Add(await store.SaveAsync("output", filenamePrefix, PngWriter.Encode(images, i)));
         return new UiOutput("images", saved);
-    }
-
-    static int NextCounter(string dir, string prefix)
-    {
-        int max = 0;
-        foreach (var f in Directory.EnumerateFiles(dir, $"{prefix}_*_.png"))
-        {
-            var stem = Path.GetFileNameWithoutExtension(f);
-            var digits = stem[(prefix.Length + 1)..^1];
-            if (int.TryParse(digits, out var v) && v > max) max = v;
-        }
-        return max + 1;
     }
 }
 
-/// <summary>Shows images in the editor: writes them to the temp folder (like ComfyUI's PreviewImage) and reports the files; they are not kept as results.</summary>
+/// <summary>Shows images in the editor: stores them as temporary files (like ComfyUI's PreviewImage); they are not kept as results.</summary>
 [Node(Category = "image", DisplayName = "Preview Image", IsOutput = true)]
 public sealed class PreviewImage
 {
-    public UiOutput Execute(ImageBatch images, IServiceProvider services)
+    public async Task<UiOutput> ExecuteAsync(ImageBatch images, IServiceProvider services)
     {
-        var dir = (services.GetService(typeof(OutputOptions)) as OutputOptions ?? new OutputOptions()).TempDirectory;
-        Directory.CreateDirectory(dir);
+        var store = Results.For(services);
         var saved = new List<object>();
-        var stamp = Guid.NewGuid().ToString("N")[..10];
         for (int i = 0; i < images.Batch; i++)
-        {
-            var name = $"preview_{stamp}_{i + 1:D2}.png";
-            File.WriteAllBytes(Path.Combine(dir, name), PngWriter.Encode(images, i));
-            saved.Add(new { filename = name, subfolder = "", type = "temp" });
-        }
+            saved.Add(await store.SaveAsync("temp", "preview", PngWriter.Encode(images, i)));
         return new UiOutput("images", saved);
     }
 }

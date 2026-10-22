@@ -16,5 +16,6 @@ builder.Services.AddSingleton(new NodeRegistry().AddAssembly(typeof(SaveImage).A
 
 builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<SpawnGen.Studio.Run.ServerClient>();
+builder.Services.AddScoped<SpawnGen.Studio.Run.BrowserEngine>();
 
 await builder.Build().RunAsync();

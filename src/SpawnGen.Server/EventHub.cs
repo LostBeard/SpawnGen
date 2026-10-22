@@ -1,17 +1,14 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
+using SpawnGen.Runtime;
 
 namespace SpawnGen.Server;
 
-/// <summary>An event in ComfyUI's websocket shape: <c>{"type": "...", "data": {...}}</c>.</summary>
-public sealed record ServerEvent(string Type, JsonObject Data)
-{
-    public string ToJson() => new JsonObject { ["type"] = Type, ["data"] = Data.DeepClone() }.ToJsonString();
-}
+
 
 /// <summary>Fans events out to connected websocket clients and in-process subscribers (tests, logging).</summary>
-public sealed class EventHub
+public sealed class EventHub : IRunEvents
 {
     readonly List<Client> _clients = [];
     readonly object _gate = new();
@@ -23,10 +20,10 @@ public sealed class EventHub
         public SemaphoreSlim SendLock { get; } = new(1, 1);
     }
 
-    public event Action<ServerEvent>? Published;
+    public event Action<RunEvent>? Published;
 
     /// <summary>Serves one websocket until it closes. Everything published meanwhile is sent to it.</summary>
-    public async Task ServeAsync(WebSocket socket, string clientId, Func<ServerEvent> hello, CancellationToken ct)
+    public async Task ServeAsync(WebSocket socket, string clientId, Func<RunEvent> hello, CancellationToken ct)
     {
         var client = new Client(socket, clientId);
         lock (_gate) _clients.Add(client);
@@ -51,7 +48,7 @@ public sealed class EventHub
         }
     }
 
-    public void Publish(ServerEvent e)
+    public void Publish(RunEvent e)
     {
         Published?.Invoke(e);
         Client[] clients;

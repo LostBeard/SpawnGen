@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SpawnGen.Runtime</RootNamespace>
+    <Description>The run queue and run events shared by every SpawnGen host (the server, the desktop shell, and the browser): runs prompts one at a time and reports progress.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpawnGen.Engine\SpawnGen.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

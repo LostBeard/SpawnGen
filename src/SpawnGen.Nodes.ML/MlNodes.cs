@@ -1,5 +1,6 @@
 using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
+using SpawnDev.ILGPU.ML.Graph;
 using SpawnDev.ILGPU.ML.Preprocessing;
 using SpawnDev.ILGPU.ML.Tensors;
 using SpawnGen.Engine.Nodes;
@@ -16,7 +17,7 @@ public sealed class CheckpointLoaderSimple
         [Input(OptionsProvider = nameof(CheckpointNames))] string ckptName,
         NodeContext context, IServiceProvider services)
     {
-        var runtime = GpuHelpers.Runtime(services);
+        var runtime = await GpuHelpers.RuntimeAsync(services);
         context.Status($"Loading {ckptName}");
         // The loader reports every percent of every sub-model; one message per 10% is plenty for a status line.
         string? lastStage = null;
@@ -38,7 +39,7 @@ public sealed class CLIPTextEncode
     public async Task<Conditioning> ExecuteAsync(
         [Input(Multiline = true)] string text, ClipHandle clip, IServiceProvider services)
     {
-        var acc = GpuHelpers.Runtime(services).Accelerator;
+        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
         var ckpt = clip.Checkpoint;
         var ids = ckpt.Tokenizer.EncodeCLIP(text, Checkpoint.TokenCount);
         var (buf, tokens) = GpuHelpers.Upload(acc, ids.Select(t => (float)t).ToArray(), [1, Checkpoint.TokenCount]);
@@ -76,7 +77,7 @@ public sealed class KSampler
         if (latentImage.Channels != Checkpoint.LatentChannels)
             throw new ArgumentException($"Latent has {latentImage.Channels} channels; this checkpoint expects {Checkpoint.LatentChannels}.", nameof(latentImage));
 
-        var acc = GpuHelpers.Runtime(services).Accelerator;
+        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
         var ckpt = model.Checkpoint;
         var unet = ckpt.Unet;
         int h = latentImage.Height, w = latentImage.Width, perImage = Checkpoint.LatentChannels * h * w;
@@ -152,31 +153,49 @@ public sealed class VAEDecode
 {
     public async Task<ImageBatch> ExecuteAsync(LatentBatch samples, VaeHandle vae, NodeContext context, IServiceProvider services)
     {
-        var acc = GpuHelpers.Runtime(services).Accelerator;
+        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
         var session = vae.Checkpoint.Vae;
         int h = samples.Height, w = samples.Width, perLatent = samples.Channels * h * w;
         int imgH = h * 8, imgW = w * 8, perImage = 3 * imgH * imgW;
         var images = new ImageBatch(samples.Batch, imgH, imgW, 3);
 
-        for (int b = 0; b < samples.Batch; b++)
+        // The browser GPU process has a memory budget the desktop does not: the library reclaims dead buffers during this decode there so its
+        // peak follows the working set (ImageGenerationPipeline does the same). Desktop backends have room to spare and are left alone.
+        bool browser = acc.AcceleratorType is AcceleratorType.WebGPU or AcceleratorType.WebGL or AcceleratorType.Wasm;
+        long savedCap = GraphExecutor.MaxPendingReleaseBytes;
+        int savedReclaim = BufferPool.ForceReclaimEveryNRents;
+        if (browser)
         {
-            context.CancellationToken.ThrowIfCancellationRequested();
-            var latent = new float[perLatent];
-            for (int i = 0; i < perLatent; i++) latent[i] = samples.Data[b * perLatent + i] / Checkpoint.VaeScale;
-
-            var (buf, tensor) = GpuHelpers.Upload(acc, latent, [1, samples.Channels, h, w]);
-            using (buf)
+            GraphExecutor.MaxPendingReleaseBytes = 64L * 1024 * 1024;
+            BufferPool.ForceReclaimEveryNRents = 8;
+        }
+        try
+        {
+            for (int b = 0; b < samples.Batch; b++)
             {
-                var outputs = await session.RunAsync(new Dictionary<string, Tensor> { [session.InputNames[0]] = tensor });
-                var chw = await GpuHelpers.ReadAsync(acc, outputs[session.OutputNames[0]], perImage);
+                context.CancellationToken.ThrowIfCancellationRequested();
+                var latent = new float[perLatent];
+                for (int i = 0; i < perLatent; i++) latent[i] = samples.Data[b * perLatent + i] / Checkpoint.VaeScale;
 
-                // NCHW in [-1, 1] -> NHWC in [0, 1].
-                int plane = imgH * imgW;
-                for (int p = 0; p < plane; p++)
-                    for (int c = 0; c < 3; c++)
-                        images.Data[(b * plane + p) * 3 + c] = Math.Clamp((chw[c * plane + p] + 1f) * 0.5f, 0f, 1f);
+                var (buf, tensor) = GpuHelpers.Upload(acc, latent, [1, samples.Channels, h, w]);
+                using (buf)
+                {
+                    var outputs = await session.RunAsync(new Dictionary<string, Tensor> { [session.InputNames[0]] = tensor });
+                    var chw = await GpuHelpers.ReadAsync(acc, outputs[session.OutputNames[0]], perImage);
+
+                    // NCHW in [-1, 1] -> NHWC in [0, 1].
+                    int plane = imgH * imgW;
+                    for (int p = 0; p < plane; p++)
+                        for (int c = 0; c < 3; c++)
+                            images.Data[(b * plane + p) * 3 + c] = Math.Clamp((chw[c * plane + p] + 1f) * 0.5f, 0f, 1f);
+                }
+                context.Progress(b + 1, samples.Batch);
             }
-            context.Progress(b + 1, samples.Batch);
+        }
+        finally
+        {
+            GraphExecutor.MaxPendingReleaseBytes = savedCap;
+            BufferPool.ForceReclaimEveryNRents = savedReclaim;
         }
         return images;
     }
@@ -187,7 +206,7 @@ public sealed class VAEEncode
 {
     public async Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, NodeContext context, IServiceProvider services)
     {
-        var acc = GpuHelpers.Runtime(services).Accelerator;
+        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
         var session = await vae.Checkpoint.GetVaeEncoderAsync();
 
         // The VAE downsamples by 8: crop to a multiple of 8 like ComfyUI does.

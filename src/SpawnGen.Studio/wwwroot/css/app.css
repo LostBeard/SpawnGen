@@ -37,3 +37,4 @@ body { background: #202020; color: #ddd; font-family: system-ui, "Segoe UI", san
 .toolbar button.danger { background: #8a2f2f; border-color: #b04545; color: #fff; }
 .toolbar label.check { display: flex; align-items: center; gap: 5px; color: #b5b5b5; font-size: 12px; margin-left: 4px; cursor: pointer; }
 .toolbar label.check input { accent-color: #4f8fe8; }
+.toolbar select.engine { background: #3a3a3a; color: #ddd; border: 1px solid #4a4a4a; border-radius: 5px; padding: 3px 6px; font: inherit; max-width: 210px; }

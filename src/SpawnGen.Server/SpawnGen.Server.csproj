@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SpawnGen.Engine\SpawnGen.Engine.csproj" />
+    <ProjectReference Include="..\SpawnGen.Runtime\SpawnGen.Runtime.csproj" />
     <ProjectReference Include="..\SpawnGen.Nodes.Core\SpawnGen.Nodes.Core.csproj" />
     <ProjectReference Include="..\SpawnGen.Nodes.ML\SpawnGen.Nodes.ML.csproj" />
     <ProjectReference Include="..\SpawnGen.Studio\SpawnGen.Studio.csproj" />

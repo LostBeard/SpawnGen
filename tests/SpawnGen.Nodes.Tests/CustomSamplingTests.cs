@@ -133,10 +133,43 @@ public class CustomSamplingTests
 
         await executor.ExecuteAsync(Common("plain", custom: false));
         await executor.ExecuteAsync(Common("custom", custom: true));
+        var advanced = Common("advanced", custom: true);
+        advanced.Add("20", "RandomNoise", ("noise_seed", 7));
+        advanced.Add("21", "BasicGuider", ("model", PromptInput.Link("1")), ("conditioning", PromptInput.Link("2")));
+        advanced.Add("7", "SamplerCustomAdvanced", ("noise", PromptInput.Link("20")), ("guider", PromptInput.Link("21")), ("sampler", PromptInput.Link("5")), ("sigmas", PromptInput.Link("6")), ("latent_image", PromptInput.Link("4")));
+        await executor.ExecuteAsync(advanced);
         var plain = Directory.GetFiles(outDir, "plain_*.png").Single();
         var custom = Directory.GetFiles(outDir, "custom_*.png").Single();
         TestContext.Out.WriteLine(plain + " and " + custom);
         Assert.That(PngReader.Decode(File.ReadAllBytes(custom)).Data, Is.EqualTo(PngReader.Decode(File.ReadAllBytes(plain)).Data));
+        var adv = Directory.GetFiles(outDir, "advanced_*.png").Single();
+        Assert.That(PngReader.Decode(File.ReadAllBytes(adv)).Data, Is.EqualTo(PngReader.Decode(File.ReadAllBytes(plain)).Data), "SamplerCustomAdvanced with RandomNoise and BasicGuider gives the same picture");
+    }
+
+    [Test]
+    public void The_advanced_sampler_and_its_pieces_validate_in_a_graph()
+    {
+        var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
+        var g = new PromptGraph();
+        g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "sd_turbo"));
+        g.Add("2", "CLIPTextEncode", ("text", "a"), ("clip", PromptInput.Link("1", 1)));
+        g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link("1", 1)));
+        g.Add("4", "EmptyLatentImage", ("width", 64), ("height", 64), ("batch_size", 1));
+        g.Add("5", "KSamplerSelect", ("sampler_name", "euler"));
+        g.Add("6", "SDTurboScheduler", ("model", PromptInput.Link("1")), ("steps", 1), ("denoise", 1.0));
+        g.Add("7", "RandomNoise", ("noise_seed", 7));
+        g.Add("8", "BasicGuider", ("model", PromptInput.Link("1")), ("conditioning", PromptInput.Link("2")));
+        g.Add("9", "CFGGuider", ("model", PromptInput.Link("1")), ("positive", PromptInput.Link("2")), ("negative", PromptInput.Link("3")), ("cfg", 7.0));
+        g.Add("10", "SamplerCustomAdvanced", ("noise", PromptInput.Link("7")), ("guider", PromptInput.Link("8")), ("sampler", PromptInput.Link("5")), ("sigmas", PromptInput.Link("6")), ("latent_image", PromptInput.Link("4")));
+        g.Add("11", "SamplerCustomAdvanced", ("noise", PromptInput.Link("7")), ("guider", PromptInput.Link("9")), ("sampler", PromptInput.Link("5")), ("sigmas", PromptInput.Link("6")), ("latent_image", PromptInput.Link("4")));
+        g.Add("12", "VAEDecode", ("samples", PromptInput.Link("10")), ("vae", PromptInput.Link("1", 2)));
+        g.Add("13", "SaveImage", ("images", PromptInput.Link("12")), ("filename_prefix", "adv"));
+        g.Add("14", "VAEDecode", ("samples", PromptInput.Link("11", 1)), ("vae", PromptInput.Link("1", 2)));
+        g.Add("15", "PreviewImage", ("images", PromptInput.Link("14")));
+        var result = new PromptExecutor(registry).Validate(g);
+        Assert.That(result.Errors, Is.Empty, string.Join("; ", result.Errors.Select(e => e.Message)));
+        Assert.That(new DisableNoise().Execute().Enabled, Is.False);
+        Assert.That(new BasicGuider().Execute(null!, null!).Cfg, Is.EqualTo(1f));
     }
 
     sealed class Services(params object[] instances) : IServiceProvider

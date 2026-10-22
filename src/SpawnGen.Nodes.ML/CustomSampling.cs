@@ -174,3 +174,54 @@ public sealed class SamplerCustom
             new SamplingSettings(noiseSeed, cfg, sampler.Name, AddNoise: addNoise), context);
     }
 }
+
+/// <summary>The noise a custom sampling run starts from (ComfyUI's NOISE): a seed, or none.</summary>
+[Socket("NOISE")]
+public sealed record NoiseChoice(long Seed, bool Enabled);
+
+/// <summary>How the model is steered at each step (ComfyUI's GUIDER): the model, what to aim for, what to avoid and how hard.</summary>
+[Socket("GUIDER")]
+public sealed record GuiderChoice(ModelHandle Model, Conditioning Positive, Conditioning Negative, float Cfg);
+
+[Node(Category = "sampling/custom_sampling/noise", DisplayName = "RandomNoise")]
+public sealed class RandomNoise
+{
+    public NoiseChoice Execute(long noiseSeed = 0) => new(noiseSeed, true);
+}
+
+[Node(Category = "sampling/custom_sampling/noise", DisplayName = "DisableNoise")]
+public sealed class DisableNoise
+{
+    /// <summary>No fresh noise: the run continues from the latent it is given (what a second pass of a split schedule wants).</summary>
+    public NoiseChoice Execute() => new(0, false);
+}
+
+[Node(Category = "sampling/custom_sampling/guiders", DisplayName = "BasicGuider")]
+public sealed class BasicGuider
+{
+    /// <summary>Guidance with the prompt alone (no negative prompt, cfg 1): what distilled models like SD-Turbo and FLUX expect.</summary>
+    public GuiderChoice Execute(ModelHandle model, Conditioning conditioning) => new(model, conditioning, conditioning, 1f);
+}
+
+[Node(Category = "sampling/custom_sampling/guiders", DisplayName = "CFGGuider")]
+public sealed class CFGGuider
+{
+    public GuiderChoice Execute(ModelHandle model, Conditioning positive, Conditioning negative, [Input(Min = 0, Max = 100, Step = 0.1)] float cfg = 8f) =>
+        new(model, positive, negative, cfg);
+}
+
+[Node(Category = "sampling/custom_sampling", DisplayName = "SamplerCustomAdvanced")]
+public sealed class SamplerCustomAdvanced
+{
+    /// <summary>
+    /// SamplerCustom with every piece a node of its own: noise, guider, sampler, sigmas. <c>output</c> is the sampled latent, <c>denoised_output</c> the model's last clean estimate.
+    /// </summary>
+    public async Task<(LatentBatch Output, LatentBatch DenoisedOutput)> ExecuteAsync(NoiseChoice noise, GuiderChoice guider, SamplerChoice sampler, Sigmas sigmas, LatentBatch latentImage,
+        NodeContext context, IServiceProvider services)
+    {
+        if (sigmas.Values.Length < 2) return (latentImage, latentImage);
+        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
+        return await SamplingCore.RunWithDenoisedAsync(acc, guider.Model.Checkpoint, guider.Positive, guider.Negative, latentImage, sigmas.Values,
+            new SamplingSettings(noise.Seed, guider.Cfg, sampler.Name, AddNoise: noise.Enabled), context);
+    }
+}

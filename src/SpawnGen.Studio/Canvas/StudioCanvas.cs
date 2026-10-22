@@ -101,6 +101,9 @@ public sealed class StudioCanvas : IDisposable
     /// <summary>Raised at the start of every pointer press on the canvas, before the editor handles it (lets the page close menus).</summary>
     public event Action? CanvasPressed;
 
+    /// <summary>A key the editor did not use (Ctrl+Enter to queue, for instance): return true when it was handled.</summary>
+    public event Func<string, Modifiers, bool>? Shortcut;
+
     // ---- input ----
 
     static Modifiers Mods(MouseEvent e, bool space) => Mods(e.ShiftKey, e.CtrlKey || e.MetaKey, e.AltKey, space);
@@ -177,7 +180,8 @@ public sealed class StudioCanvas : IDisposable
         {
             var key = e.Key.ToLowerInvariant();
             if (key == " ") { _space = true; e.PreventDefault(); return; }
-            if (_view.Key(key, Mods(e, _space))) e.PreventDefault();
+            var mods = Mods(e, _space);
+            if (_view.Key(key, mods) || Shortcut?.Invoke(key, mods) == true) e.PreventDefault();
         }
         finally { e.Dispose(); }
     }

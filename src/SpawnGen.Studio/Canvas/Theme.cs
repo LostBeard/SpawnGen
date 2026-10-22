@@ -16,6 +16,7 @@ public static class Theme
     public const string WidgetBorder = "#4a4a4a";
     public const string Accent = "#4f8fe8";
     public const string Error = "#e05555";
+    public const string Running = "#4caf50";
 
     public const string Font = "12px system-ui, 'Segoe UI', sans-serif";
     public const string TitleFont = "600 13px system-ui, 'Segoe UI', sans-serif";

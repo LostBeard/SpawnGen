@@ -507,6 +507,9 @@ public sealed class EditorView
         });
     }
 
+    /// <summary>Asks the UI to redraw (something outside the editor changed what is shown: a result arrived, a picture loaded).</summary>
+    public void Invalidate() => ViewChanged?.Invoke();
+
     public void FitToView(bool selectionOnly = false)
     {
         var nodes = selectionOnly ? Document.Graph.Nodes.Where(n => _selected.Contains(n.Id)) : Document.Graph.Nodes;

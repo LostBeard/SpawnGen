@@ -21,6 +21,8 @@ public sealed class NodeGeometry
     public required IReadOnlyList<SlotGeometry> Inputs { get; init; }
     public required IReadOnlyList<SlotGeometry> Outputs { get; init; }
     public required IReadOnlyList<WidgetRow> Widgets { get; init; }
+    /// <summary>Where the result image is drawn, when the node has one.</summary>
+    public Rect? PreviewArea { get; init; }
     /// <summary>The bottom-right grab area for resizing the width.</summary>
     public required Rect ResizeHandle { get; init; }
 
@@ -38,6 +40,7 @@ public static class NodeLayout
     public const double BottomPadding = 8;
     public const double MinWidth = 190;
     public const double ResizeSize = 14;
+    public const double MaxPreviewHeight = 520;
     /// <summary>Average glyph width used to size nodes before the real text is measured; the UI may pass a better measure.</summary>
     public const double EstimatedCharWidth = 7.2;
 
@@ -103,12 +106,24 @@ public static class NodeLayout
             y += h;
         }
 
+        // The result picture, under the widgets: as wide as the node, as tall as its aspect ratio asks (until it has loaded it is assumed square).
+        Rect? preview = null;
+        if (node.Previews.Count > 0)
+        {
+            var first = node.Previews[0];
+            double pw = Math.Max(40, width - 2 * Padding);
+            double aspect = first.Width > 0 && first.Height > 0 ? first.Height / first.Width : 1;
+            double ph = Math.Clamp(pw * aspect, 40, MaxPreviewHeight);
+            preview = new Rect(node.X + Padding, y + 2, pw, ph);
+            y += ph + 8;
+        }
+
         double height = (y - node.Y) + BottomPadding;
         var boundsAll = new Rect(node.X, node.Y, width, height);
         return new NodeGeometry
         {
             NodeId = node.Id, Title = title, Bounds = boundsAll, TitleBar = new Rect(node.X, node.Y, width, TitleHeight), Collapsed = false,
-            Inputs = inputs, Outputs = outputs, Widgets = widgets,
+            Inputs = inputs, Outputs = outputs, Widgets = widgets, PreviewArea = preview,
             ResizeHandle = new Rect(boundsAll.Right - ResizeSize, boundsAll.Bottom - ResizeSize, ResizeSize, ResizeSize),
         };
     }

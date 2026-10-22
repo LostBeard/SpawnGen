@@ -483,3 +483,38 @@ public class EditorViewTests
         Assert.That(geometry.Bounds.Width, Is.GreaterThan(0));
     }
 }
+
+public class PreviewLayoutTests
+{
+    [Test]
+    public void A_node_with_a_result_image_reserves_room_for_it_below_its_widgets()
+    {
+        var (doc, ids) = Fixtures.Txt2Img();
+        var hits = new HitTester(doc);
+        var node = doc.Graph.GetNode(ids["save"]);
+        var before = hits.Geometry(node);
+        Assert.That(before.PreviewArea, Is.Null);
+
+        node.Previews = [new NodePreview("/view?filename=a.png")]; // size unknown yet: assumed square
+        var square = hits.Geometry(node);
+        Assert.That(square.PreviewArea, Is.Not.Null);
+        Assert.That(square.PreviewArea!.Value.Width, Is.EqualTo(square.Bounds.Width - 2 * NodeLayout.Padding).Within(0.001));
+        Assert.That(square.PreviewArea.Value.Height, Is.EqualTo(square.PreviewArea.Value.Width).Within(0.001));
+        Assert.That(square.PreviewArea.Value.Y, Is.GreaterThanOrEqualTo(before.Bounds.Bottom - NodeLayout.BottomPadding - 1), "Below the widgets.");
+        Assert.That(square.Bounds.Height, Is.GreaterThan(before.Bounds.Height + 40));
+        Assert.That(square.Bounds.Contains(new Point(square.PreviewArea.Value.Right, square.PreviewArea.Value.Bottom)), Is.True, "Inside the node.");
+
+        node.Previews = [new NodePreview("/view?filename=a.png", 1024, 512)]; // a landscape picture is half as tall as wide
+        var wide = hits.Geometry(node);
+        Assert.That(wide.PreviewArea!.Value.Height, Is.EqualTo(wide.PreviewArea.Value.Width / 2).Within(0.001));
+    }
+
+    [Test]
+    public void Preview_height_is_capped()
+    {
+        var (doc, ids) = Fixtures.Txt2Img();
+        var node = doc.Graph.GetNode(ids["save"]);
+        node.Previews = [new NodePreview("x", 100, 4000)];
+        Assert.That(new HitTester(doc).Geometry(node).PreviewArea!.Value.Height, Is.EqualTo(NodeLayout.MaxPreviewHeight));
+    }
+}

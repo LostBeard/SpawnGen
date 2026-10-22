@@ -34,3 +34,6 @@ body { background: #202020; color: #ddd; font-family: system-ui, "Segoe UI", san
 .menu { position: absolute; z-index: 20; list-style: none; margin: 0; padding: 4px; min-width: 190px; background: #2a2a2a; border: 1px solid #4a4a4a; border-radius: 6px; box-shadow: 0 8px 28px #000a; }
 .menu li { padding: 6px 12px; border-radius: 4px; cursor: pointer; }
 .menu li:hover { background: #2f5fa8; }
+.toolbar button.danger { background: #8a2f2f; border-color: #b04545; color: #fff; }
+.toolbar label.check { display: flex; align-items: center; gap: 5px; color: #b5b5b5; font-size: 12px; margin-left: 4px; cursor: pointer; }
+.toolbar label.check input { accent-color: #4f8fe8; }

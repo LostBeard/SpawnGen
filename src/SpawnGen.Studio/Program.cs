@@ -14,4 +14,7 @@ builder.Services.AddSpawnJSRuntime(out _);
 // The node types the editor offers: everything marked [Node] in the node assemblies. A node pack is one more AddAssembly.
 builder.Services.AddSingleton(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly));
 
+builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+builder.Services.AddScoped<SpawnGen.Studio.Run.ServerClient>();
+
 await builder.Build().RunAsync();

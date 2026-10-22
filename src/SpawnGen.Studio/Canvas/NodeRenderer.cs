@@ -5,7 +5,7 @@ using SpawnGen.Engine.Nodes;
 namespace SpawnGen.Studio.Canvas;
 
 /// <summary>Draws the editor state (<see cref="EditorView"/>) onto a 2D canvas in world coordinates. All state lives in the view; this only paints.</summary>
-public sealed class NodeRenderer(EditorView view)
+public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals visuals, ImageCache images)
 {
     readonly Dictionary<string, double> _textWidths = [];
     CanvasRenderingContext2D? _measureContext;
@@ -171,10 +171,19 @@ public sealed class NodeRenderer(EditorView view)
             ctx.FillRect(geo.TitleBar.X, geo.TitleBar.Y, geo.TitleBar.Width, geo.TitleBar.Height);
             ctx.Restore();
         }
+        bool running = visuals.ExecutingNode == node.Id;
+        bool failed = visuals.Errors.ContainsKey(node.Id);
         RoundRect(ctx, b, 8);
-        ctx.LineWidth = selected ? 2 / scale + 0.5 : 1.5;
-        ctx.StrokeStyle = selected ? Theme.NodeSelected : (schema is null ? Theme.Error : Theme.NodeBorder);
+        ctx.LineWidth = running || failed ? 3 : selected ? 2 / scale + 0.5 : 1.5;
+        ctx.StrokeStyle = failed ? Theme.Error : running ? Theme.Running : selected ? Theme.NodeSelected : (schema is null ? Theme.Error : Theme.NodeBorder);
         ctx.Stroke();
+
+        // Progress along the bottom of the title bar while this node runs (a node that reports no steps just shows the green outline).
+        if (running && visuals.ProgressMax > 0)
+        {
+            ctx.FillStyle = Theme.Running;
+            ctx.FillRect(geo.TitleBar.X + 1, geo.TitleBar.Bottom - 4, (geo.TitleBar.Width - 2) * visuals.Fraction, 3);
+        }
 
         if (detailed)
         {
@@ -196,6 +205,7 @@ public sealed class NodeRenderer(EditorView view)
             foreach (var s in geo.Inputs) DrawSlot(ctx, s, detailed, view.Hover is { Kind: HitKind.InputSlot } h && h.NodeId == node.Id && h.Name == s.Name);
             foreach (var s in geo.Outputs) DrawSlot(ctx, s, detailed, view.Hover is { Kind: HitKind.OutputSlot } h && h.NodeId == node.Id && h.Index == s.Index);
             if (detailed) foreach (var w in geo.Widgets) DrawWidget(ctx, node, w);
+            if (geo.PreviewArea is { } area) DrawPreview(ctx, node, area, detailed);
             // Resize grip.
             var r = geo.ResizeHandle;
             ctx.StrokeStyle = "#5a5a5a";
@@ -211,6 +221,61 @@ public sealed class NodeRenderer(EditorView view)
             foreach (var s in geo.Inputs.Take(1)) Dot(ctx, s.Position, 5, Theme.SocketColor(s.Type.Name), s.IsConnected);
         }
         ctx.GlobalAlpha = 1;
+
+        // A failed node says why, in a red tag under it.
+        if (failed && detailed)
+        {
+            var text = Ellipsize(visuals.Errors[node.Id], Math.Max(b.Width, 220));
+            ctx.Font = Theme.Font;
+            double w = Math.Max(MeasureText(text) + 16, 60);
+            RoundRect(ctx, new Rect(b.X, b.Bottom + 6, w, 22), 5);
+            ctx.FillStyle = "#6b2424";
+            ctx.Fill();
+            ctx.FillStyle = "#ffd6d6";
+            ctx.TextBaseline = "middle";
+            ctx.FillText(text, b.X + 8, b.Bottom + 17);
+        }
+    }
+
+    /// <summary>The node's result picture. Until it has loaded a placeholder shows; once it has, the node is resized to the picture's shape.</summary>
+    void DrawPreview(CanvasRenderingContext2D ctx, EditorNode node, Rect area, bool detailed)
+    {
+        var preview = node.Previews[0];
+        var image = images.Get(preview.Url, (w, h) =>
+        {
+            node.Previews = node.Previews.Select(p => p.Url == preview.Url ? p with { Width = w, Height = h } : p).ToList();
+            view.Invalidate();
+        });
+
+        RoundRect(ctx, area, 5);
+        ctx.FillStyle = "#141414";
+        ctx.Fill();
+        if (image is not null)
+        {
+            ctx.Save();
+            RoundRect(ctx, area, 5);
+            ctx.Clip();
+            ctx.DrawImage(image, area.X, area.Y, area.Width, area.Height);
+            ctx.Restore();
+        }
+        else if (detailed)
+        {
+            ctx.Font = Theme.Font;
+            ctx.FillStyle = Theme.LabelText;
+            ctx.TextAlign = "center";
+            ctx.TextBaseline = "middle";
+            ctx.FillText("loading...", area.Center.X, area.Center.Y);
+            ctx.TextAlign = "left";
+        }
+        if (node.Previews.Count > 1 && detailed)
+        {
+            ctx.Font = Theme.Font;
+            ctx.FillStyle = "rgba(0,0,0,0.6)";
+            ctx.FillRect(area.Right - 38, area.Y + 4, 34, 18);
+            ctx.FillStyle = "#fff";
+            ctx.TextBaseline = "middle";
+            ctx.FillText($"1/{node.Previews.Count}", area.Right - 34, area.Y + 13);
+        }
     }
 
     void DrawSlot(CanvasRenderingContext2D ctx, SlotGeometry s, bool detailed, bool hovered)

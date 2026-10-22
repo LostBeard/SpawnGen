@@ -4,11 +4,15 @@
 @using SpawnDev.SpawnJS
 @using SpawnDev.SpawnJS.JSObjects
 @using SpawnGen.Editor
+@using System.Text.Json.Nodes
+@using SpawnGen.Engine.Graph
+@using SpawnGen.Studio.Run
 @using SpawnGen.Engine.Nodes
 @using SpawnGen.Studio.Canvas
 @inject SpawnJSRuntime JS
 @inject IJSRuntime Interop
 @inject NodeRegistry Registry
+@inject ServerClient Server
 @implements IDisposable
 
 <div class="studio">
@@ -24,8 +28,17 @@
         <button title="Download the workflow as ComfyUI JSON" @onclick="SaveAsync">Save</button>
         <button title="Replace the graph with a starter text-to-image workflow" @onclick="LoadExample">Example</button>
         <span class="sep"></span>
-        <button class="primary" disabled title="Running graphs from the browser is not wired up yet">Queue</button>
-        <span class="status">@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
+        @if (_running)
+        {
+            <button class="danger" title="Stop the run in progress" @onclick="InterruptAsync">Stop</button>
+        }
+        else
+        {
+            <button class="primary" disabled="@(!_serverAvailable)" @onclick="QueueAsync"
+                    title="@(_serverAvailable ? "Run the graph on the server (Ctrl+Enter)" : "No SpawnGen server: this page is editing only. Run the server to queue.")">Queue</button>
+        }
+        <label class="check" title="Pick a new random seed for the seed widgets every time you queue, like ComfyUI"><input type="checkbox" @bind="_randomizeSeeds" /> random seed</label>
+        <span class="status">@RunStatus()@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
     </div>
 
     <div class="stage">
@@ -137,7 +150,9 @@
     {
         _doc = new EditorDocument(Registry);
         _view = new EditorView(_doc, text => _renderer!.MeasureText(text));
-        _renderer = new NodeRenderer(_view);
+        _renderer = new NodeRenderer(_view, _visuals, _images);
+        Server.EventReceived += OnServerEvent;
+        Server.ConnectionChanged += RefreshUi;
 
         // Blazor only re-renders the toolbar and overlays; the canvas repaints itself. Throttled so a drag does not re-render on every move.
         _doc.Changed += RefreshUi;
@@ -155,6 +170,8 @@
         {
             _studio = new StudioCanvas(JS, _canvasRef.As<HTMLCanvasElement>(), _view, _renderer);
             _studio.FirstLayout += () => _view.FitToView();
+            _studio.Shortcut += OnShortcut;
+            _ = StartServerAsync();
             _studio.CanvasPressed += CloseMenus; // the canvas reports its own presses first, so a menu it opens right after is not closed again
             LoadExample();
             _studio.Focus();
@@ -406,6 +423,13 @@
 
     // ---- toast ----
 
+    bool OnShortcut(string key, Modifiers mods)
+    {
+        if (key != "enter" || !mods.HasFlag(Modifiers.Ctrl)) return false;
+        _ = QueueAsync();
+        return true;
+    }
+
     void ShowMessage(string text)
     {
         _message = text;
@@ -421,8 +445,138 @@
         });
     }
 
+    // ---- running on the server ----
+
+    readonly RunVisuals _visuals = new();
+    readonly ImageCache _images = new();
+    bool _serverAvailable, _running, _randomizeSeeds = true;
+    int _queueRemaining;
+    string? _statusText;
+    string? _executingTitle;
+
+    async Task StartServerAsync()
+    {
+        _serverAvailable = await Server.ProbeAsync();
+        if (_serverAvailable) Server.Start();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    string RunStatus()
+    {
+        if (!_running && _queueRemaining == 0) return "";
+        var where = _executingTitle is null ? "Queued" : $"Running {_executingTitle}";
+        if (_visuals.ProgressMax > 0) where += $" {_visuals.ProgressValue:0}/{_visuals.ProgressMax:0}";
+        else if (_statusText is not null) where += $": {_statusText}";
+        return where + " · ";
+    }
+
+    async Task QueueAsync()
+    {
+        if (!_serverAvailable) { ShowMessage("There is no SpawnGen server behind this page: run the server to queue."); return; }
+        if (_randomizeSeeds) RandomizeSeeds();
+
+        var compiled = GraphCompiler.Compile(_doc.Graph, Registry);
+        if (compiled.Graph.Nodes.Count == 0) { ShowMessage(compiled.Notes.FirstOrDefault() ?? "There is nothing to run."); return; }
+        _visuals.Errors.Clear();
+
+        var result = await Server.QueueAsync(PromptJson.ToJson(compiled.Graph));
+        if (!result.Queued)
+        {
+            foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;
+            var detail = result.NodeErrors.Count > 0 ? $" {result.NodeErrors.First().Value}" : "";
+            ShowMessage($"{result.Message}.{detail}");
+            _view.Invalidate();
+            return;
+        }
+        if (compiled.Notes.Count > 0) ShowMessage(compiled.Notes[0]);
+        _studio?.Focus();
+    }
+
+    async Task InterruptAsync()
+    {
+        await Server.InterruptAsync();
+        _studio?.Focus();
+    }
+
+    /// <summary>New random seeds, as ComfyUI does after each queue; one undo step.</summary>
+    void RandomizeSeeds()
+    {
+        _doc.Group(() =>
+        {
+            foreach (var node in _doc.Graph.Nodes.ToList())
+            {
+                var schema = Registry.GetSchema(node.ClassType);
+                foreach (var input in schema?.Inputs.Where(i => i.Widget?.Kind == WidgetKind.Int && i.Name is "seed" or "noise_seed") ?? [])
+                    if (_doc.Graph.LinkInto(node.Id, input.Name) is null) _doc.SetWidget(node.Id, input.Name, Random.Shared.NextInt64(1L << 40));
+            }
+        });
+        _doc.EndGesture();
+    }
+
+    void OnServerEvent(JsonObject e)
+    {
+        var type = (string?)e["type"];
+        var data = e["data"] as JsonObject ?? [];
+        int? node = int.TryParse((string?)data["node"], out var n) ? n : null;
+
+        switch (type)
+        {
+            case "status":
+                _queueRemaining = (int?)data["status"]?["exec_info"]?["queue_remaining"] ?? 0;
+                break;
+            case "execution_start":
+                _visuals.BeginRun();
+                _running = true;
+                _statusText = null;
+                break;
+            case "executing":
+                _visuals.ExecutingNode = node;
+                _visuals.ProgressValue = _visuals.ProgressMax = 0;
+                _statusText = null;
+                _executingTitle = node is { } runningId && _doc.Graph.FindNode(runningId) is { } running
+                    ? running.Title ?? Registry.GetSchema(running.ClassType)?.DisplayName ?? running.ClassType : null;
+                break;
+            case "progress":
+                _visuals.ProgressValue = (double?)data["value"] ?? 0;
+                _visuals.ProgressMax = (double?)data["max"] ?? 0;
+                break;
+            case "node_status":
+                _statusText = (string?)data["message"];
+                break;
+            case "executed" when node is { } shownId && _doc.Graph.FindNode(shownId) is { } shown:
+                if (data["output"]?["images"] is JsonArray images)
+                    shown.Previews = images.OfType<JsonObject>()
+                        .Select(i => new NodePreview(Server.ViewUrl((string)i["filename"]!, (string?)i["subfolder"], (string?)i["type"]))).ToList();
+                break;
+            case "execution_error":
+                int? failedNode = node;
+                if (failedNode is null && int.TryParse((string?)data["node_id"], out var failedId)) failedNode = failedId;
+                if (failedNode is { } badId) _visuals.Errors[badId] = (string?)data["exception_message"] ?? "failed";
+                ShowMessage($"Run failed: {(string?)data["exception_message"]}");
+                _running = false;
+                _visuals.EndRun();
+                break;
+            case "execution_success":
+                _running = false;
+                _executingTitle = null;
+                _visuals.EndRun();
+                break;
+            case "execution_interrupted":
+                _running = false;
+                _executingTitle = null;
+                _visuals.EndRun();
+                ShowMessage("Stopped.");
+                break;
+        }
+        _view.Invalidate();
+        RefreshUi();
+    }
+
     public void Dispose()
     {
+        Server.EventReceived -= OnServerEvent;
+        Server.ConnectionChanged -= RefreshUi;
+        _images.Dispose();
         _studio?.Dispose();
         _toastTimer?.Cancel();
     }

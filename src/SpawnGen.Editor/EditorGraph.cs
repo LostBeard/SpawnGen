@@ -25,6 +25,8 @@ public sealed class EditorNode
     public NodeMode Mode { get; set; }
     /// <summary>Drawing and hit-test order, higher is on top. View state: not undoable, not part of the saved workflow's meaning.</summary>
     public int ZIndex { get; set; }
+    /// <summary>Result images shown inside the node (view state: set from run results, never saved).</summary>
+    public IReadOnlyList<NodePreview> Previews { get; set; } = [];
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
 
@@ -134,3 +136,6 @@ public sealed class EditorGraph
         return null;
     }
 }
+
+/// <summary>An image a node produced (a result shown inside the node). <see cref="Width"/> and <see cref="Height"/> are 0 until the picture has loaded.</summary>
+public sealed record NodePreview(string Url, double Width = 0, double Height = 0);

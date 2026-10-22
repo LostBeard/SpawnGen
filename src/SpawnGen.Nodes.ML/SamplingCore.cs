@@ -45,8 +45,8 @@ internal static class SamplingCore
             var pos = positive.Entries.Select(e => (Entry: e, Tensor: Upload(e))).ToList();
             var neg = negative.Entries.Select(e => (Entry: e, Tensor: Upload(e))).ToList();
 
-            var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask };
-            var denoisedResult = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask };
+            var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, SameNoise = latent.SameNoise };
+            var denoisedResult = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, SameNoise = latent.SameNoise };
             bool maxDenoise = MathF.Abs(sigmas[0] - ckpt.Sigmas.SigmaMax) <= 1e-5f * ckpt.Sigmas.SigmaMax || sigmas[0] > ckpt.Sigmas.SigmaMax;
 
             for (int b = 0; b < latent.Batch; b++)
@@ -56,7 +56,8 @@ internal static class SamplingCore
                 var mask = ResizedMask(latent.NoiseMask, b, h, w);
 
                 // Start: the latent plus noise at the first sigma. From the top of the schedule the noise is scaled so the model's input has unit variance.
-                var noise = settings.AddNoise ? DiffusionScheduler.GenerateNoise(Checkpoint.LatentChannels, h, w, unchecked((int)(settings.Seed + b))) : new float[perImage];
+                int noiseIndex = latent.SameNoise ? 0 : b;
+                var noise = settings.AddNoise ? DiffusionScheduler.GenerateNoise(Checkpoint.LatentChannels, h, w, unchecked((int)(settings.Seed + noiseIndex))) : new float[perImage];
                 float noiseScale = maxDenoise ? MathF.Sqrt(1f + sigmas[0] * sigmas[0]) : sigmas[0];
                 var x = new float[perImage];
                 for (int i = 0; i < perImage; i++) x[i] = original[i] + noise[i] * noiseScale;
@@ -103,7 +104,7 @@ internal static class SamplingCore
                 }
 
                 int item = b;
-                x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise, new Samplers.NoiseSource(unchecked((int)(settings.Seed + b) ^ 0x5EED), Checkpoint.LatentChannels, h, w),
+                x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise, new Samplers.NoiseSource(unchecked((int)(settings.Seed + noiseIndex) ^ 0x5EED), Checkpoint.LatentChannels, h, w),
                     done =>
                     {
                         context.Progress(item * steps + done, latent.Batch * steps);

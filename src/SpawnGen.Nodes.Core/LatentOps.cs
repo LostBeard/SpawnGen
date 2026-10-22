@@ -317,3 +317,72 @@ public sealed class LatentInterpolate
         return r;
     }
 }
+
+[Node(Category = "latent/batch", DisplayName = "Latent Batch")]
+public sealed class LatentBatchNode
+{
+    /// <summary>Stacks two latents into one batch; a second latent of another size is resized (bilinear, centre crop) to the first's.</summary>
+    public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2)
+    {
+        var second = samples2;
+        if (samples2.Channels != samples1.Channels) throw new ArgumentException($"The latents have {samples1.Channels} and {samples2.Channels} channels and cannot be batched.");
+        if (samples2.Height != samples1.Height || samples2.Width != samples1.Width)
+            second = new LatentUpscale().Execute(samples2, "bilinear", samples1.Width * 8, samples1.Height * 8, "center");
+        var frames = Enumerable.Range(0, samples1.Batch).Select(i => Latents.Frame(samples1, i))
+            .Concat(Enumerable.Range(0, second.Batch).Select(i => Latents.Frame(second, i))).ToList();
+        return Latents.From(frames, samples1.Channels, samples1.Height, samples1.Width);
+    }
+}
+
+[Node(Category = "latent/advanced", DisplayName = "LatentBatchSeedBehavior")]
+public sealed class LatentBatchSeedBehavior
+{
+    public static string[] Behaviors() => ["random", "fixed"];
+
+    /// <summary>"fixed" gives every picture in the batch the same starting noise (so the batch varies only by prompt or settings); "random" gives each its own.</summary>
+    public LatentBatch Execute(LatentBatch samples, [Input(OptionsProvider = nameof(Behaviors))] string seedBehavior = "fixed") =>
+        new(samples.Batch, samples.Channels, samples.Height, samples.Width, samples.Data) { NoiseMask = samples.NoiseMask, SameNoise = seedBehavior == "fixed" };
+}
+
+[Node(Category = "latent", DisplayName = "LatentCompositeMasked")]
+public sealed class LatentCompositeMasked
+{
+    /// <summary>Pastes <c>source</c> into <c>destination</c> at (x, y) pixels through an optional mask (resized to the source); with <c>resize_source</c> the source is first stretched to the destination's size.</summary>
+    public LatentBatch Execute(LatentBatch destination, LatentBatch source, [Input(Min = 0, Max = 16384, Step = 8)] int x = 0, [Input(Min = 0, Max = 16384, Step = 8)] int y = 0,
+        bool resizeSource = false, MaskBatch? mask = null)
+    {
+        int c = destination.Channels, dh = destination.Height, dw = destination.Width;
+        if (source.Channels != c) throw new ArgumentException($"The latents have {c} and {source.Channels} channels and cannot be composited.");
+        bool stretch = resizeSource && (source.Height != dh || source.Width != dw);
+        int sh = stretch ? dh : source.Height, sw = stretch ? dw : source.Width;
+        float[] SourceFrame(int b)
+        {
+            var frame = Latents.Frame(source, b % source.Batch);
+            return stretch ? Latents.Resize(frame, c, source.Height, source.Width, dh, dw, ResampleMethod.Bilinear) : frame;
+        }
+        int left = Math.Min(x / 8, dw), top = Math.Min(y / 8, dh);
+        int visibleW = Math.Max(0, Math.Min(sw, dw - left)), visibleH = Math.Max(0, Math.Min(sh, dh - top));
+
+        var result = new LatentBatch(destination.Batch, c, dh, dw, (float[])destination.Data.Clone()) { NoiseMask = destination.NoiseMask };
+        for (int b = 0; b < destination.Batch; b++)
+        {
+            var src = SourceFrame(b);
+            float[]? m = null;
+            if (mask is not null)
+            {
+                var one = new float[mask.Height * mask.Width];
+                Array.Copy(mask.Data, (b % mask.Batch) * one.Length, one, 0, one.Length);
+                m = mask.Height == sh && mask.Width == sw ? one : Resample.Resize(one, mask.Width, mask.Height, 1, sw, sh, ResampleMethod.Bilinear);
+            }
+            for (int ch = 0; ch < c; ch++)
+                for (int yy = 0; yy < visibleH; yy++)
+                    for (int xx = 0; xx < visibleW; xx++)
+                    {
+                        float w = m is null ? 1f : m[yy * sw + xx];
+                        int di = ((b * c + ch) * dh + top + yy) * dw + left + xx;
+                        result.Data[di] = w * src[(ch * sh + yy) * sw + xx] + (1f - w) * result.Data[di];
+                    }
+        }
+        return result;
+    }
+}

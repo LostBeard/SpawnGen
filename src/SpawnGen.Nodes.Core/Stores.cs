@@ -36,6 +36,22 @@ public sealed class OutputOptions
     public string TempDirectory { get; init; } = Path.Combine(AppContext.BaseDirectory, "temp");
 }
 
+/// <summary>A save prefix such as <c>folder/name</c> split into its subfolder and file name part. The subfolder must stay inside the output folder.</summary>
+public static class SavePrefix
+{
+    public static (string Subfolder, string Name) Split(string prefix)
+    {
+        prefix = (prefix ?? "").Replace('\\', '/');
+        int slash = prefix.LastIndexOf('/');
+        if (slash < 0) return ("", prefix);
+        var subfolder = prefix[..slash].Trim('/');
+        var segments = subfolder.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (prefix.StartsWith('/') || subfolder.Contains(':') || segments.Any(s => s == ".." || s == "."))
+            throw new ArgumentException($"The file name prefix '{prefix}' must stay inside the output folder: no '..', drive letters or leading slash.", nameof(prefix));
+        return (string.Join('/', segments), prefix[(slash + 1)..]);
+    }
+}
+
 /// <summary>Results as PNG files in folders. Output files are numbered (<c>prefix_00001_.png</c>) and never overwritten.</summary>
 public sealed class DiskResultStore(OutputOptions options) : IResultStore
 {
@@ -45,7 +61,9 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
 
     public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png, string extension)
     {
-        string dir = type == "temp" ? options.TempDirectory : options.Directory;
+        var (subfolder, prefixName) = SavePrefix.Split(prefix);
+        prefix = prefixName;
+        string dir = Path.Combine(type == "temp" ? options.TempDirectory : options.Directory, subfolder);
         Directory.CreateDirectory(dir);
         string name;
         lock (_gate)
@@ -56,7 +74,7 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
                 : $"{prefix}_{NextCounter(dir, prefix, extension):D5}_.{extension}";
             File.WriteAllBytes(Path.Combine(dir, name), png);
         }
-        return Task.FromResult(new ResultFile(name, "", type));
+        return Task.FromResult(new ResultFile(name, subfolder, type));
     }
 
     static int NextCounter(string dir, string prefix, string extension)
@@ -82,6 +100,8 @@ public sealed class MemoryResultStore : IResultStore
 
     public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png, string extension)
     {
+        var (subfolder, prefixName) = SavePrefix.Split(prefix);
+        prefix = prefixName;
         lock (_gate)
         {
             string name;
@@ -89,24 +109,25 @@ public sealed class MemoryResultStore : IResultStore
             else
             {
                 int n = 1;
-                while (_files.ContainsKey(Key(type, $"{prefix}_{n:D5}_.{extension}"))) n++;
+                while (_files.ContainsKey(Key(type, subfolder, $"{prefix}_{n:D5}_.{extension}"))) n++;
                 name = $"{prefix}_{n:D5}_.{extension}";
             }
-            _files[Key(type, name)] = png;
-            Saved?.Invoke(new ResultFile(name, "", type), png);
-            return Task.FromResult(new ResultFile(name, "", type));
+            _files[Key(type, subfolder, name)] = png;
+            var file = new ResultFile(name, subfolder, type);
+            Saved?.Invoke(file, png);
+            return Task.FromResult(file);
         }
     }
 
-    public byte[]? Get(string type, string filename)
+    public byte[]? Get(string type, string filename, string? subfolder = null)
     {
-        lock (_gate) return _files.GetValueOrDefault(Key(type, filename));
+        lock (_gate) return _files.GetValueOrDefault(Key(type, subfolder ?? "", filename));
     }
 
     /// <summary>Raised when a picture is stored (the browser turns it into a blob URL the canvas can show).</summary>
     public event Action<ResultFile, byte[]>? Saved;
 
-    static string Key(string type, string name) => type + "/" + name;
+    static string Key(string type, string subfolder, string name) => type + "/" + (subfolder.Length == 0 ? "" : subfolder + "/") + name;
 }
 
 public sealed class DiskInputStore(Func<string> directory) : IInputStore

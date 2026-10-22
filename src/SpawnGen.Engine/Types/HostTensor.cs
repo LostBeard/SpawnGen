@@ -47,6 +47,9 @@ public sealed class LatentBatch : HostTensor
 
     /// <summary>Optional inpainting mask at latent size (batch, h, w): 1 = this area is regenerated, 0 = it is kept. Set by Set Latent Noise Mask.</summary>
     public MaskBatch? NoiseMask { get; init; }
+
+    /// <summary>Every picture in the batch starts from the same noise (Latent Batch Seed Behavior "fixed"); otherwise each gets its own.</summary>
+    public bool SameNoise { get; init; }
 }
 
 /// <summary>A batch of masks, NHW (batch, height, width), values 0..1 (same layout as ComfyUI's MASK). 1 = selected.</summary>

@@ -70,6 +70,8 @@ public static class NodeLayout
             };
         }
 
+        if (schema.Id == "Reroute") return ComputeReroute(node, schema, graph);
+
         var slotInputs = schema.Inputs.Where(i => IsSlotRow(i, node, graph)).ToList();
         var widgetInputs = schema.Inputs.Where(i => i.Widget is not null && !IsSlotRow(i, node, graph)).ToList();
         int slotRows = Math.Max(slotInputs.Count, schema.Outputs.Count);
@@ -131,6 +133,23 @@ public static class NodeLayout
             NodeId = node.Id, Title = title, Bounds = boundsAll, TitleBar = new Rect(node.X, node.Y, width, TitleHeight), Collapsed = false,
             Inputs = inputs, Outputs = outputs, Widgets = widgets, PreviewArea = preview,
             ResizeHandle = new Rect(boundsAll.Right - ResizeSize, boundsAll.Bottom - ResizeSize, ResizeSize, ResizeSize),
+        };
+    }
+
+    public const double RerouteWidth = 75, RerouteHeight = 26;
+
+    /// <summary>A reroute is just its two dots in a small body: no title, no widgets.</summary>
+    static NodeGeometry ComputeReroute(EditorNode node, NodeSchema schema, EditorGraph graph)
+    {
+        var bounds = new Rect(node.X, node.Y, RerouteWidth, RerouteHeight);
+        var input = schema.Inputs[0];
+        var output = schema.Outputs[0];
+        return new NodeGeometry
+        {
+            NodeId = node.Id, Title = "", Bounds = bounds, TitleBar = new Rect(node.X, node.Y, RerouteWidth, 0), Collapsed = false,
+            Inputs = [new SlotGeometry(SlotKind.Input, input.Name, 0, input.Type, new Point(bounds.X, bounds.Center.Y), false, graph.LinkInto(node.Id, input.Name) is not null)],
+            Outputs = [new SlotGeometry(SlotKind.Output, output.Name, 0, output.Type, new Point(bounds.Right, bounds.Center.Y), false, graph.LinksFrom(node.Id, 0).Any())],
+            Widgets = [], ResizeHandle = new Rect(bounds.Right, bounds.Bottom, 0, 0),
         };
     }
 

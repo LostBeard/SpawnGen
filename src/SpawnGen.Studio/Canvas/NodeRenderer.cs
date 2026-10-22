@@ -160,14 +160,15 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.GlobalAlpha = node.Mode == NodeMode.Never ? 0.4 : node.Mode == NodeMode.Bypass ? 0.55 : 1;
         // Body and title.
         RoundRect(ctx, b, 8);
-        ctx.FillStyle = node.Mode == NodeMode.Bypass ? "#4a3a5a" : Theme.NodeBody;
+        bool isNote = schema is { FrontendOnly: true } && schema.Id != "Reroute";
+        ctx.FillStyle = node.Mode == NodeMode.Bypass ? "#4a3a5a" : isNote ? "#4d4630" : Theme.NodeBody;
         ctx.Fill();
         if (!geo.Collapsed || true)
         {
             ctx.Save();
             RoundRect(ctx, b, 8);
             ctx.Clip();
-            ctx.FillStyle = schema is null ? "#5a2a2a" : Theme.TitleColor(schema.Category);
+            ctx.FillStyle = schema is null ? "#5a2a2a" : isNote ? "#7a6a2a" : Theme.TitleColor(schema.Category);
             ctx.FillRect(geo.TitleBar.X, geo.TitleBar.Y, geo.TitleBar.Width, geo.TitleBar.Height);
             ctx.Restore();
         }
@@ -185,7 +186,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.FillRect(geo.TitleBar.X + 1, geo.TitleBar.Bottom - 4, (geo.TitleBar.Width - 2) * visuals.Fraction, 3);
         }
 
-        if (detailed)
+        if (detailed && geo.TitleBar.Height > 0)
         {
             ctx.Font = Theme.TitleFont;
             ctx.TextBaseline = "middle";
@@ -200,7 +201,12 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.Fill();
         }
 
-        if (!geo.Collapsed)
+        if (schema?.Id == "Reroute")
+        {
+            // Just the two dots: no names, no grip.
+            foreach (var s in geo.Inputs.Concat(geo.Outputs)) Dot(ctx, s.Position, 5, Theme.SocketColor(s.Type.Name), s.IsConnected);
+        }
+        else if (!geo.Collapsed)
         {
             foreach (var s in geo.Inputs) DrawSlot(ctx, s, detailed, view.Hover is { Kind: HitKind.InputSlot } h && h.NodeId == node.Id && h.Name == s.Name);
             foreach (var s in geo.Outputs) DrawSlot(ctx, s, detailed, view.Hover is { Kind: HitKind.OutputSlot } h && h.NodeId == node.Id && h.Index == s.Index);
@@ -345,13 +351,14 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             WidgetKind.Boolean => (value as bool? ?? false) ? "on" : "off",
             _ => value?.ToString() ?? "",
         };
+        // The value keeps its room (up to two thirds of the row); a long name gives way to it, as in ComfyUI.
+        double avail = r.Width - 34, valueWidth = Math.Min(MeasureText(text), avail * 0.65);
         ctx.FillStyle = Theme.LabelText;
         ctx.TextAlign = "left";
-        ctx.FillText(w.Name, r.X + 10, cy);
+        ctx.FillText(Ellipsize(w.Name, Math.Max(24, avail - valueWidth - 8)), r.X + 10, cy);
         ctx.FillStyle = Theme.ValueText;
         ctx.TextAlign = "right";
-        double room = r.Width - MeasureText(w.Name) - 34;
-        ctx.FillText(Ellipsize(text, room), r.Right - 10, cy);
+        ctx.FillText(Ellipsize(text, valueWidth), r.Right - 10, cy);
         ctx.TextAlign = "left";
 
         if (w.Spec.Kind is WidgetKind.Int or WidgetKind.Float or WidgetKind.Combo)

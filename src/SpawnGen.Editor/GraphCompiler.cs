@@ -19,7 +19,8 @@ public static class GraphCompiler
         // 1. Nodes that cannot run at all: muted, bypassed (replaced by a pass-through below), or of a type nobody registered.
         foreach (var n in graph.Nodes)
         {
-            if (registry.GetSchema(n.ClassType) is null) { skipped.Add(n.Id); notes.Add($"{Name(n)} skipped: node type '{n.ClassType}' is not installed."); }
+            if (registry.GetSchema(n.ClassType) is { FrontendOnly: true }) skipped.Add(n.Id); // Reroute, Note: never emitted, and reroutes are looked through below
+            else if (registry.GetSchema(n.ClassType) is null) { skipped.Add(n.Id); notes.Add($"{Name(n)} skipped: node type '{n.ClassType}' is not installed."); }
             else if (n.Mode == NodeMode.Never) { skipped.Add(n.Id); notes.Add($"{Name(n)} is muted."); }
             else if (n.Mode == NodeMode.Bypass) skipped.Add(n.Id);
         }
@@ -30,6 +31,13 @@ public static class GraphCompiler
             var node = graph.FindNode(fromNode);
             if (node is null || registry.GetSchema(node.ClassType) is not { } schema) return null;
             if (node.Mode == NodeMode.Never) return null;
+            if (schema.FrontendOnly)
+            {
+                // A reroute is transparent: whatever feeds it feeds what it feeds.
+                seen ??= [];
+                if (!seen.Add(fromNode) || graph.LinkInto(fromNode, schema.Inputs.FirstOrDefault()?.Name ?? "") is not { } feeding) return null;
+                return Source(feeding.FromNode, feeding.FromOutput, seen);
+            }
             if (node.Mode != NodeMode.Bypass) return (fromNode, fromOutput);
 
             seen ??= [];

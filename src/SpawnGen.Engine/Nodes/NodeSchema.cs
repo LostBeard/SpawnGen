@@ -34,6 +34,8 @@ public sealed class NodeSchema
     public bool IsOutputNode { get; init; }
     /// <summary>Never served from cache (clocks, randomness, external state).</summary>
     public bool AlwaysExecute { get; init; }
+    /// <summary>Editor-only node (Reroute, Note): not part of the prompt that is run.</summary>
+    public bool FrontendOnly { get; init; }
 
     public InputSpec? FindInput(string name) => Inputs.FirstOrDefault(i => i.Name == name);
 }

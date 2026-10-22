@@ -214,6 +214,7 @@ public sealed class NodeRegistry
             Outputs = outputs,
             IsOutputNode = attr?.IsOutput ?? false,
             AlwaysExecute = attr?.AlwaysExecute ?? false,
+            FrontendOnly = attr?.FrontendOnly ?? false,
         };
 
         return new RegisteredNode

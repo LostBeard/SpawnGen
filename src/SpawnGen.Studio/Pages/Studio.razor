@@ -404,9 +404,14 @@
         var all = Registry.Schemas.OrderBy(s => s.Category).ThenBy(s => s.DisplayName);
         if (q.Length == 0) return all.Take(14);
         var words = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // Best matches first: the name is the query, starts with it, has a word starting with it, or just contains it.
+        int Rank(NodeSchema s) =>
+            s.DisplayName.Equals(q, StringComparison.OrdinalIgnoreCase) ? 0
+            : s.DisplayName.StartsWith(q, StringComparison.OrdinalIgnoreCase) ? 1
+            : s.DisplayName.Split(' ', '(', ')', '_').Any(part => part.StartsWith(q, StringComparison.OrdinalIgnoreCase)) ? 2 : 3;
         return all.Where(s => words.All(w => s.DisplayName.Contains(w, StringComparison.OrdinalIgnoreCase)
                                           || s.Id.Contains(w, StringComparison.OrdinalIgnoreCase)
-                                          || s.Category.Contains(w, StringComparison.OrdinalIgnoreCase))).Take(14);
+                                          || s.Category.Contains(w, StringComparison.OrdinalIgnoreCase))).OrderBy(Rank).Take(14);
     }
 
     void OnSearchInput(ChangeEventArgs e)

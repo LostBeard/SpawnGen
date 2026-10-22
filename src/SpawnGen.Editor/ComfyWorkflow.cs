@@ -62,9 +62,13 @@ public static class ComfyWorkflow
                 int linkId = (int)l[0]!, from = (int)l[1]!, fromSlot = (int)l[2]!, to = (int)l[3]!, toSlot = (int)l[4]!;
                 if (!nodeJson.TryGetValue(to, out var target) || !nodeJson.ContainsKey(from)) { warnings.Add($"Link #{linkId} points at a missing node and was dropped."); continue; }
                 var name = (string?)(target["inputs"] as JsonArray)?.ElementAtOrDefault(toSlot)?["name"];
+                // ComfyUI's Reroute names its only input "": that is our node's single input.
+                if (string.IsNullOrEmpty(name) && doc.Registry.GetSchema((string?)target["type"] ?? "") is { Inputs.Count: 1 } single) name = single.Inputs[0].Name;
                 if (name is null) { warnings.Add($"Link #{linkId} has no matching input on node #{to} and was dropped."); continue; }
                 graph.AddLinkRaw(new EditorLink { Id = linkId, FromNode = from, FromOutput = fromSlot, ToNode = to, ToInput = name });
             }
+
+            FoldPrimitiveNodes(doc, graph, warnings);
 
             graph.NextNodeId = Math.Max(graph.NextNodeId, ((int?)root["last_node_id"] ?? 0) + 1);
             graph.NextLinkId = Math.Max(graph.NextLinkId, ((int?)root["last_link_id"] ?? 0) + 1);
@@ -72,6 +76,26 @@ public static class ComfyWorkflow
         doc.Groups = root["groups"] as JsonArray;
         doc.Extra = root["extra"] as JsonObject;
         return warnings;
+    }
+
+    /// <summary>
+    /// ComfyUI's legacy <c>PrimitiveNode</c> is a front-end device that turns into the widget it is linked to. Here its value is written into every widget it
+    /// fed and the node is dropped (the Primitive Int / Float / String nodes are the real equivalents).
+    /// </summary>
+    static void FoldPrimitiveNodes(EditorDocument doc, EditorGraph graph, List<string> warnings)
+    {
+        foreach (var primitive in graph.Nodes.Where(n => n.ClassType == "PrimitiveNode").ToList())
+        {
+            var value = (primitive.Widgets.GetValueOrDefault(RawWidgetsKey) as JsonArray)?.FirstOrDefault();
+            foreach (var link in graph.LinksFrom(primitive.Id).ToList())
+            {
+                if (graph.FindNode(link.ToNode) is { } target && doc.Registry.GetSchema(target.ClassType)?.FindInput(link.ToInput)?.Widget is { } spec && value is not null)
+                    target.Widgets[link.ToInput] = Coerce(spec, value, target, link.ToInput, warnings);
+                graph.RemoveLinkRaw(link.Id);
+            }
+            graph.RemoveNodeRaw(primitive.Id);
+            warnings.Add($"Primitive node #{primitive.Id} was folded into the widgets it fed (its value is kept).");
+        }
     }
 
     /// <summary>ComfyUI saves a pair either as <c>[a, b]</c> or, in older files, as <c>{"0": a, "1": b}</c>.</summary>

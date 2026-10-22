@@ -11,6 +11,8 @@ public sealed class NodeAttribute(string? id = null) : Attribute
     public string? Description { get; init; }
     public bool IsOutput { get; init; }
     public bool AlwaysExecute { get; init; }
+    /// <summary>A node that only exists in the editor (Reroute, Note): the compiler resolves or drops it, a run never sends it.</summary>
+    public bool FrontendOnly { get; init; }
 }
 
 /// <summary>Widget and socket hints for an <c>Execute</c> parameter. Unset numeric hints use <see cref="double.NaN"/>.</summary>

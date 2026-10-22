@@ -4,17 +4,19 @@ namespace SpawnGen.Engine.Nodes;
 public sealed class NodeContext
 {
     readonly Action<double, double, string?>? _progress;
+    readonly Action<byte[]>? _preview;
 
     readonly Lazy<string>? _promptJson;
 
     internal NodeContext(string nodeId, string classType, IServiceProvider services, CancellationToken cancellationToken,
-        Action<double, double, string?>? progress, Lazy<string>? promptJson = null, IReadOnlyDictionary<string, string>? extraPngInfo = null)
+        Action<double, double, string?>? progress, Lazy<string>? promptJson = null, IReadOnlyDictionary<string, string>? extraPngInfo = null, Action<byte[]>? preview = null)
     {
         NodeId = nodeId;
         ClassType = classType;
         Services = services;
         CancellationToken = cancellationToken;
         _progress = progress;
+        _preview = preview;
         _promptJson = promptJson;
         ExtraPngInfo = extraPngInfo ?? new Dictionary<string, string>();
     }
@@ -32,6 +34,12 @@ public sealed class NodeContext
 
     /// <summary>Reports <paramref name="value"/> of <paramref name="max"/> units done (e.g. sampler steps).</summary>
     public void Progress(double value, double max, string? message = null) => _progress?.Invoke(value, max, message);
+
+    /// <summary>True when something shows previews, so a node can skip making them when nobody looks.</summary>
+    public bool WantsPreview => _preview is not null;
+
+    /// <summary>Shows a picture (PNG bytes) in the node while it works, e.g. a sampler's current guess; each call replaces the last.</summary>
+    public void Preview(byte[] png) => _preview?.Invoke(png);
 
     /// <summary>Reports a status message with no fraction (e.g. "Downloading model").</summary>
     public void Status(string message) => _progress?.Invoke(0, 0, message);

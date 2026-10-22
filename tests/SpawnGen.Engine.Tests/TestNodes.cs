@@ -119,3 +119,14 @@ public sealed class ModelPicker
     public static List<string> Models() => ["sd-turbo", "flux2"];
     public string Execute([Input(OptionsProvider = nameof(Models))] string model = "sd-turbo") => model;
 }
+
+[Node(Category = "test")]
+public sealed class Previewer
+{
+    public long Execute(long value, NodeContext ctx)
+    {
+        ctx.Preview([1, 2, 3]);
+        ctx.Preview([4]);
+        return value;
+    }
+}

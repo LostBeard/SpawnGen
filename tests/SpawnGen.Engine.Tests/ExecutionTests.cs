@@ -189,6 +189,19 @@ public class ExecutionTests
     }
 
     [Test]
+    public async Task A_node_can_show_previews_while_it_works_and_nobody_is_asked_when_nobody_listens()
+    {
+        var g = new PromptGraph();
+        g.Add("1", "Previewer", ("value", 7));
+        g.Add("2", "Sink", ("value", L("1")));
+        var obs = new Recorder();
+        await _executor.ExecuteAsync(g, observer: obs);
+        Assert.That(obs.Previews, Is.EqualTo(new[] { "1:3", "1:1" }), "node id and byte count, in order");
+        Calls.Reset();
+        await new PromptExecutor(_registry).ExecuteAsync(g); // no observer: the previews go nowhere and nothing fails
+    }
+
+    [Test]
     public async Task Observer_sees_the_run_in_order()
     {
         var obs = new Recorder();
@@ -225,6 +238,8 @@ public class ExecutionTests
         public List<string> Events { get; } = [];
         public List<string> Errors { get; } = [];
         public List<string?> Progress { get; } = [];
+        public List<string> Previews { get; } = [];
+        public void OnNodePreview(string nodeId, byte[] png) => Previews.Add(nodeId + ":" + png.Length);
         public Action? OnProgress { get; set; }
         public void OnStart(string promptId, IReadOnlyList<string> plan) => Events.Add("start");
         public void OnNodeCached(string nodeId) => Events.Add("cached:" + nodeId);

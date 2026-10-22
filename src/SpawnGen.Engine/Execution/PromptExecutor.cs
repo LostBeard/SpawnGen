@@ -79,7 +79,8 @@ public sealed class PromptExecutor
 
                     observer?.OnNodeExecuting(id);
                     var context = new NodeContext(id, node.ClassType, _services, cancellationToken,
-                        (value, max, message) => observer?.OnNodeProgress(id, value, max, message), promptJson, options?.ExtraPngInfo);
+                        (value, max, message) => observer?.OnNodeProgress(id, value, max, message), promptJson, options?.ExtraPngInfo,
+                        observer is null ? null : png => observer.OnNodePreview(id, png));
 
                     NodeOutputs result;
                     try

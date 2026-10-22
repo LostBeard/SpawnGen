@@ -93,7 +93,11 @@ internal static class SamplingCore
 
                 int item = b;
                 x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise, new Samplers.NoiseSource(unchecked((int)(settings.Seed + b) ^ 0x5EED), Checkpoint.LatentChannels, h, w),
-                    done => context.Progress(item * steps + done, latent.Batch * steps), context.CancellationToken);
+                    done =>
+                    {
+                        context.Progress(item * steps + done, latent.Batch * steps);
+                        if (item == 0 && context.WantsPreview) context.Preview(LatentPreview.Png(lastDenoised, h, w));
+                    }, context.CancellationToken);
                 Array.Copy(x, 0, result.Data, b * perImage, perImage);
                 Array.Copy(lastDenoised, 0, denoisedResult.Data, b * perImage, perImage);
             }

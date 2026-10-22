@@ -61,6 +61,8 @@ public interface IExecutionObserver
     void OnNodeExecuting(string nodeId) { }
     void OnNodeProgress(string nodeId, double value, double max, string? message) { }
     void OnNodeExecuted(string nodeId, NodeOutputs outputs) { }
+    /// <summary>A node shows a picture while it works (a sampler's latent preview): a PNG, replaced by the next one.</summary>
+    void OnNodePreview(string nodeId, byte[] png) { }
     void OnError(string? nodeId, Exception error) { }
     void OnFinished(ExecutionResult result) { }
 }

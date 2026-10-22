@@ -1051,6 +1051,9 @@
                 _visuals.ProgressValue = (double?)data["value"] ?? 0;
                 _visuals.ProgressMax = (double?)data["max"] ?? 0;
                 break;
+            case "preview" when node is { } previewId && _doc.Graph.FindNode(previewId) is { } previewed && (string?)data["image"] is { } dataUrl:
+                previewed.Previews = [new NodePreview(dataUrl)]; // a sampler's current guess, replaced at every step
+                break;
             case "node_status":
                 _statusText = (string?)data["message"];
                 break;

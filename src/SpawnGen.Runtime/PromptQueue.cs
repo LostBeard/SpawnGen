@@ -225,6 +225,13 @@ public sealed class PromptQueue : IDisposable
             else if (message is not null) { d["message"] = message; events.Publish(new("node_status", d)); }
         }
 
+        public void OnNodePreview(string nodeId, byte[] png)
+        {
+            var d = Data(nodeId);
+            d["image"] = "data:image/png;base64," + Convert.ToBase64String(png);
+            events.Publish(new("preview", d));
+        }
+
         public void OnNodeExecuted(string nodeId, NodeOutputs outputs)
         {
             if (outputs.Ui is not { Count: > 0 } ui) return;

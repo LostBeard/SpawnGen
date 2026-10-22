@@ -2,6 +2,13 @@ using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Nodes.Core;
 
+/// <summary>Shows a text in the editor: link any STRING output (a detection list, keypoints, a prompt) to read it in the node.</summary>
+[Node("PreviewAny", Category = "utils", DisplayName = "Preview Any", IsOutput = true)]
+public sealed class PreviewAny
+{
+    public UiOutput Execute([Input(Multiline = true)] string source = "") => new("text", new[] { source });
+}
+
 // Backend value nodes (ComfyUI's comfy_extras primitives): a widget that produces a value other nodes can read, so one number or text can feed many inputs.
 
 [Node(Category = "utils/primitive", DisplayName = "String")]

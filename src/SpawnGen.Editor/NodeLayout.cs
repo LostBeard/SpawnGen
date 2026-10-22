@@ -23,6 +23,8 @@ public sealed class NodeGeometry
     public required IReadOnlyList<WidgetRow> Widgets { get; init; }
     /// <summary>Where the result image is drawn, when the node has one.</summary>
     public Rect? PreviewArea { get; init; }
+    /// <summary>Where the node's result text is drawn (null when it has none); <see cref="TextLines"/> is how many lines fit.</summary>
+    public Rect? TextArea { get; init; }
     /// <summary>The bottom-right grab area for resizing the width.</summary>
     public required Rect ResizeHandle { get; init; }
 
@@ -41,6 +43,8 @@ public static class NodeLayout
     public const double MinWidth = 190;
     public const double ResizeSize = 14;
     public const double MaxPreviewHeight = 520;
+    public const int MaxTextLines = 16;
+    public const double TextLineHeight = 16;
     /// <summary>Average glyph width used to size nodes before the real text is measured; the UI may pass a better measure.</summary>
     public const double EstimatedCharWidth = 7.2;
 
@@ -126,12 +130,21 @@ public static class NodeLayout
             y += ph + 8;
         }
 
+        Rect? text = null;
+        if (!string.IsNullOrEmpty(node.ResultText))
+        {
+            int lines = Math.Clamp(node.ResultText.Split('\n').Length, 1, MaxTextLines);
+            double th = lines * TextLineHeight + 12;
+            text = new Rect(node.X + Padding, y + 2, Math.Max(40, width - 2 * Padding), th);
+            y += th + 8;
+        }
+
         double height = (y - node.Y) + BottomPadding;
         var boundsAll = new Rect(node.X, node.Y, width, height);
         return new NodeGeometry
         {
             NodeId = node.Id, Title = title, Bounds = boundsAll, TitleBar = new Rect(node.X, node.Y, width, TitleHeight), Collapsed = false,
-            Inputs = inputs, Outputs = outputs, Widgets = widgets, PreviewArea = preview,
+            Inputs = inputs, Outputs = outputs, Widgets = widgets, PreviewArea = preview, TextArea = text,
             ResizeHandle = new Rect(boundsAll.Right - ResizeSize, boundsAll.Bottom - ResizeSize, ResizeSize, ResizeSize),
         };
     }

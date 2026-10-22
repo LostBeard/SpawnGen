@@ -71,7 +71,7 @@ Todo, in priority order:
 3. **Latent** (done: upscale, upscale by, composite, from-batch, repeat, rotate, flip, crop, blend, set noise mask): bislerp upscale todo; VAE Encode (for Inpainting) done, verified by eye (a vase painted into an apple, the rest untouched).
 4. **Sampling** (done: KSampler, KSampler Advanced, 11 samplers, 6 schedulers, denoise, noise masks, SamplerCustom with KSamplerSelect, BasicScheduler, Karras/Exponential/Polyexponential/VP/SDTurbo schedulers, SplitSigmas(+Denoise), FlipSigmas, SetFirstSigma; SamplerCustom == KSampler byte-for-byte on a turbo step): dpmpp_sde, dpmpp_3m_sde, uni_pc, ipndm, deis, res_multistep and other newer samplers, beta scheduler.
 5. **Conditioning** (done: combine, concat, average, set area, set area percentage, set mask, zero out, timestep range): ControlNet apply, unCLIP and the model-specific ones need library support.
-6. **Primitives and utilities** (done: int, float, string, multiline string, boolean): math, string ops, switch, reroute, note, "save text", "preview any" todo.
+6. **Primitives and utilities** (done: int, float, string, multiline string, boolean): Preview Any (text result shown in the node) done; math, string ops, switch, "save text" todo.
 7. **Loaders**: separate VAE / CLIP loaders, LoRA loader (once supported), upscale model loader.
 
 ## 5. Platform

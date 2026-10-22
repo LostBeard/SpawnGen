@@ -27,6 +27,8 @@ public sealed class EditorNode
     public int ZIndex { get; set; }
     /// <summary>Result images shown inside the node (view state: set from run results, never saved).</summary>
     public IReadOnlyList<NodePreview> Previews { get; set; } = [];
+    /// <summary>Result text shown inside the node (Preview Any): view state like <see cref="Previews"/>.</summary>
+    public string? ResultText { get; set; }
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
 

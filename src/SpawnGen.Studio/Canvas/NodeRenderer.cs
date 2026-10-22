@@ -265,6 +265,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             foreach (var s in geo.Outputs) DrawSlot(ctx, s, detailed, view.Hover is { Kind: HitKind.OutputSlot } h && h.NodeId == node.Id && h.Index == s.Index);
             if (detailed) foreach (var w in geo.Widgets) DrawWidget(ctx, node, w);
             if (geo.PreviewArea is { } area) DrawPreview(ctx, node, area, detailed);
+            if (geo.TextArea is { } textArea && detailed) DrawResultText(ctx, node.ResultText!, textArea);
             // Resize grip.
             var r = geo.ResizeHandle;
             ctx.StrokeStyle = "#5a5a5a";
@@ -294,6 +295,28 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.TextBaseline = "middle";
             ctx.FillText(text, b.X + 8, b.Bottom + 17);
         }
+    }
+
+    /// <summary>The node's result text, one line per row in a dark box; what does not fit is cut off with an ellipsis.</summary>
+    void DrawResultText(CanvasRenderingContext2D ctx, string text, Rect area)
+    {
+        RoundRect(ctx, area, 5);
+        ctx.FillStyle = "#141414";
+        ctx.Fill();
+        ctx.Save();
+        RoundRect(ctx, area, 5);
+        ctx.Clip();
+        ctx.Font = Theme.Font;
+        ctx.FillStyle = "#d8d8d8";
+        ctx.TextBaseline = "middle";
+        var lines = text.Split('\n');
+        for (int i = 0; i < Math.Min(lines.Length, NodeLayout.MaxTextLines); i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (i == NodeLayout.MaxTextLines - 1 && lines.Length > NodeLayout.MaxTextLines) line += " ...";
+            ctx.FillText(line, area.X + 8, area.Y + 6 + (i + 0.5) * NodeLayout.TextLineHeight);
+        }
+        ctx.Restore();
     }
 
     /// <summary>The node's result picture. Until it has loaded a placeholder shows; once it has, the node is resized to the picture's shape.</summary>

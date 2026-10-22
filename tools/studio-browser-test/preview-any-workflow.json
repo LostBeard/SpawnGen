@@ -1,0 +1,8 @@
+{
+  "last_node_id": 1, "last_link_id": 0,
+  "nodes": [
+    { "id": 1, "type": "PreviewAny", "pos": [100, 100], "size": [300, 140], "flags": {}, "order": 0, "mode": 0,
+      "inputs": [], "outputs": [], "properties": {}, "widgets_values": ["first line\nsecond line\nthird line"] }
+  ],
+  "links": [], "groups": [], "config": {}, "extra": {}, "version": 0.4
+}

@@ -1023,6 +1023,8 @@
         _studio?.Focus();
     }
 
+    static JsonArray? TextOf(JsonObject data) => data["output"]?["text"] as JsonArray;
+
     void OnServerEvent(JsonObject e)
     {
         var type = (string?)e["type"];
@@ -1056,6 +1058,9 @@
                 break;
             case "node_status":
                 _statusText = (string?)data["message"];
+                break;
+            case "executed" when node is { } textId && _doc.Graph.FindNode(textId) is { } texted && TextOf(data) is { } texts:
+                texted.ResultText = string.Join("\n", texts.Select(t => (string?)t ?? ""));
                 break;
             case "executed" when node is { } shownId && _doc.Graph.FindNode(shownId) is { } shown:
                 if (data["output"]?["images"] is JsonArray images)

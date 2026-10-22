@@ -562,4 +562,23 @@ public class PreviewLayoutTests
         node.Previews = [new NodePreview("x", 100, 4000)];
         Assert.That(new HitTester(doc).Geometry(node).PreviewArea!.Value.Height, Is.EqualTo(NodeLayout.MaxPreviewHeight));
     }
+
+    [Test]
+    public void A_result_text_gets_a_box_as_tall_as_its_lines_up_to_a_limit()
+    {
+        var (doc, ids) = Fixtures.Txt2Img();
+        var hits = new HitTester(doc);
+        var node = doc.Graph.GetNode(ids["save"]);
+        var before = hits.Geometry(node);
+        Assert.That(before.TextArea, Is.Null);
+
+        node.ResultText = "one\ntwo\nthree";
+        var three = hits.Geometry(node);
+        Assert.That(three.TextArea!.Value.Height, Is.EqualTo(3 * NodeLayout.TextLineHeight + 12).Within(0.001));
+        Assert.That(three.Bounds.Contains(new Point(three.TextArea.Value.Right, three.TextArea.Value.Bottom)), Is.True, "Inside the node.");
+        Assert.That(three.Bounds.Height, Is.GreaterThan(before.Bounds.Height + 3 * NodeLayout.TextLineHeight));
+
+        node.ResultText = string.Join("\n", Enumerable.Repeat("x", 100));
+        Assert.That(hits.Geometry(node).TextArea!.Value.Height, Is.EqualTo(NodeLayout.MaxTextLines * NodeLayout.TextLineHeight + 12).Within(0.001));
+    }
 }

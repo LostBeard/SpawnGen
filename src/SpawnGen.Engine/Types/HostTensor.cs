@@ -44,4 +44,25 @@ public sealed class LatentBatch : HostTensor
     public int Channels => Shape[1];
     public int Height => Shape[2];
     public int Width => Shape[3];
+
+    /// <summary>Optional inpainting mask at latent size (batch, h, w): 1 = this area is regenerated, 0 = it is kept. Set by Set Latent Noise Mask.</summary>
+    public MaskBatch? NoiseMask { get; init; }
+}
+
+/// <summary>A batch of masks, NHW (batch, height, width), values 0..1 (same layout as ComfyUI's MASK). 1 = selected.</summary>
+[Socket("MASK")]
+public sealed class MaskBatch : HostTensor
+{
+    public MaskBatch(int batch, int height, int width, float[]? data = null) : base([batch, height, width], data) { }
+
+    public int Batch => Shape[0];
+    public int Height => Shape[1];
+    public int Width => Shape[2];
+
+    public static MaskBatch Filled(int batch, int height, int width, float value)
+    {
+        var m = new MaskBatch(batch, height, width);
+        Array.Fill(m.Data, value);
+        return m;
+    }
 }

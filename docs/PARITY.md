@@ -59,15 +59,15 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 ## 4. Node library (host-side nodes, SpawnGen's to write)
 
-Done: Load/Save/Preview Image, Empty Latent, CLIP Text Encode, KSampler (euler, euler_ancestral, dpmpp_2m), VAE Encode/Decode, Load Checkpoint.
+Done: Load/Save/Preview Image, Empty Latent, CLIP Text Encode, KSampler (euler, euler_ancestral, dpmpp_2m), VAE Encode/Decode, Load Checkpoint; and 40 host-side nodes (resampling, image ops, masks, latent ops, primitives, tested against hand-computed values).
 
 Todo, in priority order:
-1. **Core image**: scale (nearest, bilinear, bicubic, lanczos), crop, pad, flip/rotate, blend, composite, invert, batch / from-batch, sharpen, blur, color adjust.
-2. **Masks**: solid mask, load image mask, mask composite, grow / feather / threshold, image to mask and back.
-3. **Latent**: upscale, composite, from-batch / repeat, rotate / flip / crop, noise mask, inpaint (VAE encode for inpaint, set latent noise mask).
+1. **Core image** (done: scale x3, crop, pad for outpaint, blend, composite, invert, batch, from-batch, repeat, blur, sharpen, empty image): flip/rotate, color adjust, quantize, morphological ops, still todo.
+2. **Masks** (done: solid, invert, crop, composite, feather, grow, threshold, image<->mask): load image mask todo.
+3. **Latent** (done: upscale, upscale by, composite, from-batch, repeat, rotate, flip, crop, blend, set noise mask): bislerp upscale, VAE encode for inpaint and sampler support for noise masks todo.
 4. **Sampling**: KSampler Advanced, SamplerCustom with schedulers (simple, karras, exponential, sgm_uniform, ddim_uniform) and more samplers (heun, dpm_2, lms, dpmpp_sde, ddim, uni_pc, lcm).
 5. **Conditioning**: combine, concat, average, set area, set mask, zero out, timestep range.
-6. **Primitives and utilities**: int / float / string / bool primitives, math, string ops, switch, reroute, note, "save text", "preview any".
+6. **Primitives and utilities** (done: int, float, string, multiline string, boolean): math, string ops, switch, reroute, note, "save text", "preview any" todo.
 7. **Loaders**: separate VAE / CLIP loaders, LoRA loader (once supported), upscale model loader.
 
 ## 5. Platform

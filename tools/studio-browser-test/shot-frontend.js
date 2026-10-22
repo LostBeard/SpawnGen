@@ -8,7 +8,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
   const problems = [];
   page.on('pageerror', e => problems.push(e.message));
-  await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(3500); await page.mouse.click(200, 700); await page.keyboard.press('f'); await page.waitForTimeout(500);
+  await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(3500); await require('./tab-offset')(page); await page.mouse.click(200, 700); await page.keyboard.press('f'); await page.waitForTimeout(500);
   for (const [x, y, name] of [[200, 700, 'reroute'], [700, 780, 'note']]) {
     await page.mouse.dblclick(x, y);
     await page.waitForSelector('.search input'); await page.waitForTimeout(400);

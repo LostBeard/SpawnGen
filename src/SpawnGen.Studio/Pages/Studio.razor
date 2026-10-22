@@ -54,6 +54,27 @@
         <span class="status">@RunStatus()@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
     </div>
 
+    <div class="tabs" @onpointerdown="CloseMenus">
+        @foreach (var tab in _tabs.Tabs)
+        {
+            var current = tab;
+            <div class="tab @(current.Id == _tabs.ActiveId ? "active" : "")" title="Double-click to rename" @onclick="() => SwitchTab(current.Id)" @ondblclick="() => _renamingTab = current.Id">
+                @if (_renamingTab == current.Id)
+                {
+                    <input value="@current.Name" @onclick:stopPropagation="true" @ondblclick:stopPropagation="true"
+                           @onchange="e => { RenameTab(current.Id, e.Value?.ToString()); }" @onblur="() => _renamingTab = null"
+                           @onkeydown="RenameKey" />
+                }
+                else
+                {
+                    <span>@current.Name</span>
+                }
+                <button title="Close this workflow" @onclick="() => CloseTab(current.Id)" @onclick:stopPropagation="true">&times;</button>
+            </div>
+        }
+        <button class="newtab" title="A new workflow in a new tab" @onclick="NewTab">+</button>
+    </div>
+
     <div class="stage">
         <canvas @ref="_canvasRef" tabindex="0"></canvas>
 
@@ -155,6 +176,10 @@
     SearchState? _search;
     MenuState? _menu;
     string? _message;
+    WorkflowTabs _tabs = new();
+    string? _renamingTab;
+    CancellationTokenSource? _autosave;
+    bool _restoring;
     bool _focusEdit, _focusSearch, _uiPending;
     CancellationTokenSource? _toastTimer;
 
@@ -191,7 +216,9 @@
             _dropRef = DotNetObjectReference.Create(this);
             await Interop.InvokeVoidAsync("spawngenEnableDrop", _dropRef, ".stage");
             _studio.CanvasPressed += CloseMenus; // the canvas reports its own presses first, so a menu it opens right after is not closed again
-            LoadExample();
+            await RestoreTabsAsync();
+            _doc.Changed += ScheduleAutosave;
+            _view.ViewChanged += OnViewMovedForAutosave;
             _studio.Focus();
         }
         // The click that opened an overlay is still finishing in the browser, and its default action moves focus to the canvas: focus the
@@ -290,15 +317,168 @@
             }
             else json = System.Text.Encoding.UTF8.GetString(bytes);
 
-            var warnings = ApiPromptImport.Looks(json) ? ApiPromptImport.Load(json, _doc) : ComfyWorkflow.Load(json, _doc);
+            // A file opens in its own tab; if it turns out not to be a workflow the tab you were in is put back untouched.
+            var before = Snapshot();
+            IReadOnlyList<string> warnings;
+            try
+            {
+                _restoring = true;
+                warnings = ApiPromptImport.Looks(json) ? ApiPromptImport.Load(json, _doc) : ComfyWorkflow.Load(json, _doc);
+            }
+            catch
+            {
+                if (before is not null) ComfyWorkflow.Load(before, _doc);
+                throw;
+            }
+            finally { _restoring = false; }
+            var tabName = System.IO.Path.GetFileNameWithoutExtension(name);
+            _tabs.Add(tabName);
             _view.ClearSelection();
             _view.FitToView();
+            PersistTabs();
             ShowMessage(warnings.Count == 0 ? $"Opened {source}." : $"Opened {source} with {warnings.Count} warning(s): {warnings[0]}");
         }
         catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException)
         {
             ShowMessage($"Could not open {name}: {ex.Message}");
         }
+    }
+
+    // ---- tabs and autosave ----
+
+    const string TabsKey = "spawngen.tabs";
+
+    /// <summary>The graph as workflow JSON, or null when saving it fails.</summary>
+    string? Snapshot()
+    {
+        try { return ComfyWorkflow.Save(_doc, _renderer.MeasureText); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>Writes the graph and the view into the active tab.</summary>
+    void CaptureActiveTab()
+    {
+        if (_tabs.Active is not { } tab) return;
+        tab.Json = Snapshot() ?? tab.Json;
+        tab.Scale = _view.Viewport.Scale;
+        tab.OffsetX = _view.Viewport.OffsetX;
+        tab.OffsetY = _view.Viewport.OffsetY;
+    }
+
+    void PersistTabs()
+    {
+        CaptureActiveTab();
+        _ = Interop.InvokeVoidAsync("spawngenStoreSet", TabsKey, _tabs.ToJson());
+    }
+
+    /// <summary>Pan and zoom are remembered too, but hovering or selecting is not worth a write.</summary>
+    void OnViewMovedForAutosave()
+    {
+        var vp = _view.Viewport;
+        if (_tabs.Active is { } tab && (tab.Scale != vp.Scale || tab.OffsetX != vp.OffsetX || tab.OffsetY != vp.OffsetY)) ScheduleAutosave();
+    }
+
+    /// <summary>Saves a second after the last change, so typing or dragging is not written on every event.</summary>
+    void ScheduleAutosave()
+    {
+        if (_restoring) return;
+        _autosave?.Cancel();
+        var source = _autosave = new CancellationTokenSource();
+        _ = Task.Delay(1000, source.Token).ContinueWith(t =>
+        {
+            if (!t.IsCanceled) InvokeAsync(PersistTabs);
+        }, TaskScheduler.Default);
+    }
+
+    async Task RestoreTabsAsync()
+    {
+        var stored = WorkflowTabs.FromJson(await Interop.InvokeAsync<string?>("spawngenStoreGet", TabsKey));
+        if (stored is null)
+        {
+            _tabs = new WorkflowTabs();
+            _tabs.Add("Workflow");
+            LoadExample();
+            PersistTabs();
+            return;
+        }
+        _tabs = stored;
+        ActivateCurrent();
+    }
+
+    /// <summary>Shows the active tab: its saved graph and view, or the starter graph for a tab that has none (or whose file no longer loads).</summary>
+    void ActivateCurrent()
+    {
+        var tab = _tabs.Active!;
+        _restoring = true;
+        try
+        {
+            if (tab.Json is not null)
+            {
+                try
+                {
+                    ComfyWorkflow.Load(tab.Json, _doc);
+                    _view.ClearSelection();
+                    _view.Viewport.Set(tab.Scale, tab.OffsetX, tab.OffsetY);
+                    _view.Invalidate();
+                    return;
+                }
+                catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException)
+                {
+                    ShowMessage($"Workflow '{tab.Name}' could not be restored ({ex.Message}); starting from the example.");
+                }
+            }
+            LoadExample();
+        }
+        finally { _restoring = false; }
+    }
+
+    void SwitchTab(string id)
+    {
+        if (id == _tabs.ActiveId || _renamingTab is not null) return;
+        CaptureActiveTab();
+        _tabs.Activate(id);
+        ActivateCurrent();
+        PersistTabs();
+        _studio?.Focus();
+    }
+
+    void NewTab()
+    {
+        CaptureActiveTab();
+        _tabs.Add("Workflow");
+        _restoring = true;
+        try { LoadExample(); } finally { _restoring = false; }
+        PersistTabs();
+        _studio?.Focus();
+    }
+
+    void CloseTab(string id)
+    {
+        bool wasActive = id == _tabs.ActiveId;
+        if (!_tabs.Close(id))
+        {
+            // The only tab: closing it starts over with the example.
+            _restoring = true;
+            try { LoadExample(); } finally { _restoring = false; }
+            PersistTabs();
+            return;
+        }
+        if (wasActive) ActivateCurrent(); else CaptureActiveTab();
+        PersistTabs();
+        _studio?.Focus();
+    }
+
+    void RenameKey(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or "Escape") _renamingTab = null;
+    }
+
+    void RenameTab(string id, string? name)
+    {
+        _tabs.Rename(id, name ?? "");
+        _renamingTab = null;
+        PersistTabs();
+        _studio?.Focus();
     }
 
     async Task SaveAsync()

@@ -43,6 +43,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
   await page.goto(URL + (process.env.PEROP ? '?perop=1' : ''));
   await page.waitForSelector('canvas');
+  await require('./tab-offset')(page);
   await page.waitForTimeout(3500);
   const status = async () => (await page.textContent('.status')).trim();
   await page.selectOption('select.engine', { label: 'This browser (WebGPU)' });

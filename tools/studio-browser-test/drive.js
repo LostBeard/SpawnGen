@@ -22,6 +22,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
 
   await page.goto(URL);
   await page.waitForSelector('canvas');
+  await require('./tab-offset')(page);
   await page.waitForTimeout(3500);
   const s0 = await status();
   check('example graph loads', /^7 nodes, 9 links/.test(s0), s0);

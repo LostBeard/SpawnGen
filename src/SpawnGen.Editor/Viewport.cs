@@ -67,6 +67,14 @@ public sealed class Viewport
         OffsetY = (screenHeight - world.Height * Scale) / 2 - world.Y * Scale;
     }
 
+    /// <summary>Puts the view back where it was (a restored tab).</summary>
+    public void Set(double scale, double offsetX, double offsetY)
+    {
+        Scale = Math.Clamp(scale, MinScale, MaxScale);
+        OffsetX = offsetX;
+        OffsetY = offsetY;
+    }
+
     public void Reset()
     {
         Scale = 1;

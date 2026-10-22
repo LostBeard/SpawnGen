@@ -30,6 +30,9 @@
                     await dotnetRef.invokeMethodAsync("OnFileDropped", f.name, new Uint8Array(await f.arrayBuffer()));
             });
         };
+        // Browser storage for the open workflows (tabs, autosave). It can be missing or full: every call is allowed to fail quietly.
+        window.spawngenStoreGet = function (key) { try { return localStorage.getItem(key); } catch (e) { return null; } };
+        window.spawngenStoreSet = function (key, value) { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } };
         // Saves a picture (a data or same-origin URL) as a file download.
         window.spawngenDownloadUrl = function (name, url) {
             const a = document.createElement("a");

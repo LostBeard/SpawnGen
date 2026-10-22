@@ -36,14 +36,8 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const g0 = wf.groups[0], s0 = sampler(wf).pos.slice();
   await page.screenshot({ path: path.join(OUT, 'groups-1.png') });
 
-  // Drag the group's title bar: its position on screen = world * scale + offset; read it back from the saved bounds and the zoom in the status line.
-  const zoom = parseInt((await page.textContent('.status')).match(/(\d+)%/)[1], 10) / 100;
-  const status = await page.textContent('.status');
-  // The view was fitted before grouping, so the group's top-left sits just outside the fitted nodes; find the title by probing the left part of the bar.
-  // Screen position of the group's title bar: use the world-to-screen of the sampler node (known on screen at 1040, 234 in the fitted layout) as anchor.
-  const anchorScreen = { x: 1040, y: 234 };
-  const toScreen = (wx, wy) => ({ x: anchorScreen.x + (wx - s0[0]) * zoom, y: anchorScreen.y + (wy - s0[1]) * zoom });
-  const title = toScreen(g0.bounding[0] + 40, g0.bounding[1] + 12);
+  // After Ctrl+G on the fitted example the group's title bar spans about x 93..1507, y 110..144 on screen (measured: see out/groups-1.png).
+  const title = { x: 300, y: 125 };
   await page.mouse.move(title.x, title.y);
   await page.mouse.down();
   await page.mouse.move(title.x + 30, title.y + 20, { steps: 4 });
@@ -57,8 +51,11 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   check('the nodes inside came along by the same amount', Math.abs(sdx - dx) < 0.5 && Math.abs(sdy - dy) < 0.5, `${sdx.toFixed(0)}, ${sdy.toFixed(0)}`);
 
   // Rename by double click on the title.
-  const title2 = toScreen(wf.groups[0].bounding[0] + 40, wf.groups[0].bounding[1] + 12);
+  const title2 = { x: title.x + 60, y: title.y + 40 }; // the title bar after the drag
+  await page.waitForTimeout(500);
   await page.mouse.dblclick(title2.x, title2.y);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.join(OUT, 'groups-dbl.png') });
   await page.waitForSelector('.widget-edit input');
   await page.waitForTimeout(300);
   await page.keyboard.press('Control+a');

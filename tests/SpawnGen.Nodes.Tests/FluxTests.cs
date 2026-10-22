@@ -39,4 +39,29 @@ public class FluxTests
         TestContext.Out.WriteLine($"mean {values.Average():F2}");
         Assert.That(values.Max() - values.Min(), Is.GreaterThan(0.3f));
     }
+
+    [Test]
+    public void A_flux3_graph_validates()
+    {
+        var g = new PromptGraph();
+        g.Add("1", "Flux3Klein", ("caption", "A red apple on a wooden table."), ("width", 512), ("height", 512), ("steps", 16), ("seed", 1));
+        g.Add("2", "SaveImage", ("images", PromptInput.Link("1")), ("filename_prefix", "flux3"));
+        var result = new PromptExecutor(Registry()).Validate(g);
+        Assert.That(result.Errors, Is.Empty, string.Join("; ", result.Errors.Select(e => e.Message)));
+    }
+
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU with 5+ GB free and a 6 GB download on first use. Look at the saved picture.")]
+    public async Task Flux3_klein_draws_a_picture_from_a_caption()
+    {
+        var files = await VisionTests.RunAsync("flux3", () =>
+        {
+            var g = new PromptGraph();
+            g.Add("1", "Flux3Klein", ("caption", "A photograph of a single glossy red apple resting on a weathered wooden table, soft window light from the left, shallow depth of field, a blurred cream-coloured wall behind."), ("width", 512), ("height", 512), ("steps", 16), ("seed", 7));
+            g.Add("2", "SaveImage", ("images", PromptInput.Link("1")), ("filename_prefix", "flux3"));
+            return g;
+        });
+        var png = PngReader.Decode(File.ReadAllBytes(files.Single()));
+        Assert.That((png.Width, png.Height), Is.EqualTo((512, 512)));
+        Assert.That(png.Data.Max() - png.Data.Min(), Is.GreaterThan(0.3f));
+    }
 }

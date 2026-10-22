@@ -30,6 +30,11 @@
     "note": "4B model, 4 steps; downloads 4.6 GB the first time. Needs a GPU with about 4 GB free."
   },
   {
+    "name": "FLUX 3 Klein text to image",
+    "file": "flux3-klein.json",
+    "note": "5.6B model, 16 steps, wants a full scene caption; downloads 6 GB the first time."
+  },
+  {
     "name": "FLUX.2 Klein picture edit",
     "file": "flux2-klein-edit.json",
     "note": "Edits the picture you load, following the prompt."

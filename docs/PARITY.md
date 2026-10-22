@@ -32,7 +32,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Properties panel | todo |
 | Multiple workflows (tabs: new, rename, close, a file opens in its own tab), autosave to browser storage with the view; restored on reload | **done**; recent files todo |
 | Mask editor (Load Image / Load Image (as Mask): right-click > Open in Mask Editor; brush size, paint / erase, clear, invert; saves a picture with the painted area transparent, which Load Image turns into its mask) | **done** |
-| Examples menu: 13 ready workflows (text to image, SD 1.5, image to image, hires fix, inpainting, FLUX.2 Klein and its edit, LLM-written prompt, upscale, remove background, depth, detection, speech), each opens in its own tab; every one is validated by a test | **done** |
+| Examples menu: 14 ready workflows (text to image, SD 1.5, image to image, hires fix, inpainting, FLUX.2 Klein and its edit, LLM-written prompt, upscale, remove background, depth, detection, speech), each opens in its own tab; every one is validated by a test | **done** |
 | Drop a generated PNG (ComfyUI or SpawnGen) or a workflow / API-format JSON on the canvas to open it; PNGs carry prompt + workflow | **done** |
 | Settings (remembered in the browser): link render modes (spline / straight / linear / hidden), snap to grid with its size, minimap | **done** |
 | Themes, shortcut customisation, shortcut parity check | todo |
@@ -65,7 +65,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | FLUX.2 Klein 4B (text to image, picture edit with reference images; 4-bit or 8-bit weights; one node) | **done**, verified by eye on the RX 590 desktop (OpenCL): 512x512 apple in 142 s after the model files were downloaded; browser (WebGPU, RX 590) also verified: 256x256 apple in 40 s with the files cached |
 | Audio: AUDIO type, Load Audio / Save Audio / Preview Audio (WAV), Audio Info; Kokoro Text to Speech (English voices; verified: 3.4 s speech, desktop OpenCL and browser WebGPU identical in length and loudness); Speech to Text (Parakeet TDT 0.6B v3; verified: heard "Hello from Spongen. This is a test of speech." from Kokoro's sentence on the RX 590, desktop only: 2.4 GB encoder). History panel plays the sound | **done** |
 | Text Generation (LLM): small local GGUF chat models (Qwen2.5 0.5B / 1.5B, Qwen3 0.6B, SmolLM2 360M, Gemma 3 270M) as a node whose text feeds any STRING input; verified: Qwen2.5 0.5B wrote "A single red apple sits gracefully on a wooden table..." and that prompt drew the picture with SD-Turbo (desktop OpenCL); also runs in the browser (WebGPU), 34 s with the model cached. Result text wraps inside Preview Any | **done** |
-| FLUX 3 Klein, TRELLIS.2, video (Wan) | **library** has pipelines; todo: expose as nodes |
+| FLUX 3 Klein 5.6B (text to image from a scene caption, up to 10 reference pictures; 4-bit or 8-bit) | **done**, verified by eye on the RX 590 (OpenCL): 512x512, 16 steps in 208 s including the 6 GB download; browser not run |
+| TRELLIS.2, video (Wan) | **library** has pipelines; todo: expose as nodes |
 
 ## 4. Node library (host-side nodes, SpawnGen's to write)
 

@@ -25,6 +25,7 @@ public sealed class MlRuntime : IDisposable
 
     readonly Context _context;
     readonly Dictionary<string, Task<Checkpoint>> _checkpoints = new();
+    readonly Dictionary<string, Task<IDisposable>> _loaded = new();
     readonly object _gate = new();
 
     public MlRuntime(IModelSource modelSource, Accelerator? accelerator = null)
@@ -61,6 +62,26 @@ public sealed class MlRuntime : IDisposable
         }
     }
 
+    /// <summary>
+    /// A loaded model (a pipeline wrapping an inference session) shared by every node that asks for the same <paramref name="key"/>: it is created once,
+    /// on first use, and disposed with the runtime. A failed load is forgotten so the next run tries again.
+    /// </summary>
+    public async Task<T> GetOrLoadAsync<T>(string key, Func<Task<T>> load) where T : class, IDisposable
+    {
+        Task<IDisposable> task;
+        lock (_gate)
+        {
+            if (!_loaded.TryGetValue(key, out task!))
+                _loaded[key] = task = Task.Run<IDisposable>(async () => await load());
+        }
+        try { return (T)await task; }
+        catch
+        {
+            lock (_gate) { if (_loaded.TryGetValue(key, out var current) && ReferenceEquals(current, task)) _loaded.Remove(key); }
+            throw;
+        }
+    }
+
     /// <summary>CUDA first, then OpenCL, then the CPU accelerator as a last resort (it is far too slow for diffusion).</summary>
     static Accelerator CreateBestAccelerator(Context context)
     {
@@ -76,6 +97,10 @@ public sealed class MlRuntime : IDisposable
         Task<Checkpoint>[] loaded;
         lock (_gate) { loaded = _checkpoints.Values.ToArray(); _checkpoints.Clear(); }
         foreach (var t in loaded)
+            if (t.IsCompletedSuccessfully) t.Result.Dispose();
+        Task<IDisposable>[] models;
+        lock (_gate) { models = _loaded.Values.ToArray(); _loaded.Clear(); }
+        foreach (var t in models)
             if (t.IsCompletedSuccessfully) t.Result.Dispose();
         if (OwnsAccelerator)
         {

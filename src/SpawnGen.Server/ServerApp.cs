@@ -26,7 +26,7 @@ public static class ServerApp
         builder.Services.AddSingleton(new OutputOptions { Directory = options.OutputPath, TempDirectory = options.TempPath });
         InputFiles.Directory = options.InputPath;
         // The GPU is only touched when the first ML node runs (resolving this singleton opens the accelerator).
-        builder.Services.AddSingleton(_ => new MlRuntime(new FolderModelSource(options.ModelsPath, MlRuntime.RepoFolders)));
+        builder.Services.AddSingleton(_ => new MlRuntime(new DesktopModelSource(options.ModelsPath, MlRuntime.RepoFolders)));
         builder.Services.AddSingleton<EventHub>();
         builder.Services.AddSingleton(sp => new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>()));
         configure?.Invoke(builder);

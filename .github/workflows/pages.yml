@@ -1,0 +1,47 @@
+# Publishes the Studio (Blazor WebAssembly, WebGPU engine in the page) to GitHub Pages: https://lostbeard.github.io/SpawnGen/
+name: Deploy Studio to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'Directory.Build.props', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish the Studio
+        run: dotnet publish src/SpawnGen.Studio -c Release -o out
+      - name: Make the build work under /SpawnGen/
+        run: |
+          cd out/wwwroot
+          sed -i 's|<base href="/" />|<base href="/SpawnGen/" />|' index.html
+          cp index.html 404.html   # deep links come back to the app
+          touch .nojekyll          # Jekyll would drop the _framework folder
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,6 +1,7 @@
 // Library vision models in the BROWSER on WebGPU: uploads a picture, runs LoadImage -> <node> -> SaveImage on "This browser", follows the status and
 // leaves a screenshot (out/browser-vision-<node>.png: look at the picture in the Save Image node). The models download from Hugging Face into the
 // profile's storage on first use; keep PROFILE_DIR to reuse them. NODE: DepthAnythingV2 (default), RemoveBackground, StyleTransfer, ImageUpscaleWithModel.
+// Flux2Klein: text to image (PICTURE_SIZE, FLUX_PROMPT; the first run downloads about 4.6 GB).
 // INPUT_PICTURE: a PNG to process (default: a generated gradient with a disc).
 const { chromium } = require('playwright-core');
 const fs = require('fs');
@@ -10,6 +11,7 @@ const URL = process.env.STUDIO_URL || 'http://localhost:5300/';
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const PROFILE = process.env.PROFILE_DIR || path.join(__dirname, 'out', 'webgpu-profile');
 const NODE = process.env.NODE || 'DepthAnythingV2';
+const SIZE = parseInt(process.env.PICTURE_SIZE || '256', 10);
 const MAX_MINUTES = parseInt(process.env.MAX_MINUTES || '15', 10);
 const OUT = path.join(__dirname, 'out');
 fs.mkdirSync(OUT, { recursive: true });
@@ -56,7 +58,8 @@ fs.mkdirSync(OUT, { recursive: true });
   if (NODE === 'ImageUpscaleWithModel') {
     prompt['2'] = { class_type: 'UpscaleModelLoader', inputs: { model_name: 'espcn_x3.onnx' } };
     prompt['3'] = { class_type: NODE, inputs: { upscale_model: ['2', 0], image: ['1', 0] } };
-  } else prompt['3'] = { class_type: NODE, inputs: { image: ['1', 0], ...inputs[NODE] } };
+  } else if (NODE === 'Flux2Klein') prompt['3'] = { class_type: NODE, inputs: { prompt: process.env.FLUX_PROMPT || 'a photo of a single red apple on a wooden table, soft daylight', width: SIZE, height: SIZE, steps: 4, seed: 7, batchSize: 1, weights: '4-bit' } };
+  else prompt['3'] = { class_type: NODE, inputs: { image: ['1', 0], ...inputs[NODE] } };
   const outputLink = NODE === 'RemoveBackground' ? ['3', 1] : ['3', 0];
   if (NODE === 'RemoveBackground') { prompt['4'] = { class_type: 'MaskToImage', inputs: { mask: ['3', 1] } }; prompt['5'] = { class_type: 'SaveImage', inputs: { images: ['4', 0], filename_prefix: 'vision' } }; }
   else prompt['5'] = { class_type: 'SaveImage', inputs: { images: outputLink, filename_prefix: 'vision' } };

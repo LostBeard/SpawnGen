@@ -338,6 +338,51 @@ public class EditorViewTests
         Assert.That(notes, Has.Count.EqualTo(1));
     }
 
+    static Rect Row(EditorView view, EditorDocument doc, int node, string widget) =>
+        view.Hits.Geometry(doc.Graph.GetNode(node)).Widgets.First(w => w.Name == widget).Bounds;
+
+    [Test]
+    public void Dragging_along_a_number_widget_scrubs_it_by_its_step_as_one_undo_step_and_never_opens_the_editor()
+    {
+        var (view, doc, ids) = Setup();
+        bool activated = false;
+        view.WidgetActivated += (_, _) => activated = true;
+        var row = Row(view, doc, ids["sampler"], "steps");
+        long before = Convert.ToInt64(doc.Graph.GetNode(ids["sampler"]).Widgets["steps"]);
+        var from = row.Center;
+        Drag(view, from, from + new Point(EditorView.ScrubPixelsPerStep * 5, 0)); // five steps to the right
+        Assert.That(Convert.ToInt64(doc.Graph.GetNode(ids["sampler"]).Widgets["steps"]), Is.EqualTo(before + 5));
+        Assert.That(activated, Is.False);
+        doc.Undo();
+        Assert.That(Convert.ToInt64(doc.Graph.GetNode(ids["sampler"]).Widgets["steps"]), Is.EqualTo(before), "one gesture, one undo step");
+
+        // Dragging left past the minimum stops at it.
+        Drag(view, from, from - new Point(EditorView.ScrubPixelsPerStep * 5000, 0));
+        Assert.That(Convert.ToInt64(doc.Graph.GetNode(ids["sampler"]).Widgets["steps"]), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void The_arrows_at_the_ends_of_a_number_widget_step_it_and_a_click_in_the_middle_edits_it()
+    {
+        var (view, doc, ids) = Setup();
+        var activated = new List<string>();
+        view.WidgetActivated += (_, w) => activated.Add(w);
+        var row = Row(view, doc, ids["sampler"], "cfg");
+        double before = Convert.ToDouble(doc.Graph.GetNode(ids["sampler"]).Widgets["cfg"]);
+        var right = new Point(row.Right - 6, row.Center.Y);
+        view.PointerDown(Screen(view, right), PointerButton.Left);
+        view.PointerUp(Screen(view, right), PointerButton.Left);
+        Assert.That(Convert.ToDouble(doc.Graph.GetNode(ids["sampler"]).Widgets["cfg"]), Is.EqualTo(before + 0.1).Within(1e-9), "the right arrow adds one step");
+        var left = new Point(row.X + 6, row.Center.Y);
+        view.PointerDown(Screen(view, left), PointerButton.Left);
+        view.PointerUp(Screen(view, left), PointerButton.Left);
+        Assert.That(Convert.ToDouble(doc.Graph.GetNode(ids["sampler"]).Widgets["cfg"]), Is.EqualTo(before).Within(1e-9), "the left arrow takes it back");
+        Assert.That(activated, Is.Empty);
+        view.PointerDown(Screen(view, row.Center), PointerButton.Left);
+        view.PointerUp(Screen(view, row.Center), PointerButton.Left);
+        Assert.That(activated, Is.EqualTo(new[] { "cfg" }));
+    }
+
     [Test]
     public void Dragging_the_corner_resizes_the_node_width_as_one_undo_step()
     {

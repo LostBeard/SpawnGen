@@ -19,12 +19,17 @@ internal sealed record SamplingSettings(long Seed, float Cfg, string Sampler, bo
 internal static class SamplingCore
 {
     public static async Task<LatentBatch> RunAsync(Accelerator acc, Checkpoint ckpt, Conditioning positive, Conditioning negative, LatentBatch latent,
+        float[] sigmas, SamplingSettings settings, NodeContext context) =>
+        (await RunWithDenoisedAsync(acc, ckpt, positive, negative, latent, sigmas, settings, context)).Output;
+
+    /// <summary>Like <see cref="RunAsync"/>, also returning the model's last denoised estimate (SamplerCustom's <c>denoised_output</c>).</summary>
+    public static async Task<(LatentBatch Output, LatentBatch Denoised)> RunWithDenoisedAsync(Accelerator acc, Checkpoint ckpt, Conditioning positive, Conditioning negative, LatentBatch latent,
         float[] sigmas, SamplingSettings settings, NodeContext context)
     {
         if (latent.Channels != Checkpoint.LatentChannels)
             throw new ArgumentException($"Latent has {latent.Channels} channels; this checkpoint expects {Checkpoint.LatentChannels}.", nameof(latent));
         int steps = sigmas.Length - 1, h = latent.Height, w = latent.Width, perImage = Checkpoint.LatentChannels * h * w;
-        if (steps < 1) return latent; // nothing to sample (a start step past the end, for instance)
+        if (steps < 1) return (latent, latent); // nothing to sample (a start step past the end, for instance)
 
         var shape = new[] { 1, Checkpoint.LatentChannels, h, w };
         var uploaded = new List<(MemoryBuffer1D<float, Stride1D.Dense> Buffer, Tensor Tensor)>();
@@ -41,6 +46,7 @@ internal static class SamplingCore
             var neg = negative.Entries.Select(e => (Entry: e, Tensor: Upload(e))).ToList();
 
             var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask };
+            var denoisedResult = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask };
             bool maxDenoise = MathF.Abs(sigmas[0] - ckpt.Sigmas.SigmaMax) <= 1e-5f * ckpt.Sigmas.SigmaMax || sigmas[0] > ckpt.Sigmas.SigmaMax;
 
             for (int b = 0; b < latent.Batch; b++)
@@ -54,6 +60,7 @@ internal static class SamplingCore
                 float noiseScale = maxDenoise ? MathF.Sqrt(1f + sigmas[0] * sigmas[0]) : sigmas[0];
                 var x = new float[perImage];
                 for (int i = 0; i < perImage; i++) x[i] = original[i] + noise[i] * noiseScale;
+                var lastDenoised = x;
 
                 async Task<float[]> Denoise(float[] sample, float sigma)
                 {
@@ -80,6 +87,7 @@ internal static class SamplingCore
                             for (int i = 0; i < plane; i++)
                                 denoised[c * plane + i] = denoised[c * plane + i] * mask[i] + original[c * plane + i] * (1f - mask[i]);
                     }
+                    lastDenoised = denoised;
                     return denoised;
                 }
 
@@ -87,8 +95,9 @@ internal static class SamplingCore
                 x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise, new Samplers.NoiseSource(unchecked((int)(settings.Seed + b) ^ 0x5EED), Checkpoint.LatentChannels, h, w),
                     done => context.Progress(item * steps + done, latent.Batch * steps), context.CancellationToken);
                 Array.Copy(x, 0, result.Data, b * perImage, perImage);
+                Array.Copy(lastDenoised, 0, denoisedResult.Data, b * perImage, perImage);
             }
-            return result;
+            return (result, denoisedResult);
         }
         finally
         {

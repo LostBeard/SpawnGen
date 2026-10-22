@@ -7,7 +7,7 @@ namespace SpawnGen.Nodes.Tests;
 public class SamplingSetupTests
 {
     // SD's scaled-linear beta schedule: 1000 steps, beta from 0.00085 to 0.012 in sqrt space.
-    static ModelSigmas Sd()
+    internal static ModelSigmas Sd()
     {
         var alphas = new float[1000];
         double cum = 1;

@@ -40,6 +40,12 @@ public sealed class EditorView
     Mode _mode;
     Point _downScreen, _lastScreen, _lastWorld;
     bool _moved;
+    // A number widget under the pointer: scrubbed by dragging along it, stepped by its end arrows, edited by a click in the middle.
+    (int NodeId, string Name, WidgetSpec Spec, double Start, int Arrow)? _number;
+    /// <summary>Pixels of drag per step of a number widget.</summary>
+    public const double ScrubPixelsPerStep = 8;
+    /// <summary>Width (world units) of the arrow zones at the ends of a number widget.</summary>
+    public const double ArrowZone = 18;
     Hit _pressed;
     double _resizeGrabOffset;
     List<int> _groupCarry = [];
@@ -207,6 +213,7 @@ public sealed class EditorView
             case HitKind.Widget:
                 SelectOnly(hit.NodeId);
                 _mode = Mode.PressedWidget;
+                _number = BeginNumber(hit, world);
                 break;
 
             case HitKind.TitleBar when clickCount >= 2:
@@ -275,6 +282,32 @@ public sealed class EditorView
         }
     }
 
+    static double StepOf(WidgetSpec spec) => spec.Step is > 0 ? spec.Step.Value : spec.Kind == WidgetKind.Int ? 1 : 0.1;
+
+    (int, string, WidgetSpec, double, int)? BeginNumber(Hit hit, Point world)
+    {
+        var node = Document.Graph.GetNode(hit.NodeId);
+        var row = Hits.Geometry(node).Widgets.FirstOrDefault(w => w.Name == hit.Name);
+        if (row is null || row.Spec.Kind is not (WidgetKind.Int or WidgetKind.Float)) return null;
+        node.Widgets.TryGetValue(row.Name, out var value);
+        double start = Convert.ToDouble(value ?? row.Spec.Default ?? 0.0, System.Globalization.CultureInfo.InvariantCulture);
+        int arrow = world.X - row.Bounds.X < ArrowZone ? -1 : row.Bounds.Right - world.X < ArrowZone ? 1 : 0;
+        return (hit.NodeId, row.Name, row.Spec, start, arrow);
+    }
+
+    /// <summary>Sets a number widget to <paramref name="value"/> clamped to its range; floats snap to the step grid so 0.1 steps do not pile up rounding noise.</summary>
+    void SetNumber((int NodeId, string Name, WidgetSpec Spec, double Start, int Arrow) n, double value)
+    {
+        if (n.Spec.Min is { } min) value = Math.Max(min, value);
+        if (n.Spec.Max is { } max) value = Math.Min(max, value);
+        if (n.Spec.Kind == WidgetKind.Int) Document.SetWidget(n.NodeId, n.Name, (long)Math.Round(value));
+        else
+        {
+            double step = StepOf(n.Spec);
+            Document.SetWidget(n.NodeId, n.Name, Math.Round(Math.Round(value / step) * step, 6));
+        }
+    }
+
     public void PointerMove(Point screen, Modifiers mods = Modifiers.None)
     {
         var world = Viewport.ScreenToWorld(screen);
@@ -298,6 +331,11 @@ public sealed class EditorView
                 Document.SetGroupBounds(resized, group.X, group.Y, world.X + _groupGrabOffset.X - group.X, world.Y + _groupGrabOffset.Y - group.Y);
                 break;
             }
+
+            case Mode.PressedWidget when _moved && _number is { Arrow: 0 } scrub:
+                SetNumber(scrub, scrub.Start + Math.Truncate((screen.X - _downScreen.X) / ScrubPixelsPerStep) * StepOf(scrub.Spec));
+                SetCursor("ew-resize");
+                break;
 
             case Mode.DraggingNodes when _moved:
                 Document.MoveNodes(_selected, world.X - _lastWorld.X, world.Y - _lastWorld.Y);
@@ -361,7 +399,10 @@ public sealed class EditorView
                 Document.EndGesture();
                 break;
             case Mode.PressedWidget:
-                if (!_moved) WidgetActivated?.Invoke(_pressed.NodeId, _pressed.Name!);
+                if (_moved && _number is not null) Document.EndGesture();
+                else if (!_moved && _number is { Arrow: not 0 } arrow) { SetNumber(arrow, arrow.Start + arrow.Arrow * StepOf(arrow.Spec)); Document.EndGesture(); }
+                else if (!_moved) WidgetActivated?.Invoke(_pressed.NodeId, _pressed.Name!);
+                _number = null;
                 break;
             case Mode.DraggingLink:
                 ReleaseLink(world);

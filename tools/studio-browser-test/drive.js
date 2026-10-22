@@ -85,13 +85,21 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   check('widget editor closes on Enter', (await page.locator('.widget-edit').count()) === 0);
   await shot('drive-5-after-edit');
 
+  // Dragging along a number widget scrubs it (one step per 8 px): 4 + 6 steps = 10, and no editor opens.
+  await page.mouse.move(1030, 404);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(1030 + i * 8, 404);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check('dragging a number widget scrubs it without opening the editor', (await page.locator('.widget-edit').count()) === 0);
+
   // Save the workflow and read what was downloaded.
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
   const savePath = `${OUT}/saved-workflow.json`;
   await download.saveAs(savePath);
   const saved = JSON.parse(fs.readFileSync(savePath, 'utf8'));
   const sampler = saved.nodes.find(n => n.type === 'KSampler');
-  check('saved workflow has the edited steps value', sampler && sampler.widgets_values[2] === 4, JSON.stringify(sampler && sampler.widgets_values));
+  check('saved workflow has the edited and scrubbed steps value', sampler && sampler.widgets_values[2] === 10, JSON.stringify(sampler && sampler.widgets_values));
   check('saved workflow has the chosen control mode', sampler && sampler.widgets_values[1] === 'increment', JSON.stringify(sampler && sampler.widgets_values));
   check('saved workflow has all nodes and links', saved.nodes.length === 7 && saved.links.length === 9, `${saved.nodes.length} nodes ${saved.links.length} links`);
 

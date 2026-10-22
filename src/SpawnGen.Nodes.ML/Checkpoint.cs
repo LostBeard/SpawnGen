@@ -15,9 +15,16 @@ public sealed class Checkpoint : IDisposable
     public const int LatentChannels = 4;
     public const int TokenCount = 77;
 
-    Checkpoint(string name, SpawnDev.ILGPU.ML.InferenceSession textEncoder, SpawnDev.ILGPU.ML.InferenceSession unet,
-        SpawnDev.ILGPU.ML.InferenceSession vae, BPETokenizer tokenizer)
+    readonly MlRuntime _runtime;
+    readonly string _repoId;
+    readonly object _encoderGate = new();
+    Task<SpawnDev.ILGPU.ML.InferenceSession>? _vaeEncoder;
+
+    Checkpoint(MlRuntime runtime, string repoId, string name, SpawnDev.ILGPU.ML.InferenceSession textEncoder,
+        SpawnDev.ILGPU.ML.InferenceSession unet, SpawnDev.ILGPU.ML.InferenceSession vae, BPETokenizer tokenizer)
     {
+        _runtime = runtime;
+        _repoId = repoId;
         Name = name;
         TextEncoder = textEncoder;
         Unet = unet;
@@ -32,6 +39,22 @@ public sealed class Checkpoint : IDisposable
     public SpawnDev.ILGPU.ML.InferenceSession Vae { get; }
     public BPETokenizer Tokenizer { get; }
     public float[] AlphasCumprod { get; }
+
+    /// <summary>The VAE encoder (pixels to latents), loaded on first use: text-to-image never needs it.</summary>
+    public Task<SpawnDev.ILGPU.ML.InferenceSession> GetVaeEncoderAsync()
+    {
+        lock (_encoderGate)
+            return _vaeEncoder ??= LoadVaeEncoderAsync();
+    }
+
+    async Task<SpawnDev.ILGPU.ML.InferenceSession> LoadVaeEncoderAsync()
+    {
+        await using var m = await _runtime.ModelSource.OpenAsync(_repoId, "vae_encoder/model.onnx");
+        var session = await SpawnDev.ILGPU.ML.InferenceSession.CreateFromOnnxStreamAsync(_runtime.Accelerator, m,
+            inputShapes: new Dictionary<string, int[]> { ["sample"] = [1, 3, 512, 512] });
+        session.CacheShapeReadbacks = false; // the encoder is run at whatever size the picture has
+        return session;
+    }
 
     internal static async Task<Checkpoint> LoadAsync(MlRuntime runtime, string name, string repoId, Action<string, int>? onProgress)
     {
@@ -78,7 +101,7 @@ public sealed class Checkpoint : IDisposable
         unet.CacheShapeReadbacks = true;
         vae.CacheShapeReadbacks = true;
         onProgress?.Invoke("done", 100);
-        return new Checkpoint(name, te, unet, vae, tokenizer);
+        return new Checkpoint(runtime, repoId, name, te, unet, vae, tokenizer);
     }
 
     public void Dispose()
@@ -86,6 +109,7 @@ public sealed class Checkpoint : IDisposable
         TextEncoder.Dispose();
         Unet.Dispose();
         Vae.Dispose();
+        if (_vaeEncoder is { IsCompletedSuccessfully: true }) _vaeEncoder.Result.Dispose();
     }
 }
 

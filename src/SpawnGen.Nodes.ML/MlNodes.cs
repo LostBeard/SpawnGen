@@ -63,7 +63,7 @@ public sealed class KSampler
         [Input(Min = 0, Max = 1, Step = 0.01)] float denoise,
         NodeContext context, IServiceProvider services)
     {
-        if (denoise < 1f) throw new NotSupportedException("KSampler denoise < 1 (img2img) is not implemented yet.");
+        if (denoise <= 0f) return latentImage; // nothing to denoise: the input passes through
         if (latentImage.Channels != Checkpoint.LatentChannels)
             throw new ArgumentException($"Latent has {latentImage.Channels} channels; this checkpoint expects {Checkpoint.LatentChannels}.", nameof(latentImage));
 
@@ -73,8 +73,8 @@ public sealed class KSampler
         int h = latentImage.Height, w = latentImage.Width, perImage = Checkpoint.LatentChannels * h * w;
 
         // Trailing timesteps and their sigmas; sigmas[^1] = 0. SD-Turbo's single step starts from full noise.
-        var timesteps = DiffusionScheduler.GetTimesteps(steps);
-        var sigmas = DiffusionScheduler.TimestepsToSigmas(timesteps, ckpt.AlphasCumprod);
+        var (timesteps, sigmas) = SigmaSchedule.Build(steps, denoise, ckpt.AlphasCumprod);
+        steps = timesteps.Length;
         bool useCfg = cfg > 1f;
 
         var result = new LatentBatch(latentImage.Batch, latentImage.Channels, h, w);
@@ -168,5 +168,42 @@ public sealed class VAEDecode
             context.Progress(b + 1, samples.Batch);
         }
         return images;
+    }
+}
+
+[Node(Category = "latent", DisplayName = "VAE Encode")]
+public sealed class VAEEncode
+{
+    public async Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, NodeContext context, IServiceProvider services)
+    {
+        var acc = GpuHelpers.Runtime(services).Accelerator;
+        var session = await vae.Checkpoint.GetVaeEncoderAsync();
+
+        // The VAE downsamples by 8: crop to a multiple of 8 like ComfyUI does.
+        int h = pixels.Height / 8 * 8, w = pixels.Width / 8 * 8;
+        if (h == 0 || w == 0) throw new ArgumentException($"Image {pixels.Width}x{pixels.Height} is smaller than 8 pixels.", nameof(pixels));
+        int lh = h / 8, lw = w / 8, perLatent = Checkpoint.LatentChannels * lh * lw;
+        var latents = new LatentBatch(pixels.Batch, Checkpoint.LatentChannels, lh, lw);
+
+        for (int b = 0; b < pixels.Batch; b++)
+        {
+            context.CancellationToken.ThrowIfCancellationRequested();
+            // NHWC in [0, 1] -> NCHW in [-1, 1]
+            var chw = new float[3 * h * w];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    for (int c = 0; c < 3; c++)
+                        chw[(c * h + y) * w + x] = pixels.Data[(((b * pixels.Height) + y) * pixels.Width + x) * pixels.Channels + c] * 2f - 1f;
+
+            var (buf, tensor) = GpuHelpers.Upload(acc, chw, [1, 3, h, w]);
+            using (buf)
+            {
+                var outputs = await session.RunAsync(new Dictionary<string, Tensor> { [session.InputNames[0]] = tensor });
+                var z = await GpuHelpers.ReadAsync(acc, outputs[session.OutputNames[0]], perLatent);
+                for (int i = 0; i < perLatent; i++) latents.Data[b * perLatent + i] = z[i] * Checkpoint.VaeScale;
+            }
+            context.Progress(b + 1, pixels.Batch);
+        }
+        return latents;
     }
 }

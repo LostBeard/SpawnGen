@@ -70,6 +70,18 @@ public class StageDiagnostics
     /// <summary>Token-embedding table of the most recent captured run (fp32 view of the session weight), for row matching.</summary>
     static float[]? TokenTable;
 
+    [Test, Explicit("Diagnostic; needs SPAWNGEN_MODELS (with vae_encoder/) and a GPU.")]
+    public async Task Vae_encoder_io()
+    {
+        var models = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(models)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+        using var runtime = new MlRuntime(new FolderModelSource(models!));
+        await using var stream = await runtime.ModelSource.OpenAsync("", "vae_encoder/model.onnx");
+        using var s = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);
+        TestContext.Out.WriteLine("inputs: " + string.Join(", ", s.InputNames.Select(n => $"{n} [{string.Join(",", s.InputShapes[n])}]")));
+        TestContext.Out.WriteLine("outputs: " + string.Join(", ", s.OutputNames.Select(n => $"{n} [{string.Join(",", s.OutputShapes[n])}]")));
+    }
+
     [Test, Explicit("Diagnostic; needs SPAWNGEN_MODELS, a GPU, and minutes on the CPU accelerator.")]
     public async Task Clip_first_diverging_node_gpu_vs_cpu()
     {

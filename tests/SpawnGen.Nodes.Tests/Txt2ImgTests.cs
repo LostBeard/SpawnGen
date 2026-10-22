@@ -28,7 +28,7 @@ public class PngWriterTests
 /// </summary>
 public class Txt2ImgTests
 {
-    static PromptGraph Graph(string prompt, int seed, int size)
+    internal static PromptGraph Graph(string prompt, int seed, int size)
     {
         var g = new PromptGraph();
         g.Add("1", "CheckpointLoader", ("ckpt_name", "sd_turbo"));

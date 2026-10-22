@@ -9,6 +9,30 @@ public sealed class OutputOptions
     public string Directory { get; init; } = Path.Combine(AppContext.BaseDirectory, "output");
 }
 
+/// <summary>Where <see cref="LoadImage"/> reads from. Set <see cref="Directory"/> at startup (default: <c>./input</c>); the combo lists its PNG files.</summary>
+public static class InputFiles
+{
+    public static string Directory { get; set; } = Path.Combine(AppContext.BaseDirectory, "input");
+
+    public static string[] List() =>
+        System.IO.Directory.Exists(Directory)
+            ? System.IO.Directory.EnumerateFiles(Directory, "*.png").Select(Path.GetFileName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray()!
+            : [];
+}
+
+[Node(Category = "image", DisplayName = "Load Image")]
+public sealed class LoadImage
+{
+    public static string[] ImageNames() => InputFiles.List();
+
+    public ImageBatch Execute([Input(OptionsProvider = nameof(ImageNames))] string image)
+    {
+        // The file name only: a node must not be able to read outside the input folder.
+        var path = Path.Combine(InputFiles.Directory, Path.GetFileName(image));
+        return PngReader.Decode(File.ReadAllBytes(path));
+    }
+}
+
 [Node(Category = "image", DisplayName = "Save Image", IsOutput = true)]
 public sealed class SaveImage
 {
@@ -39,5 +63,17 @@ public sealed class SaveImage
             if (int.TryParse(digits, out var v) && v > max) max = v;
         }
         return max + 1;
+    }
+}
+
+/// <summary>Shows images in the editor without writing files: the PNG bytes travel in the node's UI output.</summary>
+[Node(Category = "image", DisplayName = "Preview Image", IsOutput = true)]
+public sealed class PreviewImage
+{
+    public UiOutput Execute(ImageBatch images)
+    {
+        var pngs = new byte[images.Batch][];
+        for (int i = 0; i < images.Batch; i++) pngs[i] = PngWriter.Encode(images, i);
+        return new UiOutput("images", pngs);
     }
 }

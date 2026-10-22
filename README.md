@@ -11,7 +11,7 @@ Design and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | Layer | State |
 |-------|-------|
 | `SpawnGen.Engine`: node schema/registry, ComfyUI API-format prompts, validator, cached executor | done, 50 tests |
-| `SpawnGen.Nodes.Core` / `SpawnGen.Nodes.ML`: empty latent, save image, checkpoint loader, CLIP encode, KSampler (euler, CFG), VAE decode; SD-Turbo txt2img verified on desktop OpenCL | working; img2img, more samplers next |
+| `SpawnGen.Nodes.Core` / `SpawnGen.Nodes.ML`: empty latent, save image, checkpoint loader, CLIP encode, KSampler (euler, CFG, denoise), VAE encode/decode, load/save/preview image (PNG); SD-Turbo txt2img and img2img verified on desktop OpenCL | working; more samplers next |
 | Studio UI (canvas node editor) | planned |
 | Server / desktop shell | planned |
 

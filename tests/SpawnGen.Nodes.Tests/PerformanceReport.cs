@@ -41,6 +41,29 @@ public class PerformanceReport
         return timer;
     }
 
+    /// <summary>Does the VAE decode time depend on how many UNet steps ran just before it? (Seen: ~13 s after 1 step, ~20 s after 4, RX 590 OpenCL.)</summary>
+    [Test, Explicit("Performance experiment; needs SPAWNGEN_MODELS and a GPU.")]
+    public async Task Vae_time_versus_preceding_unet_steps()
+    {
+        var models = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(models)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+        var work = Path.Combine(Path.GetTempPath(), "spawngen-perf-" + Guid.NewGuid().ToString("N"));
+        using var runtime = new MlRuntime(new FolderModelSource(models!));
+        var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
+        var ex = new PromptExecutor(registry, new Services(runtime, new OutputOptions { Directory = work }));
+
+        var sequence = (Environment.GetEnvironmentVariable("SPAWNGEN_STEP_SEQUENCE") ?? "1,1,4,1,4,2,1").Split(',').Select(int.Parse).ToArray();
+        int seed = 100;
+        foreach (var steps in sequence)
+        {
+            var g = Txt2ImgTests.Graph("a photo of a red apple on a wooden table", seed: seed++, size: 512);
+            g.Nodes["5"].Inputs["steps"] = PromptInput.Value(steps);
+            var t = await TimedAsync(ex, g, $"{steps} step(s)");
+            double vae = t.Rows.First(r => r.Type == "VAEDecode").Ms, unet = t.Rows.First(r => r.Type == "KSampler").Ms;
+            TestContext.Out.WriteLine($"RESULT steps={steps} sampler={unet:F0} ms vae={vae:F0} ms");
+        }
+    }
+
     [Test, Explicit("Performance report; needs SPAWNGEN_MODELS and a GPU.")]
     public async Task Sd_turbo_node_timings()
     {

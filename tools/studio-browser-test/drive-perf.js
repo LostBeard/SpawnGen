@@ -28,7 +28,7 @@ const N = parseInt(process.env.NODES || '400', 10);
   const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--disable-gpu'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
   const problems = [];
-  page.on('console', m => { if (m.type() === 'error') problems.push(m.text()); else if (/[perf]/.test(m.text())) console.log(m.text()); });
+  page.on('console', m => { if (m.type() === 'error') problems.push(m.text());; });
   page.on('pageerror', e => problems.push('PAGEERROR ' + e.message));
   await page.goto(URL);
   await page.waitForSelector('canvas');

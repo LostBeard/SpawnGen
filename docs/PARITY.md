@@ -41,8 +41,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Cached re-runs (only what changed) | **done** |
 | Queue, interrupt, progress, per-node status, history | **done** |
 | Run result images inside nodes | **done** |
-| Random seed per queue, "control after generate" fixed / increment / decrement / randomize | partial (randomize on/off only) |
-| Batch count (queue N), queue front, cancel / reorder queued items | todo |
+| "Control after generate" per seed widget: fixed / increment / decrement / randomize, applied after each queue, saved in the workflow | **done** |
+| Batch count (queue N times) | **done**; queue front, cancel / reorder queued items todo |
 | List inputs/outputs (`INPUT_IS_LIST`), lazy inputs, loops / node expansion | todo (engine) |
 | Latent preview during sampling | todo |
 | Gallery / history panel with workflow reload | todo |

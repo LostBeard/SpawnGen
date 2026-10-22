@@ -89,6 +89,7 @@ public static class ComfyWorkflow
         {
             foreach (var w in widgetInputs)
                 if (map[w.Name] is { } v) node.Widgets[w.Name] = Coerce(w.Widget!, v, node, w.Name, warnings);
+            if (map[ControlAfterGenerate.Name] is JsonValue mode && mode.TryGetValue<string>(out var named) && ControlValues.Contains(named)) node.Widgets[ControlAfterGenerate.Name] = named;
             return;
         }
         var list = values as JsonArray ?? [];
@@ -98,9 +99,13 @@ public static class ComfyWorkflow
             node.Widgets[w.Name] = w.Widget!.Default is { } d && pos >= list.Count ? d : node.Widgets.GetValueOrDefault(w.Name);
             if (pos >= list.Count) continue;
             node.Widgets[w.Name] = Coerce(w.Widget!, list[pos++], node, w.Name, warnings);
-            // Skip the "control after generate" value ComfyUI stores right after a seed widget.
+            // ComfyUI stores the "control after generate" mode right after a seed widget.
             if (w.Widget!.Kind == WidgetKind.Int && SeedWidgets.Contains(w.Name) && pos < list.Count
-                && list[pos] is JsonValue cv && cv.TryGetValue<string>(out var s) && ControlValues.Contains(s)) pos++;
+                && list[pos] is JsonValue cv && cv.TryGetValue<string>(out var s) && ControlValues.Contains(s))
+            {
+                node.Widgets[ControlAfterGenerate.Name] = s;
+                pos++;
+            }
         }
     }
 
@@ -240,7 +245,7 @@ public static class ComfyWorkflow
                 bool b => JsonValue.Create(b),
                 _ => JsonValue.Create(v.ToString()),
             });
-            if (w.Widget!.Kind == WidgetKind.Int && SeedWidgets.Contains(w.Name)) list.Add("fixed"); // keep a seed reproducible when ComfyUI opens it
+            if (w.Widget!.Kind == WidgetKind.Int && SeedWidgets.Contains(w.Name)) list.Add(ControlAfterGenerate.ModeOf(n));
         }
         return list;
     }

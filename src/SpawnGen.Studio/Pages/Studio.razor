@@ -50,7 +50,7 @@
             }
         </select>
         <label class="button" title="Upload a PNG for Load Image nodes">Upload<InputFile OnChange="OnUploadChosen" accept=".png" hidden /></label>
-        <label class="check" title="Pick a new random seed for the seed widgets every time you queue, like ComfyUI"><input type="checkbox" @bind="_randomizeSeeds" /> random seed</label>
+        <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
         <span class="status">@RunStatus()@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
     </div>
 
@@ -194,7 +194,13 @@
         }
         // The click that opened an overlay is still finishing in the browser, and its default action moves focus to the canvas: focus the
         // overlay's input once that has happened, or typing would go to the canvas.
-        if (_focusEdit) { _focusEdit = false; await Task.Delay(40); await _editRef.FocusAsync(); }
+        if (_focusEdit)
+        {
+            _focusEdit = false;
+            await Task.Delay(40);
+            try { await _editRef.FocusAsync(); }
+            catch (Microsoft.JSInterop.JSException) { } // the editor was closed (a quick pick) before it could take focus
+        }
         if (_focusSearch) { _focusSearch = false; await Task.Delay(40); await _searchRef.FocusAsync(); }
     }
 
@@ -305,7 +311,7 @@
     void OnWidgetActivated(int nodeId, string name)
     {
         var node = _doc.Graph.GetNode(nodeId);
-        var spec = Registry.GetSchema(node.ClassType)?.FindInput(name)?.Widget;
+        var spec = name == ControlAfterGenerate.Name ? ControlAfterGenerate.Spec : Registry.GetSchema(node.ClassType)?.FindInput(name)?.Widget;
         if (spec is null) return;
         var value = node.Widgets.GetValueOrDefault(name) ?? spec.Default;
 
@@ -512,7 +518,8 @@
 
     readonly RunVisuals _visuals = new();
     readonly ImageCache _images = new();
-    bool _running, _randomizeSeeds = true;
+    bool _running;
+    int _batchCount = 1;
     int _queueRemaining;
     string? _statusText;
     string? _executingTitle;
@@ -584,10 +591,16 @@
     async Task QueueAsync()
     {
         if (_engine is null) { ShowMessage("There is no engine: this browser has no WebGPU and no SpawnGen server serves this page."); return; }
-        if (_randomizeSeeds) RandomizeSeeds();
+        for (int run = 0, runs = Math.Clamp(_batchCount, 1, 100); run < runs; run++)
+            if (!await QueueOnceAsync()) break;
+        _studio?.Focus();
+    }
 
+    /// <summary>Sends the graph once and then moves every seed on by its control after generate, as ComfyUI does. False when the run could not be queued.</summary>
+    async Task<bool> QueueOnceAsync()
+    {
         var compiled = GraphCompiler.Compile(_doc.Graph, Registry);
-        if (compiled.Graph.Nodes.Count == 0) { ShowMessage(compiled.Notes.FirstOrDefault() ?? "There is nothing to run."); return; }
+        if (compiled.Graph.Nodes.Count == 0) { ShowMessage(compiled.Notes.FirstOrDefault() ?? "There is nothing to run."); return false; }
         _visuals.Errors.Clear();
 
         // The workflow travels with the prompt so Save Image can embed it: the picture can then be dropped back on the canvas.
@@ -598,31 +611,17 @@
             var detail = result.NodeErrors.Count > 0 ? $" {result.NodeErrors.First().Value}" : "";
             ShowMessage($"{result.Message}.{detail}");
             _view.Invalidate();
-            return;
+            return false;
         }
         if (compiled.Notes.Count > 0) ShowMessage(compiled.Notes[0]);
-        _studio?.Focus();
+        ControlAfterGenerate.ApplyAfterQueue(_doc, Registry.GetSchema, Random.Shared);
+        return true;
     }
 
     async Task InterruptAsync()
     {
         await (_engine?.InterruptAsync() ?? Task.CompletedTask);
         _studio?.Focus();
-    }
-
-    /// <summary>New random seeds, as ComfyUI does after each queue; one undo step.</summary>
-    void RandomizeSeeds()
-    {
-        _doc.Group(() =>
-        {
-            foreach (var node in _doc.Graph.Nodes.ToList())
-            {
-                var schema = Registry.GetSchema(node.ClassType);
-                foreach (var input in schema?.Inputs.Where(i => i.Widget?.Kind == WidgetKind.Int && i.Name is "seed" or "noise_seed") ?? [])
-                    if (_doc.Graph.LinkInto(node.Id, input.Name) is null) _doc.SetWidget(node.Id, input.Name, Random.Shared.NextInt64(1L << 40));
-            }
-        });
-        _doc.EndGesture();
     }
 
     void OnServerEvent(JsonObject e)

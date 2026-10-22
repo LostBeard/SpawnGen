@@ -48,7 +48,6 @@ fs.mkdirSync(OUT, { recursive: true });
   await page.selectOption('select.engine', { label: 'This browser (WebGPU)' });
   await page.setInputFiles('input[accept=".json,.png"]', wfPath);
   await page.waitForTimeout(1200);
-  await page.uncheck('label.check input'); // keep the seed we set
   console.log(t(), 'opened:', await status());
   await page.locator('button:has-text("Queue")').click();
 

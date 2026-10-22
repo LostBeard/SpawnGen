@@ -35,7 +35,7 @@ function pngText(buf) {
   await page.waitForSelector('canvas');
   await page.waitForTimeout(3500);
 
-  // 1. Generate (a new random seed is picked on queue).
+  // 1. Generate (the seed is used as it is, then control after generate moves it on).
   await page.locator('button:has-text("Queue")').click();
   for (let i = 0; i < 160; i++) { await page.waitForTimeout(1000); if (i > 3 && !/Running|Queued/.test(await status())) break; }
   await page.waitForTimeout(2000);
@@ -54,7 +54,7 @@ function pngText(buf) {
   check('the PNG carries prompt and workflow', 'prompt' in text && 'workflow' in text, Object.keys(text).join(', '));
   const sampler = JSON.parse(text.workflow).nodes.find(n => n.type === 'KSampler');
   const seed = sampler.widgets_values[0];
-  check('the embedded workflow has the random seed that was used', Number.isInteger(seed) && seed > 0, 'seed ' + seed);
+  check('the embedded workflow has the seed that was used', Number.isInteger(seed) && seed >= 0, 'seed ' + seed);
 
   // 2. Replace the graph with something else.
   await page.setInputFiles('input[accept=".json,.png"]', path.join(__dirname, 'load-preview-workflow.json'));

@@ -66,8 +66,15 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await page.waitForTimeout(300);
   check('undo removes the placed node', /^7 nodes/.test(await status()), await status());
 
-  // Edit a widget in place: KSampler steps row.
+  // The seed's "control after generate" combo sits right under the seed: pick a mode.
   await page.mouse.click(1030, 378);
+  await page.waitForSelector('.widget-edit select');
+  await page.selectOption('.widget-edit select', 'increment');
+  await page.waitForTimeout(400);
+  check('control after generate combo closes after a pick', (await page.locator('.widget-edit').count()) === 0);
+
+  // Edit a widget in place: KSampler steps row (below the control row).
+  await page.mouse.click(1030, 404);
   await page.waitForSelector('.widget-edit input');
   await shot('drive-4-widget-edit');
   await page.keyboard.press('Control+a');
@@ -84,6 +91,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const saved = JSON.parse(fs.readFileSync(savePath, 'utf8'));
   const sampler = saved.nodes.find(n => n.type === 'KSampler');
   check('saved workflow has the edited steps value', sampler && sampler.widgets_values[2] === 4, JSON.stringify(sampler && sampler.widgets_values));
+  check('saved workflow has the chosen control mode', sampler && sampler.widgets_values[1] === 'increment', JSON.stringify(sampler && sampler.widgets_values));
   check('saved workflow has all nodes and links', saved.nodes.length === 7 && saved.links.length === 9, `${saved.nodes.length} nodes ${saved.links.length} links`);
 
   // Open ComfyUI's stock workflow through the file input.

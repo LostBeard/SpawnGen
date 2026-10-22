@@ -23,8 +23,16 @@ fs.mkdirSync(OUT, { recursive: true });
   await page.waitForTimeout(3500);
   const status = async () => (await page.textContent('.status')).trim();
   const historyOf = () => page.evaluate(async () => Object.values(await (await fetch('/history')).json()).map(h => h.status.status_str));
-  const before = (await historyOf()).length;
   const queue = page.locator('button:has-text("Queue")');
+  // Warm-up run: control after generate moves the seed on after a queue, so the measured run below always has a seed the server has not seen
+  // (otherwise a server that already ran the same graph with the same seed would serve everything from its cache).
+  if (await queue.isEnabled()) {
+    await queue.click();
+    const t0 = Date.now();
+    await page.waitForTimeout(3000);
+    while (Date.now() - t0 < 150000 && /Running|Queued/.test(await status())) await page.waitForTimeout(500);
+  }
+  const before = (await historyOf()).length;
   const results = [];
   const check = (name, ok, detail) => { results.push(ok); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail ? '  [' + detail + ']' : '')); };
 
@@ -49,7 +57,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
   const history = (await historyOf()).slice(before);
   check('the server ran it to success', history.length === 1 && history[0] === 'success', JSON.stringify(history));
-  // A server that already ran this graph serves the loader and the text encoders from its cache; the sampler and decode always run (new random seed).
+  // The loader and the text encoders come from the server's cache by now; the sampler and decode run again because the seed moved on after the warm-up queue.
   check('the toolbar followed the sampler and the decode', ['Running KSampler', 'Running VAE Decode'].every(s => seen.includes(s)), seen.join(' > '));
   check('no browser errors', problems.length === 0, problems.join(' | '));
   console.log('Look at out/run-3-done.png: the Save Image node should show the generated picture.');

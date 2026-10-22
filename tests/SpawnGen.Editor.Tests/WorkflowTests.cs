@@ -125,7 +125,7 @@ public class WorkflowTests
         var sampler = root["nodes"]!.AsArray().Single(n => (int)n!["id"]! == 3)!.AsObject();
         // seed, control_after_generate, steps, cfg, sampler_name, scheduler, denoise
         Assert.That(sampler["widgets_values"]!.AsArray().Select(v => v!.ToJsonString()),
-            Is.EqualTo(new[] { "156680208700286", "\"fixed\"", "20", "8", "\"euler\"", "\"normal\"", "1" }));
+            Is.EqualTo(new[] { "156680208700286", "\"randomize\"", "20", "8", "\"euler\"", "\"normal\"", "1" }));
         // Socket inputs in order; widgets are not listed unless linked.
         Assert.That(sampler["inputs"]!.AsArray().Select(i => (string)i!["name"]!), Is.EqualTo(new[] { "model", "positive", "negative", "latent_image" }));
         // A link's last-but-one number is the slot in the target's "inputs" list: sampler "negative" is slot 2.

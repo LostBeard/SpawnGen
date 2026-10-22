@@ -104,6 +104,12 @@ public static class NodeLayout
             // The drop target for linking a value into this widget: the left edge of its row.
             inputs.Add(new SlotGeometry(SlotKind.Input, spec.Name, inputs.Count, spec.Type, new Point(node.X, bounds.Center.Y), true, false));
             y += h;
+            if (ControlAfterGenerate.HasControl(spec))
+            {
+                // ComfyUI's "control after generate" combo sits right under the seed. It is not an input: no slot, no link.
+                widgets.Add(new WidgetRow(ControlAfterGenerate.Name, ControlAfterGenerate.Spec, new Rect(node.X + Padding, y, width - 2 * Padding, WidgetRowHeight - 4)));
+                y += WidgetRowHeight;
+            }
         }
 
         // The result picture, under the widgets: as wide as the node, as tall as its aspect ratio asks (until it has loaded it is assumed square).

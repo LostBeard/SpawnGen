@@ -17,6 +17,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SpawnGen.Server\SpawnGen.Server.csproj" />
+    <!-- Built next to the tests; a copy of its dll is installed as a custom node pack by CustomNodesTests. -->
+    <ProjectReference Include="..\..\samples\SpawnGen.SampleNodes\SpawnGen.SampleNodes.csproj" />
   </ItemGroup>
 
 </Project>

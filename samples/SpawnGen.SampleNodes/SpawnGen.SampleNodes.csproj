@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>An example custom node pack for the SpawnGen server: two small nodes. Build it, copy SpawnGen.SampleNodes.dll into the server's custom_nodes folder and restart. See docs/CUSTOM_NODES.md.</Description>
+    <IsPackable>false</IsPackable>
+    <!-- The engine and core nodes are the host's: do not copy them next to the pack, or the pack would try to load its own copy. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SpawnGen.Engine\SpawnGen.Engine.csproj"><Private>false</Private></ProjectReference>
+  </ItemGroup>
+
+</Project>

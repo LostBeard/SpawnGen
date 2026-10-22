@@ -9,6 +9,9 @@
     <Project Path="src/SpawnGen.Server/SpawnGen.Server.csproj" />
     <Project Path="src/SpawnGen.Desktop/SpawnGen.Desktop.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/SpawnGen.SampleNodes/SpawnGen.SampleNodes.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SpawnGen.Engine.Tests/SpawnGen.Engine.Tests.csproj" />
     <Project Path="tests/SpawnGen.Nodes.Tests/SpawnGen.Nodes.Tests.csproj" />

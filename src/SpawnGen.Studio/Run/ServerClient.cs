@@ -35,6 +35,17 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { return false; }
     }
 
+    /// <summary>The server's node catalogue as schemas (its custom nodes included), or empty when it cannot be read.</summary>
+    public async Task<IReadOnlyList<SpawnGen.Engine.Nodes.NodeSchema>> FetchSchemasAsync()
+    {
+        try
+        {
+            var info = await http.GetFromJsonAsync<JsonObject>("object_info", _stop.Token);
+            return info is null ? [] : SpawnGen.Engine.Nodes.NodeSchemaJson.FromObjectInfo(info);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { return []; }
+    }
+
     public void Start() => _loop ??= Task.Run(ConnectLoopAsync);
 
     async Task ConnectLoopAsync()

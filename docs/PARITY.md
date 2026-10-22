@@ -80,7 +80,7 @@ Todo, in priority order:
 
 | Item | Status |
 |---|---|
-| C# scripting node and user node assemblies (node packs) in place of Python custom nodes | todo |
+| C# node packs in place of Python custom nodes: DLLs in the server's custom_nodes folder are loaded at start, the Studio learns them from /object_info and runs them on the server (docs/CUSTOM_NODES.md, samples/SpawnGen.SampleNodes) | **done**; C# scripting node (code typed in the editor) and browser-side packs todo |
 | Themes, internationalisation | todo (settings dialog exists) |
 | Model manager: list installed checkpoints from the host, download on first use (desktop), cache (browser OPFS) | partial (browser streams; desktop expects files in place) |
 | Packaging: self-contained desktop builds, hosted static browser build (GitHub Pages) | todo |

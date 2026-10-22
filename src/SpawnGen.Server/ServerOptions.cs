@@ -10,6 +10,11 @@ public sealed class ServerOptions
     public string OutputPath { get; set; } = Path.Combine(Home, "output");
     public string InputPath { get; set; } = Path.Combine(Home, "input");
     public string TempPath { get; set; } = Path.Combine(Home, "temp");
+    /// <summary>Folder of custom node assemblies (.dll with classes marked [Node]), loaded when the server starts. See docs/CUSTOM_NODES.md.</summary>
+    public string CustomNodesPath { get; set; } = Path.Combine(Home, "custom_nodes");
+
+    /// <summary>What the custom node loader found at start-up (set by the server, reported by /system_stats).</summary>
+    public IReadOnlyList<CustomNodes.Loaded> LoadedCustomNodes { get; set; } = [];
 
     public static ServerOptions From(IConfiguration configuration)
     {

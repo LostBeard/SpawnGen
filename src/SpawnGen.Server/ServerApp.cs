@@ -19,7 +19,7 @@ public static class ServerApp
         // wwwroot instead and there is no manifest, so this does nothing there.
         builder.WebHost.UseStaticWebAssets();
         var options = ServerOptions.From(builder.Configuration);
-        foreach (var dir in new[] { options.ModelsPath, options.OutputPath, options.InputPath, options.TempPath }) Directory.CreateDirectory(dir);
+        foreach (var dir in new[] { options.ModelsPath, options.OutputPath, options.InputPath, options.TempPath, options.CustomNodesPath }) Directory.CreateDirectory(dir);
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly));
@@ -33,6 +33,14 @@ public static class ServerApp
 
         var app = builder.Build();
         app.UseWebSockets();
+        var customNodes = CustomNodes.Load(app.Services.GetRequiredService<NodeRegistry>(), options.CustomNodesPath);
+        var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpawnGen.CustomNodes");
+        foreach (var pack in customNodes)
+        {
+            if (pack.Error is not null) log.LogWarning("Custom node pack {File} was not loaded: {Error}", pack.File, pack.Error);
+            else log.LogInformation("Custom node pack {File}: {Nodes}", pack.File, string.Join(", ", pack.Nodes));
+        }
+        app.Services.GetRequiredService<ServerOptions>().LoadedCustomNodes = customNodes;
         MapApi(app);
 
         // The Studio (Blazor WebAssembly) is served from the same origin so it needs no CORS and no configuration.
@@ -55,6 +63,7 @@ public static class ServerApp
         {
             system = new { os = Environment.OSVersion.Platform.ToString(), spawngen_version = typeof(ServerApp).Assembly.GetName().Version?.ToString() ?? "0" },
             devices = Array.Empty<object>(),
+            custom_nodes = options.LoadedCustomNodes.Select(p => new { file = Path.GetFileName(p.File), nodes = p.Nodes, error = p.Error }),
         }));
 
         app.MapPost("/prompt", async (HttpRequest request) =>

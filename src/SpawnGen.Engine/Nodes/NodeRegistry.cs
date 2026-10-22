@@ -24,12 +24,16 @@ public sealed class RegisteredNode
 
     public required NodeSchema Schema { get; init; }
 
+    /// <summary>A node known only by its schema (it lives on a server): it can be edited and validated here but not run here.</summary>
+    public bool IsRemote { get; init; }
+
     /// <summary>CLR type an input's value must be coerced to.</summary>
     internal Type? InputClrType(string inputName) =>
-        Params.FirstOrDefault(p => p.Kind == ParamKind.Input && p.InputName == inputName)?.Info.ParameterType;
+        Params?.FirstOrDefault(p => p.Kind == ParamKind.Input && p.InputName == inputName)?.Info.ParameterType; // a remote node has no parameters
 
     internal async ValueTask<NodeOutputs> InvokeAsync(IReadOnlyDictionary<string, object?> inputs, NodeContext context)
     {
+        if (IsRemote) throw new NotSupportedException($"'{Schema.DisplayName}' is a node of the SpawnGen server (a custom node): run this graph on the server engine.");
         var args = new object?[Params.Length];
         for (var i = 0; i < Params.Length; i++)
         {
@@ -136,6 +140,13 @@ public sealed class NodeRegistry
     {
         var node = Build(type);
         _nodes[node.Schema.Id] = node;
+        return this;
+    }
+
+    /// <summary>Registers a node known only by its schema (a server's custom node seen from the Studio); an existing node of the same id is left alone.</summary>
+    public NodeRegistry AddRemote(NodeSchema schema)
+    {
+        _nodes.TryAdd(schema.Id, new RegisteredNode { Schema = schema, IsRemote = true });
         return this;
     }
 

@@ -320,7 +320,7 @@
             _studio = new StudioCanvas(JS, _canvasRef.As<HTMLCanvasElement>(), _view, _renderer);
             _studio.FirstLayout += () => _view.FitToView();
             _studio.Shortcut += OnShortcut;
-            _ = StartServerAsync();
+            await StartServerAsync(); // before the tabs open: a workflow may use the server's custom nodes
             _dropRef = DotNetObjectReference.Create(this);
             await Interop.InvokeVoidAsync("spawngenEnableDrop", _dropRef, ".stage");
             _studio.CanvasPressed += CloseMenus; // the canvas reports its own presses first, so a menu it opens right after is not closed again
@@ -1008,6 +1008,9 @@
         if (await Server.ProbeAsync())
         {
             Server.Start();
+            // The server's custom nodes are not compiled into this page: learn them from its catalogue so they can be placed and wired here (they run on the server).
+            foreach (var schema in await Server.FetchSchemasAsync())
+                if (Registry.GetSchema(schema.Id) is null) Registry.AddRemote(schema);
             _engines.Add(Server); // a native GPU is the faster choice when there is one, so it is the default
         }
         if (Browser.WebGpuAvailable) _engines.Add(Browser);

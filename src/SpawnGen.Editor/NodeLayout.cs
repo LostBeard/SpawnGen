@@ -25,6 +25,8 @@ public sealed class NodeGeometry
     public Rect? PreviewArea { get; init; }
     /// <summary>Where the node's result text is drawn (null when it has none); <see cref="TextLines"/> is how many lines fit.</summary>
     public Rect? TextArea { get; init; }
+    /// <summary>The result text broken into the lines drawn in <see cref="TextArea"/> (at most <see cref="NodeLayout.MaxTextLines"/>; the last ends in "..." when there was more).</summary>
+    public IReadOnlyList<string> TextLines { get; init; } = [];
     /// <summary>The bottom-right grab area for resizing the width.</summary>
     public required Rect ResizeHandle { get; init; }
 
@@ -131,10 +133,12 @@ public static class NodeLayout
         }
 
         Rect? text = null;
+        List<string> textLines = [];
         if (!string.IsNullOrEmpty(node.ResultText))
         {
-            int lines = Math.Clamp(node.ResultText.Split('\n').Length, 1, MaxTextLines);
-            double th = lines * TextLineHeight + 12;
+            textLines = TextWrap.Wrap(node.ResultText, Math.Max(40, width - 2 * Padding) - 16, measureText);
+            if (textLines.Count > MaxTextLines) { textLines = textLines.Take(MaxTextLines).ToList(); textLines[^1] += " ..."; }
+            double th = textLines.Count * TextLineHeight + 12;
             text = new Rect(node.X + Padding, y + 2, Math.Max(40, width - 2 * Padding), th);
             y += th + 8;
         }
@@ -144,7 +148,7 @@ public static class NodeLayout
         return new NodeGeometry
         {
             NodeId = node.Id, Title = title, Bounds = boundsAll, TitleBar = new Rect(node.X, node.Y, width, TitleHeight), Collapsed = false,
-            Inputs = inputs, Outputs = outputs, Widgets = widgets, PreviewArea = preview, TextArea = text,
+            Inputs = inputs, Outputs = outputs, Widgets = widgets, PreviewArea = preview, TextArea = text, TextLines = textLines,
             ResizeHandle = new Rect(boundsAll.Right - ResizeSize, boundsAll.Bottom - ResizeSize, ResizeSize, ResizeSize),
         };
     }

@@ -10,7 +10,15 @@ namespace SpawnGen.Nodes.Tests;
 /// <summary>Library vision models as nodes: packing, and (explicit, GPU + network on first use) real runs whose pictures are checked by eye.</summary>
 public class VisionTests
 {
-    static NodeRegistry Registry() => new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
+    static NodeRegistry Registry() => new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly).Add(typeof(CaptureText));
+
+    /// <summary>Test-only output node that keeps the text it is given, so a run's string outputs can be read.</summary>
+    [Node(Category = "test", IsOutput = true)]
+    public sealed class CaptureText
+    {
+        public static string Last = "";
+        public void Execute(string text) => Last = text;
+    }
 
     [Test]
     public void Packing_pictures_for_the_library_round_trips_within_one_level()
@@ -177,6 +185,40 @@ public class VisionTests
             return g;
         }, TestPicture(512));
         Assert.That(files, Has.Length.EqualTo(1));
+    }
+
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU, SPAWNGEN_TEST_PICTURE (a photo of people) and the network on first use (MoveNet 9 MB). Look at the saved picture.")]
+    public async Task Pose_estimation_draws_a_skeleton_and_lists_keypoints()
+    {
+        var files = await RunAsync("pose", () =>
+        {
+            var g = new PromptGraph();
+            g.Add("1", "LoadImage", ("image", "in.png"));
+            g.Add("2", "PoseEstimation", ("image", PromptInput.Link("1")), ("confidence", 0.3), ("overlay", true));
+            g.Add("3", "SaveImage", ("images", PromptInput.Link("2")), ("filename_prefix", "pose"));
+            g.Add("4", "CaptureText", ("text", PromptInput.Link("2", 1)));
+            return g;
+        }, TestPicture(512));
+        TestContext.Out.WriteLine(CaptureText.Last);
+        Assert.That(files, Has.Length.EqualTo(1));
+        Assert.That(CaptureText.Last.Split(Environment.NewLine), Has.Length.EqualTo(17));
+    }
+
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU, SPAWNGEN_TEST_PICTURE (a photo with people or vehicles) and the network on first use (YOLOv8n 13 MB). Look at the saved picture.")]
+    public async Task Object_detection_draws_boxes()
+    {
+        var files = await RunAsync("detect", () =>
+        {
+            var g = new PromptGraph();
+            g.Add("1", "LoadImage", ("image", "in.png"));
+            g.Add("2", "ObjectDetection", ("image", PromptInput.Link("1")), ("confidence", double.TryParse(Environment.GetEnvironmentVariable("DETECT_CONF"), out var conf) ? conf : 0.25));
+            g.Add("3", "SaveImage", ("images", PromptInput.Link("2")), ("filename_prefix", "detect"));
+            g.Add("4", "CaptureText", ("text", PromptInput.Link("2", 1)));
+            return g;
+        }, TestPicture(512));
+        TestContext.Out.WriteLine(CaptureText.Last);
+        Assert.That(files, Has.Length.EqualTo(1));
+        Assert.That(CaptureText.Last, Does.Contain("bus").And.Contain("person"));
     }
 
     sealed class Services(params object[] instances) : IServiceProvider

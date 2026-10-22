@@ -1,5 +1,6 @@
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Pipelines;
+using SpawnDev.ILGPU.ML.Preprocessing;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 
@@ -193,5 +194,91 @@ public sealed class StyleTransfer
             context.Progress(b + 1, image.Batch);
         }
         return Rgba.Unpack(frames, outW, outH);
+    }
+}
+
+[Node(Category = "image/preprocessors", DisplayName = "Pose Estimation (MoveNet)")]
+public sealed class PoseEstimation
+{
+    const string Repo = "Xenova/movenet-singlepose-lightning", File = "onnx/model.onnx";
+
+    /// <summary>
+    /// Finds the 17 body keypoints of one person (MoveNet Lightning) and draws the skeleton: on black, which is what pose ControlNets take, or over the picture.
+    /// <c>keypoints</c> lists them as <c>name x y confidence</c>, one per line, in picture pixels.
+    /// </summary>
+    public async Task<(ImageBatch Image, string Keypoints)> ExecuteAsync(ImageBatch image, NodeContext context, IServiceProvider services,
+        [Input(Min = 0, Max = 1, Step = 0.01)] float confidence = 0.3f, bool overlay = false)
+    {
+        var runtime = await GpuHelpers.RuntimeAsync(services);
+        var pipeline = await runtime.GetOrLoadAsync($"pose:{Repo}", async () =>
+        {
+            await using var stream = await runtime.ModelSource.OpenAsync(Repo, File);
+            var session = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);
+            return new PoseEstimationPipeline(session, runtime.Accelerator);
+        });
+
+        var frames = new List<int[]>();
+        var text = new System.Text.StringBuilder();
+        for (int b = 0; b < image.Batch; b++)
+        {
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var packed = Rgba.Pack(image, b);
+            var result = await pipeline.EstimateAsync(packed, image.Width, image.Height, confidence);
+            var canvas = new byte[image.Width * image.Height * 4];
+            if (overlay) Buffer.BlockCopy(packed, 0, canvas, 0, canvas.Length);
+            else for (int i = 3; i < canvas.Length; i += 4) canvas[i] = 255;
+            DrawingUtils.DrawSkeleton(canvas, image.Width, image.Height, result.Keypoints, confidence, lineThickness: Math.Max(2, image.Width / 128), pointRadius: Math.Max(3, image.Width / 96));
+            var outPacked = new int[packed.Length];
+            Buffer.BlockCopy(canvas, 0, outPacked, 0, canvas.Length);
+            frames.Add(outPacked);
+            foreach (var k in result.Keypoints)
+                text.AppendLine(FormattableString.Invariant($"{k.Name} {k.X:0.#} {k.Y:0.#} {k.Confidence:0.00}"));
+            context.Progress(b + 1, image.Batch);
+        }
+        return (Rgba.Unpack(frames, image.Width, image.Height), text.ToString().TrimEnd());
+    }
+}
+
+[Node(Category = "image/preprocessors", DisplayName = "Object Detection (YOLOv8)")]
+public sealed class ObjectDetection
+{
+    const string Repo = "salim4n/yolov8n-detect-onnx", File = "yolov8n-onnx-web/yolov8n.onnx";
+
+    /// <summary>
+    /// Finds the 80 COCO kinds of object (YOLOv8 nano) and draws a box around each. <c>detections</c> lists them as <c>label confidence x y width height</c>, one per line,
+    /// in picture pixels (the box is each object's colour; the label is in the list).
+    /// </summary>
+    public async Task<(ImageBatch Image, string Detections)> ExecuteAsync(ImageBatch image, NodeContext context, IServiceProvider services,
+        [Input(Min = 0, Max = 1, Step = 0.01)] float confidence = 0.25f)
+    {
+        var runtime = await GpuHelpers.RuntimeAsync(services);
+        var pipeline = await runtime.GetOrLoadAsync($"yolo:{Repo}", async () =>
+        {
+            await using var stream = await runtime.ModelSource.OpenAsync(Repo, File);
+            var session = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);
+            return new ObjectDetectionPipeline(session, runtime.Accelerator);
+        });
+
+        var frames = new List<int[]>();
+        var text = new System.Text.StringBuilder();
+        for (int b = 0; b < image.Batch; b++)
+        {
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var packed = Rgba.Pack(image, b);
+            var result = await pipeline.DetectAsync(packed, image.Width, image.Height, confidence);
+            var canvas = new byte[image.Width * image.Height * 4];
+            Buffer.BlockCopy(packed, 0, canvas, 0, canvas.Length);
+            foreach (var o in result.Objects)
+            {
+                var (r, g, bl) = DrawingUtils.GetClassColor(o.ClassId);
+                DrawingUtils.DrawRect(canvas, image.Width, image.Height, (int)o.X, (int)o.Y, (int)(o.X + o.Width), (int)(o.Y + o.Height), r, g, bl, Math.Max(2, image.Width / 200));
+                text.AppendLine(FormattableString.Invariant($"{o.Label} {o.Confidence:0.00} {o.X:0} {o.Y:0} {o.Width:0} {o.Height:0}"));
+            }
+            var outPacked = new int[packed.Length];
+            Buffer.BlockCopy(canvas, 0, outPacked, 0, canvas.Length);
+            frames.Add(outPacked);
+            context.Progress(b + 1, image.Batch);
+        }
+        return (Rgba.Unpack(frames, image.Width, image.Height), text.ToString().TrimEnd());
     }
 }

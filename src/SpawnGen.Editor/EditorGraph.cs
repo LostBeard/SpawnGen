@@ -23,6 +23,8 @@ public sealed class EditorNode
     public double? Width { get; set; }
     public bool Collapsed { get; set; }
     public NodeMode Mode { get; set; }
+    /// <summary>Drawing and hit-test order, higher is on top. View state: not undoable, not part of the saved workflow's meaning.</summary>
+    public int ZIndex { get; set; }
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
 
@@ -68,10 +70,20 @@ public sealed class EditorGraph
     public IEnumerable<EditorLink> LinksOf(int nodeId) => _links.Values.Where(l => l.FromNode == nodeId || l.ToNode == nodeId);
 
     // Raw mutations. They keep the id counters ahead of every id in use; callers (commands) own the undo bookkeeping.
+    int _topZ;
+
     internal void AddNodeRaw(EditorNode node)
     {
         _nodes[node.Id] = node;
         NextNodeId = Math.Max(NextNodeId, node.Id + 1);
+        if (node.ZIndex == 0) node.ZIndex = ++_topZ;
+        else _topZ = Math.Max(_topZ, node.ZIndex);
+    }
+
+    /// <summary>Puts the node above all others (a clicked node comes to the front).</summary>
+    public void BringToFront(int id)
+    {
+        if (FindNode(id) is { } n && n.ZIndex != _topZ) n.ZIndex = ++_topZ;
     }
 
     internal void RemoveNodeRaw(int id) => _nodes.Remove(id);

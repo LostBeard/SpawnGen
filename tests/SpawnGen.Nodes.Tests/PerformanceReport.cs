@@ -44,6 +44,35 @@ public class PerformanceReport
     }
 
     /// <summary>
+    /// The same latent decoded many times in a VAE-only session, each time printed with a clock stamp. If the time still drifts, it is the GPU (or
+    /// driver) changing speed over time, not the data and not the pipeline. SPAWNGEN_DECODE_COUNT sets the number of decodes (default 20).
+    /// </summary>
+    [Test, Explicit("Performance experiment; needs SPAWNGEN_MODELS and a GPU.")]
+    public async Task Vae_decode_repeated_on_one_latent()
+    {
+        var models = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(models)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+        int count = int.TryParse(Environment.GetEnvironmentVariable("SPAWNGEN_DECODE_COUNT"), out var n) ? n : 20;
+        using var runtime = new MlRuntime(new FolderModelSource(models!));
+        var acc = runtime.Accelerator;
+        await using var stream = await runtime.ModelSource.OpenAsync("", "vae_decoder/model.onnx");
+        using var vae = await SpawnDev.ILGPU.ML.InferenceSession.CreateFromOnnxStreamAsync(acc, stream,
+            inputShapes: new Dictionary<string, int[]> { ["latent_sample"] = [1, 4, 64, 64] });
+        var latent = SpawnDev.ILGPU.ML.Preprocessing.DiffusionScheduler.GenerateNoise(4, 64, 64, 1);
+        var start = DateTime.Now;
+        for (int i = 1; i <= count; i++)
+        {
+            using var buf = acc.Allocate1D(latent);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var outs = await vae.RunAsync(new Dictionary<string, SpawnDev.ILGPU.ML.Tensors.Tensor>
+                { [vae.InputNames[0]] = new SpawnDev.ILGPU.ML.Tensors.Tensor(buf.View, [1, 4, 64, 64]) });
+            await acc.SynchronizeAsync();
+            _ = outs[vae.OutputNames[0]].Data.SubView(0, 16).GetAsArray1D();
+            TestContext.Out.WriteLine($"RESULT decode {i,2} at +{(DateTime.Now - start).TotalSeconds,5:F0} s: {sw.Elapsed.TotalMilliseconds:F0} ms");
+        }
+    }
+
+    /// <summary>
     /// Is the VAE decode time a property of the latent being decoded? Samples a latent per seed (1 step), then decodes each one several times in a
     /// VAE-only session. If the time follows the latent and not the position in the run, the cause is data-dependent, not memory.
     /// </summary>

@@ -9,6 +9,8 @@ interface IEditorCommand
     void Undo(EditorGraph graph);
     /// <summary>Folds <paramref name="next"/> into this command when they are one gesture (a drag, a slider scrub); returns false when they are separate steps.</summary>
     bool TryMerge(IEditorCommand next) => false;
+    /// <summary>True for edits that arrive in bursts as one gesture (drag, scrub, resize): successive ones merge into one undo step until <c>EndGesture</c>.</summary>
+    bool IsGesture => false;
 }
 
 /// <summary>
@@ -184,7 +186,7 @@ public sealed class EditorDocument(NodeRegistry registry)
         if (_lastMergeable is not null && _undo.Count > 0 && ReferenceEquals(_undo[^1], _lastMergeable) && _lastMergeable.TryMerge(cmd))
             return;
         _undo.Add(cmd);
-        _lastMergeable = cmd is MoveNodesCommand or SetWidgetCommand ? cmd : null;
+        _lastMergeable = cmd.IsGesture ? cmd : null;
         if (_undo.Count > UndoLimit) _undo.RemoveAt(0);
     }
 
@@ -233,6 +235,7 @@ public sealed class EditorDocument(NodeRegistry registry)
     {
         double _dx = dx, _dy = dy;
 
+        public bool IsGesture => true;
         public void Do(EditorGraph g) => Shift(g, _dx, _dy);
         public void Undo(EditorGraph g) => Shift(g, -_dx, -_dy);
 
@@ -278,6 +281,7 @@ public sealed class EditorDocument(NodeRegistry registry)
     {
         object? _after = after;
 
+        public bool IsGesture => true;
         public void Do(EditorGraph g) => g.GetNode(nodeId).Widgets[name] = _after;
         public void Undo(EditorGraph g) => g.GetNode(nodeId).Widgets[name] = before;
 
@@ -294,9 +298,20 @@ public sealed class EditorDocument(NodeRegistry registry)
 
     sealed class SetNodePropertyCommand<T>(int nodeId, string property, T before, T after, Action<EditorNode, T> set) : IEditorCommand
     {
+        T _after = after;
+        public int NodeId { get; } = nodeId;
         public string Property { get; } = property;
-        public void Do(EditorGraph g) => set(g.GetNode(nodeId), after);
-        public void Undo(EditorGraph g) => set(g.GetNode(nodeId), before);
+        /// <summary>Resizing fires on every pointer move; the other properties are one-shot toggles.</summary>
+        public bool IsGesture => Property == "width";
+        public void Do(EditorGraph g) => set(g.GetNode(NodeId), _after);
+        public void Undo(EditorGraph g) => set(g.GetNode(NodeId), before);
+
+        public bool TryMerge(IEditorCommand next)
+        {
+            if (next is not SetNodePropertyCommand<T> p || p.NodeId != NodeId || p.Property != Property) return false;
+            _after = p._after;
+            return true;
+        }
     }
 
     sealed class GroupCommand(List<IEditorCommand> commands) : IEditorCommand

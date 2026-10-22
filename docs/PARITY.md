@@ -82,5 +82,5 @@ Todo, in priority order:
 |---|---|
 | C# node packs in place of Python custom nodes: DLLs in the server's custom_nodes folder are loaded at start, the Studio learns them from /object_info and runs them on the server (docs/CUSTOM_NODES.md, samples/SpawnGen.SampleNodes) | **done**; C# scripting node (code typed in the editor) and browser-side packs todo |
 | Themes, internationalisation | todo (settings dialog exists) |
-| Model manager: list installed checkpoints from the host, download on first use (desktop), cache (browser OPFS) | partial (browser streams; desktop expects files in place) |
+| Model manager: checkpoints the host knows (checkpoints.json in the models folder pointing at any Optimum-style ONNX Stable Diffusion repo, or a folder in the models folder), listed in Load Checkpoint while the server engine is selected; download on first use (desktop), cache (browser OPFS) | **partial**: ONNX checkpoints only (single-file .safetensors needs the library); no download progress / manager window yet |
 | Packaging: self-contained desktop builds, hosted static browser build (GitHub Pages) | todo |

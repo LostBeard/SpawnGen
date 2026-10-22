@@ -143,6 +143,27 @@ public sealed class NodeRegistry
         return this;
     }
 
+    /// <summary>
+    /// Gives an input of a registered node another widget (a combo with other choices: the models a server has, say) and returns the one it had, so it can be put back.
+    /// Null when the node or input is unknown.
+    /// </summary>
+    public WidgetSpec? ReplaceWidget(string nodeId, string input, WidgetSpec widget)
+    {
+        if (!_nodes.TryGetValue(nodeId, out var node) || node.Schema.FindInput(input) is not { } old) return null;
+        var schema = new NodeSchema
+        {
+            Id = node.Schema.Id, DisplayName = node.Schema.DisplayName, Category = node.Schema.Category, Description = node.Schema.Description,
+            Inputs = node.Schema.Inputs.Select(i => i.Name == input ? i with { Widget = widget } : i).ToList(),
+            Outputs = node.Schema.Outputs, IsOutputNode = node.Schema.IsOutputNode, AlwaysExecute = node.Schema.AlwaysExecute, FrontendOnly = node.Schema.FrontendOnly,
+        };
+        _nodes[nodeId] = new RegisteredNode
+        {
+            Schema = schema, IsRemote = node.IsRemote, Type = node.Type, Method = node.Method, Params = node.Params, OutputTypes = node.OutputTypes,
+            ReturnsTuple = node.ReturnsTuple, UiIndex = node.UiIndex, ResultType = node.ResultType,
+        };
+        return old.Widget;
+    }
+
     /// <summary>Registers a node known only by its schema (a server's custom node seen from the Studio); an existing node of the same id is left alone.</summary>
     public NodeRegistry AddRemote(NodeSchema schema)
     {

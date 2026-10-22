@@ -1009,19 +1009,49 @@
         {
             Server.Start();
             // The server's custom nodes are not compiled into this page: learn them from its catalogue so they can be placed and wired here (they run on the server).
-            foreach (var schema in await Server.FetchSchemasAsync())
+            _serverSchemas = await Server.FetchSchemasAsync();
+            foreach (var schema in _serverSchemas)
                 if (Registry.GetSchema(schema.Id) is null) Registry.AddRemote(schema);
             _engines.Add(Server); // a native GPU is the faster choice when there is one, so it is the default
         }
         if (Browser.WebGpuAvailable) _engines.Add(Browser);
         _engine = _engines.FirstOrDefault();
+        ApplyEngineChoices();
         await RefreshInputImagesAsync();
         await InvokeAsync(StateHasChanged);
+    }
+
+    IReadOnlyList<NodeSchema> _serverSchemas = [];
+    readonly Dictionary<(string Node, string Input), WidgetSpec> _pageChoices = new();   // the combos as this page knows them, for when the engine changes back
+
+    /// <summary>
+    /// The lists in combos (checkpoints, upscale models...) are what the engine that runs the graph has: a server may offer checkpoints this page does not know,
+    /// the browser engine only its own. Switching the engine swaps the lists.
+    /// </summary>
+    void ApplyEngineChoices()
+    {
+        foreach (var ((node, input), widget) in _pageChoices) Registry.ReplaceWidget(node, input, widget);
+        _pageChoices.Clear();
+        if (!ReferenceEquals(_engine, Server)) return;
+        foreach (var server in _serverSchemas)
+        {
+            if (Registry.GetSchema(server.Id) is not { } local) continue;
+            foreach (var input in server.Inputs)
+            {
+                if (input.Widget is not { Kind: WidgetKind.Combo } remote || local.FindInput(input.Name)?.Widget is not { Kind: WidgetKind.Combo } mine) continue;
+                var theirs = remote.ResolveOptions();
+                if (theirs.SequenceEqual(mine.ResolveOptions())) continue;
+                _pageChoices[(server.Id, input.Name)] = mine;
+                Registry.ReplaceWidget(server.Id, input.Name, mine with { Options = theirs, OptionsProvider = null });
+            }
+        }
+        _view.Invalidate();
     }
 
     async Task OnEngineChosen(ChangeEventArgs e)
     {
         _engine = _engines.FirstOrDefault(x => x.Name == e.Value?.ToString()) ?? _engine;
+        ApplyEngineChoices();
         await RefreshInputImagesAsync();
         ShowMessage($"Running on: {_engine?.Name}.");
     }

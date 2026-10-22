@@ -15,23 +15,15 @@ namespace SpawnGen.Nodes.ML;
 public sealed class MlRuntime : IDisposable
 {
     /// <summary>Checkpoint names the loader offers, mapped to the repo id on the model source.</summary>
-    public static readonly IReadOnlyDictionary<string, string> KnownCheckpoints = new Dictionary<string, string>
-    {
-        ["sd_turbo"] = "schmuell/sd-turbo-ort-web",
-        ["sd_v1-5"] = "a420/stable-diffusion-v1-5_onnx",
-    };
+    public static IReadOnlyDictionary<string, string> KnownCheckpoints => CheckpointCatalog.Repos;
 
     /// <summary>What differs between the checkpoints that share the SD layout: the width of the text encoder's output (the UNet's cross-attention input) and whether the UNet's weights live in a separate file.</summary>
     public sealed record CheckpointInfo(int TextWidth, string? UnetExternalData = null);
 
-    public static readonly IReadOnlyDictionary<string, CheckpointInfo> CheckpointDetails = new Dictionary<string, CheckpointInfo>
-    {
-        ["sd_turbo"] = new(1024),
-        ["sd_v1-5"] = new(768, "unet/model.onnx_data"),
-    };
+    public static IReadOnlyDictionary<string, CheckpointInfo> CheckpointDetails => CheckpointCatalog.Details;
 
     /// <summary>Repo id to folder name, for <see cref="FolderModelSource"/>: a models folder holds one sub-folder per checkpoint name.</summary>
-    public static IReadOnlyDictionary<string, string> RepoFolders { get; } = KnownCheckpoints.ToDictionary(kv => kv.Value, kv => kv.Key);
+    public static IReadOnlyDictionary<string, string> RepoFolders => CheckpointCatalog.RepoFolders;
 
     readonly Context _context;
     readonly Dictionary<string, Task<Checkpoint>> _checkpoints = new();

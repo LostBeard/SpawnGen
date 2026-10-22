@@ -21,6 +21,8 @@ public static class ServerApp
         var options = ServerOptions.From(builder.Configuration);
         foreach (var dir in new[] { options.ModelsPath, options.OutputPath, options.InputPath, options.TempPath, options.CustomNodesPath }) Directory.CreateDirectory(dir);
 
+        CheckpointCatalog.LoadJson(Path.Combine(options.ModelsPath, "checkpoints.json"));
+        CheckpointCatalog.ScanFolder(options.ModelsPath);
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly));
         builder.Services.AddSingleton(new OutputOptions { Directory = options.OutputPath, TempDirectory = options.TempPath });

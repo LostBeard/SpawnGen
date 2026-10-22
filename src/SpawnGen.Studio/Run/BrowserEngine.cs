@@ -101,8 +101,27 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         var accelerator = await context.CreatePreferredAcceleratorAsync()
             ?? throw new InvalidOperationException("This browser has no GPU the engine can use (it needs WebGPU).");
         // Model files stream into the origin-private file system and are reused on the next visit, never held whole in memory.
-        return new MlRuntime(new HubModelSource(_js, _http), accelerator);
+        return new MlRuntime(Hub, accelerator);
     }
+
+    HubModelSource? _hub;
+    /// <summary>The browser's model source, shared by the runtime and the model manager (it can list and delete the cache without opening the GPU).</summary>
+    HubModelSource Hub => _hub ??= new HubModelSource(_js, _http);
+
+    public async Task<SpawnGen.Runtime.ModelCacheInfo> GetModelCacheAsync()
+    {
+        try
+        {
+            var files = (await Hub.Store.ListAsync()).Select(e => new SpawnGen.Runtime.CachedModelFile(e.Key, e.SizeBytes, e.Complete)).OrderByDescending(f => f.Size).ToList();
+            var downloads = Hub.ActiveDownloads.Select(d => new SpawnGen.Runtime.ModelDownload(d.Key, d.BytesReceived, d.TotalBytes, d.BytesPerSecond)).ToList();
+            return new(files, files.Sum(f => f.Size), downloads);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Microsoft.JSInterop.JSException or NotSupportedException) { return new([], 0, []); }
+    }
+
+    public Task RemoveCachedModelAsync(string key) => Hub.Store.RemoveAsync(key);
+
+    public Task ClearModelCacheAsync() => Hub.Store.ClearAsync();
 
     // ---- IEngineClient ----
 

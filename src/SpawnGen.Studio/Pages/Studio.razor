@@ -27,6 +27,7 @@
         <span class="sep"></span>
         <button class="@(_libraryOpen ? "on" : "")" title="Node library: browse every node by category, click or drag one onto the canvas (N)" @onclick="() => { ToggleLibrary(); }">Nodes</button>
         <button class="@(_historyOpen ? "on" : "")" title="Queue and history: every run of this session with its pictures; load the workflow of a run back (H)" @onclick="ToggleHistory">History@(_history.Count > 0 ? $" ({_history.Count})" : "")</button>
+        <button class="@(_modelsOpen ? "on" : "")" title="Models: what this engine has downloaded, what is downloading, free the space" @onclick="ToggleModels">Models</button>
         <button class="@(_settingsOpen ? "on" : "")" title="Settings: how links are drawn, snap to grid, minimap" @onclick="() => { _settingsOpen = !_settingsOpen; _studio?.Focus(); }">Settings</button>
         <button title="Add a node (double-click the canvas)" @onclick="() => OpenSearch(CenterWorld(), null)">Add node</button>
         <button class="@(_settings.ShowMinimap ? "on" : "")" title="Overview of the whole graph in the corner: click or drag on it to move the view" @onclick="() => { _settings.ShowMinimap = !_settings.ShowMinimap; ApplySettings(); _studio?.Focus(); }">Map</button>
@@ -181,6 +182,46 @@
                     <input type="number" min="2" max="200" step="1" value="@_settings.GridSize" @onchange="OnGridSizeChosen" />
                 </label>
                 <label class="row"><input type="checkbox" checked="@_settings.ShowMinimap" @onchange="e => { _settings.ShowMinimap = (bool)(e.Value ?? false); ApplySettings(); }" /> Show the minimap</label>
+            </div>
+        }
+
+        @if (_modelsOpen)
+        {
+            <div class="models">
+                <div class="set-head"><span>Models on @(_engine?.Name ?? "this engine")</span><button title="Close" @onclick="() => _modelsOpen = false">&times;</button></div>
+                @if (_cache is null)
+                {
+                    <div class="hist-none">Reading...</div>
+                }
+                else
+                {
+                    @foreach (var d in _cache.Downloads)
+                    {
+                        <div class="model-download">
+                            <div>@ShortKey(d.Key)</div>
+                            <div class="bar"><div style="width:@((int)((d.Fraction ?? 0) * 100))%"></div></div>
+                            <div class="sub">@FormatBytes(d.Received) of @(d.Total > 0 ? FormatBytes(d.Total) : "?")@(d.BytesPerSecond > 0 ? $" · {FormatBytes((long)d.BytesPerSecond)}/s" : "")</div>
+                        </div>
+                    }
+                    <div class="model-total">@_cache.Files.Count files, @FormatBytes(_cache.TotalBytes)
+                        <button title="Delete every downloaded model file (they download again when needed)" disabled="@(_cache.Files.Count == 0)" @onclick="ClearModelsAsync">Delete all</button>
+                    </div>
+                    <div class="model-list">
+                        @foreach (var f in _cache.Files)
+                        {
+                            var file = f;
+                            <div class="model-file @(file.Complete ? "" : "partial")">
+                                <span class="name" title="@file.Key">@ShortKey(file.Key)</span>
+                                <span class="size">@FormatBytes(file.Size)@(file.Complete ? "" : " (partial)")</span>
+                                <button title="Delete this file" @onclick="() => RemoveModelAsync(file)">&times;</button>
+                            </div>
+                        }
+                        @if (_cache.Files.Count == 0)
+                        {
+                            <div class="hist-none">Nothing downloaded yet. Models download the first time a node needs them.</div>
+                        }
+                    </div>
+                }
             </div>
         }
 
@@ -947,6 +988,69 @@
         catch (Microsoft.JSInterop.JSException ex) { ShowMessage("The mask editor failed: " + ex.Message); }
     }
 
+    // ---- models ----
+
+    bool _modelsOpen, _polling;
+    SpawnGen.Runtime.ModelCacheInfo? _cache;
+    string? _downloadText;
+
+    static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1L << 30 => $"{bytes / (double)(1L << 30):0.0} GB",
+        >= 1L << 20 => $"{bytes / (double)(1L << 20):0} MB",
+        >= 1L << 10 => $"{bytes / 1024.0:0} KB",
+        _ => $"{bytes} B",
+    };
+
+    /// <summary>Cache keys look like hf_owner_repo_main_path_to_file; show them without the plumbing.</summary>
+    static string ShortKey(string key)
+    {
+        var k = key.StartsWith("hf_", StringComparison.Ordinal) ? key[3..] : key;
+        return k.Replace("_main_", " / ", StringComparison.Ordinal);
+    }
+
+    void ToggleModels()
+    {
+        _modelsOpen = !_modelsOpen;
+        if (_modelsOpen) { _cache = null; _ = PollModelsAsync(); }
+        _studio?.Focus();
+    }
+
+    /// <summary>Reads the model cache once a second while the panel is open or a run is going (to show downloads in the status line).</summary>
+    async Task PollModelsAsync()
+    {
+        if (_polling) return;
+        _polling = true;
+        try
+        {
+            while ((_modelsOpen || _running) && _engine is not null)
+            {
+                _cache = await _engine.GetModelCacheAsync();
+                var d = _cache.Downloads.FirstOrDefault();
+                _downloadText = d is null ? null : $"Downloading {ShortKey(d.Key)} {(d.Fraction is { } f ? $"{f * 100:0}%" : FormatBytes(d.Received))}";
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(1000);
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { }
+        finally { _polling = false; _downloadText = null; await InvokeAsync(StateHasChanged); }
+    }
+
+    async Task RemoveModelAsync(SpawnGen.Runtime.CachedModelFile file)
+    {
+        if (_engine is null) return;
+        await _engine.RemoveCachedModelAsync(file.Key);
+        _cache = await _engine.GetModelCacheAsync();
+    }
+
+    async Task ClearModelsAsync()
+    {
+        if (_engine is null) return;
+        await _engine.ClearModelCacheAsync();
+        _cache = await _engine.GetModelCacheAsync();
+        ShowMessage("Downloaded models deleted.");
+    }
+
     // ---- settings ----
 
     const string SettingsKey = "spawngen.settings";
@@ -1153,6 +1257,7 @@
         var where = _executingTitle is null ? "Queued" : $"Running {_executingTitle}";
         if (_visuals.ProgressMax > 0) where += $" {_visuals.ProgressValue:0}/{_visuals.ProgressMax:0}";
         else if (_statusText is not null) where += $": {_statusText}";
+        if (_downloadText is not null) where += $" ({_downloadText})";
         return where + " · ";
     }
 
@@ -1222,6 +1327,7 @@
                 break;
             case "execution_start":
                 StartHistoryEntry((string?)data["prompt_id"]);
+                _ = PollModelsAsync();
                 _visuals.BeginRun();
                 _running = true;
                 _statusText = null;

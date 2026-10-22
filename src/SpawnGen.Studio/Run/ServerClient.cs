@@ -124,6 +124,16 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
         return (string?)(await response.Content.ReadFromJsonAsync<JsonObject>(_stop.Token))?["name"];
     }
 
+    public async Task<SpawnGen.Runtime.ModelCacheInfo> GetModelCacheAsync()
+    {
+        try { return await http.GetFromJsonAsync<SpawnGen.Runtime.ModelCacheInfo>("models/cache", _stop.Token) ?? new([], 0, []); }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { return new([], 0, []); }
+    }
+
+    public Task RemoveCachedModelAsync(string key) => http.DeleteAsync("models/cache/" + Uri.EscapeDataString(key), _stop.Token);
+
+    public Task ClearModelCacheAsync() => http.PostAsync("models/cache/clear", null, _stop.Token);
+
     /// <summary>The Load Image choices the server offers, read from its node catalogue (<c>/object_info</c>).</summary>
     public async Task<IReadOnlyList<string>> ListInputImagesAsync()
     {

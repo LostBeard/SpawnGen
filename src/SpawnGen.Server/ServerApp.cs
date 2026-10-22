@@ -28,7 +28,8 @@ public static class ServerApp
         builder.Services.AddSingleton(new OutputOptions { Directory = options.OutputPath, TempDirectory = options.TempPath });
         InputFiles.Directory = options.InputPath;
         // The GPU is only touched when the first ML node runs (resolving this singleton opens the accelerator).
-        builder.Services.AddSingleton(_ => new MlRuntime(new DesktopModelSource(options.ModelsPath, MlRuntime.RepoFolders)));
+        builder.Services.AddSingleton(_ => new DesktopModelSource(options.ModelsPath, MlRuntime.RepoFolders));
+        builder.Services.AddSingleton(sp => new MlRuntime(sp.GetRequiredService<DesktopModelSource>()));
         builder.Services.AddSingleton<EventHub>();
         builder.Services.AddSingleton(sp => new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>()));
         configure?.Invoke(builder);
@@ -72,6 +73,24 @@ public static class ServerApp
             "upscale_models" => SpawnGen.Nodes.ML.UpscaleModelLoader.Models(),
             _ => Array.Empty<string>(),
         }));
+        // The model manager: what downloaded models take on disk, what is downloading now, and removing files.
+        app.MapGet("/models/cache", async () =>
+        {
+            var source = app.Services.GetRequiredService<DesktopModelSource>();
+            var files = (await source.Remote.Store.ListAsync()).Select(e => new SpawnGen.Runtime.CachedModelFile(e.Key, e.SizeBytes, e.Complete)).OrderByDescending(f => f.Size).ToList();
+            var downloads = source.Remote.ActiveDownloads.Select(d => new SpawnGen.Runtime.ModelDownload(d.Key, d.BytesReceived, d.TotalBytes, d.BytesPerSecond)).ToList();
+            return Results.Json(new SpawnGen.Runtime.ModelCacheInfo(files, files.Sum(f => f.Size), downloads));
+        });
+        app.MapDelete("/models/cache/{key}", async (string key) =>
+        {
+            await app.Services.GetRequiredService<DesktopModelSource>().Remote.Store.RemoveAsync(key);
+            return Results.Ok();
+        });
+        app.MapPost("/models/cache/clear", async () =>
+        {
+            await app.Services.GetRequiredService<DesktopModelSource>().Remote.Store.ClearAsync();
+            return Results.Ok();
+        });
         app.MapGet("/embeddings", () => Results.Json(Array.Empty<string>()));
         app.MapGet("/extensions", () => Results.Json(Array.Empty<string>()));
         app.MapPost("/free", () => Results.Ok()); // models stay loaded: this server frees them when it stops

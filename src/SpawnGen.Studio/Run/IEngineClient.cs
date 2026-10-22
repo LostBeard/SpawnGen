@@ -29,6 +29,11 @@ public interface IEngineClient
     /// <summary>Makes a picture available to Load Image nodes. Returns the name it is stored under.</summary>
     Task<string?> UploadImageAsync(string name, byte[] png);
 
+    /// <summary>The model files this engine has downloaded and the downloads in progress (the model manager).</summary>
+    Task<SpawnGen.Runtime.ModelCacheInfo> GetModelCacheAsync();
+    Task RemoveCachedModelAsync(string key);
+    Task ClearModelCacheAsync();
+
     /// <summary>The picture names a Load Image node can pick from on this engine.</summary>
     Task<IReadOnlyList<string>> ListInputImagesAsync();
 }

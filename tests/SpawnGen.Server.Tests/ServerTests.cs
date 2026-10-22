@@ -317,6 +317,28 @@ public class ServerTests
     }
 
     [Test]
+    public async Task The_model_manager_lists_deletes_and_clears_downloaded_files()
+    {
+        var hub = Path.Combine(_dir, "models", "hub");
+        Directory.CreateDirectory(hub);
+        File.WriteAllBytes(Path.Combine(hub, "hf_owner_repo_main_big.bin"), new byte[3000]);
+        File.WriteAllBytes(Path.Combine(hub, "hf_owner_repo_main_small.bin"), new byte[100]);
+
+        var info = JsonNode.Parse(await _http.GetStringAsync("/models/cache"))!;
+        var files = info["files"]!.AsArray();
+        Assert.That(files.Select(f => (string?)f!["key"]), Is.EqualTo(new[] { "hf_owner_repo_main_big.bin", "hf_owner_repo_main_small.bin" }), "biggest first");
+        Assert.That((long)files[0]!["size"]!, Is.EqualTo(3000));
+        Assert.That((long)info["totalBytes"]!, Is.EqualTo(3100));
+        Assert.That(info["downloads"]!.AsArray(), Is.Empty);
+
+        Assert.That((await _http.DeleteAsync("/models/cache/hf_owner_repo_main_big.bin")).IsSuccessStatusCode, Is.True);
+        Assert.That(File.Exists(Path.Combine(hub, "hf_owner_repo_main_big.bin")), Is.False);
+        Assert.That(File.Exists(Path.Combine(hub, "hf_owner_repo_main_small.bin")), Is.True);
+        Assert.That((await _http.PostAsync("/models/cache/clear", null)).IsSuccessStatusCode, Is.True);
+        Assert.That(JsonNode.Parse(await _http.GetStringAsync("/models/cache"))!["files"]!.AsArray(), Is.Empty);
+    }
+
+    [Test]
     public async Task Progress_messages_from_a_node_reach_the_client()
     {
         await ConnectAsync();

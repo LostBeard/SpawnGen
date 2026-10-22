@@ -35,6 +35,14 @@ public sealed class Checkpoint : IDisposable
     }
 
     public string Name { get; }
+
+    Task<float[]>? _emptyPrompt;
+
+    /// <summary>The text encoder's output for the empty prompt, computed once by <paramref name="compute"/>: the baseline weighted prompts are measured against.</summary>
+    public Task<float[]> EmptyPromptEmbeddingsAsync(Func<Task<float[]>> compute)
+    {
+        lock (_encoderGate) return _emptyPrompt ??= compute();
+    }
     public SpawnDev.ILGPU.ML.InferenceSession TextEncoder { get; }
     public SpawnDev.ILGPU.ML.InferenceSession Unet { get; }
     public SpawnDev.ILGPU.ML.InferenceSession Vae { get; }

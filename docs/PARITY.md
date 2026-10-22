@@ -63,7 +63,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 ## 4. Node library (host-side nodes, SpawnGen's to write)
 
-Done: Load Image (IMAGE + MASK from the alpha, PNG and JPEG incl. progressive and EXIF orientation) and Load Image (as Mask), Save/Preview Image, Empty Latent, CLIP Text Encode, KSampler and KSampler (Advanced) with 11 samplers (euler, euler_ancestral, heun, dpm_2, dpm_2_ancestral, lms, dpmpp_2s_ancestral, dpmpp_2m, dpmpp_2m_sde, ddim, lcm) and 6 schedulers (normal, simple, sgm_uniform, ddim_uniform, karras, exponential), CLIP Text Encode with the conditioning nodes, VAE Encode/Decode, Load Checkpoint; and 40 host-side nodes (resampling, image ops, masks, latent ops, primitives, tested against hand-computed values).
+Done: Load Image (IMAGE + MASK from the alpha, PNG and JPEG incl. progressive and EXIF orientation) and Load Image (as Mask), Save/Preview Image, Empty Latent, CLIP Text Encode, KSampler and KSampler (Advanced) with 11 samplers (euler, euler_ancestral, heun, dpm_2, dpm_2_ancestral, lms, dpmpp_2s_ancestral, dpmpp_2m, dpmpp_2m_sde, ddim, lcm) and 6 schedulers (normal, simple, sgm_uniform, ddim_uniform, karras, exponential), CLIP Text Encode with ComfyUI prompt emphasis ((word:1.3), (word), nested, escaped brackets; verified by eye: a stronger green weight gives a greener apple) and the conditioning nodes, VAE Encode/Decode, Load Checkpoint; and 40 host-side nodes (resampling, image ops, masks, latent ops, primitives, tested against hand-computed values).
 
 Todo, in priority order:
 1. **Core image** (done: scale x3, crop, pad for outpaint, blend, composite, invert, batch, from-batch, repeat, blur, sharpen, empty image, flip, rotate, quantize, morphology): color adjust, WebP loading, still todo.

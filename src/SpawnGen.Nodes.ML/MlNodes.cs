@@ -37,12 +37,40 @@ public sealed class CheckpointLoaderSimple
 [Node(Category = "conditioning", DisplayName = "CLIP Text Encode (Prompt)")]
 public sealed class CLIPTextEncode
 {
+    /// <summary>
+    /// Encodes the prompt. Emphasis works as in ComfyUI: <c>(text:1.3)</c>, <c>(text)</c> = 1.1, nested brackets multiply, <c>(</c> and <c>)</c> are literal brackets.
+    /// </summary>
     public async Task<Conditioning> ExecuteAsync(
         [Input(Multiline = true)] string text, ClipHandle clip, IServiceProvider services)
     {
         var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
         var ckpt = clip.Checkpoint;
-        var ids = ckpt.Tokenizer.EncodeCLIP(text, Checkpoint.TokenCount);
+        if (!PromptWeights.HasEmphasis(text))
+        {
+            var ids = ckpt.Tokenizer.EncodeCLIP(text, Checkpoint.TokenCount);
+            var (plain, shape) = await EncodeAsync(acc, ckpt, ids);
+            return new Conditioning(plain, shape);
+        }
+
+        // Weighted prompt: tokenise each piece, encode the lot, then move each weighted token's row away from the empty prompt's by its weight.
+        var (weightedIds, weights) = PromptWeights.Tokens(text, piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount);
+        var (z, zShape) = await EncodeAsync(acc, ckpt, weightedIds);
+        var empty = await ckpt.EmptyPromptEmbeddingsAsync(async () => (await EncodeAsync(acc, ckpt, ckpt.Tokenizer.EncodeCLIP("", Checkpoint.TokenCount))).Embeddings);
+        PromptWeights.Apply(z, empty, weights, zShape[^1]);
+        return new Conditioning(z, zShape);
+    }
+
+    /// <summary>The tokens of a piece of text without the start and end markers or padding.</summary>
+    static int[] PlainTokens(Checkpoint ckpt, string piece)
+    {
+        var ids = ckpt.Tokenizer.EncodeCLIP(piece, Math.Max(8, piece.Length + 3));
+        var tokens = new List<int>();
+        for (int i = 1; i < ids.Length && ids[i] != 49407; i++) tokens.Add(ids[i]);
+        return [.. tokens];
+    }
+
+    static async Task<(float[] Embeddings, int[] Shape)> EncodeAsync(Accelerator acc, Checkpoint ckpt, int[] ids)
+    {
         var (buf, tokens) = GpuHelpers.Upload(acc, ids.Select(t => (float)t).ToArray(), [1, Checkpoint.TokenCount]);
         using (buf)
         {
@@ -51,8 +79,8 @@ public sealed class CLIPTextEncode
                 [ckpt.TextEncoder.InputNames[0]] = tokens,
             });
             var embeddings = outputs[ckpt.TextEncoder.OutputNames[0]];
-            int count = embeddings.Shape.Aggregate(1, (a, b) => a * b);
-            return new Conditioning(await GpuHelpers.ReadAsync(acc, embeddings, count), embeddings.Shape.ToArray());
+            int count = embeddings.Shape.Aggregate(1, (x, y) => x * y);
+            return (await GpuHelpers.ReadAsync(acc, embeddings, count), embeddings.Shape.ToArray());
         }
     }
 }

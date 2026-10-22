@@ -251,6 +251,25 @@ public class VisionTests
         Assert.That(CaptureText.Last, Does.Contain("a photo of a bus"));
     }
 
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU, SPAWNGEN_TEST_PICTURE (a photo of one object) and the network on first use (TRELLIS.2 and DINOv3, about 10 GB). Open the saved .glb in the Studio viewer (STUDIO_GLB=... node drive-glb.js).")]
+    public async Task Image_to_3D_makes_a_glb_of_the_object()
+    {
+        var files = await RunAsync("trellis", () =>
+        {
+            var g = new PromptGraph();
+            g.Add("1", "LoadImage", ("image", "in.png"));
+            g.Add("2", "TrellisImageTo3D", ("image", PromptInput.Link("1")), ("seed", 42), ("max_faces", 100000), ("texture_size", "1024"), ("resolution", "512"));
+            g.Add("3", "Save3DModel", ("model", PromptInput.Link("2")), ("filename_prefix", "trellis"));
+            return g;
+        }, TestPicture(512), "glb");
+        Assert.That(files, Has.Length.EqualTo(1));
+        var bytes = File.ReadAllBytes(files[0]);
+        TestContext.Out.WriteLine($"{bytes.Length / 1024} KB");
+        Assert.That(System.Text.Encoding.ASCII.GetString(bytes, 0, 4), Is.EqualTo("glTF"));
+        Assert.That(bytes.Length, Is.GreaterThan(100_000));
+        File.Copy(files[0], Path.Combine(Path.GetTempPath(), "spawngen-trellis-last.glb"), true);
+    }
+
     sealed class Services(params object[] instances) : IServiceProvider
     {
         public object? GetService(Type serviceType) => instances.FirstOrDefault(serviceType.IsInstanceOfType);

@@ -57,7 +57,7 @@
                 <option>No engine available</option>
             }
         </select>
-        <label class="button" title="Upload a PNG or JPEG for Load Image nodes, or a WAV for Load Audio">Upload<InputFile OnChange="OnUploadChosen" accept=".png,.jpg,.jpeg,.wav" hidden /></label>
+        <label class="button" title="Upload a PNG or JPEG for Load Image nodes, a WAV for Load Audio, or a .latent for Load Latent">Upload<InputFile OnChange="OnUploadChosen" accept=".png,.jpg,.jpeg,.wav,.latent" hidden /></label>
         <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
         <span class="status">@RunStatus()@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
     </div>
@@ -145,6 +145,11 @@
                             @foreach (var sound in run.Audio)
                             {
                                 <audio controls src="@sound"></audio>
+                            }
+                            @foreach (var model in run.Models)
+                            {
+                                var m3d = model;
+                                <div class="hist-actions"><button title="Open the model in the 3D viewer" @onclick="() => View3D(m3d)">View 3D model</button></div>
                             }
                             <div class="hist-thumbs">
                                 @foreach (var url in run.Urls)
@@ -857,6 +862,8 @@
                 items.Add(new("Colour: default", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, null, null); _doc.EndGesture(); }));
             if (node.Previews.Count > 0)
                 items.Add(new("Save picture", () => _ = SavePicturesAsync(node)));
+            if (node.ResultModels.Count > 0)
+                items.Add(new("View 3D model", () => View3D(node.ResultModels[0])));
             if (!node.Pinned) items.Add(new(node.Collapsed ? "Expand" : "Collapse", () => { _doc.SetCollapsed(hit.NodeId, !node.Collapsed); _doc.EndGesture(); }));
             items.Add(new(node.Pinned ? "Unpin  (P)" : "Pin  (P)", () => _view.TogglePin()));
             items.Add(new(node.Mode == NodeMode.Never ? "Unmute" : "Mute  (Ctrl+M)", () => _view.Key("m", Modifiers.Ctrl)));
@@ -916,6 +923,7 @@
         public required string Workflow { get; init; }
         public List<string> Urls { get; } = [];
         public List<string> Audio { get; } = [];
+        public List<string> Models { get; } = [];
         public double? Seconds { get; set; }
         public string State { get; set; } = "running";
         public string? Error { get; set; }
@@ -957,7 +965,7 @@
         if (_history.FirstOrDefault(e => e.State == "running") is not { } entry) return;
         entry.State = state;
         entry.Error = error;
-        if (state == "done" && entry.Urls.Count == 0 && entry.Audio.Count == 0) entry.Note = "No new pictures: every output was cached from an earlier run (nothing changed).";
+        if (state == "done" && entry.Urls.Count == 0 && entry.Audio.Count == 0 && entry.Models.Count == 0) entry.Note = "No new pictures: every output was cached from an earlier run (nothing changed).";
         entry.Seconds = (DateTime.Now - entry.Started).TotalSeconds;
     }
 
@@ -1244,7 +1252,7 @@
             await stream.CopyToAsync(memory);
             var stored = await _engine.UploadImageAsync(e.File.Name, memory.ToArray());
             await RefreshInputImagesAsync();
-            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG and JPEG pictures and WAV sound can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image node.");
+            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG and JPEG pictures, WAV sound and .latent files can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image, Load Audio or Load Latent node.");
         }
         catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
     }
@@ -1318,7 +1326,12 @@
         string Url(JsonObject f) => _engine.ViewUrl((string)f["filename"]!, (string?)f["subfolder"], (string?)f["type"]);
         if (data["output"]?["images"] is JsonArray images) run.Urls.AddRange(images.OfType<JsonObject>().Where(i => (string?)i["type"] == "output").Select(Url));
         if (AudioOf(data) is { } clips) run.Audio.AddRange(clips.OfType<JsonObject>().Select(Url));
+        if (ModelsOf(data) is { } models) run.Models.AddRange(models.OfType<JsonObject>().Select(Url));
     }
+
+    static JsonArray? ModelsOf(JsonObject data) => data["output"]?["3d"] as JsonArray;
+
+    void View3D(string url) => _ = Interop.InvokeVoidAsync("spawngenView3D", url, "3D model");
 
     static JsonArray? AudioOf(JsonObject data) => data["output"]?["audio"] as JsonArray;
 
@@ -1363,6 +1376,10 @@
                 break;
             case "executed" when node is { } audioId && _doc.Graph.FindNode(audioId) is { } audible && AudioOf(data) is { } clips:
                 audible.ResultText = string.Join("\n", clips.OfType<JsonObject>().Select(c => "♪ " + (string?)c["filename"]));
+                break;
+            case "executed" when node is { } modelId && _doc.Graph.FindNode(modelId) is { } modelled && ModelsOf(data) is { } models:
+                modelled.ResultModels = models.OfType<JsonObject>().Select(m => _engine!.ViewUrl((string)m["filename"]!, (string?)m["subfolder"], (string?)m["type"])).ToList();
+                modelled.ResultText = string.Join("\n", models.OfType<JsonObject>().Select(m => "▣ "+ (string?)m["filename"] + " (open it from the right-click menu)"));
                 break;
             case "executed" when node is { } textId && _doc.Graph.FindNode(textId) is { } texted && TextOf(data) is { } texts:
                 texted.ResultText = string.Join("\n", texts.Select(t => (string?)t ?? ""));

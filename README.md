@@ -21,7 +21,8 @@ How close to ComfyUI it is, feature by feature, is in [docs/PARITY.md](docs/PARI
 
 - **Image generation**: SD-Turbo, Stable Diffusion 1.5 (any Optimum-style ONNX export, listed in `checkpoints.json`), FLUX.2 Klein 4B and FLUX 3 Klein 5.6B (text to image and editing from reference pictures). 11 samplers, 6 schedulers,
   KSampler (Advanced), SamplerCustom and the sigma nodes, conditioning nodes (area, mask, combine ...), inpainting, latent upscale, prompt emphasis `(word:1.3)`, latent preview while sampling.
-- **Vision**: upscale, background removal, depth (Depth Anything V2), style transfer, pose (MoveNet), object detection (YOLOv8n).
+- **Vision**: upscale, background removal, depth (Depth Anything V2), style transfer, pose (MoveNet), object detection (YOLOv8n), image classification (MobileNetV2), CLIP label matching.
+- **3D**: Image to 3D with TRELLIS.2 (a picture becomes a textured .glb; desktop engines, about 10 GB of weights the first time), Save / Preview 3D Model, and a built-in 3D viewer.
 - **Audio and text**: Kokoro text to speech, Parakeet speech to text, local LLM text generation (small GGUF chat models) whose output can feed a prompt.
 - **Over 100 nodes in all, most of them plain host code**: image ops, masks, latents, strings, math, primitives, Reroute / Note / groups, Preview Any.
 - **Editor**: node library sidebar, search, undo/redo, copy/paste, groups, colours, workflow tabs with autosave, minimap, settings (link style, snap to grid), history panel with sound and picture players,

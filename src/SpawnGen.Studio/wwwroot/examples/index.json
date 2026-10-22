@@ -68,5 +68,10 @@
     "name": "Speak and listen (Kokoro, then Parakeet)",
     "file": "speech.json",
     "note": "Text to speech, then the speech back to text (the listener needs a desktop GPU)."
+  },
+  {
+    "name": "Image to 3D model (TRELLIS.2)",
+    "file": "image-to-3d.json",
+    "note": "Upload a picture of one object, pick it in Load Image, Queue; right-click Save 3D Model > View 3D model. About 10 GB the first time."
   }
 ]

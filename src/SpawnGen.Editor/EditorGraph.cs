@@ -34,6 +34,8 @@ public sealed class EditorNode
     public IReadOnlyList<NodePreview> Previews { get; set; } = [];
     /// <summary>Result text shown inside the node (Preview Any): view state like <see cref="Previews"/>.</summary>
     public string? ResultText { get; set; }
+    /// <summary>URLs of 3D models this node produced (Save / Preview 3D Model): view state like <see cref="Previews"/>, opened in the viewer from the context menu.</summary>
+    public IReadOnlyList<string> ResultModels { get; set; } = [];
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
 

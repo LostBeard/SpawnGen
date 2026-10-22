@@ -9,7 +9,7 @@ using SpawnGen.Nodes.Core;
 
 namespace SpawnGen.Nodes.ML;
 
-internal sealed record SamplingSettings(long Seed, float Cfg, string Sampler, bool AddNoise = true);
+internal sealed record SamplingSettings(long Seed, float Cfg, string Sampler, bool AddNoise = true, float RescaleCfg = 0f);
 
 /// <summary>
 /// One sampling run over a latent batch: noise it to the first sigma, then step down the given sigmas with the chosen sampler, asking the UNet for
@@ -82,7 +82,8 @@ internal static class SamplingCore
                         for (int i = 0; i < perImage; i++) eps[i] = uncond[i] + settings.Cfg * (cond[i] - uncond[i]);
                     }
                     var denoised = new float[perImage];
-                    for (int i = 0; i < perImage; i++) denoised[i] = sample[i] - sigma * eps[i];
+                    if (settings.RescaleCfg > 0f && uncondEps is not null) RescaledDenoised(sample, cond, uncondEps, settings.Cfg, sigma, settings.RescaleCfg, denoised);
+                    else for (int i = 0; i < perImage; i++) denoised[i] = sample[i] - sigma * eps[i];
                     if (Samplers.UsesUncond(settings.Sampler))
                     {
                         // CFG++ samplers re-noise along the unconditional direction.
@@ -119,6 +120,39 @@ internal static class SamplingCore
         {
             foreach (var (buf, _) in uploaded) buf.Dispose();
         }
+    }
+
+    /// <summary>
+    /// ComfyUI's RescaleCFG (arXiv 2305.08891, "Common Diffusion Noise Schedules and Sample Steps are Flawed"): the guided prediction is formed in v-space, rescaled to
+    /// the standard deviation of the prompt's own prediction and blended back by <paramref name="multiplier"/> (0 = plain CFG), which tames the over-saturation of a high cfg.
+    /// <paramref name="sample"/> is the noisy sample, the two predictions are the UNet's eps outputs; the result is the denoised estimate written to <paramref name="denoised"/>.
+    /// </summary>
+    internal static void RescaledDenoised(float[] sample, float[] epsCond, float[] epsUncond, float cfg, float sigma, float multiplier, float[] denoised)
+    {
+        int n = sample.Length;
+        double k = Math.Sqrt((double)sigma * sigma + 1.0), scaledInput = 1.0 / ((double)sigma * sigma + 1.0);
+        var cond = new double[n];
+        var guided = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            double b = sample[i] / (sigma * k);          // the part of v that comes from the sample itself
+            double vc = b - k * epsCond[i], vu = b - k * epsUncond[i];
+            cond[i] = vc;
+            guided[i] = vu + cfg * (vc - vu);
+        }
+        double ratio = Std(cond) / Math.Max(Std(guided), 1e-12);
+        for (int i = 0; i < n; i++)
+        {
+            double final = multiplier * (guided[i] * ratio) + (1.0 - multiplier) * guided[i];
+            denoised[i] = (float)(sample[i] - (sample[i] * scaledInput - final * sigma / k));
+        }
+    }
+
+    static double Std(double[] v)
+    {
+        double mean = v.Average(), sum = 0;
+        foreach (var x in v) sum += (x - mean) * (x - mean);
+        return Math.Sqrt(sum / Math.Max(1, v.Length - 1));
     }
 
     /// <summary>

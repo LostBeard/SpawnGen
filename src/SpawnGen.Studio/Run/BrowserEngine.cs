@@ -162,7 +162,8 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     /// <summary>Results live in memory here, so the picture itself is the URL (a data URL).</summary>
     public string ViewUrl(string filename, string? subfolder, string? type) =>
         (type == "input" ? _inputs.ReadAsync(filename).GetAwaiter().GetResult() : _results.Get(type ?? "output", filename, subfolder)) is { } bytes
-            ? (filename.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? "data:audio/wav;base64," : "data:image/png;base64,") + Convert.ToBase64String(bytes)
+            ? (filename.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? "data:audio/wav;base64,"
+                : filename.EndsWith(".glb", StringComparison.OrdinalIgnoreCase) ? "data:model/gltf-binary;base64," : "data:image/png;base64,") + Convert.ToBase64String(bytes)
             : "";
 
     public async Task<string?> UploadImageAsync(string name, byte[] png) => await _inputs.SaveAsync(Path.GetFileName(name), png);

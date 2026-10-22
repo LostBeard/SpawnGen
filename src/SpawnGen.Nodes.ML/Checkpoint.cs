@@ -128,7 +128,12 @@ public sealed class Checkpoint : IDisposable
 
 /// <summary>The denoiser (UNet) of a loaded checkpoint, with the sampling math constants.</summary>
 [Socket("MODEL")]
-public sealed class ModelHandle(Checkpoint checkpoint) { public Checkpoint Checkpoint { get; } = checkpoint; }
+public sealed class ModelHandle(Checkpoint checkpoint)
+{
+    public Checkpoint Checkpoint { get; } = checkpoint;
+    /// <summary>RescaleCFG's multiplier (0 = off): sampling rescales the guided prediction towards the spread of the prompt's own (see <see cref="SamplingCore.RescaledDenoised"/>).</summary>
+    public float RescaleCfg { get; init; }
+}
 
 /// <summary>The CLIP text encoder and tokenizer of a loaded checkpoint.</summary>
 [Socket("CLIP")]

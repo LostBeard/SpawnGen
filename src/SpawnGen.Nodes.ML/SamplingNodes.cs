@@ -23,8 +23,19 @@ public sealed class KSampler
         if (denoise <= 0f) return latentImage; // nothing to denoise: the input passes through
         var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
         var sigmas = model.Checkpoint.Sigmas.ScheduleForDenoise(scheduler, steps, denoise);
-        return await SamplingCore.RunAsync(acc, model.Checkpoint, positive, negative, latentImage, sigmas, new SamplingSettings(seed, cfg, samplerName), context);
+        return await SamplingCore.RunAsync(acc, model.Checkpoint, positive, negative, latentImage, sigmas, new SamplingSettings(seed, cfg, samplerName, RescaleCfg: model.RescaleCfg), context);
     }
+}
+
+[Node(Category = "advanced/model", DisplayName = "RescaleCFG")]
+public sealed class RescaleCFG
+{
+    /// <summary>
+    /// Lets a high cfg keep colours and contrast: the guided prediction is rescaled towards the spread of the prompt's own prediction. <c>multiplier</c> 0 does nothing,
+    /// 1 rescales fully; ComfyUI's default is 0.7. Connect it between the checkpoint and the sampler.
+    /// </summary>
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 1, Step = 0.01)] float multiplier = 0.7f) =>
+        new(model.Checkpoint) { RescaleCfg = multiplier };
 }
 
 [Node(Category = "sampling", DisplayName = "KSampler (Advanced)")]
@@ -56,7 +67,7 @@ public sealed class KSamplerAdvanced
         var sigmas = Slice(model.Checkpoint.Sigmas.Schedule(scheduler, steps), startAtStep, endAtStep, returnWithLeftoverNoise == "disable");
         if (sigmas.Length < 2) return latentImage; // the start step is past the end of the schedule
         return await SamplingCore.RunAsync(acc, model.Checkpoint, positive, negative, latentImage, sigmas,
-            new SamplingSettings(noiseSeed, cfg, samplerName, AddNoise: addNoise == "enable"), context);
+            new SamplingSettings(noiseSeed, cfg, samplerName, AddNoise: addNoise == "enable", RescaleCfg: model.RescaleCfg), context);
     }
 
     /// <summary>The part of a schedule a run covers: sigmas[start .. end]; unless leftover noise is wanted, the last one is set to 0 so the run ends clean.</summary>

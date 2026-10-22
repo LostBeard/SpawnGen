@@ -114,3 +114,12 @@ body { background: #202020; color: #ddd; font-family: system-ui, "Segoe UI", san
 .models .model-download .bar { height: 6px; background: #1a1a1a; border-radius: 3px; margin: 4px 0; overflow: hidden; }
 .models .model-download .bar > div { height: 100%; background: #4f8fe8; }
 .models .model-download .sub { color: #999; }
+.glbviewer { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #1e1e20; }
+.glbviewer .gv-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: #262626; border-bottom: 1px solid #3a3a3a; color: #ddd; font-size: 13px; }
+.glbviewer .gv-title { font-weight: 600; color: #fff; }
+.glbviewer .gv-hint { color: #8a8a8a; font-size: 12px; }
+.glbviewer .gv-spacer { flex: 1; }
+.glbviewer button { background: #3a3a3a; color: #ddd; border: 1px solid #4a4a4a; border-radius: 4px; padding: 3px 12px; cursor: pointer; font: inherit; }
+.glbviewer .gv-canvas { flex: 1; width: 100%; min-height: 0; touch-action: none; cursor: grab; }
+.glbviewer .gv-status { position: absolute; left: 12px; bottom: 10px; color: #8a8a8a; font-size: 12px; pointer-events: none; }
+.glbviewer .gv-status.error { color: #e05555; font-size: 14px; }

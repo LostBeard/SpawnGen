@@ -24,7 +24,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await page.click('button:has-text("Examples")');
   await page.waitForSelector('.menu');
   const items = await page.locator('.menu li').allTextContents();
-  check('the menu lists the starter and the examples', items.length === 15 && /Starter/.test(items[0]), `${items.length} items`);
+  check('the menu lists the starter and the examples', items.length === 16 && /Starter/.test(items[0]), `${items.length} items`);
 
   const wanted = [['Hires fix', 9], ['LLM writes the prompt', 9], ['Speak and listen', 4], ['FLUX.2 Klein picture edit', 3], ['Remove the background', 8]];
   for (const [label, count] of wanted) {

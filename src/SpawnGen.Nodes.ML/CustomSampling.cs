@@ -171,7 +171,7 @@ public sealed class SamplerCustom
         if (sigmas.Values.Length < 2) return (latentImage, latentImage);
         var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
         return await SamplingCore.RunWithDenoisedAsync(acc, model.Checkpoint, positive, negative, latentImage, sigmas.Values,
-            new SamplingSettings(noiseSeed, cfg, sampler.Name, AddNoise: addNoise), context);
+            new SamplingSettings(noiseSeed, cfg, sampler.Name, AddNoise: addNoise, RescaleCfg: model.RescaleCfg), context);
     }
 }
 
@@ -222,7 +222,7 @@ public sealed class SamplerCustomAdvanced
         if (sigmas.Values.Length < 2) return (latentImage, latentImage);
         var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
         return await SamplingCore.RunWithDenoisedAsync(acc, guider.Model.Checkpoint, guider.Positive, guider.Negative, latentImage, sigmas.Values,
-            new SamplingSettings(noise.Seed, guider.Cfg, sampler.Name, AddNoise: noise.Enabled), context);
+            new SamplingSettings(noise.Seed, guider.Cfg, sampler.Name, AddNoise: noise.Enabled, RescaleCfg: guider.Model.RescaleCfg), context);
     }
 }
 

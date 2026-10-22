@@ -57,6 +57,44 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.LineWidth = 1 / vp.Scale;
             ctx.StrokeRect(box.X, box.Y, box.Width, box.Height);
         }
+
+        if (view.MinimapVisible) DrawMinimap(ctx, geometries.Select(g => (g.Node, g.Geo)).ToList(), cssWidth, cssHeight, pixelRatio);
+    }
+
+    /// <summary>The overview in the bottom right corner: groups, nodes (the selected ones lit) and the rectangle of what the canvas shows now.</summary>
+    void DrawMinimap(CanvasRenderingContext2D ctx, List<(EditorNode Node, NodeGeometry Geo)> geometries, double cssWidth, double cssHeight, double pixelRatio)
+    {
+        ctx.SetTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        var r = view.MinimapScreenRect;
+        var (scale, _) = view.MinimapMapping();
+        RoundRect(ctx, r, 6);
+        ctx.FillStyle = "rgba(20,20,20,0.96)";
+        ctx.Fill();
+        ctx.StrokeStyle = "#555";
+        ctx.LineWidth = 1;
+        ctx.Stroke();
+        ctx.Save();
+        RoundRect(ctx, r, 6);
+        ctx.Clip();
+        foreach (var g in view.Document.Graph.Groups)
+        {
+            var a = view.WorldToMinimap(new Point(g.X, g.Y));
+            ctx.FillStyle = "rgba(120,150,190,0.25)";
+            ctx.FillRect(a.X, a.Y, g.Width * scale, g.Height * scale);
+        }
+        var selected = view.SelectedNodes;
+        foreach (var (node, geo) in geometries)
+        {
+            var a = view.WorldToMinimap(new Point(geo.Bounds.X, geo.Bounds.Y));
+            ctx.FillStyle = selected.Contains(node.Id) ? "#4f8fe8" : "#7a7a7a";
+            ctx.FillRect(a.X, a.Y, Math.Max(2, geo.Bounds.Width * scale), Math.Max(2, geo.Bounds.Height * scale));
+        }
+        var vis = view.Viewport.VisibleWorld(cssWidth, cssHeight);
+        var v = view.WorldToMinimap(new Point(vis.X, vis.Y));
+        ctx.StrokeStyle = "#f0f0f0";
+        ctx.LineWidth = 1.5;
+        ctx.StrokeRect(v.X, v.Y, vis.Width * scale, vis.Height * scale);
+        ctx.Restore();
     }
 
     // ---- groups ----

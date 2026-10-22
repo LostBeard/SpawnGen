@@ -32,7 +32,7 @@ public sealed class LinkDraft
 /// </summary>
 public sealed class EditorView
 {
-    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup }
+    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap }
 
     const double DragThresholdPixels = 3;
 
@@ -166,6 +166,15 @@ public sealed class EditorView
         if (button == PointerButton.Middle || (button == PointerButton.Left && mods.HasFlag(Modifiers.Space)))
         {
             _mode = Mode.Panning;
+            SetCursor("grabbing");
+            return;
+        }
+
+        if (button == PointerButton.Left && MinimapVisible && MinimapScreenRect.Contains(screen))
+        {
+            _mode = Mode.Minimap;
+            _minimapLock = MinimapMapping();
+            CenterViewFromMinimap(screen);
             SetCursor("grabbing");
             return;
         }
@@ -320,6 +329,10 @@ public sealed class EditorView
                 ViewChanged?.Invoke();
                 break;
 
+            case Mode.Minimap:
+                CenterViewFromMinimap(screen);
+                break;
+
             case Mode.DraggingGroup when _moved && SelectedGroup is { } dragged:
                 Document.MoveGroup(dragged, world.X - _lastWorld.X, world.Y - _lastWorld.Y, _groupCarry);
                 SetCursor("move");
@@ -397,6 +410,9 @@ public sealed class EditorView
             case Mode.DraggingGroup:
             case Mode.ResizingGroup:
                 Document.EndGesture();
+                break;
+            case Mode.Minimap:
+                _minimapLock = null;
                 break;
             case Mode.PressedWidget:
                 if (_moved && _number is not null) Document.EndGesture();
@@ -628,6 +644,53 @@ public sealed class EditorView
 
     /// <summary>Asks the UI to redraw (something outside the editor changed what is shown: a result arrived, a picture loaded).</summary>
     public void Invalidate() => ViewChanged?.Invoke();
+
+    // ---- minimap ----
+
+    (double Scale, Point Origin)? _minimapLock;
+
+    public const double MinimapWidth = 200, MinimapHeight = 140, MinimapMargin = 12;
+
+    /// <summary>The small overview of the whole graph in a corner of the canvas: drawn by the UI, clicked and dragged here to move the view.</summary>
+    public bool MinimapVisible { get; set; } = true;
+
+    /// <summary>Where the minimap sits, in canvas pixels (bottom right).</summary>
+    public Rect MinimapScreenRect => new(ScreenSize.X - MinimapWidth - MinimapMargin, ScreenSize.Y - MinimapHeight - MinimapMargin, MinimapWidth, MinimapHeight);
+
+    /// <summary>
+    /// The map from world to minimap pixels: the world area it shows is every node and group plus the part in view, so the view's rectangle is always on it,
+    /// scaled to fit and centred. <paramref name="Scale"/> is minimap pixels per world unit; <paramref name="Origin"/> is the world point at the minimap's top left.
+    /// </summary>
+    public (double Scale, Point Origin) MinimapMapping()
+    {
+        if (_minimapLock is { } locked) return locked; // while dragging on it the map must hold still, or it would slide under the pointer
+        var area = Viewport.VisibleWorld(ScreenSize.X, ScreenSize.Y);
+        foreach (var n in Document.Graph.Nodes) area = Rect.Union(area, Hits.Geometry(n).Bounds);
+        foreach (var g in Document.Graph.Groups) area = Rect.Union(area, new Rect(g.X, g.Y, g.Width, g.Height));
+        double scale = Math.Min((MinimapWidth - 8) / area.Width, (MinimapHeight - 8) / area.Height);
+        double shownW = MinimapWidth / scale, shownH = MinimapHeight / scale;
+        return (scale, new Point(area.X - (shownW - area.Width) / 2, area.Y - (shownH - area.Height) / 2));
+    }
+
+    public Point MinimapToWorld(Point screen)
+    {
+        var (scale, origin) = MinimapMapping();
+        var r = MinimapScreenRect;
+        return new Point(origin.X + (screen.X - r.X) / scale, origin.Y + (screen.Y - r.Y) / scale);
+    }
+
+    public Point WorldToMinimap(Point world)
+    {
+        var (scale, origin) = MinimapMapping();
+        var r = MinimapScreenRect;
+        return new Point(r.X + (world.X - origin.X) * scale, r.Y + (world.Y - origin.Y) * scale);
+    }
+
+    void CenterViewFromMinimap(Point screen)
+    {
+        Viewport.CenterOn(MinimapToWorld(screen), ScreenSize.X, ScreenSize.Y);
+        ViewChanged?.Invoke();
+    }
 
     public void FitToView(bool selectionOnly = false)
     {

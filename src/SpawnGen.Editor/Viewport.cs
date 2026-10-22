@@ -43,6 +43,13 @@ public sealed class Viewport
     public Rect VisibleWorld(double screenWidth, double screenHeight) =>
         new(-OffsetX / Scale, -OffsetY / Scale, screenWidth / Scale, screenHeight / Scale);
 
+    /// <summary>Moves the view so the world point <paramref name="world"/> is in the middle of a canvas of the given size (the zoom stays).</summary>
+    public void CenterOn(Point world, double screenWidth, double screenHeight)
+    {
+        OffsetX = screenWidth / 2 - world.X * Scale;
+        OffsetY = screenHeight / 2 - world.Y * Scale;
+    }
+
     public void Pan(double screenDx, double screenDy)
     {
         OffsetX += screenDx;

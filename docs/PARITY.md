@@ -28,7 +28,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Groups (boxes): Ctrl+G around the selection, drawn, drag the title to move with the nodes inside, resize, rename (double click), colours, delete, undo, saved in the workflow | **done** |
 | Subgraphs / group nodes | todo |
 | Node library sidebar (Nodes button / N key: categories, filter, click or drag onto the canvas) | **done** |
-| Minimap, properties panel | todo |
+| Minimap (bottom right: nodes, groups, the view; click or drag to move the view; Map button) | **done** |
+| Properties panel | todo |
 | Multiple workflows (tabs: new, rename, close, a file opens in its own tab), autosave to browser storage with the view; restored on reload | **done**; recent files todo |
 | Drop a generated PNG (ComfyUI or SpawnGen) or a workflow / API-format JSON on the canvas to open it; PNGs carry prompt + workflow | **done** |
 | Link render modes (spline / straight / linear / hidden), themes, snap to grid, shortcuts parity | todo |

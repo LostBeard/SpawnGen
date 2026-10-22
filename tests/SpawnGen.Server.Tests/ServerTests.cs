@@ -207,6 +207,26 @@ public class ServerTests
     }
 
     [Test]
+    public async Task A_saved_picture_carries_the_prompt_and_the_workflow_that_made_it()
+    {
+        await ConnectAsync();
+        var image = WriteInputPng("in.png");
+        var workflow = new JsonObject { ["nodes"] = new JsonArray(), ["marker"] = "from the editor" };
+        var body = new JsonObject
+        {
+            ["prompt"] = Prompt(image), ["client_id"] = "test",
+            ["extra_data"] = new JsonObject { ["extra_pnginfo"] = new JsonObject { ["workflow"] = workflow } },
+        };
+        Assert.That((await _http.PostAsJsonAsync("/prompt", body)).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var executed = await WaitForAsync(m => (string?)m["type"] == "executed" && (string?)m["data"]!["node"] == "9");
+
+        var file = (string)executed["data"]!["output"]!["images"]![0]!["filename"]!;
+        var text = PngReader.ReadText(await File.ReadAllBytesAsync(Path.Combine(_dir, "output", file)));
+        Assert.That(JsonNode.Parse(text["prompt"])!["1"]!["class_type"]!.ToString(), Is.EqualTo("LoadImage"), "The API graph is embedded.");
+        Assert.That(JsonNode.Parse(text["workflow"])!["marker"]!.ToString(), Is.EqualTo("from the editor"), "So is the editor workflow.");
+    }
+
+    [Test]
     public async Task Garbage_in_the_request_is_a_400_not_a_crash()
     {
         Assert.That((await _http.PostAsync("/prompt", new StringContent("{nope", Encoding.UTF8, "application/json"))).StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));

@@ -20,6 +20,16 @@
         <span class="dismiss">x</span>
     </div>
     <script>
+        // Lets files be dropped on the editor: they go to the page (OnFileDropped) as bytes.
+        window.spawngenEnableDrop = function (dotnetRef, selector) {
+            const el = document.querySelector(selector);
+            el.addEventListener("dragover", e => e.preventDefault());
+            el.addEventListener("drop", async e => {
+                e.preventDefault();
+                for (const f of e.dataTransfer.files)
+                    await dotnetRef.invokeMethodAsync("OnFileDropped", f.name, new Uint8Array(await f.arrayBuffer()));
+            });
+        };
         // Saves a picture (a data or same-origin URL) as a file download.
         window.spawngenDownloadUrl = function (name, url) {
             const a = document.createElement("a");

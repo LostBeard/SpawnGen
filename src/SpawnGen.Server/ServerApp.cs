@@ -74,7 +74,11 @@ public static class ServerApp
 
             try
             {
-                var item = queue.Enqueue(graph, (string?)body["client_id"]);
+                // ComfyUI clients send the editor's workflow as extra_data.extra_pnginfo.workflow; Save Image embeds it in the PNG.
+                Dictionary<string, string>? extra = null;
+                if (body["extra_data"]?["extra_pnginfo"] is JsonObject pnginfo)
+                    extra = pnginfo.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value is JsonValue v && v.TryGetValue<string>(out var s) ? s : kv.Value!.ToJsonString());
+                var item = queue.Enqueue(graph, (string?)body["client_id"], extra);
                 return Results.Json(new JsonObject { ["prompt_id"] = item.Id, ["number"] = item.Number, ["node_errors"] = new JsonObject() });
             }
             catch (PromptValidationException ex)

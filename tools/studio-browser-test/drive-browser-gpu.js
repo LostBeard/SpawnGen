@@ -46,7 +46,7 @@ fs.mkdirSync(OUT, { recursive: true });
   await page.waitForTimeout(3500);
   const status = async () => (await page.textContent('.status')).trim();
   await page.selectOption('select.engine', { label: 'This browser (WebGPU)' });
-  await page.setInputFiles('input[accept=".json"]', wfPath);
+  await page.setInputFiles('input[accept=".json,.png"]', wfPath);
   await page.waitForTimeout(1200);
   await page.uncheck('label.check input'); // keep the seed we set
   console.log(t(), 'opened:', await status());

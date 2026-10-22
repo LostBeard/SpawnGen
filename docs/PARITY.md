@@ -29,7 +29,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Subgraphs / group nodes | todo |
 | Minimap, node library sidebar, properties panel | todo |
 | Multiple workflows (tabs), recent files, autosave | todo |
-| Drop a generated PNG on the canvas to load its workflow (PNG metadata) | todo (high value) |
+| Drop a generated PNG (ComfyUI or SpawnGen) or a workflow / API-format JSON on the canvas to open it; PNGs carry prompt + workflow | **done** |
 | Link render modes (spline / straight / linear / hidden), themes, snap to grid, shortcuts parity | todo |
 | Node colours, custom titles, pins, badges | partial (titles) |
 

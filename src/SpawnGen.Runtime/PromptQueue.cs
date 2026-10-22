@@ -7,7 +7,7 @@ using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Runtime;
 
-public sealed record QueuedPrompt(int Number, string Id, PromptGraph Graph, string? ClientId);
+public sealed record QueuedPrompt(int Number, string Id, PromptGraph Graph, string? ClientId, IReadOnlyDictionary<string, string>? ExtraPngInfo = null);
 
 /// <summary>One finished (or failed) run, as <c>/history</c> reports it.</summary>
 public sealed class HistoryEntry
@@ -55,7 +55,7 @@ public sealed class PromptQueue : IDisposable
     public NodeRegistry Registry { get; }
 
     /// <summary>Validates and queues the prompt. Throws <see cref="PromptValidationException"/> (nothing is queued) when it cannot run.</summary>
-    public QueuedPrompt Enqueue(PromptGraph graph, string? clientId)
+    public QueuedPrompt Enqueue(PromptGraph graph, string? clientId, IReadOnlyDictionary<string, string>? extraPngInfo = null)
     {
         var validation = _executor.Validate(graph);
         if (!validation.IsValid) throw new PromptValidationException(validation);
@@ -63,7 +63,7 @@ public sealed class PromptQueue : IDisposable
         QueuedPrompt item;
         lock (_gate)
         {
-            item = new QueuedPrompt(++_number, Guid.NewGuid().ToString("D"), graph, clientId);
+            item = new QueuedPrompt(++_number, Guid.NewGuid().ToString("D"), graph, clientId, extraPngInfo);
             _pending.Add(item);
         }
         _channel.Writer.TryWrite(item);
@@ -164,7 +164,7 @@ public sealed class PromptQueue : IDisposable
         ExecutionResult? result = null;
         try
         {
-            result = await _executor.ExecuteAsync(item.Graph, new ExecutionOptions { PromptId = item.Id }, observer, ct);
+            result = await _executor.ExecuteAsync(item.Graph, new ExecutionOptions { PromptId = item.Id, ExtraPngInfo = item.ExtraPngInfo }, observer, ct);
         }
         catch (OperationCanceledException)
         {

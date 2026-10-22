@@ -12,6 +12,71 @@ public static class PngReader
 {
     static readonly byte[] Signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
+    /// <summary>
+    /// The text entries of a PNG (tEXt, zTXt and iTXt chunks) by keyword. ComfyUI stores the run's <c>prompt</c> and the editor's <c>workflow</c>
+    /// this way, so a generated picture carries the graph that made it. Returns an empty map for a file that is not a PNG or has none.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> ReadText(byte[] png)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (png.Length < 8 || !png.AsSpan(0, 8).SequenceEqual(Signature)) return result;
+        for (int pos = 8; pos + 12 <= png.Length;)
+        {
+            int len = (int)BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(pos));
+            if (len < 0 || pos + 12 + len > png.Length) break;
+            string type = System.Text.Encoding.ASCII.GetString(png, pos + 4, 4);
+            var data = png.AsSpan(pos + 8, len);
+            switch (type)
+            {
+                case "tEXt":
+                {
+                    int z = data.IndexOf((byte)0);
+                    if (z > 0) result[System.Text.Encoding.Latin1.GetString(data[..z])] = System.Text.Encoding.Latin1.GetString(data[(z + 1)..]);
+                    break;
+                }
+                case "zTXt":
+                {
+                    int z = data.IndexOf((byte)0);
+                    if (z > 0 && z + 2 <= data.Length && Inflate(data[(z + 2)..]) is { } bytes)
+                        result[System.Text.Encoding.Latin1.GetString(data[..z])] = System.Text.Encoding.Latin1.GetString(bytes);
+                    break;
+                }
+                case "iTXt":
+                {
+                    int z = data.IndexOf((byte)0);
+                    if (z <= 0 || z + 3 > data.Length) break;
+                    bool compressed = data[z + 1] == 1;
+                    var rest = data[(z + 3)..];
+                    int lang = rest.IndexOf((byte)0);
+                    if (lang < 0) break;
+                    rest = rest[(lang + 1)..];
+                    int translated = rest.IndexOf((byte)0);
+                    if (translated < 0) break;
+                    var body = rest[(translated + 1)..];
+                    var text = compressed ? (Inflate(body) is { } b ? System.Text.Encoding.UTF8.GetString(b) : null) : System.Text.Encoding.UTF8.GetString(body);
+                    if (text is not null) result[System.Text.Encoding.UTF8.GetString(data[..z])] = text;
+                    break;
+                }
+            }
+            if (type == "IEND") break;
+            pos += 12 + len;
+        }
+        return result;
+    }
+
+    static byte[]? Inflate(ReadOnlySpan<byte> compressed)
+    {
+        try
+        {
+            using var input = new MemoryStream(compressed.ToArray());
+            using var z = new ZLibStream(input, CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            z.CopyTo(output);
+            return output.ToArray();
+        }
+        catch (InvalidDataException) { return null; }
+    }
+
     public static ImageBatch Decode(byte[] png)
     {
         if (png.Length < 8 || !png.AsSpan(0, 8).SequenceEqual(Signature))

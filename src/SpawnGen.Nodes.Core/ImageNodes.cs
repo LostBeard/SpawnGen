@@ -16,6 +16,14 @@ public static class InputFiles
 
 internal static class Results
 {
+    /// <summary>What goes into a saved picture's text chunks, like ComfyUI: <c>prompt</c> (the API graph that made it) plus the editor's extras (<c>workflow</c>).</summary>
+    public static IReadOnlyDictionary<string, string> Metadata(NodeContext context)
+    {
+        var text = new Dictionary<string, string> { ["prompt"] = context.PromptJson };
+        foreach (var (key, value) in context.ExtraPngInfo) text[key] = value;
+        return text;
+    }
+
     /// <summary>The result store a host registered, or a disk store over the output options (so the nodes also work with no host setup).</summary>
     public static IResultStore For(IServiceProvider services) =>
         services.GetService(typeof(IResultStore)) as IResultStore
@@ -34,12 +42,12 @@ public sealed class LoadImage
 [Node(Category = "image", DisplayName = "Save Image", IsOutput = true)]
 public sealed class SaveImage
 {
-    public async Task<UiOutput> ExecuteAsync(ImageBatch images, IServiceProvider services, string filenamePrefix = "ComfyUI")
+    public async Task<UiOutput> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services, string filenamePrefix = "ComfyUI")
     {
         var store = Results.For(services);
         var saved = new List<object>();
         for (int i = 0; i < images.Batch; i++)
-            saved.Add(await store.SaveAsync("output", filenamePrefix, PngWriter.Encode(images, i)));
+            saved.Add(await store.SaveAsync("output", filenamePrefix, PngWriter.Encode(images, i, Results.Metadata(context))));
         return new UiOutput("images", saved);
     }
 }
@@ -48,12 +56,12 @@ public sealed class SaveImage
 [Node(Category = "image", DisplayName = "Preview Image", IsOutput = true)]
 public sealed class PreviewImage
 {
-    public async Task<UiOutput> ExecuteAsync(ImageBatch images, IServiceProvider services)
+    public async Task<UiOutput> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services)
     {
         var store = Results.For(services);
         var saved = new List<object>();
         for (int i = 0; i < images.Batch; i++)
-            saved.Add(await store.SaveAsync("temp", "preview", PngWriter.Encode(images, i)));
+            saved.Add(await store.SaveAsync("temp", "preview", PngWriter.Encode(images, i, Results.Metadata(context))));
         return new UiOutput("images", saved);
     }
 }

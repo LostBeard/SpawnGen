@@ -2,6 +2,6 @@
   "name": "spawngen-studio-browser-test",
   "private": true,
   "description": "Drives the SpawnGen Studio in headless Chrome with real pointer and keyboard events.",
-  "scripts": { "test": "node drive.js", "test:run": "node drive-run.js", "test:browser": "node drive-browser-engine.js", "test:desktop": "node drive-run.js", "test:gpu": "node drive-browser-gpu.js" },
+  "scripts": { "test": "node drive.js", "test:run": "node drive-run.js", "test:browser": "node drive-browser-engine.js", "test:desktop": "node drive-run.js", "test:gpu": "node drive-browser-gpu.js", "test:roundtrip": "node drive-roundtrip.js" },
   "dependencies": { "playwright-core": "^1.48.0" }
 }

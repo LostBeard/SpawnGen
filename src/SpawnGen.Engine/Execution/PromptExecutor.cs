@@ -48,6 +48,7 @@ public sealed class PromptExecutor
             }
 
             var promptId = options?.PromptId ?? Guid.NewGuid().ToString("N");
+            var promptJson = new Lazy<string>(() => PromptJson.ToJson(graph)); // only built if a node asks for it (Save Image does)
             var stopwatch = Stopwatch.StartNew();
             observer?.OnStart(promptId, validation.Plan);
 
@@ -78,7 +79,7 @@ public sealed class PromptExecutor
 
                     observer?.OnNodeExecuting(id);
                     var context = new NodeContext(id, node.ClassType, _services, cancellationToken,
-                        (value, max, message) => observer?.OnNodeProgress(id, value, max, message));
+                        (value, max, message) => observer?.OnNodeProgress(id, value, max, message), promptJson, options?.ExtraPngInfo);
 
                     NodeOutputs result;
                     try

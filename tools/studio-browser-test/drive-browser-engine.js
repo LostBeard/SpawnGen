@@ -29,7 +29,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
   await page.setInputFiles('input[accept=".png"]', path.join(__dirname, 'apple.png'));
   await page.waitForTimeout(800);
-  await page.setInputFiles('input[accept=".json"]', path.join(__dirname, 'load-preview-workflow.json'));
+  await page.setInputFiles('input[accept=".json,.png"]', path.join(__dirname, 'load-preview-workflow.json'));
   await page.waitForTimeout(1200);
   check('the workflow opened', /^2 nodes, 1 links/.test(await status()), await status());
   await page.screenshot({ path: path.join(OUT, 'browser-1-before.png') });

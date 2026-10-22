@@ -10,7 +10,7 @@ public static class PngWriter
     static readonly uint[] CrcTable = BuildCrcTable();
 
     /// <summary>Encodes image <paramref name="index"/> of the batch (NHWC, 0..1) as a PNG.</summary>
-    public static byte[] Encode(ImageBatch images, int index = 0)
+    public static byte[] Encode(ImageBatch images, int index = 0, IReadOnlyDictionary<string, string>? text = null)
     {
         int w = images.Width, h = images.Height, ch = images.Channels;
         if (ch is not (3 or 4)) throw new ArgumentException($"PNG output needs 3 or 4 channels, got {ch}.", nameof(images));
@@ -35,9 +35,24 @@ public static class PngWriter
         ihdr[8] = 8;                      // bit depth
         ihdr[9] = (byte)(ch == 3 ? 2 : 6); // color type: RGB / RGBA
         WriteChunk(png, "IHDR", ihdr);
+        if (text is not null)
+            foreach (var (key, value) in text) WriteText(png, key, value);
         WriteChunk(png, "IDAT", idat.ToArray());
         WriteChunk(png, "IEND", []);
         return png.ToArray();
+    }
+
+    /// <summary>A text entry (ComfyUI keeps the prompt and the workflow this way): tEXt when it is Latin-1, else iTXt (UTF-8).</summary>
+    static void WriteText(Stream s, string keyword, string value)
+    {
+        var key = System.Text.Encoding.Latin1.GetBytes(keyword);
+        if (value.All(c => c <= 0xFF))
+        {
+            WriteChunk(s, "tEXt", [.. key, 0, .. System.Text.Encoding.Latin1.GetBytes(value)]);
+            return;
+        }
+        // iTXt: keyword, 0, compression flag 0, method 0, empty language tag, 0, empty translated keyword, 0, text.
+        WriteChunk(s, "iTXt", [.. key, 0, 0, 0, 0, 0, .. System.Text.Encoding.UTF8.GetBytes(value)]);
     }
 
     static void WriteChunk(Stream s, string type, byte[] data)

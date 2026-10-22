@@ -106,7 +106,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     // ---- IEngineClient ----
 
-    public Task<QueueResult> QueueAsync(string promptJson)
+    public Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null)
     {
         PromptGraph graph;
         try { graph = PromptJson.Parse(promptJson); }
@@ -116,7 +116,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         }
         try
         {
-            var item = _queue.Enqueue(graph, "browser");
+            var item = _queue.Enqueue(graph, "browser", workflowJson is null ? null : new Dictionary<string, string> { ["workflow"] = workflowJson });
             return Task.FromResult(new QueueResult(true, item.Id, null, new Dictionary<int, string>()));
         }
         catch (PromptValidationException ex)

@@ -7,12 +7,14 @@ public class SettingsTests
     [Test]
     public void Settings_survive_a_round_trip_and_defaults_fill_the_gaps()
     {
-        var s = new StudioSettings { LinkStyle = LinkStyle.Straight, SnapToGrid = true, GridSize = 25, ShowMinimap = false };
+        var s = new StudioSettings { LinkStyle = LinkStyle.Straight, SnapToGrid = true, GridSize = 25, ShowMinimap = false, ShowNodeIds = true };
         var back = StudioSettings.FromJson(s.ToJson());
         Assert.That((back.LinkStyle, back.SnapToGrid, back.GridSize, back.ShowMinimap), Is.EqualTo((LinkStyle.Straight, true, 25, false)));
+        Assert.That(back.ShowNodeIds, Is.True);
 
         var empty = StudioSettings.FromJson(null);
         Assert.That((empty.LinkStyle, empty.SnapToGrid, empty.GridSize, empty.ShowMinimap), Is.EqualTo((LinkStyle.Spline, false, 10, true)));
+        Assert.That(empty.ShowNodeIds, Is.False);
     }
 
     [TestCase("not json")]

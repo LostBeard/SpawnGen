@@ -12,6 +12,8 @@ public sealed class StudioSettings
     public bool SnapToGrid { get; set; }
     public int GridSize { get; set; } = 10;
     public bool ShowMinimap { get; set; } = true;
+    /// <summary>Draws each node's id (#12) in its title bar, the number the saved workflow and error messages use (ComfyUI's node id badge).</summary>
+    public bool ShowNodeIds { get; set; }
 
     public string ToJson() => JsonSerializer.Serialize(this);
 
@@ -28,6 +30,7 @@ public sealed class StudioSettings
             if (root.TryGetProperty(nameof(LinkStyle), out var ls) && ls.ValueKind == JsonValueKind.Number && ls.TryGetInt32(out var li) && Enum.IsDefined(typeof(LinkStyle), li)) s.LinkStyle = (LinkStyle)li;
             if (root.TryGetProperty(nameof(SnapToGrid), out var sg) && sg.ValueKind is JsonValueKind.True or JsonValueKind.False) s.SnapToGrid = sg.GetBoolean();
             if (root.TryGetProperty(nameof(GridSize), out var gs) && gs.ValueKind == JsonValueKind.Number && gs.TryGetInt32(out var g) && g is >= 2 and <= 200) s.GridSize = g;
+            if (root.TryGetProperty(nameof(ShowNodeIds), out var sn) && sn.ValueKind is JsonValueKind.True or JsonValueKind.False) s.ShowNodeIds = sn.GetBoolean();
             if (root.TryGetProperty(nameof(ShowMinimap), out var sm) && sm.ValueKind is JsonValueKind.True or JsonValueKind.False) s.ShowMinimap = sm.GetBoolean();
         }
         catch (JsonException) { }

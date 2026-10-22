@@ -717,6 +717,9 @@ public sealed class EditorView
     /// <summary>The small overview of the whole graph in a corner of the canvas: drawn by the UI, clicked and dragged here to move the view.</summary>
     public bool MinimapVisible { get; set; } = true;
 
+    /// <summary>Show each node's id in its title bar (a drawing option the UI reads).</summary>
+    public bool ShowNodeIds { get; set; }
+
     /// <summary>Where the minimap sits, in canvas pixels (bottom right).</summary>
     public Rect MinimapScreenRect => new(ScreenSize.X - MinimapWidth - MinimapMargin, ScreenSize.Y - MinimapHeight - MinimapMargin, MinimapWidth, MinimapHeight);
 

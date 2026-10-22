@@ -321,8 +321,19 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.Font = Theme.TitleFont;
             ctx.TextBaseline = "middle";
             ctx.FillStyle = Theme.TitleText;
-            ctx.FillText(geo.Title, b.X + 26, geo.TitleBar.Y + geo.TitleBar.Height / 2);
+            // With the id badge on, a long title gives up its tail (the title font is bolder than the one measured, hence the 1.12).
+            var title = view.ShowNodeIds ? Ellipsize(geo.Title, (b.Width - 26 - 40 - (node.Pinned ? 18 : 0)) / 1.12) : geo.Title;
+            ctx.FillText(title, b.X + 26, geo.TitleBar.Y + geo.TitleBar.Height / 2);
             if (node.Pinned) DrawPin(ctx, b.Right - 14, geo.TitleBar.Y + geo.TitleBar.Height / 2);
+            if (view.ShowNodeIds)
+            {
+                ctx.Font = Theme.Font;
+                ctx.TextAlign = "right";
+                ctx.FillStyle = Theme.LabelText;
+                ctx.FillText("#" + node.Id, b.Right - (node.Pinned ? 28 : 10), geo.TitleBar.Y + geo.TitleBar.Height / 2);
+                ctx.TextAlign = "left";
+                ctx.Font = Theme.TitleFont;
+            }
             // Collapse arrow.
             ctx.FillStyle = Theme.LabelText;
             ctx.BeginPath();

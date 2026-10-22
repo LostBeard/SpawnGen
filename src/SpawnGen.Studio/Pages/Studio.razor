@@ -181,6 +181,7 @@
                 <label>Grid size
                     <input type="number" min="2" max="200" step="1" value="@_settings.GridSize" @onchange="OnGridSizeChosen" />
                 </label>
+                <label class="row"><input type="checkbox" checked="@_settings.ShowNodeIds" @onchange="e => { _settings.ShowNodeIds = (bool)(e.Value ?? false); ApplySettings(); }" /> Show node ids (#12) in the title bars</label>
                 <label class="row"><input type="checkbox" checked="@_settings.ShowMinimap" @onchange="e => { _settings.ShowMinimap = (bool)(e.Value ?? false); ApplySettings(); }" /> Show the minimap</label>
             </div>
         }
@@ -376,6 +377,7 @@
             _view.SnapToGrid = _settings.SnapToGrid;
             _view.GridSize = _settings.GridSize;
             _view.MinimapVisible = _settings.ShowMinimap;
+            _view.ShowNodeIds = _settings.ShowNodeIds;
             await RestoreTabsAsync();
             _doc.Changed += ScheduleAutosave;
             _view.ViewChanged += OnViewMovedForAutosave;
@@ -1067,6 +1069,7 @@
         _view.SnapToGrid = _settings.SnapToGrid;
         _view.GridSize = _settings.GridSize;
         _view.MinimapVisible = _settings.ShowMinimap;
+        _view.ShowNodeIds = _settings.ShowNodeIds;
         _view.Invalidate();
         _ = Interop.InvokeVoidAsync("spawngenStoreSet", SettingsKey, _settings.ToJson());
         InvokeAsync(StateHasChanged);

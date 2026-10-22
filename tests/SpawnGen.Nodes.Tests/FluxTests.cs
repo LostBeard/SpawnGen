@@ -64,4 +64,32 @@ public class FluxTests
         Assert.That((png.Width, png.Height), Is.EqualTo((512, 512)));
         Assert.That(png.Data.Max() - png.Data.Min(), Is.GreaterThan(0.3f));
     }
+
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU and the FLUX files in the hub cache. Prints where the time goes (the library's own stage timings), twice: the second picture reuses the resident transformer.")]
+    public async Task Flux_stage_timings_for_the_library_team()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+        using var runtime = new MlRuntime(new DesktopModelSource(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(root!))!, MlRuntime.RepoFolders));
+        var acc = runtime.Accelerator;
+        TestContext.Out.WriteLine($"{acc.AcceleratorType} {acc.Name}");
+        var flux3 = await SpawnDev.ILGPU.ML.Flux3.Flux3Pipeline.CreateAsync(acc, runtime.ModelSource, "LostBeard/flux-3-image-klein-q4-ILGPU");
+        flux3.KeepTransformerResident = true;
+        for (int run = 1; run <= 2; run++)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await flux3.RunAsync(new SpawnDev.ILGPU.ML.Flux3.Flux3Request { Caption = "A red apple on a wooden table.", Seed = run, Width = 512, Height = 512, Steps = 16 });
+            TestContext.Out.WriteLine($"FLUX 3 Klein 512x512 16 steps, picture {run}: {sw.Elapsed.TotalSeconds:F1} s: " + string.Join(", ", flux3.LastTimings.Select(t => $"{t.Stage} {t.Seconds:F1}")));
+        }
+        flux3.Dispose();
+        var flux2 = await SpawnDev.ILGPU.ML.Flux2.Flux2Pipeline.CreateAsync(acc, runtime.ModelSource, "LostBeard/FLUX.2-klein-4B-q4-ILGPU");
+        flux2.KeepTransformerResident = true;
+        for (int run = 1; run <= 2; run++)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await flux2.RunAsync(new SpawnDev.ILGPU.ML.Flux2.Flux2Request { Prompt = "a red apple on a wooden table", Seed = run, Size = 512, Steps = 4 });
+            TestContext.Out.WriteLine($"FLUX.2 klein 512x512 4 steps, picture {run}: {sw.Elapsed.TotalSeconds:F1} s");
+        }
+        flux2.Dispose();
+    }
 }

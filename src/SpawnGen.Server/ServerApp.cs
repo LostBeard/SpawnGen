@@ -148,7 +148,7 @@ public static class ServerApp
             var form = await request.ReadFormAsync();
             if (form.Files["image"] is not { } file) return Results.BadRequest("no 'image' file");
             var name = Path.GetFileName(file.FileName);
-            if (!ImageDecoder.IsSupportedName(name)) return Results.BadRequest("only PNG and JPEG images can be loaded for now");
+            if (!ImageDecoder.IsSupportedName(name) && !name.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("only PNG and JPEG pictures and WAV sound can be loaded for now");
             var target = Path.Combine(options.InputPath, name);
             if (File.Exists(target) && (string?)form["overwrite"] != "true")
                 name = $"{Path.GetFileNameWithoutExtension(name)}_{Guid.NewGuid().ToString("N")[..6]}{Path.GetExtension(name)}";
@@ -282,6 +282,6 @@ public static class ServerApp
 
     static string ContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {
-        ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", _ => "application/octet-stream",
+        ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".wav" => "audio/wav", _ => "application/octet-stream",
     };
 }

@@ -79,7 +79,7 @@ public class VisionTests
     }
 
     /// <summary>Runs <paramref name="build"/>'s graph on the real GPU with the desktop model source (downloads the vision model into the models folder's hub cache on first use).</summary>
-    internal static async Task<string[]> RunAsync(string name, Func<PromptGraph> build, string? inputPicture = null)
+    internal static async Task<string[]> RunAsync(string name, Func<PromptGraph> build, string? inputPicture = null, string extension = "png")
     {
         var root = ModelsRoot();
         if (root is null) Assert.Ignore("SPAWNGEN_MODELS is not set.");
@@ -91,7 +91,7 @@ public class VisionTests
         var executor = new PromptExecutor(Registry(), new Services(runtime, new OutputOptions { Directory = Path.Combine(work, "output") }));
         var r = await executor.ExecuteAsync(build());
         TestContext.Out.WriteLine($"{name}: {r.Elapsed.TotalSeconds:F1} s on {runtime.Accelerator.AcceleratorType} {runtime.Accelerator.Name}");
-        var files = Directory.GetFiles(Path.Combine(work, "output"), "*.png");
+        var files = Directory.GetFiles(Path.Combine(work, "output"), "*." + extension);
         foreach (var f in files) TestContext.Out.WriteLine("  " + f);
         return files;
     }

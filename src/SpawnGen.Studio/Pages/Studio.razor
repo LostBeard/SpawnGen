@@ -53,7 +53,7 @@
                 <option>No engine available</option>
             }
         </select>
-        <label class="button" title="Upload a PNG or JPEG for Load Image nodes">Upload<InputFile OnChange="OnUploadChosen" accept=".png,.jpg,.jpeg" hidden /></label>
+        <label class="button" title="Upload a PNG or JPEG for Load Image nodes, or a WAV for Load Audio">Upload<InputFile OnChange="OnUploadChosen" accept=".png,.jpg,.jpeg,.wav" hidden /></label>
         <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
         <span class="status">@RunStatus()@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
     </div>
@@ -137,6 +137,10 @@
                             @if (run.Note is not null)
                             {
                                 <div class="hist-note">@run.Note</div>
+                            }
+                            @foreach (var sound in run.Audio)
+                            {
+                                <audio controls src="@sound"></audio>
                             }
                             <div class="hist-thumbs">
                                 @foreach (var url in run.Urls)
@@ -833,6 +837,7 @@
         public required string Engine { get; init; }
         public required string Workflow { get; init; }
         public List<string> Urls { get; } = [];
+        public List<string> Audio { get; } = [];
         public double? Seconds { get; set; }
         public string State { get; set; } = "running";
         public string? Error { get; set; }
@@ -874,7 +879,7 @@
         if (_history.FirstOrDefault(e => e.State == "running") is not { } entry) return;
         entry.State = state;
         entry.Error = error;
-        if (state == "done" && entry.Urls.Count == 0) entry.Note = "No new pictures: every output was cached from an earlier run (nothing changed).";
+        if (state == "done" && entry.Urls.Count == 0 && entry.Audio.Count == 0) entry.Note = "No new pictures: every output was cached from an earlier run (nothing changed).";
         entry.Seconds = (DateTime.Now - entry.Started).TotalSeconds;
     }
 
@@ -1075,7 +1080,7 @@
             await stream.CopyToAsync(memory);
             var stored = await _engine.UploadImageAsync(e.File.Name, memory.ToArray());
             await RefreshInputImagesAsync();
-            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG and JPEG pictures can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image node.");
+            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG and JPEG pictures and WAV sound can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image node.");
         }
         catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
     }
@@ -1084,6 +1089,7 @@
     sealed class ListedInputStore(IReadOnlyList<string> names) : IInputStore
     {
         public IReadOnlyList<string> List() => names;
+        public IReadOnlyList<string> List(Func<string, bool> filter) => names.Where(filter).ToList();
         public Task<byte[]> ReadAsync(string name) => throw new InvalidOperationException("Pictures are read by the engine that runs the graph.");
         public Task<string> SaveAsync(string name, byte[] bytes) => throw new InvalidOperationException("Upload goes through the engine.");
     }
@@ -1135,6 +1141,8 @@
         _studio?.Focus();
     }
 
+    static JsonArray? AudioOf(JsonObject data) => data["output"]?["audio"] as JsonArray;
+
     static JsonArray? TextOf(JsonObject data) => data["output"]?["text"] as JsonArray;
 
     void OnServerEvent(JsonObject e)
@@ -1170,6 +1178,11 @@
                 break;
             case "node_status":
                 _statusText = (string?)data["message"];
+                break;
+            case "executed" when node is { } audioId && _doc.Graph.FindNode(audioId) is { } audible && AudioOf(data) is { } clips:
+                audible.ResultText = string.Join("\n", clips.OfType<JsonObject>().Select(c => "♪ " + (string?)c["filename"]));
+                if (_history.FirstOrDefault(h => h.State == "running") is { } audioRun)
+                    audioRun.Audio.AddRange(clips.OfType<JsonObject>().Select(c => _engine!.ViewUrl((string)c["filename"]!, (string?)c["subfolder"], (string?)c["type"])));
                 break;
             case "executed" when node is { } textId && _doc.Graph.FindNode(textId) is { } texted && TextOf(data) is { } texts:
                 texted.ResultText = string.Join("\n", texts.Select(t => (string?)t ?? ""));

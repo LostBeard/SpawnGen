@@ -11,12 +11,18 @@ public interface IResultStore
 {
     /// <param name="type">"output" for a result to keep, "temp" for a throw-away preview.</param>
     Task<ResultFile> SaveAsync(string type, string prefix, byte[] png);
+
+    /// <summary>Stores any result file (a WAV, say) with the given extension (no dot).</summary>
+    Task<ResultFile> SaveAsync(string type, string prefix, byte[] data, string extension);
 }
 
 /// <summary>Where Load Image finds its pictures.</summary>
 public interface IInputStore
 {
+    /// <summary>The pictures the store holds (what Load Image offers).</summary>
     IReadOnlyList<string> List();
+    /// <summary>The files of any kind whose name passes <paramref name="filter"/> (Load Audio lists the .wav files).</summary>
+    IReadOnlyList<string> List(Func<string, bool> filter);
     Task<byte[]> ReadAsync(string name);
     /// <summary>Stores an uploaded picture and returns the name it was stored under (changed when it would overwrite another).</summary>
     Task<string> SaveAsync(string name, byte[] bytes);
@@ -35,7 +41,9 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
 {
     readonly object _gate = new();
 
-    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png)
+    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png) => SaveAsync(type, prefix, png, "png");
+
+    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png, string extension)
     {
         string dir = type == "temp" ? options.TempDirectory : options.Directory;
         Directory.CreateDirectory(dir);
@@ -44,17 +52,17 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
         {
             // Output files continue after the highest existing number; previews just get a unique name.
             name = type == "temp"
-                ? $"{prefix}_{Guid.NewGuid().ToString("N")[..10]}.png"
-                : $"{prefix}_{NextCounter(dir, prefix):D5}_.png";
+                ? $"{prefix}_{Guid.NewGuid().ToString("N")[..10]}.{extension}"
+                : $"{prefix}_{NextCounter(dir, prefix, extension):D5}_.{extension}";
             File.WriteAllBytes(Path.Combine(dir, name), png);
         }
         return Task.FromResult(new ResultFile(name, "", type));
     }
 
-    static int NextCounter(string dir, string prefix)
+    static int NextCounter(string dir, string prefix, string extension)
     {
         int max = 0;
-        foreach (var f in Directory.EnumerateFiles(dir, $"{prefix}_*_.png"))
+        foreach (var f in Directory.EnumerateFiles(dir, $"{prefix}_*_.{extension}"))
         {
             var stem = Path.GetFileNameWithoutExtension(f);
             var digits = stem[(prefix.Length + 1)..^1];
@@ -70,17 +78,19 @@ public sealed class MemoryResultStore : IResultStore
     readonly Dictionary<string, byte[]> _files = [];
     readonly object _gate = new();
 
-    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png)
+    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png) => SaveAsync(type, prefix, png, "png");
+
+    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png, string extension)
     {
         lock (_gate)
         {
             string name;
-            if (type == "temp") name = $"{prefix}_{Guid.NewGuid().ToString("N")[..10]}.png";
+            if (type == "temp") name = $"{prefix}_{Guid.NewGuid().ToString("N")[..10]}.{extension}";
             else
             {
                 int n = 1;
-                while (_files.ContainsKey(Key(type, $"{prefix}_{n:D5}_.png"))) n++;
-                name = $"{prefix}_{n:D5}_.png";
+                while (_files.ContainsKey(Key(type, $"{prefix}_{n:D5}_.{extension}"))) n++;
+                name = $"{prefix}_{n:D5}_.{extension}";
             }
             _files[Key(type, name)] = png;
             Saved?.Invoke(new ResultFile(name, "", type), png);
@@ -106,6 +116,11 @@ public sealed class DiskInputStore(Func<string> directory) : IInputStore
             ? Directory.EnumerateFiles(directory()).Where(ImageDecoder.IsSupportedName).Select(f => Path.GetFileName(f)!).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray()
             : [];
 
+    public IReadOnlyList<string> List(Func<string, bool> filter) =>
+        Directory.Exists(directory())
+            ? Directory.EnumerateFiles(directory()).Select(f => Path.GetFileName(f)!).Where(filter).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray()
+            : [];
+
     public Task<byte[]> ReadAsync(string name) =>
         // The file name only: a node must not be able to read outside the input folder.
         File.ReadAllBytesAsync(Path.Combine(directory(), Path.GetFileName(name)));
@@ -126,9 +141,11 @@ public sealed class MemoryInputStore : IInputStore
     readonly SortedDictionary<string, byte[]> _files = new(StringComparer.OrdinalIgnoreCase);
     readonly object _gate = new();
 
-    public IReadOnlyList<string> List()
+    public IReadOnlyList<string> List() => List(ImageDecoder.IsSupportedName);
+
+    public IReadOnlyList<string> List(Func<string, bool> filter)
     {
-        lock (_gate) return [.. _files.Keys];
+        lock (_gate) return [.. _files.Keys.Where(filter)];
     }
 
     public Task<byte[]> ReadAsync(string name)

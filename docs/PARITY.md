@@ -61,7 +61,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | LoRA, ControlNet, IP-Adapter, embeddings, upscale models | todo: **library** (LoRA could be applied to loaded weights from SpawnGen) |
 | Upscale (ESPCN x3: Load Upscale Model + Upscale Image using Model), Remove Background (RMBG 1.4: image + mask), Depth Anything V2 small, Style Transfer (5 styles), Pose Estimation (MoveNet: skeleton + keypoint text), Object Detection (YOLOv8n: boxes + list; found and fixed a library letterbox padding bug in 5.5.1) | **done**, verified by eye on the RX 590 on the desktop (OpenCL) and, except RMBG which ran but was not looked at, in the browser (WebGPU); models download on first use (desktop: the models folder's hub cache; browser: OPFS) |
 | FLUX.2 Klein 4B (text to image, picture edit with reference images; 4-bit or 8-bit weights; one node) | **done**, verified by eye on the RX 590 desktop (OpenCL): 512x512 apple in 142 s after the model files were downloaded; browser (WebGPU, RX 590) also verified: 256x256 apple in 40 s with the files cached |
-| FLUX 3 Klein, TRELLIS.2, TTS, speech, LLM | **library** has pipelines; todo: expose as nodes |
+| Audio: AUDIO type, Load Audio / Save Audio / Preview Audio (WAV), Audio Info; Kokoro Text to Speech (English voices; verified: 3.4 s speech, desktop OpenCL and browser WebGPU identical in length and loudness); Speech to Text (Parakeet TDT 0.6B v3; verified: heard "Hello from Spongen. This is a test of speech." from Kokoro's sentence on the RX 590, desktop only: 2.4 GB encoder). History panel plays the sound | **done** |
+| FLUX 3 Klein, TRELLIS.2, LLM, video (Wan) | **library** has pipelines; todo: expose as nodes |
 
 ## 4. Node library (host-side nodes, SpawnGen's to write)
 

@@ -39,6 +39,8 @@ public sealed class ExecutionOptions
     /// <summary>Run only these output nodes. Default: every output node in the graph.</summary>
     public IReadOnlyList<string>? OutputNodeIds { get; init; }
     public string? PromptId { get; init; }
+    /// <summary>Text the Save Image node embeds in its PNGs next to the prompt (ComfyUI's <c>extra_pnginfo</c>: the editor's workflow JSON), by chunk name.</summary>
+    public IReadOnlyDictionary<string, string>? ExtraPngInfo { get; init; }
 }
 
 public sealed class ExecutionResult

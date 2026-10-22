@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU;
 using SpawnDev.ILGPU.ML;
+using SpawnDev.ILGPU.ML.Graph;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.SpawnJS;
 using SpawnDev.SpawnJS.JSObjects;
@@ -33,8 +34,33 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _js = js;
         _http = http;
         InputFiles.Store = _inputs;
-        _bus.Published += e => EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
+        _bus.Published += e =>
+        {
+            if (_perOp) ReportPerOpTimings(e.Type);
+            EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
+        };
         _queue = new PromptQueue(registry, this, _bus);
+        // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the
+        // slowest ones to the console when a run ends. For finding the single op that overruns a GPU watchdog.
+        try { _perOp = _js.Get<string>("location.search")?.Contains("perop=1") == true; } catch (Exception) { }
+    }
+
+    readonly bool _perOp;
+
+    void ReportPerOpTimings(string eventType)
+    {
+        if (eventType == "execution_start")
+        {
+            GraphExecutor.PerOpSync = true;
+            GraphExecutor.CapturedNodeTimingsMs = new Dictionary<string, double>();
+        }
+        else if (eventType is "execution_success" or "execution_error" && GraphExecutor.CapturedNodeTimingsMs is { } timings)
+        {
+            var last = timings.Keys.LastOrDefault();
+            Console.WriteLine($"[perop] {timings.Count} ops timed; last op recorded: {last}");
+            foreach (var (op, ms) in timings.OrderByDescending(t => t.Value).Take(12))
+                Console.WriteLine($"[perop] {ms,9:F0} ms  {op}");
+        }
     }
 
     public string Name => "This browser (WebGPU)";

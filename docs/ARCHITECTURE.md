@@ -11,16 +11,26 @@ source of truth for the design; keep it current.
 
 ```
 SpawnGen.Engine          pure .NET, no ML/UI deps: graph, node schema/registry, validator, cached executor
-SpawnGen.Nodes.Core      primitives, math, string, image/latent utility nodes (host-side math only)
-SpawnGen.Nodes.ML        nodes backed by SpawnDev.ILGPU.ML (checkpoint loader, CLIP encode, KSampler, VAE, ...)
-SpawnGen.Scripting       Roslyn C# scripting / user node assemblies (desktop/server hosts)
-SpawnGen.Server          Kestrel host: ComfyUI-shaped HTTP + WebSocket API, native CUDA/OpenCL engine
-SpawnGen.Studio          Blazor WASM UI: canvas node editor, queue, history, gallery, settings
-SpawnGen.Studio.Desktop  Photino shell around Server + Studio
+SpawnGen.Runtime         run queue + run events (ComfyUI's event shapes), shared by every host
+SpawnGen.Nodes.Core      primitives, image nodes (Load/Save/Preview, PNG codec); result and input stores (disk or memory)
+SpawnGen.Nodes.ML        nodes backed by SpawnDev.ILGPU.ML (checkpoint loader, CLIP encode, KSampler, VAE encode/decode)
+SpawnGen.Editor          UI-independent editor core: document, undo/redo, layout, hit testing, interaction, ComfyUI workflow I/O, compiler
+SpawnGen.Studio          Blazor WASM UI: C#-drawn canvas (SpawnJS), toolbar, search, widgets, run visuals, engine selector
+SpawnGen.Server          ASP.NET Core host: ComfyUI-shaped HTTP + WebSocket API, native CUDA/OpenCL engine, also serves the Studio
+SpawnGen.Desktop         Photino window opening the Studio from an in-process Server (same UI, native engine)
+SpawnGen.Scripting       (planned) Roslyn C# scripting / user node assemblies
 ```
 
-The Studio talks to an `IEngineClient`. Two implementations: **in-process** (browser: the engine runs inside
-the WASM app on WebGPU) and **remote** (HTTP/WS to SpawnGen.Server). Same UI either way.
+**One UI, three places to run it.** The Studio talks to an `IEngineClient` and gets the same ComfyUI-style run events from each:
+
+| Where | Engine | Backend |
+|---|---|---|
+| Browser (any, static files) | `BrowserEngine`: `PromptQueue` inside the WASM app | WebGPU through SpawnDev.ILGPU; models stream into OPFS |
+| Desktop app (Photino) | `ServerClient` to the in-process server | CUDA / OpenCL natively |
+| A server (headless, API) | `ServerClient` over HTTP + WebSocket | CUDA / OpenCL natively; also usable by ComfyUI-API tools |
+
+Results and uploaded pictures go through `IResultStore` / `IInputStore` (files on desktop and server, memory in the browser), and ML nodes
+get their GPU from an async `IMlRuntimeProvider`, so a node is written once and runs in all three.
 
 ## Graph model
 

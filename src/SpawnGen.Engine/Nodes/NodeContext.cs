@@ -5,15 +5,25 @@ public sealed class NodeContext
 {
     readonly Action<double, double, string?>? _progress;
 
+    readonly Lazy<string>? _promptJson;
+
     internal NodeContext(string nodeId, string classType, IServiceProvider services, CancellationToken cancellationToken,
-        Action<double, double, string?>? progress)
+        Action<double, double, string?>? progress, Lazy<string>? promptJson = null, IReadOnlyDictionary<string, string>? extraPngInfo = null)
     {
         NodeId = nodeId;
         ClassType = classType;
         Services = services;
         CancellationToken = cancellationToken;
         _progress = progress;
+        _promptJson = promptJson;
+        ExtraPngInfo = extraPngInfo ?? new Dictionary<string, string>();
     }
+
+    /// <summary>The whole prompt being run, as ComfyUI API-format JSON (for nodes that record where a result came from).</summary>
+    public string PromptJson => _promptJson?.Value ?? "{}";
+
+    /// <summary>Extra text to embed in saved PNGs by chunk name (the editor's workflow, so a picture can be dropped back on the canvas).</summary>
+    public IReadOnlyDictionary<string, string> ExtraPngInfo { get; }
 
     public string NodeId { get; }
     public string ClassType { get; }

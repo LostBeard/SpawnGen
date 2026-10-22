@@ -20,6 +20,11 @@
         <span class="dismiss">x</span>
     </div>
     <script>
+        // Saves a picture (a data or same-origin URL) as a file download.
+        window.spawngenDownloadUrl = function (name, url) {
+            const a = document.createElement("a");
+            a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+        };
         // Saves text as a file download (the workflow JSON).
         window.spawngenDownload = function (name, text) {
             const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));

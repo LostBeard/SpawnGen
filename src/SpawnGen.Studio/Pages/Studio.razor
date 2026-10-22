@@ -408,6 +408,8 @@
         {
             var node = _doc.Graph.GetNode(hit.NodeId);
             items.Add(new("Rename", () => OnTitleEdit(hit.NodeId)));
+            if (node.Previews.Count > 0)
+                items.Add(new("Save picture", () => _ = SavePicturesAsync(node)));
             items.Add(new(node.Collapsed ? "Expand" : "Collapse", () => { _doc.SetCollapsed(hit.NodeId, !node.Collapsed); _doc.EndGesture(); }));
             items.Add(new(node.Mode == NodeMode.Never ? "Unmute" : "Mute  (Ctrl+M)", () => _view.Key("m", Modifiers.Ctrl)));
             items.Add(new(node.Mode == NodeMode.Bypass ? "Remove bypass" : "Bypass  (Ctrl+B)", () => _view.Key("b", Modifiers.Ctrl)));
@@ -436,6 +438,14 @@
     }
 
     // ---- toast ----
+
+    /// <summary>Downloads the pictures a node shows (a browser run keeps results in memory, so this is how they leave the page).</summary>
+    async Task SavePicturesAsync(EditorNode node)
+    {
+        int n = 1;
+        foreach (var preview in node.Previews)
+            await Interop.InvokeVoidAsync("spawngenDownloadUrl", $"spawngen_{node.Id}_{n++}.png", preview.Url);
+    }
 
     bool OnShortcut(string key, Modifiers mods)
     {

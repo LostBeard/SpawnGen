@@ -1,4 +1,4 @@
-// SD-Turbo in the BROWSER on WebGPU: opens ComfyUI's stock workflow (patched to sd_turbo, 1 step, small picture), runs it on "This browser",
+// (CKPT, STEPS, CFG, SAMPLER, SCHEDULER select another checkpoint, e.g. CKPT=sd_v1-5 STEPS=8 CFG=7 SAMPLER=dpmpp_2m SCHEDULER=karras.) SD-Turbo in the BROWSER on WebGPU: opens ComfyUI's stock workflow (patched to sd_turbo, 1 step, small picture), runs it on "This browser",
 // follows the status line and reports timings. The first run downloads the model (about 2.5 GB) into the profile's origin-private storage; keep
 // PROFILE_DIR to reuse it. Needs a WebGPU browser (the system Chrome here) and network access to Hugging Face on the first run.
 const { chromium } = require('playwright-core');
@@ -32,9 +32,9 @@ fs.mkdirSync(OUT, { recursive: true });
   // The stock workflow, patched: our checkpoint name, 1 step, cfg 1, a small picture.
   const wf = JSON.parse(fs.readFileSync(path.join(__dirname, 'comfy-default-workflow.json'), 'utf8'));
   for (const n of wf.nodes) {
-    if (n.type === 'CheckpointLoaderSimple') n.widgets_values = ['sd_turbo'];
+    if (n.type === 'CheckpointLoaderSimple') n.widgets_values = [process.env.CKPT || 'sd_turbo'];
     if (n.type === 'EmptyLatentImage') n.widgets_values = [SIZE, SIZE, 1];
-    if (n.type === 'KSampler') n.widgets_values = [7, 'fixed', 1, 1, 'euler', 'normal', 1];
+    if (n.type === 'KSampler') n.widgets_values = [7, 'fixed', parseInt(process.env.STEPS || '1', 10), parseFloat(process.env.CFG || '1'), process.env.SAMPLER || 'euler', process.env.SCHEDULER || 'normal', 1];
     if (n.type === 'CLIPTextEncode' && n.id === 6) n.widgets_values = ['a photo of a red apple on a wooden table'];
     if (n.type === 'CLIPTextEncode' && n.id === 7) n.widgets_values = [''];
   }

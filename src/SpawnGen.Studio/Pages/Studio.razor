@@ -23,6 +23,7 @@
         <button title="Undo (Ctrl+Z)" disabled="@(!_doc.CanUndo)" @onclick="() => { _doc.Undo(); _studio?.Focus(); }">Undo</button>
         <button title="Redo (Ctrl+Y)" disabled="@(!_doc.CanRedo)" @onclick="() => { _doc.Redo(); _studio?.Focus(); }">Redo</button>
         <span class="sep"></span>
+        <button class="@(_libraryOpen ? "on" : "")" title="Node library: browse every node by category, click or drag one onto the canvas (N)" @onclick="() => { ToggleLibrary(); }">Nodes</button>
         <button title="Add a node (double-click the canvas)" @onclick="() => OpenSearch(CenterWorld(), null)">Add node</button>
         <button title="Fit all nodes in view (F)" @onclick="() => { _view.FitToView(); _studio?.Focus(); }">Fit</button>
         <span class="sep"></span>
@@ -77,6 +78,29 @@
 
     <div class="stage">
         <canvas @ref="_canvasRef" tabindex="0"></canvas>
+
+        @if (_libraryOpen)
+        {
+            <div class="library">
+                <input class="lib-filter" placeholder="Filter nodes..." value="@_libraryFilter" @oninput="OnLibraryFilter" />
+                <div class="lib-list">
+                    @foreach (var group in LibraryGroups())
+                    {
+                        var open = _libraryFilter.Trim().Length > 0 || !_libraryClosed.Contains(group.Key);
+                        var key = group.Key;
+                        <div class="lib-cat" @onclick="() => ToggleCategory(key)">@(open ? "▾" : "▸") @key.Replace("/", " › ") <span>@group.Count()</span></div>
+                        @if (open)
+                        {
+                            @foreach (var schema in group)
+                            {
+                                var item = schema;
+                                <div class="lib-node" draggable="true" data-node="@item.Id" title="@item.Id" @onclick="() => PlaceFromLibrary(item)">@item.DisplayName</div>
+                            }
+                        }
+                    }
+                </div>
+            </div>
+        }
 
         @if (_message is not null)
         {
@@ -707,8 +731,57 @@
             await Interop.InvokeVoidAsync("spawngenDownloadUrl", $"spawngen_{node.Id}_{n++}.png", preview.Url);
     }
 
+    // ---- node library ----
+
+    bool _libraryOpen;
+    string _libraryFilter = "";
+    readonly HashSet<string> _libraryClosed = new();
+    int _placed;
+
+    void ToggleLibrary()
+    {
+        _libraryOpen = !_libraryOpen;
+        _studio?.Focus();
+    }
+
+    void OnLibraryFilter(ChangeEventArgs e) => _libraryFilter = e.Value?.ToString() ?? "";
+
+    void ToggleCategory(string category)
+    {
+        if (!_libraryClosed.Remove(category)) _libraryClosed.Add(category);
+    }
+
+    IEnumerable<IGrouping<string, NodeSchema>> LibraryGroups()
+    {
+        var words = _libraryFilter.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return Registry.Schemas
+            .Where(s => words.All(w => s.DisplayName.Contains(w, StringComparison.OrdinalIgnoreCase) || s.Id.Contains(w, StringComparison.OrdinalIgnoreCase) || s.Category.Contains(w, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(s => s.DisplayName)
+            .GroupBy(s => s.Category)
+            .OrderBy(g => g.Key);
+    }
+
+    /// <summary>A click in the library places the node a little off the centre of the free part of the canvas, each one a step further so they do not stack.</summary>
+    void PlaceFromLibrary(NodeSchema schema)
+    {
+        var at = _view.Viewport.ScreenToWorld(new Point(_view.ScreenSize.X / 2 + 130, _view.ScreenSize.Y / 2));
+        int cascade = _placed++ % 6 * 24;
+        _view.PlaceNode(schema.Id, new Point(at.X + cascade, at.Y + cascade));
+        _studio?.Focus();
+    }
+
+    /// <summary>A library entry dropped on the canvas (see <c>spawngenEnableDrop</c> in index.html): (x, y) are canvas pixels.</summary>
+    [JSInvokable]
+    public void OnNodeDropped(string classType, double x, double y)
+    {
+        if (Registry.GetSchema(classType) is null) return;
+        _view.PlaceNode(classType, _view.Viewport.ScreenToWorld(new Point(x, y)));
+        _studio?.Focus();
+    }
+
     bool OnShortcut(string key, Modifiers mods)
     {
+        if (key == "n" && mods == Modifiers.None) { ToggleLibrary(); InvokeAsync(StateHasChanged); return true; }
         if (key != "enter" || !mods.HasFlag(Modifiers.Ctrl)) return false;
         _ = QueueAsync();
         return true;

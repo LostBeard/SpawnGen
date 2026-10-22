@@ -26,10 +26,17 @@
             el.addEventListener("dragover", e => e.preventDefault());
             el.addEventListener("drop", async e => {
                 e.preventDefault();
+                const node = e.dataTransfer.getData("text/spawngen-node");
+                if (node) { const r = el.getBoundingClientRect(); await dotnetRef.invokeMethodAsync("OnNodeDropped", node, e.clientX - r.left, e.clientY - r.top); return; }
                 for (const f of e.dataTransfer.files)
                     await dotnetRef.invokeMethodAsync("OnFileDropped", f.name, new Uint8Array(await f.arrayBuffer()));
             });
         };
+        // A node dragged out of the library carries its class name.
+        document.addEventListener("dragstart", e => {
+            const n = e.target.closest && e.target.closest("[data-node]");
+            if (n) { e.dataTransfer.setData("text/spawngen-node", n.dataset.node); e.dataTransfer.effectAllowed = "copy"; }
+        });
         // Browser storage for the open workflows (tabs, autosave). It can be missing or full: every call is allowed to fail quietly.
         window.spawngenStoreGet = function (key) { try { return localStorage.getItem(key); } catch (e) { return null; } };
         window.spawngenStoreSet = function (key, value) { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } };

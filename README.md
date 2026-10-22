@@ -26,6 +26,7 @@ How close to ComfyUI it is, feature by feature, is in [docs/PARITY.md](docs/PARI
 - **Over 100 nodes in all, most of them plain host code**: image ops, masks, latents, strings, math, primitives, Reroute / Note / groups, Preview Any.
 - **Editor**: node library sidebar, search, undo/redo, copy/paste, groups, colours, workflow tabs with autosave, minimap, settings (link style, snap to grid), history panel with sound and picture players,
   mask editor for Load Image, ComfyUI workflow import/export (PNGs carry their workflow, drop one on the canvas to open it).
+- **Examples menu** with 13 ready workflows to start from.
 - **Custom nodes in C#**: [docs/CUSTOM_NODES.md](docs/CUSTOM_NODES.md), example pack in `samples/SpawnGen.SampleNodes`.
 
 ## Run it

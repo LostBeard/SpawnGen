@@ -1,0 +1,67 @@
+[
+  {
+    "name": "Text to image (SD-Turbo, 1 step)",
+    "file": "txt2img-sd-turbo.json",
+    "note": "The smallest model: draws in one step."
+  },
+  {
+    "name": "Text to image (Stable Diffusion 1.5, real guidance)",
+    "file": "txt2img-sd15.json",
+    "note": "20 steps with a negative prompt; downloads 4.4 GB the first time."
+  },
+  {
+    "name": "Image to image",
+    "file": "img2img.json",
+    "note": "Upload a picture, pick it in Load Image, then Queue."
+  },
+  {
+    "name": "Hires fix (draw small, upscale the latent, refine)",
+    "file": "hires-fix.json",
+    "note": "SD-Turbo at 256 px, then 512 px."
+  },
+  {
+    "name": "Inpainting (paint the mask yourself)",
+    "file": "inpaint.json",
+    "note": "Upload a picture, right-click Load Image > Open in Mask Editor, paint, Queue."
+  },
+  {
+    "name": "FLUX.2 Klein text to image",
+    "file": "flux2-klein.json",
+    "note": "4B model, 4 steps; downloads 4.6 GB the first time. Needs a GPU with about 4 GB free."
+  },
+  {
+    "name": "FLUX.2 Klein picture edit",
+    "file": "flux2-klein-edit.json",
+    "note": "Edits the picture you load, following the prompt."
+  },
+  {
+    "name": "LLM writes the prompt, SD-Turbo draws it",
+    "file": "llm-prompt.json",
+    "note": "A small local language model expands your idea into a prompt."
+  },
+  {
+    "name": "Upscale a picture with a model",
+    "file": "upscale.json",
+    "note": "ESPCN x3, a few hundred KB."
+  },
+  {
+    "name": "Remove the background",
+    "file": "remove-background.json",
+    "note": "RMBG 1.4: the mask, and the cut-out on green."
+  },
+  {
+    "name": "Depth map",
+    "file": "depth.json",
+    "note": "Depth Anything V2 small."
+  },
+  {
+    "name": "Pose and object detection",
+    "file": "detect.json",
+    "note": "Boxes around what is in the picture, the list of what was found, and the body skeleton."
+  },
+  {
+    "name": "Speak and listen (Kokoro, then Parakeet)",
+    "file": "speech.json",
+    "note": "Text to speech, then the speech back to text (the listener needs a desktop GPU)."
+  }
+]

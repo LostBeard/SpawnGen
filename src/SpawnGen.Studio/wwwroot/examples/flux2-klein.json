@@ -1,0 +1,24 @@
+{
+  "1": {
+    "class_type": "Flux2Klein",
+    "inputs": {
+      "prompt": "a photo of a single red apple on a wooden table, soft daylight",
+      "width": 512,
+      "height": 512,
+      "steps": 4,
+      "seed": 7,
+      "batch_size": 1,
+      "weights": "4-bit"
+    }
+  },
+  "2": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "1",
+        0
+      ],
+      "filename_prefix": "SpawnGen"
+    }
+  }
+}

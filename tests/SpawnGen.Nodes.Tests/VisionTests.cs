@@ -91,6 +91,7 @@ public class VisionTests
         var executor = new PromptExecutor(Registry(), new Services(runtime, new OutputOptions { Directory = Path.Combine(work, "output") }));
         var r = await executor.ExecuteAsync(build());
         TestContext.Out.WriteLine($"{name}: {r.Elapsed.TotalSeconds:F1} s on {runtime.Accelerator.AcceleratorType} {runtime.Accelerator.Name}");
+        Directory.CreateDirectory(Path.Combine(work, "output")); // a graph that only reports text saves nothing
         var files = Directory.GetFiles(Path.Combine(work, "output"), "*." + extension);
         foreach (var f in files) TestContext.Out.WriteLine("  " + f);
         return files;
@@ -196,7 +197,6 @@ public class VisionTests
             g.Add("1", "LoadImage", ("image", "in.png"));
             g.Add("2", "PoseEstimation", ("image", PromptInput.Link("1")), ("confidence", 0.3), ("overlay", true));
             g.Add("3", "SaveImage", ("images", PromptInput.Link("2")), ("filename_prefix", "pose"));
-            g.Add("4", "CaptureText", ("text", PromptInput.Link("2", 1)));
             return g;
         }, TestPicture(512));
         TestContext.Out.WriteLine(CaptureText.Last);
@@ -213,12 +213,42 @@ public class VisionTests
             g.Add("1", "LoadImage", ("image", "in.png"));
             g.Add("2", "ObjectDetection", ("image", PromptInput.Link("1")), ("confidence", double.TryParse(Environment.GetEnvironmentVariable("DETECT_CONF"), out var conf) ? conf : 0.25));
             g.Add("3", "SaveImage", ("images", PromptInput.Link("2")), ("filename_prefix", "detect"));
-            g.Add("4", "CaptureText", ("text", PromptInput.Link("2", 1)));
             return g;
         }, TestPicture(512));
         TestContext.Out.WriteLine(CaptureText.Last);
         Assert.That(files, Has.Length.EqualTo(1));
         Assert.That(CaptureText.Last, Does.Contain("bus").And.Contain("person"));
+    }
+
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU, SPAWNGEN_TEST_PICTURE (a photo of a bus) and the network on first use (MobileNetV2 14 MB).")]
+    public async Task Image_classification_names_the_bus()
+    {
+        await RunAsync("classify", () =>
+        {
+            var g = new PromptGraph();
+            g.Add("1", "LoadImage", ("image", "in.png"));
+            g.Add("2", "ImageClassification", ("image", PromptInput.Link("1")), ("top_k", 5));
+            g.Add("3", "CaptureText", ("text", PromptInput.Link("2", 0)));
+            return g;
+        }, TestPicture(512));
+        TestContext.Out.WriteLine(CaptureText.Last);
+        Assert.That(CaptureText.Last.Split(Environment.NewLine), Has.Length.EqualTo(5));
+        Assert.That(CaptureText.Last, Does.Contain("bus"));
+    }
+
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU, SPAWNGEN_TEST_PICTURE (a photo of a bus) and the network on first use (CLIP ViT-B/32, 0.6 GB).")]
+    public async Task Matching_labels_to_a_picture_ranks_the_bus_first()
+    {
+        await RunAsync("clip", () =>
+        {
+            var g = new PromptGraph();
+            g.Add("1", "LoadImage", ("image", "in.png"));
+            g.Add("2", "ZeroShotClassification", ("image", PromptInput.Link("1")), ("labels", "a photo of a cat, a photo of a bus, a photo of a banana"));
+            g.Add("3", "CaptureText", ("text", PromptInput.Link("2", 0)));
+            return g;
+        }, TestPicture(512));
+        TestContext.Out.WriteLine(CaptureText.Last);
+        Assert.That(CaptureText.Last, Does.Contain("a photo of a bus"));
     }
 
     sealed class Services(params object[] instances) : IServiceProvider

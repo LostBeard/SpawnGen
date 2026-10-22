@@ -37,6 +37,78 @@
             const n = e.target.closest && e.target.closest("[data-node]");
             if (n) { e.dataTransfer.setData("text/spawngen-node", n.dataset.node); e.dataTransfer.effectAllowed = "copy"; }
         });
+        // The mask editor: paint over a picture, get it back as a PNG whose painted pixels are transparent (what Load Image turns into its mask).
+        // Resolves with the PNG bytes, or null when cancelled or the picture cannot be read.
+        window.spawngenMaskEditor = function (imageUrl) {
+            return new Promise(async resolve => {
+                const img = new Image();
+                img.src = imageUrl;
+                try { await img.decode(); } catch (e) { resolve(null); return; }
+                const w = img.naturalWidth, h = img.naturalHeight;
+                if (!w || !h) { resolve(null); return; }
+                const root = document.createElement("div");
+                root.className = "maskeditor";
+                root.innerHTML = '<div class="me-bar"><span>Mask editor</span>' +
+                    '<label>Brush <input class="me-size" type="range" min="2" max="200" value="40"></label>' +
+                    '<button class="me-mode" data-mode="paint">Paint</button><button class="me-mode" data-mode="erase">Erase</button>' +
+                    '<button class="me-clear">Clear</button><button class="me-invert">Invert</button>' +
+                    '<span class="me-spacer"></span><button class="me-cancel">Cancel</button><button class="me-save">Save</button></div>' +
+                    '<div class="me-stage"><div class="me-stack"><canvas class="me-base"></canvas><canvas class="me-mask"></canvas></div></div>';
+                document.body.appendChild(root);
+                const base = root.querySelector(".me-base"), mask = root.querySelector(".me-mask");
+                base.width = mask.width = w; base.height = mask.height = h;
+                const bctx = base.getContext("2d"), mctx = mask.getContext("2d");
+                bctx.drawImage(img, 0, 0);
+                // An existing mask (transparent pixels of the picture) comes back as paint.
+                const pix = bctx.getImageData(0, 0, w, h);
+                const init = mctx.createImageData(w, h);
+                for (let i = 0; i < pix.data.length; i += 4) {
+                    if (pix.data[i + 3] < 128) { init.data[i] = 255; init.data[i + 1] = 59; init.data[i + 2] = 59; init.data[i + 3] = 255; }
+                    pix.data[i + 3] = 255;
+                }
+                bctx.putImageData(pix, 0, 0);
+                mctx.putImageData(init, 0, 0);
+                let mode = "paint", drawing = false, last = null;
+                const modes = root.querySelectorAll(".me-mode");
+                const setMode = m => { mode = m; modes.forEach(b => b.classList.toggle("on", b.dataset.mode === m)); };
+                setMode("paint");
+                modes.forEach(b => b.onclick = () => setMode(b.dataset.mode));
+                const size = root.querySelector(".me-size");
+                const at = e => { const r = mask.getBoundingClientRect(); return { x: (e.clientX - r.left) * w / r.width, y: (e.clientY - r.top) * h / r.height }; };
+                const stroke = (a, b) => {
+                    mctx.globalCompositeOperation = mode === "erase" ? "destination-out" : "source-over";
+                    mctx.strokeStyle = "#ff3b3b"; mctx.fillStyle = "#ff3b3b";
+                    mctx.lineWidth = +size.value; mctx.lineCap = "round"; mctx.lineJoin = "round";
+                    mctx.beginPath(); mctx.moveTo(a.x, a.y); mctx.lineTo(b.x + 0.01, b.y); mctx.stroke();
+                };
+                mask.onpointerdown = e => { drawing = true; mask.setPointerCapture(e.pointerId); last = at(e); stroke(last, last); };
+                mask.onpointermove = e => { if (!drawing) return; const p = at(e); stroke(last, p); last = p; };
+                mask.onpointerup = mask.onpointercancel = () => { drawing = false; };
+                root.querySelector(".me-clear").onclick = () => mctx.clearRect(0, 0, w, h);
+                root.querySelector(".me-invert").onclick = () => {
+                    const d = mctx.getImageData(0, 0, w, h);
+                    for (let i = 0; i < d.data.length; i += 4) { const on = d.data[i + 3] > 127; d.data[i] = 255; d.data[i + 1] = 59; d.data[i + 2] = 59; d.data[i + 3] = on ? 0 : 255; }
+                    mctx.putImageData(d, 0, 0);
+                };
+                const finish = result => { document.removeEventListener("keydown", onKey); root.remove(); resolve(result); };
+                const onKey = e => { if (e.key === "Escape") { e.preventDefault(); finish(null); } };
+                document.addEventListener("keydown", onKey);
+                root.querySelector(".me-cancel").onclick = () => finish(null);
+                root.querySelector(".me-save").onclick = async () => {
+                    const out = document.createElement("canvas"); out.width = w; out.height = h;
+                    const octx = out.getContext("2d");
+                    octx.drawImage(base, 0, 0);
+                    octx.globalCompositeOperation = "destination-out";
+                    // Anything painted by more than half counts as masked: the soft edge of a stroke is not a half-transparent hole.
+                    const d = mctx.getImageData(0, 0, w, h);
+                    for (let i = 0; i < d.data.length; i += 4) d.data[i + 3] = d.data[i + 3] > 127 ? 255 : 0;
+                    const tmp = document.createElement("canvas"); tmp.width = w; tmp.height = h;
+                    tmp.getContext("2d").putImageData(d, 0, 0);
+                    octx.drawImage(tmp, 0, 0);
+                    out.toBlob(async blob => finish(blob ? new Uint8Array(await blob.arrayBuffer()) : null), "image/png");
+                };
+            });
+        };
         // Browser storage for the open workflows (tabs, autosave). It can be missing or full: every call is allowed to fail quietly.
         window.spawngenStoreGet = function (key) { try { return localStorage.getItem(key); } catch (e) { return null; } };
         window.spawngenStoreSet = function (key, value) { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } };

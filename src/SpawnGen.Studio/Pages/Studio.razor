@@ -776,6 +776,8 @@
         {
             var node = _doc.Graph.GetNode(hit.NodeId);
             items.Add(new("Rename", () => OnTitleEdit(hit.NodeId)));
+            if (node.ClassType is "LoadImage" or "LoadImageMask")
+                items.Add(new("Open in Mask Editor", () => _ = OpenMaskEditorAsync(node)));
             foreach (var (name, color, bg) in EditorGroup.NodePalette)
                 items.Add(new($"Colour: {name}", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, color, bg); _doc.EndGesture(); }));
             if (node.Color is not null || node.BgColor is not null)
@@ -892,6 +894,28 @@
     async Task DownloadLightbox()
     {
         if (_lightbox is { } url) await Interop.InvokeVoidAsync("spawngenDownloadUrl", "spawngen_result.png", url);
+    }
+
+    // ---- mask editor ----
+
+    /// <summary>Paints a mask over the picture of a Load Image node: the result is a new picture whose painted pixels are transparent, which the node turns into its mask.</summary>
+    async Task OpenMaskEditorAsync(EditorNode node)
+    {
+        if (_engine is null) { ShowMessage("There is no engine to keep the masked picture on."); return; }
+        if (node.Widgets.GetValueOrDefault("image") as string is not { Length: > 0 } name) { ShowMessage("Pick a picture in the Load Image node first."); return; }
+        try
+        {
+            var png = await Interop.InvokeAsync<byte[]?>("spawngenMaskEditor", _engine.ViewUrl(name, "", "input"));
+            if (png is null) return;
+            var stem = System.IO.Path.GetFileNameWithoutExtension(name);
+            var stored = await _engine.UploadImageAsync(stem.StartsWith("mask-") ? stem + ".png" : $"mask-{stem}.png", png);
+            if (stored is null) { ShowMessage("Could not keep the masked picture."); return; }
+            await RefreshInputImagesAsync();
+            _doc.SetWidget(node.Id, "image", stored);
+            _doc.EndGesture();
+            ShowMessage($"Saved as {stored}: its painted area is the node's mask output.");
+        }
+        catch (Microsoft.JSInterop.JSException ex) { ShowMessage("The mask editor failed: " + ex.Message); }
     }
 
     // ---- settings ----

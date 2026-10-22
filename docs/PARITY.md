@@ -31,6 +31,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Minimap (bottom right: nodes, groups, the view; click or drag to move the view; Map button) | **done** |
 | Properties panel | todo |
 | Multiple workflows (tabs: new, rename, close, a file opens in its own tab), autosave to browser storage with the view; restored on reload | **done**; recent files todo |
+| Mask editor (Load Image / Load Image (as Mask): right-click > Open in Mask Editor; brush size, paint / erase, clear, invert; saves a picture with the painted area transparent, which Load Image turns into its mask) | **done** |
 | Drop a generated PNG (ComfyUI or SpawnGen) or a workflow / API-format JSON on the canvas to open it; PNGs carry prompt + workflow | **done** |
 | Settings (remembered in the browser): link render modes (spline / straight / linear / hidden), snap to grid with its size, minimap | **done** |
 | Themes, shortcut customisation, shortcut parity check | todo |

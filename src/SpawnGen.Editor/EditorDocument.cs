@@ -109,6 +109,14 @@ public sealed class EditorDocument(NodeRegistry registry)
             (n, v) => n.Title = v));
     }
 
+    /// <summary>Colours a node (null for both = back to the theme's). One undo step.</summary>
+    public void SetNodeColor(int nodeId, string? color, string? bgColor)
+    {
+        var node = Graph.GetNode(nodeId);
+        if (node.Color == color && node.BgColor == bgColor) return;
+        Run(new SetNodePropertyCommand<(string?, string?)>(nodeId, "color", (node.Color, node.BgColor), (color, bgColor), (n, v) => (n.Color, n.BgColor) = v));
+    }
+
     public void SetMode(int nodeId, NodeMode mode)
     {
         var node = Graph.GetNode(nodeId);

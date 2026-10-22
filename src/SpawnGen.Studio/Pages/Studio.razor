@@ -772,6 +772,10 @@
         {
             var node = _doc.Graph.GetNode(hit.NodeId);
             items.Add(new("Rename", () => OnTitleEdit(hit.NodeId)));
+            foreach (var (name, color, bg) in EditorGroup.NodePalette)
+                items.Add(new($"Colour: {name}", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, color, bg); _doc.EndGesture(); }));
+            if (node.Color is not null || node.BgColor is not null)
+                items.Add(new("Colour: default", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, null, null); _doc.EndGesture(); }));
             if (node.Previews.Count > 0)
                 items.Add(new("Save picture", () => _ = SavePicturesAsync(node)));
             items.Add(new(node.Collapsed ? "Expand" : "Collapse", () => { _doc.SetCollapsed(hit.NodeId, !node.Collapsed); _doc.EndGesture(); }));

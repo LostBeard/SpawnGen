@@ -17,6 +17,9 @@ public sealed class EditorNode
     public required int Id { get; init; }
     public required string ClassType { get; init; }
     public string? Title { get; set; }
+    /// <summary>Title bar and body colours the user picked (CSS colours, ComfyUI's <c>color</c> and <c>bgcolor</c>); null = the theme's.</summary>
+    public string? Color { get; set; }
+    public string? BgColor { get; set; }
     public double X { get; set; }
     public double Y { get; set; }
     /// <summary>Width the user dragged the node to; null = sized from its content.</summary>
@@ -34,7 +37,7 @@ public sealed class EditorNode
 
     public EditorNode Clone(int? newId = null) => new()
     {
-        Id = newId ?? Id, ClassType = ClassType, Title = Title, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Mode = Mode,
+        Id = newId ?? Id, ClassType = ClassType, Title = Title, Color = Color, BgColor = BgColor, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Mode = Mode,
         Widgets = new Dictionary<string, object?>(Widgets, StringComparer.Ordinal),
     };
 }

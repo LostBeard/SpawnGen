@@ -17,6 +17,13 @@ public sealed class EditorGroup
         ("cyan", "#8AA"), ("purple", "#a1309b"), ("yellow", "#b58b2a"), ("black", "#444"),
     ];
 
+    /// <summary>ComfyUI's node colour presets: name, title bar colour, body colour (what it writes as <c>color</c> and <c>bgcolor</c>).</summary>
+    public static readonly IReadOnlyList<(string Name, string Color, string BgColor)> NodePalette =
+    [
+        ("red", "#322", "#533"), ("brown", "#332922", "#593930"), ("green", "#232", "#353"), ("blue", "#223", "#335"), ("pale blue", "#2a363b", "#3f5159"),
+        ("cyan", "#233", "#355"), ("purple", "#323", "#535"), ("yellow", "#432", "#653"), ("black", "#222", "#000"),
+    ];
+
     public required int Id { get; init; }
     public string Title { get; set; } = "Group";
     public double X { get; set; }

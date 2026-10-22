@@ -264,14 +264,14 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         // Body and title.
         RoundRect(ctx, b, 8);
         bool isNote = schema is { FrontendOnly: true } && schema.Id != "Reroute";
-        ctx.FillStyle = node.Mode == NodeMode.Bypass ? "#4a3a5a" : isNote ? "#4d4630" : Theme.NodeBody;
+        ctx.FillStyle = node.Mode == NodeMode.Bypass ? "#4a3a5a" : node.BgColor ?? (isNote ? "#4d4630" : Theme.NodeBody);
         ctx.Fill();
         if (!geo.Collapsed || true)
         {
             ctx.Save();
             RoundRect(ctx, b, 8);
             ctx.Clip();
-            ctx.FillStyle = schema is null ? "#5a2a2a" : isNote ? "#7a6a2a" : Theme.TitleColor(schema.Category);
+            ctx.FillStyle = schema is null ? "#5a2a2a" : node.Color ?? (isNote ? "#7a6a2a" : Theme.TitleColor(schema.Category));
             ctx.FillRect(geo.TitleBar.X, geo.TitleBar.Y, geo.TitleBar.Width, geo.TitleBar.Height);
             ctx.Restore();
         }

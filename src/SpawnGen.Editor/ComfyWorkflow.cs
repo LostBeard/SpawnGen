@@ -38,7 +38,7 @@ public static class ComfyWorkflow
                 nodeJson[id] = n;
                 var node = new EditorNode
                 {
-                    Id = id, ClassType = type, Title = (string?)n["title"],
+                    Id = id, ClassType = type, Title = (string?)n["title"], Color = (string?)n["color"], BgColor = (string?)n["bgcolor"],
                     X = Pair(n["pos"]).X, Y = Pair(n["pos"]).Y,
                     Collapsed = (bool?)n["flags"]?["collapsed"] ?? false,
                     Mode = Enum.IsDefined(typeof(NodeMode), (int?)n["mode"] ?? 0) ? (NodeMode)((int?)n["mode"] ?? 0) : NodeMode.Always,
@@ -212,6 +212,8 @@ public static class ComfyWorkflow
                 ["mode"] = (int)n.Mode,
             };
             if (n.Title is not null) obj["title"] = n.Title;
+            if (n.Color is not null) obj["color"] = n.Color;
+            if (n.BgColor is not null) obj["bgcolor"] = n.BgColor;
 
             var inputs = new JsonArray();
             var outputs = new JsonArray();

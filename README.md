@@ -14,13 +14,18 @@ Design and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | `SpawnGen.Nodes.Core` / `SpawnGen.Nodes.ML`: empty latent, save image, checkpoint loader, CLIP encode, KSampler (euler, euler_ancestral, dpmpp_2m, CFG, denoise), VAE encode/decode, load/save/preview image (PNG); SD-Turbo txt2img and img2img verified on desktop OpenCL | working; schedulers, LoRA/ControlNet next |
 | `SpawnGen.Editor`: UI-independent node editor core (document, undo/redo, layout, hit testing, pointer/keyboard interaction, ComfyUI workflow import/export, graph compiler) | working, 100 tests; Blazor canvas next |
 | `SpawnGen.Studio`: Blazor WebAssembly canvas editor drawn from C# (no per-move re-render): pan/zoom, drag, link, node search, in-place widget edit, context menu, open/save ComfyUI workflows; browser-tested (`tools/studio-browser-test`) | working; running graphs from the Studio, queue and gallery next |
-| Server / desktop shell | planned |
+| `SpawnGen.Server`: ComfyUI-shaped HTTP + WebSocket API (`/prompt`, `/queue`, `/history`, `/object_info`, `/view`, `/upload/image`, `/ws`), one-at-a-time queue with interrupt, native CUDA/OpenCL; also serves the Studio. SD-Turbo txt2img verified end to end through it on an RX 590 | working; desktop shell next |
 
-## Run the Studio
+## Run it
 
 ```powershell
-dotnet run --project src/SpawnGen.Studio -c Release --urls http://localhost:5280
+dotnet run --project src/SpawnGen.Server -c Release --urls http://localhost:8188
 ```
+
+Open http://localhost:8188 for the Studio; the same address is the API. Models, inputs and results live under
+`%LOCALAPPDATA%\SpawnGen` (`models\sd_turbo\...`, `input`, `output`, `temp`); change them with `SpawnGen__ModelsPath`, `SpawnGen__OutputPath`,
+`SpawnGen__InputPath`, `SpawnGen__TempPath` (environment variables or `--SpawnGen:ModelsPath=...`).
+The Studio alone (no server, editing only) is `dotnet run --project src/SpawnGen.Studio -c Release`.
 
 ## Build and test
 

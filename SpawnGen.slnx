@@ -5,10 +5,12 @@
     <Project Path="src/SpawnGen.Nodes.ML/SpawnGen.Nodes.ML.csproj" />
     <Project Path="src/SpawnGen.Editor/SpawnGen.Editor.csproj" />
     <Project Path="src/SpawnGen.Studio/SpawnGen.Studio.csproj" />
+    <Project Path="src/SpawnGen.Server/SpawnGen.Server.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SpawnGen.Engine.Tests/SpawnGen.Engine.Tests.csproj" />
     <Project Path="tests/SpawnGen.Nodes.Tests/SpawnGen.Nodes.Tests.csproj" />
     <Project Path="tests/SpawnGen.Editor.Tests/SpawnGen.Editor.Tests.csproj" />
+    <Project Path="tests/SpawnGen.Server.Tests/SpawnGen.Server.Tests.csproj" />
   </Folder>
 </Solution>

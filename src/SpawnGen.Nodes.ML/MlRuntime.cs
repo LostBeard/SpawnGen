@@ -20,6 +20,9 @@ public sealed class MlRuntime : IDisposable
         ["sd_turbo"] = "schmuell/sd-turbo-ort-web",
     };
 
+    /// <summary>Repo id to folder name, for <see cref="FolderModelSource"/>: a models folder holds one sub-folder per checkpoint name.</summary>
+    public static IReadOnlyDictionary<string, string> RepoFolders { get; } = KnownCheckpoints.ToDictionary(kv => kv.Value, kv => kv.Key);
+
     readonly Context _context;
     readonly Dictionary<string, Task<Checkpoint>> _checkpoints = new();
     readonly object _gate = new();

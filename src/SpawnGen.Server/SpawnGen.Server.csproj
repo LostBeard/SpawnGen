@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>SpawnGen.Server</RootNamespace>
+    <Description>SpawnGen server: ComfyUI-shaped HTTP/WebSocket API over the engine, native CUDA/OpenCL execution, and it hosts the Studio.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpawnGen.Engine\SpawnGen.Engine.csproj" />
+    <ProjectReference Include="..\SpawnGen.Nodes.Core\SpawnGen.Nodes.Core.csproj" />
+    <ProjectReference Include="..\SpawnGen.Nodes.ML\SpawnGen.Nodes.ML.csproj" />
+    <ProjectReference Include="..\SpawnGen.Studio\SpawnGen.Studio.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SpawnGen.Server.Tests" />
+  </ItemGroup>
+
+</Project>

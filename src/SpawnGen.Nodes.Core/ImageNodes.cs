@@ -7,6 +7,8 @@ namespace SpawnGen.Nodes.Core;
 public sealed class OutputOptions
 {
     public string Directory { get; init; } = Path.Combine(AppContext.BaseDirectory, "output");
+    /// <summary>Where <see cref="PreviewImage"/> writes its throw-away files.</summary>
+    public string TempDirectory { get; init; } = Path.Combine(AppContext.BaseDirectory, "temp");
 }
 
 /// <summary>Where <see cref="LoadImage"/> reads from. Set <see cref="Directory"/> at startup (default: <c>./input</c>); the combo lists its PNG files.</summary>
@@ -66,14 +68,22 @@ public sealed class SaveImage
     }
 }
 
-/// <summary>Shows images in the editor without writing files: the PNG bytes travel in the node's UI output.</summary>
+/// <summary>Shows images in the editor: writes them to the temp folder (like ComfyUI's PreviewImage) and reports the files; they are not kept as results.</summary>
 [Node(Category = "image", DisplayName = "Preview Image", IsOutput = true)]
 public sealed class PreviewImage
 {
-    public UiOutput Execute(ImageBatch images)
+    public UiOutput Execute(ImageBatch images, IServiceProvider services)
     {
-        var pngs = new byte[images.Batch][];
-        for (int i = 0; i < images.Batch; i++) pngs[i] = PngWriter.Encode(images, i);
-        return new UiOutput("images", pngs);
+        var dir = (services.GetService(typeof(OutputOptions)) as OutputOptions ?? new OutputOptions()).TempDirectory;
+        Directory.CreateDirectory(dir);
+        var saved = new List<object>();
+        var stamp = Guid.NewGuid().ToString("N")[..10];
+        for (int i = 0; i < images.Batch; i++)
+        {
+            var name = $"preview_{stamp}_{i + 1:D2}.png";
+            File.WriteAllBytes(Path.Combine(dir, name), PngWriter.Encode(images, i));
+            saved.Add(new { filename = name, subfolder = "", type = "temp" });
+        }
+        return new UiOutput("images", saved);
     }
 }

@@ -18,7 +18,16 @@ public sealed class CheckpointLoaderSimple
     {
         var runtime = GpuHelpers.Runtime(services);
         context.Status($"Loading {ckptName}");
-        var ckpt = await runtime.GetCheckpointAsync(ckptName, (stage, pct) => context.Status($"Loading {ckptName}: {stage} {pct}%"));
+        // The loader reports every percent of every sub-model; one message per 10% is plenty for a status line.
+        string? lastStage = null;
+        int lastBucket = -1;
+        var ckpt = await runtime.GetCheckpointAsync(ckptName, (stage, pct) =>
+        {
+            int bucket = pct / 10;
+            if (stage == lastStage && bucket == lastBucket) return;
+            (lastStage, lastBucket) = (stage, bucket);
+            context.Status($"Loading {ckptName}: {stage} {pct}%");
+        });
         return (new ModelHandle(ckpt), new ClipHandle(ckpt), new VaeHandle(ckpt));
     }
 }

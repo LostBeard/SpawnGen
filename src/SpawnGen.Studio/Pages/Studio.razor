@@ -24,6 +24,7 @@
         <button title="Redo (Ctrl+Y)" disabled="@(!_doc.CanRedo)" @onclick="() => { _doc.Redo(); _studio?.Focus(); }">Redo</button>
         <span class="sep"></span>
         <button class="@(_libraryOpen ? "on" : "")" title="Node library: browse every node by category, click or drag one onto the canvas (N)" @onclick="() => { ToggleLibrary(); }">Nodes</button>
+        <button class="@(_historyOpen ? "on" : "")" title="Queue and history: every run of this session with its pictures; load the workflow of a run back (H)" @onclick="ToggleHistory">History@(_history.Count > 0 ? $" ({_history.Count})" : "")</button>
         <button title="Add a node (double-click the canvas)" @onclick="() => OpenSearch(CenterWorld(), null)">Add node</button>
         <button title="Fit all nodes in view (F)" @onclick="() => { _view.FitToView(); _studio?.Focus(); }">Fit</button>
         <span class="sep"></span>
@@ -99,6 +100,56 @@
                         }
                     }
                 </div>
+            </div>
+        }
+
+        @if (_historyOpen)
+        {
+            <div class="history">
+                <div class="hist-head">
+                    <span>@(_running ? "Running" : "Idle")@(_pendingWorkflows.Count > 0 ? $", {_pendingWorkflows.Count} queued" : "")</span>
+                    <button title="Forget the runs listed here (the pictures stay where they were saved)" disabled="@(_history.Count == 0)" @onclick="ClearHistory">Clear</button>
+                </div>
+                <div class="hist-list">
+                    @foreach (var entry in _history)
+                    {
+                        var run = entry;
+                        <div class="hist-entry @run.State">
+                            <div class="hist-title">#@run.Number · @run.Started.ToString("HH:mm:ss")@(run.Seconds is { } sec ? $" · {sec:0.#} s" : "") · @run.State</div>
+                            <div class="hist-engine">@run.Engine</div>
+                            @if (run.Error is not null)
+                            {
+                                <div class="hist-error">@run.Error</div>
+                            }
+                            @if (run.Note is not null)
+                            {
+                                <div class="hist-note">@run.Note</div>
+                            }
+                            <div class="hist-thumbs">
+                                @foreach (var url in run.Urls)
+                                {
+                                    var picture = url;
+                                    <img src="@picture" alt="result" @onclick="() => _lightbox = picture" />
+                                }
+                            </div>
+                            <div class="hist-actions">
+                                <button title="Open this run's workflow in a new tab" @onclick="() => LoadRunWorkflow(run)">Load workflow</button>
+                            </div>
+                        </div>
+                    }
+                    @if (_history.Count == 0)
+                    {
+                        <div class="hist-none">Nothing has run yet. Press Queue.</div>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_lightbox is not null)
+        {
+            <div class="lightbox" @onclick="() => _lightbox = null">
+                <img src="@_lightbox" alt="result" />
+                <button @onclick="DownloadLightbox" @onclick:stopPropagation="true">Download</button>
             </div>
         }
 
@@ -731,6 +782,62 @@
             await Interop.InvokeVoidAsync("spawngenDownloadUrl", $"spawngen_{node.Id}_{n++}.png", preview.Url);
     }
 
+    // ---- queue and history ----
+
+    sealed class HistoryEntry
+    {
+        public required int Number { get; init; }
+        public required DateTime Started { get; init; }
+        public required string Engine { get; init; }
+        public required string Workflow { get; init; }
+        public List<string> Urls { get; } = [];
+        public double? Seconds { get; set; }
+        public string State { get; set; } = "running";
+        public string? Error { get; set; }
+        public string? Note { get; set; }
+    }
+
+    bool _historyOpen;
+    string? _lightbox;
+    int _runNumber;
+    readonly List<HistoryEntry> _history = [];           // newest first
+    readonly Queue<string> _pendingWorkflows = new();    // the workflows of queued runs, in the order they start
+
+    void ToggleHistory()
+    {
+        _historyOpen = !_historyOpen;
+        _studio?.Focus();
+    }
+
+    void ClearHistory() => _history.RemoveAll(e => e.State != "running");
+
+    void StartHistoryEntry()
+    {
+        var workflow = _pendingWorkflows.Count > 0 ? _pendingWorkflows.Dequeue() : Snapshot() ?? "";
+        _history.Insert(0, new HistoryEntry { Number = ++_runNumber, Started = DateTime.Now, Engine = _engine?.Name ?? "", Workflow = workflow });
+        if (_history.Count > 50) _history.RemoveAt(_history.Count - 1);
+    }
+
+    void FinishHistoryEntry(string state, string? error)
+    {
+        if (_history.FirstOrDefault(e => e.State == "running") is not { } entry) return;
+        entry.State = state;
+        entry.Error = error;
+        if (state == "done" && entry.Urls.Count == 0) entry.Note = "No new pictures: every output was cached from an earlier run (nothing changed).";
+        entry.Seconds = (DateTime.Now - entry.Started).TotalSeconds;
+    }
+
+    async Task LoadRunWorkflow(HistoryEntry entry)
+    {
+        if (entry.Workflow.Length == 0) { ShowMessage("That run has no workflow saved."); return; }
+        await OpenBytesAsync($"run-{entry.Number}.json", System.Text.Encoding.UTF8.GetBytes(entry.Workflow));
+    }
+
+    async Task DownloadLightbox()
+    {
+        if (_lightbox is { } url) await Interop.InvokeVoidAsync("spawngenDownloadUrl", "spawngen_result.png", url);
+    }
+
     // ---- node library ----
 
     bool _libraryOpen;
@@ -782,6 +889,8 @@
     bool OnShortcut(string key, Modifiers mods)
     {
         if (key == "n" && mods == Modifiers.None) { ToggleLibrary(); InvokeAsync(StateHasChanged); return true; }
+        if (key == "h" && mods == Modifiers.None) { ToggleHistory(); InvokeAsync(StateHasChanged); return true; }
+        if (key == "escape" && _lightbox is not null) { _lightbox = null; InvokeAsync(StateHasChanged); return true; }
         if (key != "enter" || !mods.HasFlag(Modifiers.Ctrl)) return false;
         _ = QueueAsync();
         return true;
@@ -892,7 +1001,8 @@
         _visuals.Errors.Clear();
 
         // The workflow travels with the prompt so Save Image can embed it: the picture can then be dropped back on the canvas.
-        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), ComfyWorkflow.Save(_doc, _renderer.MeasureText));
+        var workflow = ComfyWorkflow.Save(_doc, _renderer.MeasureText);
+        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow);
         if (!result.Queued)
         {
             foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;
@@ -901,6 +1011,7 @@
             _view.Invalidate();
             return false;
         }
+        _pendingWorkflows.Enqueue(workflow);
         if (compiled.Notes.Count > 0) ShowMessage(compiled.Notes[0]);
         ControlAfterGenerate.ApplyAfterQueue(_doc, Registry.GetSchema, Random.Shared);
         return true;
@@ -924,6 +1035,7 @@
                 _queueRemaining = (int?)data["status"]?["exec_info"]?["queue_remaining"] ?? 0;
                 break;
             case "execution_start":
+                StartHistoryEntry();
                 _visuals.BeginRun();
                 _running = true;
                 _statusText = null;
@@ -944,23 +1056,32 @@
                 break;
             case "executed" when node is { } shownId && _doc.Graph.FindNode(shownId) is { } shown:
                 if (data["output"]?["images"] is JsonArray images)
+                {
                     shown.Previews = images.OfType<JsonObject>()
                         .Select(i => new NodePreview(_engine!.ViewUrl((string)i["filename"]!, (string?)i["subfolder"], (string?)i["type"]))).ToList();
+                    // Saved pictures (not Preview Image's temporary ones) are the run's results.
+                    if (_history.FirstOrDefault(h => h.State == "running") is { } activeRun)
+                        activeRun.Urls.AddRange(images.OfType<JsonObject>().Where(i => (string?)i["type"] == "output")
+                            .Select(i => _engine!.ViewUrl((string)i["filename"]!, (string?)i["subfolder"], (string?)i["type"])));
+                }
                 break;
             case "execution_error":
                 int? failedNode = node;
                 if (failedNode is null && int.TryParse((string?)data["node_id"], out var failedId)) failedNode = failedId;
                 if (failedNode is { } badId) _visuals.Errors[badId] = (string?)data["exception_message"] ?? "failed";
+                FinishHistoryEntry("failed", (string?)data["exception_message"]);
                 ShowMessage($"Run failed: {(string?)data["exception_message"]}");
                 _running = false;
                 _visuals.EndRun();
                 break;
             case "execution_success":
+                FinishHistoryEntry("done", null);
                 _running = false;
                 _executingTitle = null;
                 _visuals.EndRun();
                 break;
             case "execution_interrupted":
+                FinishHistoryEntry("stopped", null);
                 _running = false;
                 _executingTitle = null;
                 _visuals.EndRun();

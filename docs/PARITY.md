@@ -46,14 +46,14 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Batch count (queue N times) | **done**; queue front, cancel / reorder queued items todo |
 | List inputs/outputs (`INPUT_IS_LIST`), lazy inputs, loops / node expansion | todo (engine) |
 | Latent preview during sampling | todo |
-| Gallery / history panel with workflow reload | todo |
+| History panel (H): every run of the session with its saved pictures, full-size view, load a run's workflow into a new tab, clear; queue shows running / queued | **done** (session only; gallery of past server runs, reorder / cancel queued items todo) |
 
 ## 3b. Model support (library)
 
 | Item | Status |
 |---|---|
 | SD-Turbo (ONNX): txt2img, img2img | **done** |
-| SD 1.5 (ONNX export a420/stable-diffusion-v1-5_onnx, fp32 UNet with external data, real CFG 7, dpmpp_2m/karras 8 steps) | **done**, verified by eye on the RX 590 desktop: 512x512 apple in 133 s including load; browser not yet run (3.4 GB fp32 UNet: probably needs half-precision weight storage) |
+| SD 1.5 (ONNX export a420/stable-diffusion-v1-5_onnx, fp32 UNet with external data, real CFG 7, dpmpp_2m/karras 8 steps) | **done**, verified by eye on the RX 590 desktop: 512x512 apple in 133 s including load; and in the browser (WebGPU, RX 590, fp32 UNet as is): the 256x256 picture looks identical to the desktop one (the weights come through the SpawnDev mirror, then Hugging Face on a 404) |
 | SD 2.x, SDXL (SDXL: two text encoders, pooled/size conditioning) ONNX checkpoints | todo: SDXL needs a node-level change |
 | Single-file `.safetensors` checkpoints (ComfyUI's main format) | todo: **library** (needs a UNet/CLIP/VAE builder from weights) |
 | LoRA, ControlNet, IP-Adapter, embeddings, upscale models | todo: **library** (LoRA could be applied to loaded weights from SpawnGen) |

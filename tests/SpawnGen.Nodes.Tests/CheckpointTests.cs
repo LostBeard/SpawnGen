@@ -7,6 +7,9 @@ namespace SpawnGen.Nodes.Tests;
 /// <summary>Other checkpoints than SD-Turbo through the same nodes (explicit: GPU and a multi-GB download on first use).</summary>
 public class CheckpointTests
 {
+    /// <summary>The picture side; SD15_SIZE overrides it (256 is what the browser check uses).</summary>
+    static int Size => int.TryParse(Environment.GetEnvironmentVariable("SD15_SIZE"), out var v) ? v : 512;
+
     [Test]
     public void Known_checkpoints_have_details_for_the_loader()
     {
@@ -24,7 +27,7 @@ public class CheckpointTests
             g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "sd_v1-5"));
             g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", PromptInput.Link("1", 1)));
             g.Add("3", "CLIPTextEncode", ("text", "blurry, low quality"), ("clip", PromptInput.Link("1", 1)));
-            g.Add("4", "EmptyLatentImage", ("width", 512), ("height", 512), ("batch_size", 1));
+            g.Add("4", "EmptyLatentImage", ("width", Size), ("height", Size), ("batch_size", 1));
             g.Add("5", "KSampler", ("model", PromptInput.Link("1")), ("positive", PromptInput.Link("2")), ("negative", PromptInput.Link("3")), ("latent_image", PromptInput.Link("4")),
                 ("seed", 7), ("steps", 8), ("cfg", 7.0), ("sampler_name", "dpmpp_2m"), ("scheduler", "karras"), ("denoise", 1.0));
             g.Add("6", "VAEDecode", ("samples", PromptInput.Link("5")), ("vae", PromptInput.Link("1", 2)));

@@ -27,6 +27,7 @@ fs.mkdirSync(OUT, { recursive: true });
     if (m.type() === 'error') { problems.push(m.text()); console.log(t(), 'console error:', m.text().slice(0, 300)); }
     else if (/\[SpawnGen\]|GenLoad|\[perop\]|device|lost|Unhandled/i.test(m.text())) console.log(t(), 'console:', m.text().slice(0, 400));
   });
+  page.on('response', r => { if (r.status() === 404) console.log(t(), '404:', r.url().slice(0, 200)); });
   page.on('pageerror', e => { problems.push('PAGEERROR ' + e.message); console.log(t(), 'PAGEERROR', e.message.slice(0, 300)); });
 
   // The stock workflow, patched: our checkpoint name, 1 step, cfg 1, a small picture.
@@ -36,7 +37,7 @@ fs.mkdirSync(OUT, { recursive: true });
     if (n.type === 'EmptyLatentImage') n.widgets_values = [SIZE, SIZE, 1];
     if (n.type === 'KSampler') n.widgets_values = [7, 'fixed', parseInt(process.env.STEPS || '1', 10), parseFloat(process.env.CFG || '1'), process.env.SAMPLER || 'euler', process.env.SCHEDULER || 'normal', 1];
     if (n.type === 'CLIPTextEncode' && n.id === 6) n.widgets_values = ['a photo of a red apple on a wooden table'];
-    if (n.type === 'CLIPTextEncode' && n.id === 7) n.widgets_values = [''];
+    if (n.type === 'CLIPTextEncode' && n.id === 7) n.widgets_values = [process.env.NEGATIVE || ''];
   }
   const wfPath = path.join(OUT, 'sd-turbo-small.json');
   fs.writeFileSync(wfPath, JSON.stringify(wf));

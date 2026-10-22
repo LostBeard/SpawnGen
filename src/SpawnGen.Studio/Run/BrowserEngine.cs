@@ -134,6 +134,12 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         return Task.CompletedTask;
     }
 
+    public Task CancelQueuedAsync(string promptId)
+    {
+        _queue.Remove(p => p.Id == promptId);
+        return Task.CompletedTask;
+    }
+
     /// <summary>Results live in memory here, so the picture itself is the URL (a data URL).</summary>
     public string ViewUrl(string filename, string? subfolder, string? type) =>
         _results.Get(type ?? "output", filename) is { } png ? "data:image/png;base64," + Convert.ToBase64String(png) : "";

@@ -43,10 +43,10 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Queue, interrupt, progress, per-node status, history | **done** |
 | Run result images inside nodes | **done** |
 | "Control after generate" per seed widget: fixed / increment / decrement / randomize, applied after each queue, saved in the workflow | **done** |
-| Batch count (queue N times) | **done**; queue front, cancel / reorder queued items todo |
+| Batch count (queue N times) | **done**; cancel queued items done (Cancel in the History panel); queue front / reorder todo |
 | List inputs/outputs (`INPUT_IS_LIST`), lazy inputs, loops / node expansion | todo (engine) |
 | Latent preview during sampling (latent2rgb of the denoised estimate, shown in the sampler node each step; verified by eye: an apple emerging at step 2 of 8) | **done**; TAESD-quality previews todo |
-| History panel (H): every run of the session with its saved pictures, full-size view, load a run's workflow into a new tab, clear; queue shows running / queued | **done** (session only; gallery of past server runs, reorder / cancel queued items todo) |
+| History panel (H): every run of the session with its saved pictures, full-size view, load a run's workflow into a new tab, clear; queue shows running / queued | **done** (session only; queued runs listed with Cancel; gallery of past server runs and reorder todo) |
 
 ## 3b. Model support (library)
 

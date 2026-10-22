@@ -107,10 +107,21 @@
         {
             <div class="history">
                 <div class="hist-head">
-                    <span>@(_running ? "Running" : "Idle")@(_pendingWorkflows.Count > 0 ? $", {_pendingWorkflows.Count} queued" : "")</span>
+                    <span>@(_running ? "Running" : "Idle")@(_pending.Count > 0 ? $", {_pending.Count} queued" : "")</span>
                     <button title="Forget the runs listed here (the pictures stay where they were saved)" disabled="@(_history.Count == 0)" @onclick="ClearHistory">Clear</button>
                 </div>
                 <div class="hist-list">
+                    @foreach (var waiting in _pending)
+                    {
+                        var queued = waiting;
+                        <div class="hist-entry queued">
+                            <div class="hist-title">Queued · @queued.At.ToString("HH:mm:ss")</div>
+                            <div class="hist-engine">@queued.Engine</div>
+                            <div class="hist-actions">
+                                <button title="Take this run out of the queue" @onclick="() => CancelQueuedAsync(queued)">Cancel</button>
+                            </div>
+                        </div>
+                    }
                     @foreach (var entry in _history)
                     {
                         var run = entry;
@@ -801,7 +812,14 @@
     string? _lightbox;
     int _runNumber;
     readonly List<HistoryEntry> _history = [];           // newest first
-    readonly Queue<string> _pendingWorkflows = new();    // the workflows of queued runs, in the order they start
+    sealed record PendingRun(string Id, string Workflow, DateTime At, string Engine);
+    readonly List<PendingRun> _pending = [];             // runs waiting in the engine's queue, in the order they start
+
+    async Task CancelQueuedAsync(PendingRun run)
+    {
+        _pending.Remove(run);
+        if (_engine is not null) await _engine.CancelQueuedAsync(run.Id);
+    }
 
     void ToggleHistory()
     {
@@ -811,9 +829,11 @@
 
     void ClearHistory() => _history.RemoveAll(e => e.State != "running");
 
-    void StartHistoryEntry()
+    void StartHistoryEntry(string? promptId)
     {
-        var workflow = _pendingWorkflows.Count > 0 ? _pendingWorkflows.Dequeue() : Snapshot() ?? "";
+        var started = _pending.FirstOrDefault(p => p.Id == promptId) ?? (_pending.Count > 0 ? _pending[0] : null);
+        if (started is not null) _pending.Remove(started);
+        var workflow = started?.Workflow ?? Snapshot() ?? "";
         _history.Insert(0, new HistoryEntry { Number = ++_runNumber, Started = DateTime.Now, Engine = _engine?.Name ?? "", Workflow = workflow });
         if (_history.Count > 50) _history.RemoveAt(_history.Count - 1);
     }
@@ -1011,7 +1031,7 @@
             _view.Invalidate();
             return false;
         }
-        _pendingWorkflows.Enqueue(workflow);
+        if (result.PromptId is { } queuedId) _pending.Add(new PendingRun(queuedId, workflow, DateTime.Now, _engine.Name));
         if (compiled.Notes.Count > 0) ShowMessage(compiled.Notes[0]);
         ControlAfterGenerate.ApplyAfterQueue(_doc, Registry.GetSchema, Random.Shared);
         return true;
@@ -1037,7 +1057,7 @@
                 _queueRemaining = (int?)data["status"]?["exec_info"]?["queue_remaining"] ?? 0;
                 break;
             case "execution_start":
-                StartHistoryEntry();
+                StartHistoryEntry((string?)data["prompt_id"]);
                 _visuals.BeginRun();
                 _running = true;
                 _statusText = null;

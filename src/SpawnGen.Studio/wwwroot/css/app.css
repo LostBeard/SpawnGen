@@ -77,3 +77,4 @@ body { background: #202020; color: #ddd; font-family: system-ui, "Segoe UI", san
 .lightbox img { max-width: 90%; max-height: 82%; object-fit: contain; box-shadow: 0 8px 40px #000; }
 .lightbox button { background: #3a3a3a; color: #ddd; border: 1px solid #4a4a4a; border-radius: 5px; padding: 5px 16px; cursor: pointer; font: inherit; }
 .history .hist-note { font-size: 12px; color: #9a9a9a; margin: 4px 0; }
+.history .hist-entry.queued { border-left-color: #c9a227; }

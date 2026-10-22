@@ -20,6 +20,9 @@ public interface IEngineClient
     Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null);
     Task InterruptAsync();
 
+    /// <summary>Removes a run that is still waiting in the queue (not the one that is running: that is <see cref="InterruptAsync"/>).</summary>
+    Task CancelQueuedAsync(string promptId);
+
     /// <summary>A URL the canvas can load a result picture from.</summary>
     string ViewUrl(string filename, string? subfolder, string? type);
 

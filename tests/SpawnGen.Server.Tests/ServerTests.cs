@@ -276,6 +276,29 @@ public class ServerTests
     }
 
     [Test]
+    public async Task A_waiting_prompt_can_be_deleted_from_the_queue_but_the_running_one_is_not_touched()
+    {
+        await ConnectAsync();
+        var image = WriteInputPng("in.png");
+        var slow = Prompt(image, middle: "WaitNode");
+        slow["2"]!["inputs"]!["seconds"] = 60;
+        var running = (string)(await (await PostPrompt(slow)).Content.ReadFromJsonAsync<JsonObject>())!.AsObject()["prompt_id"]!;
+        await WaitForAsync(m => (string?)m["type"] == "executing" && (string?)m["data"]!["node"] == "2");
+        var waiting = (string)(await (await PostPrompt(Prompt(image))).Content.ReadFromJsonAsync<JsonObject>())!["prompt_id"]!;
+        Assert.That(JsonNode.Parse(await _http.GetStringAsync("/queue"))!["queue_pending"]!.AsArray(), Has.Count.EqualTo(1));
+
+        // Deleting the running prompt's id does nothing to it; deleting the waiting one removes it.
+        await _http.PostAsJsonAsync("/queue", new JsonObject { ["delete"] = new JsonArray(running) });
+        var queue = JsonNode.Parse(await _http.GetStringAsync("/queue"))!;
+        Assert.That(queue["queue_running"]!.AsArray(), Has.Count.EqualTo(1));
+        await _http.PostAsJsonAsync("/queue", new JsonObject { ["delete"] = new JsonArray(waiting) });
+        queue = JsonNode.Parse(await _http.GetStringAsync("/queue"))!;
+        Assert.That(queue["queue_pending"]!.AsArray(), Is.Empty);
+        Assert.That(queue["queue_running"]!.AsArray(), Has.Count.EqualTo(1));
+        await _http.PostAsync("/interrupt", null);
+    }
+
+    [Test]
     public async Task Progress_messages_from_a_node_reach_the_client()
     {
         await ConnectAsync();

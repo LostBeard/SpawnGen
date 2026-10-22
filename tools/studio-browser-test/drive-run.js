@@ -10,13 +10,15 @@ const OUT = path.join(__dirname, 'out');
 fs.mkdirSync(OUT, { recursive: true });
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--disable-gpu'] });
-  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+  // CDP_URL attaches to an already running window (the desktop shell with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333).
+  const attach = process.env.CDP_URL;
+  const browser = attach ? await chromium.connectOverCDP(attach) : await chromium.launch({ executablePath: CHROME, headless: true, args: ['--disable-gpu'] });
+  const page = attach ? browser.contexts()[0].pages()[0] : await browser.newPage({ viewport: { width: 1600, height: 900 } });
   const problems = [];
   page.on('console', m => { if (m.type() === 'error') problems.push(m.text()); });
   page.on('pageerror', e => problems.push('PAGEERROR ' + e.message));
 
-  await page.goto(URL);
+  if (!attach) await page.goto(URL); else await page.reload();
   await page.waitForSelector('canvas');
   await page.waitForTimeout(3500);
   const status = async () => (await page.textContent('.status')).trim();
@@ -52,6 +54,6 @@ fs.mkdirSync(OUT, { recursive: true });
   check('no browser errors', problems.length === 0, problems.join(' | '));
   console.log('Look at out/run-3-done.png: the Save Image node should show the generated picture.');
 
-  await browser.close();
+  if (!attach) await browser.close();
   process.exit(results.every(Boolean) ? 0 : 1);
 })().catch(e => { console.error('SCRIPT ERROR', e); process.exit(2); });

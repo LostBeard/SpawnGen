@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SpawnGen.Desktop</RootNamespace>
+    <AssemblyName>SpawnGen</AssemblyName>
+    <Description>SpawnGen for the desktop: the Studio in a native window (Photino) over the in-process server, so CUDA and OpenCL run natively.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Photino.NET" Version="4.0.16" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpawnGen.Server\SpawnGen.Server.csproj" />
+  </ItemGroup>
+
+</Project>

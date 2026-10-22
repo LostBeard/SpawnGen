@@ -130,3 +130,11 @@ public sealed class ConditioningSetTimestepRange
     public Conditioning Execute(Conditioning conditioning, [Input(Min = 0, Max = 1, Step = 0.001)] float start = 0f, [Input(Min = 0, Max = 1, Step = 0.001)] float end = 1f) =>
         conditioning.Map(e => e with { StartPercent = start, EndPercent = end });
 }
+
+[Node(Category = "conditioning", DisplayName = "ConditioningSetAreaStrength")]
+public sealed class ConditioningSetAreaStrength
+{
+    /// <summary>Sets how strongly every entry of the conditioning counts where it applies (its area or mask weight is multiplied by it).</summary>
+    public Conditioning Execute(Conditioning conditioning, [Input(Min = 0, Max = 10, Step = 0.01)] float strength = 1f) =>
+        conditioning.Map(e => e with { Strength = strength });
+}

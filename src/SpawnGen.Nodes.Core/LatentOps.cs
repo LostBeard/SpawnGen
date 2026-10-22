@@ -238,3 +238,82 @@ public sealed class SetLatentNoiseMask
     public LatentBatch Execute(LatentBatch samples, MaskBatch mask) =>
         new(samples.Batch, samples.Channels, samples.Height, samples.Width, (float[])samples.Data.Clone()) { NoiseMask = mask };
 }
+
+/// <summary>Shared by the latent maths nodes: the second latent brought to the first one's size (bicubic, centred) and read around when it has fewer pictures.</summary>
+internal static class LatentMath
+{
+    public static LatentBatch Match(LatentBatch reference, LatentBatch other) =>
+        other.Width == reference.Width && other.Height == reference.Height
+            ? other
+            : new LatentUpscale().Execute(other, "bicubic", reference.Width * 8, reference.Height * 8, "center");
+
+    public static LatentBatch Combine(LatentBatch a, LatentBatch b, Func<float, float, float> f)
+    {
+        b = Match(a, b);
+        var r = new LatentBatch(a.Batch, a.Channels, a.Height, a.Width) { NoiseMask = a.NoiseMask };
+        for (int i = 0; i < r.Data.Length; i++) r.Data[i] = f(a.Data[i], b.Data[i % b.Data.Length]);
+        return r;
+    }
+}
+
+[Node(Category = "latent/advanced", DisplayName = "LatentAdd")]
+public sealed class LatentAdd
+{
+    public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2) => LatentMath.Combine(samples1, samples2, (a, b) => a + b);
+}
+
+[Node(Category = "latent/advanced", DisplayName = "LatentSubtract")]
+public sealed class LatentSubtract
+{
+    public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2) => LatentMath.Combine(samples1, samples2, (a, b) => a - b);
+}
+
+[Node(Category = "latent/advanced", DisplayName = "LatentMultiply")]
+public sealed class LatentMultiply
+{
+    public LatentBatch Execute(LatentBatch samples, [Input(Min = -10, Max = 10, Step = 0.01)] float multiplier = 1f)
+    {
+        var r = new LatentBatch(samples.Batch, samples.Channels, samples.Height, samples.Width) { NoiseMask = samples.NoiseMask };
+        for (int i = 0; i < r.Data.Length; i++) r.Data[i] = samples.Data[i] * multiplier;
+        return r;
+    }
+}
+
+[Node(Category = "latent/advanced", DisplayName = "LatentInterpolate")]
+public sealed class LatentInterpolate
+{
+    /// <summary>
+    /// Mixes two latents by <c>ratio</c> (1 = all of the first) while keeping the strength: at every position the direction over the channels is interpolated and the length
+    /// (the norm over the channels) is interpolated separately, so a half-way mix is not washed out like a plain average.
+    /// </summary>
+    public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2, [Input(Min = 0, Max = 1, Step = 0.01)] float ratio = 1f)
+    {
+        var b = LatentMath.Match(samples1, samples2);
+        var r = new LatentBatch(samples1.Batch, samples1.Channels, samples1.Height, samples1.Width) { NoiseMask = samples1.NoiseMask };
+        int c = samples1.Channels, plane = samples1.Height * samples1.Width, per = c * plane;
+        for (int n = 0; n < samples1.Batch; n++)
+            for (int p = 0; p < plane; p++)
+            {
+                double m1 = 0, m2 = 0;
+                for (int ch = 0; ch < c; ch++)
+                {
+                    m1 += Math.Pow(samples1.Data[n * per + ch * plane + p], 2);
+                    m2 += Math.Pow(b.Data[(n * per + ch * plane + p) % b.Data.Length], 2);
+                }
+                m1 = Math.Sqrt(m1); m2 = Math.Sqrt(m2);
+                double mt = 0;
+                var t = new double[c];
+                for (int ch = 0; ch < c; ch++)
+                {
+                    double s1 = m1 == 0 ? 0 : samples1.Data[n * per + ch * plane + p] / m1;
+                    double s2 = m2 == 0 ? 0 : b.Data[(n * per + ch * plane + p) % b.Data.Length] / m2;
+                    t[ch] = s1 * ratio + s2 * (1 - ratio);
+                    mt += t[ch] * t[ch];
+                }
+                mt = Math.Sqrt(mt);
+                double length = m1 * ratio + m2 * (1 - ratio);
+                for (int ch = 0; ch < c; ch++) r.Data[n * per + ch * plane + p] = (float)(mt == 0 ? 0 : t[ch] / mt * length);
+            }
+        return r;
+    }
+}

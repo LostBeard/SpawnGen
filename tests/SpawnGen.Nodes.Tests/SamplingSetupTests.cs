@@ -194,4 +194,14 @@ public class SamplingSetupTests
         soft.Data[5 * 10 + 5] = 0.3f; soft.Data[5 * 10 + 6] = 0.4f;
         Assert.That(VAEEncodeForInpaint.GrowAndCrop(soft, 1, 10, 10, 8, 8, 3).Data[5 * 8 + 5], Is.EqualTo(0.7f).Within(1e-6), "overlapping weights add up, clamped to 1");
     }
+
+    [Test]
+    public void Set_area_strength_sets_the_strength_of_every_entry_and_leaves_the_input_alone()
+    {
+        var a = new Conditioning(new float[] { 1, 2 }, new[] { 1, 1, 2 });
+        var both = new ConditioningCombine().Execute(a, a);
+        var set = new ConditioningSetAreaStrength().Execute(both, 0.25f);
+        Assert.That(set.Entries.Select(e => e.Strength), Is.EqualTo(new[] { 0.25f, 0.25f }));
+        Assert.That(both.Entries.Select(e => e.Strength), Is.EqualTo(new[] { 1f, 1f }));
+    }
 }

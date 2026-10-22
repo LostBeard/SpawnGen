@@ -78,7 +78,7 @@ Not yet: list-valued execution (`INPUT_IS_LIST`/`OUTPUT_IS_LIST`), lazy inputs, 
 `SpawnGen.Nodes.ML` builds them from public primitives (`InferenceSession`, `BPETokenizer`,
 `DiffusionScheduler`, `ElementWiseKernels`, `Tensor`):
 
-`CheckpointLoader` -> (`MODEL`, `CLIP`, `VAE`), `CLIPTextEncode` -> `CONDITIONING`, `EmptyLatentImage`,
+`CheckpointLoaderSimple` -> (`MODEL`, `CLIP`, `VAE`), `CLIPTextEncode` -> `CONDITIONING`, `EmptyLatentImage`,
 `KSampler` (euler / ddim / ...; CFG), `VAEDecode`, `VAEEncode`, `LoadImage`, `SaveImage`, `PreviewImage`.
 Monolithic pipelines the library only exposes whole (FLUX.2/3, TRELLIS.2, ...) are wrapped as single nodes first
 and decomposed if/when the library exposes the stages.

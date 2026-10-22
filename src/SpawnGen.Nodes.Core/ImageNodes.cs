@@ -36,7 +36,7 @@ public sealed class LoadImage
 [Node(Category = "image", DisplayName = "Save Image", IsOutput = true)]
 public sealed class SaveImage
 {
-    public UiOutput Execute(ImageBatch images, IServiceProvider services, string filenamePrefix = "SpawnGen")
+    public UiOutput Execute(ImageBatch images, IServiceProvider services, string filenamePrefix = "ComfyUI")
     {
         var dir = (services.GetService(typeof(OutputOptions)) as OutputOptions ?? new OutputOptions()).Directory;
         Directory.CreateDirectory(dir);

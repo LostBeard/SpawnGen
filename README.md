@@ -12,7 +12,8 @@ Design and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 |-------|-------|
 | `SpawnGen.Engine`: node schema/registry, ComfyUI API-format prompts, validator, cached executor | done, 50 tests |
 | `SpawnGen.Nodes.Core` / `SpawnGen.Nodes.ML`: empty latent, save image, checkpoint loader, CLIP encode, KSampler (euler, euler_ancestral, dpmpp_2m, CFG, denoise), VAE encode/decode, load/save/preview image (PNG); SD-Turbo txt2img and img2img verified on desktop OpenCL | working; schedulers, LoRA/ControlNet next |
-| Studio UI (canvas node editor) | planned |
+| `SpawnGen.Editor`: UI-independent node editor core (document, undo/redo, layout, hit testing, pointer/keyboard interaction, ComfyUI workflow import/export, graph compiler) | working, 100 tests; Blazor canvas next |
+| Studio UI (Blazor canvas, queue, gallery) | planned |
 | Server / desktop shell | planned |
 
 ## Build and test

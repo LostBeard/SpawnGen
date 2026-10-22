@@ -15,7 +15,7 @@ static class Fixtures
         var doc = new EditorDocument(Registry());
         var ids = new Dictionary<string, int>();
         int Add(string key, string type, double x, double y) => ids[key] = doc.AddNode(type, x, y).Id;
-        Add("ckpt", "CheckpointLoader", 0, 0);
+        Add("ckpt", "CheckpointLoaderSimple", 0, 0);
         Add("pos", "CLIPTextEncode", 400, 0);
         Add("neg", "CLIPTextEncode", 400, 250);
         Add("latent", "EmptyLatentImage", 400, 500);

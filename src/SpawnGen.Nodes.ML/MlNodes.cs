@@ -8,7 +8,7 @@ using SpawnGen.Engine.Types;
 namespace SpawnGen.Nodes.ML;
 
 [Node(Category = "loaders", DisplayName = "Load Checkpoint")]
-public sealed class CheckpointLoader
+public sealed class CheckpointLoaderSimple
 {
     public static string[] CheckpointNames() => MlRuntime.KnownCheckpoints.Keys.ToArray();
 

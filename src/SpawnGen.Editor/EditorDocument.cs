@@ -24,6 +24,10 @@ public sealed class EditorDocument(NodeRegistry registry)
     List<IEditorCommand>? _group;
 
     public NodeRegistry Registry { get; } = registry;
+
+    /// <summary>Workflow parts the editor does not edit but must not lose when a workflow is opened and saved again: group boxes and ComfyUI's "extra" block.</summary>
+    public System.Text.Json.Nodes.JsonArray? Groups { get; set; }
+    public System.Text.Json.Nodes.JsonObject? Extra { get; set; }
     public EditorGraph Graph { get; } = new();
     public int UndoLimit { get; set; } = 200;
     public bool CanUndo => _undo.Count > 0;

@@ -79,7 +79,7 @@ public class Img2ImgTests
     static PromptGraph Graph(string image, string prompt, int seed, int steps, double denoise)
     {
         var g = new PromptGraph();
-        g.Add("1", "CheckpointLoader", ("ckpt_name", "sd_turbo"));
+        g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "sd_turbo"));
         g.Add("2", "CLIPTextEncode", ("text", prompt), ("clip", PromptInput.Link("1", 1)));
         g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link("1", 1)));
         g.Add("4", "LoadImage", ("image", image));

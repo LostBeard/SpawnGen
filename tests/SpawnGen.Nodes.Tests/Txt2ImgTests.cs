@@ -31,7 +31,7 @@ public class Txt2ImgTests
     internal static PromptGraph Graph(string prompt, int seed, int size)
     {
         var g = new PromptGraph();
-        g.Add("1", "CheckpointLoader", ("ckpt_name", "sd_turbo"));
+        g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "sd_turbo"));
         g.Add("2", "CLIPTextEncode", ("text", prompt), ("clip", PromptInput.Link("1", 1)));
         g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link("1", 1)));
         g.Add("4", "EmptyLatentImage", ("width", size), ("height", size), ("batch_size", 1));

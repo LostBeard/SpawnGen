@@ -52,6 +52,28 @@ public class Txt2ImgTests
         Assert.That(result.Plan, Has.Count.EqualTo(7));
     }
 
+    /// <summary>One image per sampler (4 steps, same seed) so they can be compared by eye. Explicit: needs SPAWNGEN_MODELS and a GPU.</summary>
+    [Test, Explicit("Visual check of every sampler; needs SPAWNGEN_MODELS and a GPU.")]
+    public async Task Every_sampler_makes_an_image()
+    {
+        var models = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(models)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+        var outDir = Path.Combine(Path.GetTempPath(), "spawngen-samplers-" + Guid.NewGuid().ToString("N"));
+        using var runtime = new MlRuntime(new FolderModelSource(models!));
+        var executor = new PromptExecutor(
+            new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly),
+            new SimpleServices(runtime, new OutputOptions { Directory = outDir }));
+        foreach (var sampler in Samplers.Names)
+        {
+            var g = Graph("a photo of a red apple on a wooden table", seed: 7, size: 512);
+            g.Nodes["5"].Inputs["sampler_name"] = PromptInput.Value(sampler);
+            g.Nodes["5"].Inputs["steps"] = PromptInput.Value(4);
+            g.Nodes["7"].Inputs["filename_prefix"] = PromptInput.Value("sampler_" + sampler);
+            var r = await executor.ExecuteAsync(g);
+            TestContext.Out.WriteLine($"{sampler}: {r.Elapsed.TotalSeconds:F1} s -> {Directory.GetFiles(outDir, $"sampler_{sampler}_*.png").Single()}");
+        }
+    }
+
     [Test]
     public async Task Generates_a_non_flat_image_and_saves_it()
     {

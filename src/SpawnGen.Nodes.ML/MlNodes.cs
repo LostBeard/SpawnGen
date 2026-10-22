@@ -49,7 +49,7 @@ public sealed class CLIPTextEncode
 [Node(Category = "sampling", DisplayName = "KSampler")]
 public sealed class KSampler
 {
-    public static string[] SamplerNames() => ["euler"];
+    public static string[] SamplerNames() => Samplers.Names;
     public static string[] SchedulerNames() => ["normal"];
 
     public async Task<LatentBatch> ExecuteAsync(
@@ -92,13 +92,13 @@ public sealed class KSampler
                 for (int i = 0; i < perImage; i++)
                     x[i] = latentImage.Data[b * perImage + i] + noise[i] * sigmas[0];
 
-                for (int step = 0; step < steps; step++)
+                // Epsilon for the sample at a step: scale_model_input (x / sqrt(sigma^2 + 1), the UNet is trained on ~unit variance), then the
+                // UNet, plus classifier-free guidance when cfg > 1.
+                async Task<float[]> Epsilon(float[] sample, int step)
                 {
-                    context.CancellationToken.ThrowIfCancellationRequested();
-                    float sigma = sigmas[step];
-                    float scale = 1f / MathF.Sqrt(sigma * sigma + 1f);
+                    float scale = 1f / MathF.Sqrt(sigmas[step] * sigmas[step] + 1f);
                     var scaled = new float[perImage];
-                    for (int i = 0; i < perImage; i++) scaled[i] = x[i] * scale;
+                    for (int i = 0; i < perImage; i++) scaled[i] = sample[i] * scale;
 
                     var eps = await PredictAsync(acc, unet, scaled, shape, timesteps[step], cond);
                     if (useCfg)
@@ -106,11 +106,13 @@ public sealed class KSampler
                         var epsUncond = await PredictAsync(acc, unet, scaled, shape, timesteps[step], uncond);
                         for (int i = 0; i < perImage; i++) eps[i] = epsUncond[i] + cfg * (eps[i] - epsUncond[i]);
                     }
-
-                    float dt = sigmas[step + 1] - sigma;
-                    for (int i = 0; i < perImage; i++) x[i] += eps[i] * dt;
-                    context.Progress(b * steps + step + 1, latentImage.Batch * steps);
+                    return eps;
                 }
+
+                int item = b;
+                x = await Samplers.RunAsync(samplerName, x, sigmas, Epsilon, unchecked((int)(seed + b) ^ 0x5EED),
+                    Checkpoint.LatentChannels, h, w, done => context.Progress(item * steps + done, latentImage.Batch * steps),
+                    context.CancellationToken);
                 Array.Copy(x, 0, result.Data, b * perImage, perImage);
             }
         }

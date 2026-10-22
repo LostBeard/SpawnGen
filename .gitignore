@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+node_modules/
+TestResults/
+_out/
+_scratch/
+output/

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SpawnGen.Engine/SpawnGen.Engine.csproj" />
+    <Project Path="src/SpawnGen.Nodes.Core/SpawnGen.Nodes.Core.csproj" />
+    <Project Path="src/SpawnGen.Nodes.ML/SpawnGen.Nodes.ML.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SpawnGen.Engine.Tests/SpawnGen.Engine.Tests.csproj" />
+    <Project Path="tests/SpawnGen.Nodes.Tests/SpawnGen.Nodes.Tests.csproj" />
+  </Folder>
+</Solution>

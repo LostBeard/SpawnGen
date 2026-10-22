@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SpawnGen.Nodes.ML</RootNamespace>
+    <Description>ML nodes for SpawnGen backed by SpawnDev.ILGPU.ML (checkpoint loader, CLIP encode, KSampler, VAE decode).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SpawnDev.ILGPU.ML" Version="5.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpawnGen.Engine\SpawnGen.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

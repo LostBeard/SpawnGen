@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SpawnGen.Nodes.Core</RootNamespace>
+    <Description>Primitive, latent and image utility nodes for SpawnGen (host-side math only).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpawnGen.Engine\SpawnGen.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

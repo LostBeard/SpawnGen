@@ -53,7 +53,25 @@
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         };
     </script>
-    <script src="_framework/blazor.webassembly.js"></script>
+    <script src="_framework/blazor.webassembly.js" autostart="false"></script>
+    <script>
+        // GitHub Pages serves files exactly as stored: off localhost every boot resource except the JS modules is fetched as its precompressed .gz copy
+        // and inflated by the browser's own DecompressionStream. The AOT runtime (dotnet.native.wasm) is over 100 MB raw and about 3.5x smaller this way.
+        Blazor.start({
+            loadBootResource: function (type, name, defaultUri, integrity) {
+                if (type === 'dotnetjs' || type === 'configuration' || type === 'manifest' || location.hostname === 'localhost' || typeof DecompressionStream === 'undefined')
+                    return null;
+                return (async function () {
+                    const r = await fetch(defaultUri + '.gz');
+                    if (!r.ok) return fetch(defaultUri);                       // no compressed copy: the original
+                    const contentType = type === 'dotnetwasm' ? 'application/wasm' : 'application/octet-stream';
+                    // a server that already sent it with Content-Encoding: gzip had the browser inflate it
+                    const body = r.headers.get('content-encoding') ? r.body : r.body.pipeThrough(new DecompressionStream('gzip'));
+                    return new Response(body, { headers: { 'content-type': contentType } });
+                })();
+            }
+        });
+    </script>
 </body>
 
 </html>

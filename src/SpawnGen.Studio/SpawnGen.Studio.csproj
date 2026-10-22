@@ -3,6 +3,12 @@
   <PropertyGroup>
     <RootNamespace>SpawnGen.Studio</RootNamespace>
     <Description>SpawnGen Studio: the node editor UI (Blazor WebAssembly, canvas drawn from C#).</Description>
+    <!-- AOT: publish with -p:StudioAot=true (the GitHub Pages workflow does; it takes an hour or more). The host maths (samplers, image ops, kernel IL compile)
+         is the interpreter's otherwise, much slower. WasmStripILAfterAOT=false keeps the IL ILGPU compiles kernels from. WasmDedup stays at its default (smallest
+         wasm, slowest build); for a quicker AOT build to try locally add -p:WasmDedup=false. Off by default so ordinary builds and tests stay fast. -->
+    <StudioAot Condition="'$(StudioAot)' == ''">false</StudioAot>
+    <RunAOTCompilation>$(StudioAot)</RunAOTCompilation>
+    <WasmStripILAfterAOT>false</WasmStripILAfterAOT>
   </PropertyGroup>
 
   <ItemGroup>

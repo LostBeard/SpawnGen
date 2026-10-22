@@ -1,11 +1,15 @@
 # Publishes the Studio (Blazor WebAssembly, WebGPU engine in the page) to GitHub Pages: https://lostbeard.github.io/SpawnGen/
+# Run it by hand (Actions > Deploy Studio to GitHub Pages > Run workflow). The default is the AOT build, which takes an hour or more
+# but runs the host maths much faster; untick "aot" for a quick interpreter build.
 name: Deploy Studio to GitHub Pages
 
 on:
-  push:
-    branches: [main]
-    paths: ['src/**', 'Directory.Build.props', '.github/workflows/pages.yml']
   workflow_dispatch:
+    inputs:
+      aot:
+        description: 'AOT compile (slow build, fast runtime)'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -14,24 +18,31 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Install .NET WASM Build Tools
+        if: ${{ inputs.aot }}
+        run: dotnet workload install wasm-tools
       - name: Publish the Studio
-        run: dotnet publish src/SpawnGen.Studio -c Release -o out
+        run: dotnet publish src/SpawnGen.Studio -c Release --nologo -p:StudioAot=${{ inputs.aot }} --output out
       - name: Make the build work under /SpawnGen/
         run: |
           cd out/wwwroot
           sed -i 's|<base href="/" />|<base href="/SpawnGen/" />|' index.html
           cp index.html 404.html   # deep links come back to the app
           touch .nojekyll          # Jekyll would drop the _framework folder
+          du -sh .
+          # The AOT runtime (dotnet.native.wasm, ~130 MB) ships as its .gz copy only; index.html fetches the .gz copies off localhost.
+          find . -type f -size +95M -print -delete
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out/wwwroot

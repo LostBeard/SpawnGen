@@ -7,20 +7,32 @@ namespace SpawnGen.Studio.Canvas;
 /// <summary>Draws the editor state (<see cref="EditorView"/>) onto a 2D canvas in world coordinates. All state lives in the view; this only paints.</summary>
 public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals visuals, ImageCache images)
 {
-    readonly Dictionary<string, double> _textWidths = [];
     CanvasRenderingContext2D? _measureContext;
 
     /// <summary>Below this zoom the detail (text, widgets) is skipped: unreadable anyway and the cost of the interop calls adds up.</summary>
     const double DetailScale = 0.45;
 
-    /// <summary>Measures text for layout with a cache; the layout asks for the same labels on every pointer move.</summary>
+    readonly Dictionary<char, double> _charWidths = new();
+
+    /// <summary>
+    /// Measures text for layout. Each distinct character is measured once (a call into the browser) and strings are summed from those widths, so laying out hundreds of nodes
+    /// with their own numbers and names costs no more calls once the alphabet has been seen. Kerning is ignored: layout only needs the width to a pixel or two.
+    /// </summary>
     public double MeasureText(string text)
     {
-        if (_textWidths.TryGetValue(text, out var w)) return w;
         if (_measureContext is null) return text.Length * NodeLayout.EstimatedCharWidth;
-        _measureContext.Font = Theme.Font;
-        using var metrics = _measureContext.MeasureText(text);
-        return _textWidths[text] = metrics.Width;
+        double total = 0;
+        foreach (char c in text)
+        {
+            if (!_charWidths.TryGetValue(c, out var w))
+            {
+                _measureContext.Font = Theme.Font;
+                using var metrics = _measureContext.MeasureText(c.ToString());
+                _charWidths[c] = w = metrics.Width;
+            }
+            total += w;
+        }
+        return total;
     }
 
     public void UseMeasureContext(CanvasRenderingContext2D ctx) => _measureContext = ctx;

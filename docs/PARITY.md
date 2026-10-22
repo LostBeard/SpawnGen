@@ -86,4 +86,5 @@ Todo, in priority order:
 | C# node packs in place of Python custom nodes: DLLs in the server's custom_nodes folder are loaded at start, the Studio learns them from /object_info and runs them on the server (docs/CUSTOM_NODES.md, samples/SpawnGen.SampleNodes) | **done**; C# scripting node (code typed in the editor) and browser-side packs todo |
 | Themes, internationalisation | todo (settings dialog exists) |
 | Model manager: checkpoints the host knows (checkpoints.json in the models folder pointing at any Optimum-style ONNX Stable Diffusion repo, or a folder in the models folder), listed in Load Checkpoint while the server engine is selected; download on first use (desktop), cache (browser OPFS) | **partial**: ONNX checkpoints only (single-file .safetensors needs the library); no download progress / manager window yet |
-| Packaging: self-contained desktop builds, hosted static browser build (GitHub Pages) | todo |
+| Hosted static browser build on GitHub Pages (https://lostbeard.github.io/SpawnGen/), AOT compiled by a manual workflow (about an hour): 400 nodes open in under a second and pan at 60 fps (the interpreter build needs 40 s) | **done** |
+| Packaging: self-contained desktop builds (Photino app as an installer / single file) | todo |

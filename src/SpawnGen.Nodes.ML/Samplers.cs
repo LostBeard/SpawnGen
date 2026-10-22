@@ -10,7 +10,8 @@ public static class Samplers
 {
     public static readonly string[] Names =
     [
-        "euler", "euler_ancestral", "heun", "dpm_2", "dpm_2_ancestral", "lms", "dpmpp_2s_ancestral", "dpmpp_2m", "dpmpp_2m_sde", "ddim", "lcm",
+        "euler", "euler_ancestral", "heun", "dpm_2", "dpm_2_ancestral", "lms", "dpmpp_2s_ancestral", "dpmpp_sde", "dpmpp_sde_gpu", "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu",
+        "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ipndm", "res_multistep", "res_multistep_ancestral", "ddim", "lcm",
     ];
 
     /// <summary>The model's denoised estimate for the sample <c>x</c> at noise level <c>sigma</c> (the callee applies input scaling, guidance and masks).</summary>
@@ -39,8 +40,8 @@ public static class Samplers
     {
         if (!Names.Contains(sampler)) throw new ArgumentException($"Unknown sampler '{sampler}'. Known: {string.Join(", ", Names)}.", nameof(sampler));
         int steps = sigmas.Length - 1, n = x.Length;
-        float[]? oldDenoised = null;
-        float hLast = 0;
+        float[]? oldDenoised = null, oldDenoised2 = null;
+        float hLast = 0, hLast2 = 0, oldSigmaDown = 0;
         var history = new List<float[]>();   // lms: past derivatives
 
         for (int i = 0; i < steps; i++)
@@ -165,7 +166,102 @@ public static class Samplers
                     break;
                 }
 
-                case "dpmpp_2m_sde":
+                case "dpmpp_sde" or "dpmpp_sde_gpu":
+                {
+                    // DPM-Solver++ (SDE) with the midpoint at r = 1/2 (k-diffusion's sample_dpmpp_sde, eta 1): two noisy half steps per step. The Brownian-tree noise of
+                    // k-diffusion is replaced by independent draws, which have the same distribution at each point (only the correlation between overlapping intervals differs).
+                    if (next == 0f) { for (int k = 0; k < n; k++) x[k] += (x[k] - d0[k]) / s * (next - s); break; }
+                    float t = -MathF.Log(s), tNext = -MathF.Log(next), h = tNext - t, sMid = MathF.Exp(-(t + h * 0.5f));
+                    var (sd, su) = AncestralStep(s, sMid);
+                    float tDown = -MathF.Log(sd);
+                    var x2 = new float[n];
+                    for (int k = 0; k < n; k++) x2[k] = sd / s * x[k] - Expm1(t - tDown) * d0[k];
+                    AddNoise(x2, noise, 2 * i, su);
+                    var dm = await model(x2, sMid);
+                    var (sd2, su2) = AncestralStep(s, next);
+                    float tDown2 = -MathF.Log(sd2);
+                    for (int k = 0; k < n; k++) x[k] = sd2 / s * x[k] - Expm1(t - tDown2) * dm[k]; // fac = 1/(2r) = 1: the midpoint estimate alone
+                    AddNoise(x, noise, 2 * i + 1, su2);
+                    break;
+                }
+
+                case "dpmpp_3m_sde" or "dpmpp_3m_sde_gpu":
+                {
+                    if (next == 0f) { Array.Copy(d0, x, n); break; }
+                    const float eta = 1f;
+                    float t = -MathF.Log(s), tNext = -MathF.Log(next), h = tNext - t, hEta = h * (eta + 1f);
+                    float keep = MathF.Exp(-hEta), mix = -Expm1(-hEta);
+                    for (int k = 0; k < n; k++) x[k] = keep * x[k] + mix * d0[k];
+                    float phi2 = Expm1(-hEta) / hEta + 1f, phi3 = phi2 / hEta - 0.5f;
+                    if (oldDenoised2 is not null)
+                    {
+                        float r0 = hLast / h, r1 = hLast2 / h;
+                        for (int k = 0; k < n; k++)
+                        {
+                            float d10 = (d0[k] - oldDenoised![k]) / r0, d11 = (oldDenoised[k] - oldDenoised2[k]) / r1;
+                            float d1 = d10 + (d10 - d11) * r0 / (r0 + r1), d2 = (d10 - d11) / (r0 + r1);
+                            x[k] += phi2 * d1 - phi3 * d2;
+                        }
+                    }
+                    else if (oldDenoised is not null)
+                    {
+                        float r = hLast / h;
+                        for (int k = 0; k < n; k++) x[k] += phi2 * (d0[k] - oldDenoised[k]) / r;
+                    }
+                    AddNoise(x, noise, i, next * MathF.Sqrt(-Expm1(-2f * h * eta)));
+                    hLast2 = hLast;
+                    hLast = h;
+                    break;
+                }
+
+                case "ipndm":
+                {
+                    // Improved PNDM: Adams-Bashforth of order up to 4 on the derivative, with fixed coefficients (ComfyUI's sample_ipndm).
+                    var d = Derivative(x, d0, s);
+                    float dt = next - s;
+                    int order = Math.Min(4, i + 1);
+                    for (int k = 0; k < n; k++)
+                    {
+                        float step = order switch
+                        {
+                            1 => d[k],
+                            2 => (3f * d[k] - history[^1][k]) / 2f,
+                            3 => (23f * d[k] - 16f * history[^1][k] + 5f * history[^2][k]) / 12f,
+                            _ => (55f * d[k] - 59f * history[^1][k] + 37f * history[^2][k] - 9f * history[^3][k]) / 24f,
+                        };
+                        x[k] += dt * step;
+                    }
+                    history.Add(d);
+                    if (history.Count > 3) history.RemoveAt(0);
+                    break;
+                }
+
+                case "res_multistep" or "res_multistep_ancestral":
+                {
+                    // Second-order multistep exponential integrator (RES, arXiv 2308.02157; ComfyUI's res_multistep): Euler for the first step, then the previous
+                    // denoised estimate corrects the step. The plain version is deterministic; the ancestral one re-noises each step like euler_ancestral.
+                    var (down, up) = sampler == "res_multistep" ? (next, 0f) : AncestralStep(s, next);
+                    if (down == 0f || oldDenoised is null)
+                    {
+                        for (int k = 0; k < n; k++) x[k] += (x[k] - d0[k]) / s * (down - s);
+                    }
+                    else
+                    {
+                        float t = -MathF.Log(s), tOld = -MathF.Log(oldSigmaDown), tNext = -MathF.Log(down), tPrev = -MathF.Log(sigmas[i - 1]);
+                        float h = tNext - t, c2 = (tPrev - tOld) / h;
+                        float phi1 = Expm1(-h) / -h, phi2 = (phi1 - 1f) / -h;
+                        float b1 = phi1 - phi2 / c2, b2 = phi2 / c2;
+                        if (float.IsNaN(b1)) b1 = 0f;
+                        if (float.IsNaN(b2)) b2 = 0f;
+                        float keep = MathF.Exp(-h);
+                        for (int k = 0; k < n; k++) x[k] = keep * x[k] + h * (b1 * d0[k] + b2 * oldDenoised[k]);
+                    }
+                    if (next > 0f) AddNoise(x, noise, i, up);
+                    oldSigmaDown = down;
+                    break;
+                }
+
+                case "dpmpp_2m_sde" or "dpmpp_2m_sde_gpu":
                 {
                     if (next == 0f) { Array.Copy(d0, x, n); break; }
                     const float eta = 1f;
@@ -190,6 +286,7 @@ public static class Samplers
                     break;
                 }
             }
+            oldDenoised2 = oldDenoised;
             oldDenoised = d0;
             onStep?.Invoke(i + 1);
         }

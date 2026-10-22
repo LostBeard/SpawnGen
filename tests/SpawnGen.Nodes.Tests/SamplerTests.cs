@@ -54,19 +54,24 @@ public class SamplerTests
         double Error(float[] x) => Math.Sqrt(x.Zip(exact, (a, b) => (double)(a - b) * (a - b)).Average());
 
         var errors = new Dictionary<string, double>();
-        foreach (var name in new[] { "euler", "heun", "dpm_2", "lms", "dpmpp_2m" })
+        foreach (var name in new[] { "euler", "heun", "dpm_2", "lms", "dpmpp_2m", "ipndm", "res_multistep" })
             errors[name] = Error(await Samplers.RunAsync(name, (float[])start.Clone(), sigmas, Gaussian(mu, s0), Noise()));
         TestContext.Out.WriteLine("rms error vs exact ODE at 8 steps: " + string.Join(", ", errors.Select(e => $"{e.Key} {e.Value:E2}")));
 
-        foreach (var better in new[] { "heun", "dpm_2", "lms", "dpmpp_2m" })
+        foreach (var better in new[] { "heun", "dpm_2", "lms", "dpmpp_2m", "ipndm", "res_multistep" })
             Assert.That(errors[better], Is.LessThan(errors["euler"]), $"{better} should beat euler at the same step count");
         Assert.That(errors["dpmpp_2m"], Is.LessThan(0.05));
+        Assert.That(errors["ipndm"], Is.LessThan(0.05));
+        Assert.That(errors["res_multistep"], Is.LessThan(0.1), "second order, but this schedule favours the dpmpp family");
     }
 
     [TestCase("euler_ancestral")]
     [TestCase("dpm_2_ancestral")]
     [TestCase("dpmpp_2s_ancestral")]
     [TestCase("dpmpp_2m_sde")]
+    [TestCase("dpmpp_sde")]
+    [TestCase("dpmpp_3m_sde")]
+    [TestCase("res_multistep_ancestral")]
     public async Task Stochastic_samplers_converge_to_the_data_distribution_as_steps_grow(string sampler)
     {
         // A stochastic sampler's result is a draw from the data distribution, so its spread tends to s0. First-order ones are too narrow with few steps.
@@ -89,6 +94,9 @@ public class SamplerTests
     [TestCase("dpm_2_ancestral")]
     [TestCase("dpmpp_2s_ancestral")]
     [TestCase("dpmpp_2m_sde")]
+    [TestCase("dpmpp_sde")]
+    [TestCase("dpmpp_3m_sde")]
+    [TestCase("res_multistep_ancestral")]
     [TestCase("lcm")]
     public async Task Noise_adding_samplers_are_reproducible_for_a_seed_and_differ_between_seeds(string sampler)
     {
@@ -107,6 +115,11 @@ public class SamplerTests
     [TestCase("dpm_2_ancestral", 11)]
     [TestCase("dpmpp_2s_ancestral", 11)]
     [TestCase("lms", 6)]
+    [TestCase("ipndm", 6)]
+    [TestCase("res_multistep", 6)]
+    [TestCase("res_multistep_ancestral", 6)]
+    [TestCase("dpmpp_3m_sde", 6)]
+    [TestCase("dpmpp_sde", 11)]
     [TestCase("lcm", 6)]
     public async Task Samplers_ask_the_model_the_expected_number_of_times(string sampler, int expected)
     {

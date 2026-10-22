@@ -13,8 +13,14 @@ Design and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | `SpawnGen.Engine`: node schema/registry, ComfyUI API-format prompts, validator, cached executor | done, 50 tests |
 | `SpawnGen.Nodes.Core` / `SpawnGen.Nodes.ML`: empty latent, save image, checkpoint loader, CLIP encode, KSampler (euler, euler_ancestral, dpmpp_2m, CFG, denoise), VAE encode/decode, load/save/preview image (PNG); SD-Turbo txt2img and img2img verified on desktop OpenCL | working; schedulers, LoRA/ControlNet next |
 | `SpawnGen.Editor`: UI-independent node editor core (document, undo/redo, layout, hit testing, pointer/keyboard interaction, ComfyUI workflow import/export, graph compiler) | working, 100 tests; Blazor canvas next |
-| Studio UI (Blazor canvas, queue, gallery) | planned |
+| `SpawnGen.Studio`: Blazor WebAssembly canvas editor drawn from C# (no per-move re-render): pan/zoom, drag, link, node search, in-place widget edit, context menu, open/save ComfyUI workflows; browser-tested (`tools/studio-browser-test`) | working; running graphs from the Studio, queue and gallery next |
 | Server / desktop shell | planned |
+
+## Run the Studio
+
+```powershell
+dotnet run --project src/SpawnGen.Studio -c Release --urls http://localhost:5280
+```
 
 ## Build and test
 

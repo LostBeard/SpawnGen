@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <RootNamespace>SpawnGen.Studio</RootNamespace>
+    <Description>SpawnGen Studio: the node editor UI (Blazor WebAssembly, canvas drawn from C#).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.12" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.12" PrivateAssets="all" />
+    <PackageReference Include="SpawnDev.SpawnJS" Version="3.0.4" />
+    <PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="3.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpawnGen.Engine\SpawnGen.Engine.csproj" />
+    <ProjectReference Include="..\SpawnGen.Editor\SpawnGen.Editor.csproj" />
+    <ProjectReference Include="..\SpawnGen.Nodes.Core\SpawnGen.Nodes.Core.csproj" />
+    <ProjectReference Include="..\SpawnGen.Nodes.ML\SpawnGen.Nodes.ML.csproj" />
+  </ItemGroup>
+
+</Project>

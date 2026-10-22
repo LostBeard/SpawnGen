@@ -194,6 +194,9 @@ public sealed class EditorDocument(NodeRegistry registry)
         if (_undo.Count > UndoLimit) _undo.RemoveAt(0);
     }
 
+    /// <summary>Removes every node and link (a new workflow). Not undoable; clears the history.</summary>
+    public void Clear() => Reset(_ => { });
+
     /// <summary>Replaces the whole graph (workflow load). Not undoable; clears the history.</summary>
     internal void Reset(Action<EditorGraph> fill)
     {

@@ -1,0 +1,429 @@
+@page "/"
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.JSInterop
+@using SpawnDev.SpawnJS
+@using SpawnDev.SpawnJS.JSObjects
+@using SpawnGen.Editor
+@using SpawnGen.Engine.Nodes
+@using SpawnGen.Studio.Canvas
+@inject SpawnJSRuntime JS
+@inject IJSRuntime Interop
+@inject NodeRegistry Registry
+@implements IDisposable
+
+<div class="studio">
+    <div class="toolbar" @onpointerdown="CloseMenus">
+        <span class="brand">SpawnGen</span>
+        <button title="Undo (Ctrl+Z)" disabled="@(!_doc.CanUndo)" @onclick="() => { _doc.Undo(); _studio?.Focus(); }">Undo</button>
+        <button title="Redo (Ctrl+Y)" disabled="@(!_doc.CanRedo)" @onclick="() => { _doc.Redo(); _studio?.Focus(); }">Redo</button>
+        <span class="sep"></span>
+        <button title="Add a node (double-click the canvas)" @onclick="() => OpenSearch(CenterWorld(), null)">Add node</button>
+        <button title="Fit all nodes in view (F)" @onclick="() => { _view.FitToView(); _studio?.Focus(); }">Fit</button>
+        <span class="sep"></span>
+        <label class="button" title="Open a ComfyUI workflow (.json)">Open<InputFile OnChange="OnFileChosen" accept=".json" hidden /></label>
+        <button title="Download the workflow as ComfyUI JSON" @onclick="SaveAsync">Save</button>
+        <button title="Replace the graph with a starter text-to-image workflow" @onclick="LoadExample">Example</button>
+        <span class="sep"></span>
+        <button class="primary" disabled title="Running graphs from the browser is not wired up yet">Queue</button>
+        <span class="status">@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
+    </div>
+
+    <div class="stage">
+        <canvas @ref="_canvasRef" tabindex="0"></canvas>
+
+        @if (_message is not null)
+        {
+            <div class="toast">@_message</div>
+        }
+
+        @if (_edit is { } e)
+        {
+            <div class="widget-edit" style="left:@(Px(e.Bounds.X)); top:@(Px(e.Bounds.Y)); width:@(Px(Math.Max(e.Bounds.Width, 140))); height:@(Px(e.Bounds.Height))">
+                @if (e.Spec?.Kind == WidgetKind.Combo)
+                {
+                    <select @ref="_editRef" @onchange="args => CommitEdit(args.Value?.ToString())" @onkeydown="EditKey">
+                        @foreach (var option in e.Spec.ResolveOptions())
+                        {
+                            <option value="@option" selected="@(option == e.Text)">@option</option>
+                        }
+                    </select>
+                }
+                else if (e.Spec?.Multiline == true)
+                {
+                    <textarea @ref="_editRef" @bind="e.Text" @bind:event="oninput" @onblur="() => CommitEdit(e.Text)" @onkeydown="EditKey"></textarea>
+                }
+                else
+                {
+                    <input @ref="_editRef" type="@(e.Spec?.Kind is WidgetKind.Int or WidgetKind.Float ? "number" : "text")"
+                           step="@(e.Spec?.Kind == WidgetKind.Float ? "any" : "1")" @bind="e.Text" @bind:event="oninput"
+                           @onblur="() => CommitEdit(e.Text)" @onkeydown="EditKey" />
+                }
+            </div>
+        }
+
+        @if (_search is { } s)
+        {
+            <div class="search-backdrop" @onclick="CloseSearch">
+                <div class="search" @onclick:stopPropagation>
+                    <input @ref="_searchRef" placeholder="Search nodes..." value="@s.Query" @oninput="OnSearchInput" @onkeydown="SearchKey" />
+                    <ul>
+                        @{ var results = SearchResults().ToList(); }
+                        @for (int i = 0; i < results.Count; i++)
+                        {
+                            var schema = results[i];
+                            var index = i;
+                            <li class="@(index == s.Selected ? "on" : "")" @onclick="() => PlaceFromSearch(schema)" @onmouseover="() => s.Selected = index">
+                                <span class="name">@schema.DisplayName</span>
+                                <span class="cat">@schema.Category</span>
+                            </li>
+                        }
+                        @if (results.Count == 0)
+                        {
+                            <li class="none">No node matches "@s.Query".</li>
+                        }
+                    </ul>
+                </div>
+            </div>
+        }
+
+        @if (_menu is { } m)
+        {
+            <ul class="menu" style="left:@(Px(m.At.X)); top:@(Px(m.At.Y))" @onpointerdown:stopPropagation>
+                @foreach (var item in m.Items)
+                {
+                    <li @onclick="() => { CloseMenus(); item.Action(); }">@item.Label</li>
+                }
+            </ul>
+        }
+    </div>
+</div>
+
+@code {
+    sealed class EditState
+    {
+        public required int NodeId { get; init; }
+        public string? Name { get; init; }           // null = editing the node title
+        public WidgetSpec? Spec { get; init; }
+        public required Rect Bounds { get; init; }
+        public required string Text { get; set; }
+    }
+
+    sealed class SearchState
+    {
+        public string Query { get; set; } = "";
+        public int Selected { get; set; }
+        public Point At { get; init; }
+        public LinkDraft? Draft { get; init; }
+    }
+
+    sealed record MenuItem(string Label, Action Action);
+    sealed record MenuState(Point At, List<MenuItem> Items);
+
+    ElementReference _canvasRef, _editRef, _searchRef;
+    EditorDocument _doc = null!;
+    EditorView _view = null!;
+    NodeRenderer _renderer = null!;
+    StudioCanvas? _studio;
+    EditState? _edit;
+    SearchState? _search;
+    MenuState? _menu;
+    string? _message;
+    bool _focusEdit, _focusSearch, _uiPending;
+    CancellationTokenSource? _toastTimer;
+
+    static string Px(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "px";
+
+    protected override void OnInitialized()
+    {
+        _doc = new EditorDocument(Registry);
+        _view = new EditorView(_doc, text => _renderer!.MeasureText(text));
+        _renderer = new NodeRenderer(_view);
+
+        // Blazor only re-renders the toolbar and overlays; the canvas repaints itself. Throttled so a drag does not re-render on every move.
+        _doc.Changed += RefreshUi;
+        _view.ViewChanged += RefreshUi;
+        _view.WidgetActivated += OnWidgetActivated;
+        _view.TitleEditRequested += OnTitleEdit;
+        _view.SearchRequested += OpenSearch;
+        _view.ContextMenuRequested += OnContextMenu;
+        _view.Message += ShowMessage;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _studio = new StudioCanvas(JS, _canvasRef.As<HTMLCanvasElement>(), _view, _renderer);
+            _studio.FirstLayout += () => _view.FitToView();
+            _studio.CanvasPressed += CloseMenus; // the canvas reports its own presses first, so a menu it opens right after is not closed again
+            LoadExample();
+            _studio.Focus();
+        }
+        // The click that opened an overlay is still finishing in the browser, and its default action moves focus to the canvas: focus the
+        // overlay's input once that has happened, or typing would go to the canvas.
+        if (_focusEdit) { _focusEdit = false; await Task.Delay(40); await _editRef.FocusAsync(); }
+        if (_focusSearch) { _focusSearch = false; await Task.Delay(40); await _searchRef.FocusAsync(); }
+    }
+
+    void RefreshUi()
+    {
+        if (_uiPending) return;
+        _uiPending = true;
+        _ = Task.Delay(120).ContinueWith(_ => { _uiPending = false; return InvokeAsync(StateHasChanged); });
+    }
+
+    Point CenterWorld() => _view.Viewport.ScreenToWorld(new Point(_view.ScreenSize.X / 2, _view.ScreenSize.Y / 2));
+
+    // ---- workflow ----
+
+    void LoadExample()
+    {
+        _doc.Clear();
+        var ids = new Dictionary<string, int>();
+        _doc.Group(() =>
+        {
+            int Add(string key, string type, double x, double y) => ids[key] = _doc.AddNode(type, x, y).Id;
+            Add("ckpt", "CheckpointLoaderSimple", 30, 250);
+            Add("pos", "CLIPTextEncode", 420, 40);
+            Add("neg", "CLIPTextEncode", 420, 300);
+            Add("latent", "EmptyLatentImage", 420, 560);
+            Add("sampler", "KSampler", 860, 120);
+            Add("decode", "VAEDecode", 1230, 120);
+            Add("save", "SaveImage", 1230, 240);
+            _doc.SetWidget(ids["ckpt"], "ckpt_name", "sd_turbo");
+            _doc.SetWidget(ids["pos"], "text", "a photo of a red apple on a wooden table");
+            _doc.SetWidget(ids["sampler"], "steps", 1L);
+            _doc.SetWidget(ids["sampler"], "cfg", 1.0);
+            void C(string from, int o, string to, string input) => _doc.Connect(ids[from], o, ids[to], input, out _);
+            C("ckpt", 1, "pos", "clip"); C("ckpt", 1, "neg", "clip");
+            C("ckpt", 0, "sampler", "model"); C("pos", 0, "sampler", "positive"); C("neg", 0, "sampler", "negative");
+            C("latent", 0, "sampler", "latent_image"); C("sampler", 0, "decode", "samples"); C("ckpt", 2, "decode", "vae");
+            C("decode", 0, "save", "images");
+        });
+        _doc.ClearHistory();
+        _view.ClearSelection();
+        _view.FitToView();
+        _studio?.Focus();
+    }
+
+    async Task OnFileChosen(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            await using var stream = e.File.OpenReadStream(32 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            var warnings = ComfyWorkflow.Load(await reader.ReadToEndAsync(), _doc);
+            _view.ClearSelection();
+            _view.FitToView();
+            ShowMessage(warnings.Count == 0 ? $"Opened {e.File.Name}." : $"Opened {e.File.Name} with {warnings.Count} warning(s): {warnings[0]}");
+        }
+        catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException or IOException)
+        {
+            ShowMessage($"Could not open {e.File.Name}: {ex.Message}");
+        }
+    }
+
+    async Task SaveAsync()
+    {
+        var json = ComfyWorkflow.Save(_doc, _renderer.MeasureText);
+        await Interop.InvokeVoidAsync("spawngenDownload", "workflow.json", json);
+        ShowMessage("Saved workflow.json.");
+    }
+
+    // ---- widget and title editing ----
+
+    void OnWidgetActivated(int nodeId, string name)
+    {
+        var node = _doc.Graph.GetNode(nodeId);
+        var spec = Registry.GetSchema(node.ClassType)?.FindInput(name)?.Widget;
+        if (spec is null) return;
+        var value = node.Widgets.GetValueOrDefault(name) ?? spec.Default;
+
+        if (spec.Kind == WidgetKind.Boolean)
+        {
+            _doc.SetWidget(nodeId, name, !(value as bool? ?? false));
+            _doc.EndGesture();
+            return;
+        }
+
+        var geo = _view.Hits.Geometry(node);
+        var row = geo.Widgets.First(w => w.Name == name).Bounds;
+        var topLeft = _view.Viewport.WorldToScreen(new Point(row.X, row.Y));
+        var scale = _view.Viewport.Scale;
+        _edit = new EditState
+        {
+            NodeId = nodeId, Name = name, Spec = spec,
+            Bounds = new Rect(topLeft.X, topLeft.Y, row.Width * scale, Math.Max(row.Height * scale, 28)),
+            Text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "",
+        };
+        _focusEdit = true;
+        StateHasChanged();
+    }
+
+    void OnTitleEdit(int nodeId)
+    {
+        var node = _doc.Graph.GetNode(nodeId);
+        var geo = _view.Hits.Geometry(node);
+        var topLeft = _view.Viewport.WorldToScreen(new Point(geo.TitleBar.X, geo.TitleBar.Y));
+        var scale = _view.Viewport.Scale;
+        _edit = new EditState
+        {
+            NodeId = nodeId, Name = null, Spec = null,
+            Bounds = new Rect(topLeft.X, topLeft.Y, geo.TitleBar.Width * scale, Math.Max(geo.TitleBar.Height * scale, 28)),
+            Text = geo.Title,
+        };
+        _focusEdit = true;
+        StateHasChanged();
+    }
+
+    void CommitEdit(string? text)
+    {
+        if (_edit is not { } e) return;
+        _edit = null;
+        text ??= "";
+        if (e.Name is null)
+        {
+            _doc.SetTitle(e.NodeId, string.IsNullOrWhiteSpace(text) ? null : text.Trim());
+        }
+        else if (e.Spec is { } spec)
+        {
+            object? value = spec.Kind switch
+            {
+                WidgetKind.Int => long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var l) ? Clamp(spec, l) : null,
+                WidgetKind.Float => double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d) ? Clamp(spec, d) : null,
+                _ => text,
+            };
+            if (value is null) ShowMessage($"'{text}' is not a valid number.");
+            else _doc.SetWidget(e.NodeId, e.Name, value);
+        }
+        _doc.EndGesture();
+        _studio?.Focus();
+    }
+
+    static object Clamp(WidgetSpec spec, double v)
+    {
+        if (spec.Min is { } min) v = Math.Max(v, min);
+        if (spec.Max is { } max) v = Math.Min(v, max);
+        return spec.Kind == WidgetKind.Int ? (object)(long)v : v;
+    }
+
+    void EditKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && _edit?.Spec?.Multiline != true) CommitEdit(_edit?.Text);
+        else if (e.Key == "Escape") { _edit = null; _studio?.Focus(); }
+    }
+
+    // ---- node search ----
+
+    void OpenSearch(Point world, LinkDraft? draft)
+    {
+        _search = new SearchState { At = world, Draft = draft };
+        _focusSearch = true;
+        InvokeAsync(StateHasChanged);
+    }
+
+    IEnumerable<NodeSchema> SearchResults()
+    {
+        var q = _search?.Query.Trim() ?? "";
+        var all = Registry.Schemas.OrderBy(s => s.Category).ThenBy(s => s.DisplayName);
+        if (q.Length == 0) return all.Take(14);
+        var words = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return all.Where(s => words.All(w => s.DisplayName.Contains(w, StringComparison.OrdinalIgnoreCase)
+                                          || s.Id.Contains(w, StringComparison.OrdinalIgnoreCase)
+                                          || s.Category.Contains(w, StringComparison.OrdinalIgnoreCase))).Take(14);
+    }
+
+    void OnSearchInput(ChangeEventArgs e)
+    {
+        if (_search is not { } s) return;
+        s.Query = e.Value?.ToString() ?? "";
+        s.Selected = 0;
+    }
+
+    void SearchKey(KeyboardEventArgs e)
+    {
+        if (_search is not { } s) return;
+        var results = SearchResults().ToList();
+        switch (e.Key)
+        {
+            case "ArrowDown": s.Selected = Math.Min(s.Selected + 1, Math.Max(results.Count - 1, 0)); break;
+            case "ArrowUp": s.Selected = Math.Max(s.Selected - 1, 0); break;
+            case "Enter" when results.Count > 0: PlaceFromSearch(results[Math.Min(s.Selected, results.Count - 1)]); break;
+            case "Escape": CloseSearch(); break;
+        }
+    }
+
+    void PlaceFromSearch(NodeSchema schema)
+    {
+        if (_search is not { } s) return;
+        _search = null;
+        _view.PlaceNode(schema.Id, s.At, s.Draft);
+        _studio?.Focus();
+    }
+
+    void CloseSearch()
+    {
+        _search = null;
+        _studio?.Focus();
+    }
+
+    // ---- context menu ----
+
+    void OnContextMenu(Hit hit, Point screen)
+    {
+        var world = _view.Viewport.ScreenToWorld(screen);
+        var items = new List<MenuItem>();
+        if (hit.Kind is HitKind.NodeBody or HitKind.TitleBar or HitKind.Widget or HitKind.CollapseButton)
+        {
+            var node = _doc.Graph.GetNode(hit.NodeId);
+            items.Add(new("Rename", () => OnTitleEdit(hit.NodeId)));
+            items.Add(new(node.Collapsed ? "Expand" : "Collapse", () => { _doc.SetCollapsed(hit.NodeId, !node.Collapsed); _doc.EndGesture(); }));
+            items.Add(new(node.Mode == NodeMode.Never ? "Unmute" : "Mute  (Ctrl+M)", () => _view.Key("m", Modifiers.Ctrl)));
+            items.Add(new(node.Mode == NodeMode.Bypass ? "Remove bypass" : "Bypass  (Ctrl+B)", () => _view.Key("b", Modifiers.Ctrl)));
+            items.Add(new("Copy  (Ctrl+C)", () => _view.Copy()));
+            items.Add(new("Delete  (Del)", () => _view.DeleteSelection()));
+        }
+        else if (hit.Kind == HitKind.Link)
+        {
+            items.Add(new("Delete link", () => _doc.Disconnect(hit.LinkId)));
+        }
+        else
+        {
+            items.Add(new("Add node...", () => OpenSearch(world, null)));
+            if (_view.CanPaste) items.Add(new("Paste  (Ctrl+V)", () => _view.Paste(world)));
+            items.Add(new("Fit view  (F)", () => _view.FitToView()));
+        }
+        _menu = new MenuState(screen, items);
+        InvokeAsync(StateHasChanged);
+    }
+
+    void CloseMenus()
+    {
+        if (_menu is null) return;
+        _menu = null;
+        _studio?.Focus();
+    }
+
+    // ---- toast ----
+
+    void ShowMessage(string text)
+    {
+        _message = text;
+        _toastTimer?.Cancel();
+        _toastTimer = new CancellationTokenSource();
+        var token = _toastTimer.Token;
+        InvokeAsync(StateHasChanged);
+        _ = Task.Delay(3500, token).ContinueWith(t =>
+        {
+            if (t.IsCanceled) return Task.CompletedTask;
+            _message = null;
+            return InvokeAsync(StateHasChanged);
+        });
+    }
+
+    public void Dispose()
+    {
+        _studio?.Dispose();
+        _toastTimer?.Cancel();
+    }
+}

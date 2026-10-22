@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SpawnGen Studio</title>
+    <base href="/" />
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="css/app.css" />
+</head>
+
+<body>
+    <div id="app">
+        <div class="boot">Loading SpawnGen Studio...</div>
+    </div>
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">x</span>
+    </div>
+    <script>
+        // Saves text as a file download (the workflow JSON).
+        window.spawngenDownload = function (name, text) {
+            const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+            const a = document.createElement("a");
+            a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+    </script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+
+</html>

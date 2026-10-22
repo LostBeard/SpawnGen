@@ -1,0 +1,36 @@
+html, body, #app { height: 100%; margin: 0; }
+body { background: #202020; color: #ddd; font-family: system-ui, "Segoe UI", sans-serif; font-size: 14px; overflow: hidden; }
+.boot { padding: 2rem; color: #888; }
+#blazor-error-ui { background: #5a1d1d; bottom: 0; display: none; left: 0; padding: 0.6rem 1.2rem; position: fixed; width: 100%; z-index: 1000; }
+#blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: 0.75rem; top: 0.5rem; }
+
+.studio { display: flex; flex-direction: column; height: 100%; }
+.toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: #2a2a2a; border-bottom: 1px solid #111; }
+.toolbar .brand { font-weight: 700; letter-spacing: 0.3px; margin-right: 10px; color: #fff; }
+.toolbar .sep { width: 1px; height: 20px; background: #444; margin: 0 4px; }
+.toolbar .status { margin-left: auto; color: #8a8a8a; font-size: 12px; }
+.toolbar button, .toolbar label.button { background: #3a3a3a; color: #ddd; border: 1px solid #4a4a4a; border-radius: 5px; padding: 4px 12px; cursor: pointer; font: inherit; }
+.toolbar button:hover:not(:disabled), .toolbar label.button:hover { background: #474747; }
+.toolbar button:disabled { opacity: 0.45; cursor: default; }
+.toolbar button.primary { background: #2f5fa8; border-color: #3d73c4; color: #fff; }
+.stage { position: relative; flex: 1; min-height: 0; }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+
+.toast { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); background: #111c; color: #eee; padding: 8px 16px; border-radius: 6px; border: 1px solid #444; max-width: 70%; pointer-events: none; }
+
+.widget-edit { position: absolute; z-index: 5; display: flex; }
+.widget-edit input, .widget-edit select, .widget-edit textarea { flex: 1; min-width: 0; background: #1a1a1a; color: #fff; border: 1px solid #4f8fe8; border-radius: 5px; padding: 2px 8px; font: inherit; outline: none; }
+.widget-edit textarea { resize: none; }
+
+.search-backdrop { position: absolute; inset: 0; z-index: 10; background: rgba(0,0,0,0.35); display: flex; justify-content: center; padding-top: 12vh; }
+.search { width: min(560px, 92%); align-self: flex-start; background: #262626; border: 1px solid #4a4a4a; border-radius: 8px; box-shadow: 0 10px 40px #000a; overflow: hidden; }
+.search input { width: 100%; box-sizing: border-box; padding: 12px 14px; background: #1c1c1c; color: #fff; border: 0; border-bottom: 1px solid #3a3a3a; font: inherit; font-size: 15px; outline: none; }
+.search ul { list-style: none; margin: 0; padding: 4px; max-height: 50vh; overflow-y: auto; }
+.search li { display: flex; justify-content: space-between; padding: 7px 10px; border-radius: 5px; cursor: pointer; }
+.search li.on { background: #2f5fa8; }
+.search li .cat { color: #9a9a9a; font-size: 12px; }
+.search li.none { color: #888; cursor: default; }
+
+.menu { position: absolute; z-index: 20; list-style: none; margin: 0; padding: 4px; min-width: 190px; background: #2a2a2a; border: 1px solid #4a4a4a; border-radius: 6px; box-shadow: 0 8px 28px #000a; }
+.menu li { padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+.menu li:hover { background: #2f5fa8; }

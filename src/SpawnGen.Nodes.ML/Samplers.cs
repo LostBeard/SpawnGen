@@ -11,11 +11,15 @@ public static class Samplers
     public static readonly string[] Names =
     [
         "euler", "euler_ancestral", "heun", "dpm_2", "dpm_2_ancestral", "lms", "dpmpp_2s_ancestral", "dpmpp_sde", "dpmpp_sde_gpu", "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu",
-        "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ipndm", "res_multistep", "res_multistep_ancestral", "ddim", "lcm",
+        "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ipndm", "ipndm_v", "res_multistep", "res_multistep_ancestral", "ddim", "lcm",
+        "gradient_estimation", "euler_cfg_pp", "euler_ancestral_cfg_pp", "dpmpp_2m_cfg_pp", "gradient_estimation_cfg_pp",
     ];
 
     /// <summary>The model's denoised estimate for the sample <c>x</c> at noise level <c>sigma</c> (the callee applies input scaling, guidance and masks).</summary>
     public delegate Task<float[]> DenoiseFn(float[] x, float sigma);
+
+    /// <summary>The samplers that use the unconditional denoised estimate (ComfyUI's cfg_pp family and gradient_estimation_cfg_pp).</summary>
+    public static bool UsesUncond(string sampler) => sampler.EndsWith("_cfg_pp", StringComparison.Ordinal);
 
     /// <summary>Where a stochastic sampler's fresh noise comes from: deterministic per (seed, step) so a seed reproduces a picture.</summary>
     public sealed class NoiseSource(int seed, int channels, int height, int width)
@@ -34,13 +38,16 @@ public static class Samplers
         }
     }
 
-    /// <summary>Runs <paramref name="sampler"/> over <paramref name="sigmas"/> (length steps + 1, the last is 0), starting from the already-noised <paramref name="x"/>.</summary>
+    /// <summary>
+    /// Runs <paramref name="sampler"/> over <paramref name="sigmas"/> (length steps + 1, the last is 0), starting from the already-noised <paramref name="x"/>.
+    /// <paramref name="uncond"/> gives the unconditional denoised estimate of the model call just made (the cfg_pp samplers need it; without it they use the guided one).
+    /// </summary>
     public static async Task<float[]> RunAsync(string sampler, float[] x, float[] sigmas, DenoiseFn model, NoiseSource noise,
-        Action<int>? onStep = null, CancellationToken ct = default)
+        Action<int>? onStep = null, CancellationToken ct = default, Func<float[]?>? uncond = null)
     {
         if (!Names.Contains(sampler)) throw new ArgumentException($"Unknown sampler '{sampler}'. Known: {string.Join(", ", Names)}.", nameof(sampler));
         int steps = sigmas.Length - 1, n = x.Length;
-        float[]? oldDenoised = null, oldDenoised2 = null;
+        float[]? oldDenoised = null, oldDenoised2 = null, oldD = null, oldUncond = null;
         float hLast = 0, hLast2 = 0, oldSigmaDown = 0;
         var history = new List<float[]>();   // lms: past derivatives
 
@@ -49,6 +56,7 @@ public static class Samplers
             ct.ThrowIfCancellationRequested();
             float s = sigmas[i], next = sigmas[i + 1];
             var d0 = await model(x, s);
+            float[] u0 = (UsesUncond(sampler) ? uncond?.Invoke() : null) ?? d0;
 
             switch (sampler)
             {
@@ -107,8 +115,9 @@ public static class Samplers
                     break;
                 }
 
-                case "lms":
+                case "lms" or "ipndm_v":
                 {
+                    // ipndm_v is ComfyUI's variable-step Adams-Bashforth of order up to 4, which is exactly lms's integral of the interpolated derivative.
                     const int order = 4;
                     history.Add(Derivative(x, d0, s));
                     if (history.Count > order) history.RemoveAt(0);
@@ -274,6 +283,53 @@ public static class Samplers
                         for (int k = 0; k < n; k++) x[k] += 0.5f * coeff * (1f / r) * (d0[k] - oldDenoised[k]); // midpoint solver
                     }
                     AddNoise(x, noise, i, next * MathF.Sqrt(-Expm1(-2f * etaH)));
+                    hLast = h;
+                    break;
+                }
+
+                case "gradient_estimation" or "gradient_estimation_cfg_pp":
+                {
+                    // Gradient estimation (ComfyUI's sample_gradient_estimation, gamma 2): an Euler step along a derivative extrapolated from the previous one.
+                    var d = Derivative(x, u0, s);
+                    float dt = next - s;
+                    if (oldD is null) { for (int k = 0; k < n; k++) x[k] += d[k] * dt; }
+                    else
+                    {
+                        const float gamma = 2f;
+                        for (int k = 0; k < n; k++) x[k] += (gamma * d[k] + (1f - gamma) * oldD[k]) * dt;
+                    }
+                    oldD = d;
+                    break;
+                }
+
+                case "euler_cfg_pp":
+                {
+                    // Euler along the unconditional derivative, landing from the guided estimate (CFG++).
+                    for (int k = 0; k < n; k++) x[k] = d0[k] + (x[k] - u0[k]) / s * next;
+                    break;
+                }
+
+                case "euler_ancestral_cfg_pp":
+                {
+                    var (down, up) = AncestralStep(s, next);
+                    for (int k = 0; k < n; k++) x[k] = d0[k] + (x[k] - u0[k]) / s * down;
+                    AddNoise(x, noise, i, up);
+                    break;
+                }
+
+                case "dpmpp_2m_cfg_pp":
+                {
+                    float t = -MathF.Log(s), h = next == 0f ? 0f : -MathF.Log(next) - t, keep = next == 0f ? 0f : MathF.Exp(-h);
+                    if (oldUncond is null || next == 0f)
+                    {
+                        for (int k = 0; k < n; k++) x[k] = d0[k] - keep * u0[k] + keep * x[k];
+                    }
+                    else
+                    {
+                        float r = hLast / h, c = -Expm1(-h) / (2f * r);
+                        for (int k = 0; k < n; k++) x[k] = d0[k] - keep * u0[k] + c * (d0[k] - oldDenoised![k]) + keep * x[k];
+                    }
+                    oldUncond = u0;
                     hLast = h;
                     break;
                 }

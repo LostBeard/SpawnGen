@@ -54,11 +54,11 @@ public class SamplerTests
         double Error(float[] x) => Math.Sqrt(x.Zip(exact, (a, b) => (double)(a - b) * (a - b)).Average());
 
         var errors = new Dictionary<string, double>();
-        foreach (var name in new[] { "euler", "heun", "dpm_2", "lms", "dpmpp_2m", "ipndm", "res_multistep" })
+        foreach (var name in new[] { "euler", "heun", "dpm_2", "lms", "dpmpp_2m", "ipndm", "ipndm_v", "res_multistep", "gradient_estimation" })
             errors[name] = Error(await Samplers.RunAsync(name, (float[])start.Clone(), sigmas, Gaussian(mu, s0), Noise()));
         TestContext.Out.WriteLine("rms error vs exact ODE at 8 steps: " + string.Join(", ", errors.Select(e => $"{e.Key} {e.Value:E2}")));
 
-        foreach (var better in new[] { "heun", "dpm_2", "lms", "dpmpp_2m", "ipndm", "res_multistep" })
+        foreach (var better in new[] { "heun", "dpm_2", "lms", "dpmpp_2m", "ipndm", "ipndm_v", "res_multistep", "gradient_estimation" })
             Assert.That(errors[better], Is.LessThan(errors["euler"]), $"{better} should beat euler at the same step count");
         Assert.That(errors["dpmpp_2m"], Is.LessThan(0.05));
         Assert.That(errors["ipndm"], Is.LessThan(0.05));
@@ -91,6 +91,7 @@ public class SamplerTests
     }
 
     [TestCase("euler_ancestral")]
+    [TestCase("euler_ancestral_cfg_pp")]
     [TestCase("dpm_2_ancestral")]
     [TestCase("dpmpp_2s_ancestral")]
     [TestCase("dpmpp_2m_sde")]
@@ -116,6 +117,12 @@ public class SamplerTests
     [TestCase("dpmpp_2s_ancestral", 11)]
     [TestCase("lms", 6)]
     [TestCase("ipndm", 6)]
+    [TestCase("ipndm_v", 6)]
+    [TestCase("gradient_estimation", 6)]
+    [TestCase("euler_cfg_pp", 6)]
+    [TestCase("euler_ancestral_cfg_pp", 6)]
+    [TestCase("dpmpp_2m_cfg_pp", 6)]
+    [TestCase("gradient_estimation_cfg_pp", 6)]
     [TestCase("res_multistep", 6)]
     [TestCase("res_multistep_ancestral", 6)]
     [TestCase("dpmpp_3m_sde", 6)]
@@ -127,6 +134,33 @@ public class SamplerTests
         var sigmas = Sigmas(6);
         await Samplers.RunAsync(sampler, Start(sigmas[0], 1), sigmas, PointMass(0f, () => calls++), Noise());
         Assert.That(calls, Is.EqualTo(expected));
+    }
+
+    [TestCase("euler_cfg_pp", "euler")]
+    [TestCase("euler_ancestral_cfg_pp", "euler_ancestral")]
+    [TestCase("dpmpp_2m_cfg_pp", "dpmpp_2m")]
+    [TestCase("gradient_estimation_cfg_pp", "gradient_estimation")]
+    [TestCase("ipndm_v", "lms")]
+    public async Task A_cfg_pp_sampler_without_guidance_is_its_plain_counterpart(string sampler, string plain)
+    {
+        // With no separate unconditional estimate the CFG++ update collapses to the ordinary one (ipndm_v is lms's variable-step integral).
+        var sigmas = Sigmas(8);
+        var a = await Samplers.RunAsync(sampler, Start(sigmas[0], 6), sigmas, Gaussian(0.3f, 1f), Noise(4));
+        var b = await Samplers.RunAsync(plain, Start(sigmas[0], 6), sigmas, Gaussian(0.3f, 1f), Noise(4));
+        Assert.That(a.Zip(b, (p, q) => Math.Abs(p - q)).Max(), Is.LessThan(2e-3f));
+    }
+
+    [Test]
+    public async Task CFG_plus_plus_samplers_use_the_unconditional_estimate_when_given()
+    {
+        var sigmas = Sigmas(6);
+        float[]? last = null;
+        Samplers.DenoiseFn model = async (x, sigma) => { var d = await Gaussian(0.3f, 1f)(x, sigma); last = d.Select(v => v + 0.1f).ToArray(); return d; };
+        var with = await Samplers.RunAsync("euler_cfg_pp", Start(sigmas[0], 6), sigmas, model, Noise(), uncond: () => last);
+        var without = await Samplers.RunAsync("euler_cfg_pp", Start(sigmas[0], 6), sigmas, Gaussian(0.3f, 1f), Noise());
+        Assert.That(with, Is.Not.EqualTo(without));
+        Assert.That(Samplers.UsesUncond("euler_cfg_pp"), Is.True);
+        Assert.That(Samplers.UsesUncond("euler"), Is.False);
     }
 
     [Test]

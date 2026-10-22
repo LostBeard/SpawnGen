@@ -61,6 +61,7 @@ internal static class SamplingCore
                 var x = new float[perImage];
                 for (int i = 0; i < perImage; i++) x[i] = original[i] + noise[i] * noiseScale;
                 var lastDenoised = x;
+                float[]? lastUncond = null;
 
                 async Task<float[]> Denoise(float[] sample, float sigma)
                 {
@@ -71,14 +72,24 @@ internal static class SamplingCore
                     // Run progress as the share of sigma range covered, for the timestep ranges of conditioning entries.
                     var cond = await GuidedAsync(pos, scaled, shape, timestep, sigma, ckpt, acc, h, w);
                     float[] eps = cond;
+                    float[]? uncondEps = null;
                     if (settings.Cfg != 1f)
                     {
                         var uncond = await GuidedAsync(neg, scaled, shape, timestep, sigma, ckpt, acc, h, w);
+                        uncondEps = uncond;
                         eps = new float[perImage];
                         for (int i = 0; i < perImage; i++) eps[i] = uncond[i] + settings.Cfg * (cond[i] - uncond[i]);
                     }
                     var denoised = new float[perImage];
                     for (int i = 0; i < perImage; i++) denoised[i] = sample[i] - sigma * eps[i];
+                    if (Samplers.UsesUncond(settings.Sampler))
+                    {
+                        // CFG++ samplers re-noise along the unconditional direction.
+                        var unc = new float[perImage];
+                        var epsU = settings.Cfg != 1f ? uncondEps! : cond;
+                        for (int i = 0; i < perImage; i++) unc[i] = sample[i] - sigma * epsU[i];
+                        lastUncond = unc;
+                    }
                     if (mask is not null)
                     {
                         // Inpainting: the part outside the mask is held at the original latent.
@@ -97,7 +108,7 @@ internal static class SamplingCore
                     {
                         context.Progress(item * steps + done, latent.Batch * steps);
                         if (item == 0 && context.WantsPreview) context.Preview(LatentPreview.Png(lastDenoised, h, w));
-                    }, context.CancellationToken);
+                    }, context.CancellationToken, () => lastUncond);
                 Array.Copy(x, 0, result.Data, b * perImage, perImage);
                 Array.Copy(lastDenoised, 0, denoisedResult.Data, b * perImage, perImage);
             }

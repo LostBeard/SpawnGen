@@ -1,3 +1,5 @@
+using ILGPU;
+using ILGPU.Runtime;
 using System.Diagnostics;
 using SpawnGen.Engine.Execution;
 using SpawnGen.Engine.Graph;
@@ -41,6 +43,51 @@ public class PerformanceReport
         return timer;
     }
 
+    /// <summary>
+    /// Is the VAE decode time a property of the latent being decoded? Samples a latent per seed (1 step), then decodes each one several times in a
+    /// VAE-only session. If the time follows the latent and not the position in the run, the cause is data-dependent, not memory.
+    /// </summary>
+    [Test, Explicit("Performance experiment; needs SPAWNGEN_MODELS and a GPU.")]
+    public async Task Vae_time_depends_on_the_latent()
+    {
+        var models = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(models)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+        using var runtime = new MlRuntime(new FolderModelSource(models!));
+        var acc = runtime.Accelerator;
+        var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
+        var ex = new PromptExecutor(registry, new Services(runtime, new OutputOptions { Directory = Path.GetTempPath() }));
+
+        var seeds = new[] { 100, 101, 102, 103, 104, 105 };
+        var latents = new Dictionary<int, float[]>();
+        foreach (var seed in seeds)
+        {
+            var g = Txt2ImgTests.Graph("a photo of a red apple on a wooden table", seed: seed, size: 512);
+            var r = await ex.ExecuteAsync(g, new ExecutionOptions { OutputNodeIds = ["5"] });
+            latents[seed] = ((SpawnGen.Engine.Types.LatentBatch)r.Outputs["5"].Values[0]!).Data;
+            var l = latents[seed];
+            TestContext.Out.WriteLine($"seed {seed}: latent mean {l.Average():F3} min {l.Min():F2} max {l.Max():F2} subnormals {l.Count(v => v != 0 && MathF.Abs(v) < 1.17549435e-38f)}");
+        }
+
+        await using var stream = await runtime.ModelSource.OpenAsync("", "vae_decoder/model.onnx");
+        using var vae = await SpawnDev.ILGPU.ML.InferenceSession.CreateFromOnnxStreamAsync(acc, stream,
+            inputShapes: new Dictionary<string, int[]> { ["latent_sample"] = [1, 4, 64, 64] });
+        async Task<double> Decode(float[] latent)
+        {
+            var scaled = latent.Select(v => v / Checkpoint.VaeScale).ToArray();
+            using var buf = acc.Allocate1D(scaled);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var outs = await vae.RunAsync(new Dictionary<string, SpawnDev.ILGPU.ML.Tensors.Tensor>
+                { [vae.InputNames[0]] = new SpawnDev.ILGPU.ML.Tensors.Tensor(buf.View, [1, 4, 64, 64]) });
+            await acc.SynchronizeAsync();
+            _ = outs[vae.OutputNames[0]].Data.SubView(0, 16).GetAsArray1D();
+            return sw.Elapsed.TotalMilliseconds;
+        }
+        await Decode(latents[seeds[0]]); // warm-up, not reported
+        for (int round = 1; round <= 2; round++)
+            foreach (var seed in seeds)
+                TestContext.Out.WriteLine($"RESULT round {round} seed {seed}: decode {await Decode(latents[seed]):F0} ms");
+    }
+
     /// <summary>Does the VAE decode time depend on how many UNet steps ran just before it? (Seen: ~13 s after 1 step, ~20 s after 4, RX 590 OpenCL.)</summary>
     [Test, Explicit("Performance experiment; needs SPAWNGEN_MODELS and a GPU.")]
     public async Task Vae_time_versus_preceding_unet_steps()
@@ -52,6 +99,13 @@ public class PerformanceReport
         var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
         var ex = new PromptExecutor(registry, new Services(runtime, new OutputOptions { Directory = work }));
 
+        // Diagnostic knob (suggested by the ILGPU.ML team): how many bytes of released buffers the executor lets pile up before it drains them.
+        TestContext.Out.WriteLine($"GraphExecutor.MaxPendingReleaseBytes default: {SpawnDev.ILGPU.ML.Graph.GraphExecutor.MaxPendingReleaseBytes / (1024 * 1024)} MiB");
+        if (long.TryParse(Environment.GetEnvironmentVariable("SPAWNGEN_MAX_PENDING_RELEASE_MB"), out var mb))
+        {
+            SpawnDev.ILGPU.ML.Graph.GraphExecutor.MaxPendingReleaseBytes = mb * 1024 * 1024;
+            TestContext.Out.WriteLine($"GraphExecutor.MaxPendingReleaseBytes set to {mb} MiB for this run");
+        }
         var sequence = (Environment.GetEnvironmentVariable("SPAWNGEN_STEP_SEQUENCE") ?? "1,1,4,1,4,2,1").Split(',').Select(int.Parse).ToArray();
         int seed = 100;
         foreach (var steps in sequence)

@@ -171,6 +171,6 @@ Status: sent to Tuvok and Data 2026-10-22; no workaround in SpawnGen.
 OpenCL write is still pending). The +8192 rows = 32 MiB = two 16 MiB chunks. Owner: Data (SpawnDev.ILGPU). Rerun this program and the
 SD-Turbo graph against his fixed build when he names the version.
 
-**Resolved (2026-10-22):** Data's SpawnDev.ILGPU 5.4.2-local.1 (forks 2.4.2-local.1) fixes it: streamcheck 0 mismatches at 16 and 1 MiB; the library
-pipeline and the SpawnGen node graph both render a correct apple scene on the RX 590 (OpenCL, seed 7, 1 step, 512). Not on nuget.org yet; bump
-`SpawnDev.ILGPU` in `SpawnGen.Nodes.ML` once 5.4.2 is released (until then SpawnGen on this card needs a pre-release 5.4.2 build).
+**Resolved (2026-10-22):** fixed in SpawnDev.ILGPU **5.4.2** (forks 2.4.2), released to nuget.org the same day. The stream check reports 0 mismatches
+at 16 and 1 MiB chunks, and the library pipeline and the SpawnGen node graph both render a correct apple scene on the RX 590 (OpenCL, seed 7,
+1 step, 512). `SpawnGen.Nodes.ML` references `SpawnDev.ILGPU` 5.4.2 directly, so SpawnGen no longer needs any pre-release feed.

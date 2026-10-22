@@ -25,8 +25,7 @@ public sealed class EditorDocument(NodeRegistry registry)
 
     public NodeRegistry Registry { get; } = registry;
 
-    /// <summary>Workflow parts the editor does not edit but must not lose when a workflow is opened and saved again: group boxes and ComfyUI's "extra" block.</summary>
-    public System.Text.Json.Nodes.JsonArray? Groups { get; set; }
+    /// <summary>Part of a workflow the editor does not edit but must not lose when it is opened and saved again: ComfyUI's "extra" block.</summary>
     public System.Text.Json.Nodes.JsonObject? Extra { get; set; }
     public EditorGraph Graph { get; } = new();
     public int UndoLimit { get; set; } = 200;
@@ -128,6 +127,60 @@ public sealed class EditorDocument(NodeRegistry registry)
         if (node.Width != width) Run(new SetNodePropertyCommand<double?>(nodeId, "width", node.Width, width, (n, v) => n.Width = v));
     }
 
+    // ---- groups ----
+
+    /// <summary>Adds an empty group box.</summary>
+    public EditorGroup AddGroup(double x, double y, double width, double height, string? title = null, string? color = null)
+    {
+        var group = new EditorGroup
+        {
+            Id = Graph.NextGroupId, X = x, Y = y, Width = Math.Max(width, EditorGroup.MinWidth), Height = Math.Max(height, EditorGroup.MinHeight),
+            Title = title ?? "Group", Color = color ?? EditorGroup.DefaultColor,
+        };
+        Run(new AddGroupCommand(group));
+        return group;
+    }
+
+    /// <summary>A group that just fits around the given nodes (with a margin and room for its title), as Ctrl+G makes. Null when there are no nodes.</summary>
+    public EditorGroup? AddGroupAround(IEnumerable<EditorNode> nodes, Func<EditorNode, Rect> bounds, double margin = 12)
+    {
+        Rect? box = null;
+        foreach (var n in nodes) box = box is null ? bounds(n) : Rect.Union(box.Value, bounds(n));
+        if (box is not { } b) return null;
+        return AddGroup(b.X - margin, b.Y - margin - EditorGroup.TitleHeight, b.Width + 2 * margin, b.Height + 2 * margin + EditorGroup.TitleHeight);
+    }
+
+    public void DeleteGroup(int id)
+    {
+        if (Graph.FindGroup(id) is { } g) Run(new DeleteGroupCommand(g));
+    }
+
+    /// <summary>Moves a group, and with it the nodes inside (listed by the caller at the start of a drag so they stay the same set during it).</summary>
+    public void MoveGroup(int id, double dx, double dy, IReadOnlyList<int> carriedNodes)
+    {
+        if (dx != 0 || dy != 0) Run(new MoveGroupCommand(id, dx, dy, [.. carriedNodes]));
+    }
+
+    public void SetGroupBounds(int id, double x, double y, double width, double height)
+    {
+        var g = Graph.GetGroup(id);
+        width = Math.Max(width, EditorGroup.MinWidth);
+        height = Math.Max(height, EditorGroup.MinHeight);
+        if ((g.X, g.Y, g.Width, g.Height) != (x, y, width, height)) Run(new SetGroupBoundsCommand(id, (g.X, g.Y, g.Width, g.Height), (x, y, width, height)));
+    }
+
+    public void SetGroupTitle(int id, string title)
+    {
+        var g = Graph.GetGroup(id);
+        if (g.Title != title) Run(new SetGroupPropertyCommand<string>(id, g.Title, title, (grp, v) => grp.Title = v));
+    }
+
+    public void SetGroupColor(int id, string color)
+    {
+        var g = Graph.GetGroup(id);
+        if (g.Color != color) Run(new SetGroupPropertyCommand<string>(id, g.Color, color, (grp, v) => grp.Color = v));
+    }
+
     /// <summary>Several edits as one undo step (paste, delete-and-reconnect, ...).</summary>
     public void Group(Action edits)
     {
@@ -202,6 +255,8 @@ public sealed class EditorDocument(NodeRegistry registry)
     {
         foreach (var l in Graph.Links.ToList()) Graph.RemoveLinkRaw(l.Id);
         foreach (var n in Graph.Nodes.ToList()) Graph.RemoveNodeRaw(n.Id);
+        foreach (var g in Graph.Groups.ToList()) Graph.RemoveGroupRaw(g.Id);
+        Graph.NextGroupId = 1;
         Graph.NextNodeId = 1;
         Graph.NextLinkId = 1;
         fill(Graph);
@@ -319,6 +374,72 @@ public sealed class EditorDocument(NodeRegistry registry)
             _after = p._after;
             return true;
         }
+    }
+
+    sealed class AddGroupCommand(EditorGroup group) : IEditorCommand
+    {
+        public void Do(EditorGraph g) => g.AddGroupRaw(group);
+        public void Undo(EditorGraph g) => g.RemoveGroupRaw(group.Id);
+    }
+
+    sealed class DeleteGroupCommand(EditorGroup group) : IEditorCommand
+    {
+        int _index;
+        public void Do(EditorGraph g) => _index = g.RemoveGroupRaw(group.Id);
+        public void Undo(EditorGraph g) => g.AddGroupRaw(group, _index);
+    }
+
+    sealed class MoveGroupCommand(int id, double dx, double dy, List<int> nodes) : IEditorCommand
+    {
+        double _dx = dx, _dy = dy;
+        public int Id => id;
+        public bool IsGesture => true;
+        public void Do(EditorGraph g) => Shift(g, _dx, _dy);
+        public void Undo(EditorGraph g) => Shift(g, -_dx, -_dy);
+
+        void Shift(EditorGraph g, double x, double y)
+        {
+            if (g.FindGroup(id) is { } grp) { grp.X += x; grp.Y += y; }
+            foreach (var n in nodes) if (g.FindNode(n) is { } node) { node.X += x; node.Y += y; }
+        }
+
+        public bool TryMerge(IEditorCommand next)
+        {
+            if (next is not MoveGroupCommand m || m.Id != id || !m.Nodes.SequenceEqual(nodes)) return false;
+            _dx += m._dx;
+            _dy += m._dy;
+            return true;
+        }
+
+        List<int> Nodes => nodes;
+    }
+
+    sealed class SetGroupBoundsCommand(int id, (double X, double Y, double W, double H) before, (double X, double Y, double W, double H) after) : IEditorCommand
+    {
+        (double X, double Y, double W, double H) _after = after;
+        public int Id => id;
+        public bool IsGesture => true;
+        public void Do(EditorGraph g) => Apply(g, _after);
+        public void Undo(EditorGraph g) => Apply(g, before);
+
+        void Apply(EditorGraph g, (double X, double Y, double W, double H) b)
+        {
+            var grp = g.GetGroup(id);
+            (grp.X, grp.Y, grp.Width, grp.Height) = b;
+        }
+
+        public bool TryMerge(IEditorCommand next)
+        {
+            if (next is not SetGroupBoundsCommand s || s.Id != id) return false;
+            _after = s._after;
+            return true;
+        }
+    }
+
+    sealed class SetGroupPropertyCommand<T>(int id, T before, T after, Action<EditorGroup, T> set) : IEditorCommand
+    {
+        public void Do(EditorGraph g) => set(g.GetGroup(id), after);
+        public void Undo(EditorGraph g) => set(g.GetGroup(id), before);
     }
 
     sealed class GroupCommand(List<IEditorCommand> commands) : IEditorCommand

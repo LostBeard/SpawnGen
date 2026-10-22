@@ -39,6 +39,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         var visible = vp.VisibleWorld(cssWidth, cssHeight);
         DrawGrid(ctx, visible, vp.Scale);
 
+        DrawGroups(ctx, visible, vp.Scale);
+
         var geometries = doc.Graph.Nodes.OrderBy(n => n.ZIndex).Select(n => (Node: n, Geo: view.Hits.Geometry(n))).ToList();
         var byId = geometries.ToDictionary(g => g.Node.Id, g => g.Geo);
 
@@ -55,6 +57,57 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.LineWidth = 1 / vp.Scale;
             ctx.StrokeRect(box.X, box.Y, box.Width, box.Height);
         }
+    }
+
+    // ---- groups ----
+
+    void DrawGroups(CanvasRenderingContext2D ctx, Rect visible, double scale)
+    {
+        foreach (var group in view.Document.Graph.Groups)
+        {
+            var b = group.Bounds;
+            if (!b.Intersects(visible)) continue;
+            bool selected = view.SelectedGroup == group.Id;
+
+            RoundRect(ctx, b, 10);
+            ctx.FillStyle = Rgba(group.Color, 0.16);
+            ctx.Fill();
+            // The title bar is a stronger band of the same colour.
+            ctx.Save();
+            RoundRect(ctx, b, 10);
+            ctx.Clip();
+            ctx.FillStyle = Rgba(group.Color, 0.38);
+            ctx.FillRect(b.X, b.Y, b.Width, EditorGroup.TitleHeight);
+            ctx.Restore();
+            RoundRect(ctx, b, 10);
+            ctx.LineWidth = selected ? 3 : 1.5;
+            ctx.StrokeStyle = selected ? Theme.NodeSelected : Rgba(group.Color, 0.75);
+            ctx.Stroke();
+
+            if (scale >= DetailScale)
+            {
+                ctx.Font = $"600 {Math.Min(group.FontSize, 20):0}px system-ui, 'Segoe UI', sans-serif";
+                ctx.TextBaseline = "middle";
+                ctx.FillStyle = Theme.TitleText;
+                ctx.FillText(Ellipsize(group.Title, b.Width - 24), b.X + 12, b.Y + EditorGroup.TitleHeight / 2);
+                var r = group.ResizeHandle;
+                ctx.StrokeStyle = Rgba(group.Color, 0.9);
+                ctx.LineWidth = 1.5;
+                ctx.BeginPath();
+                ctx.MoveTo(r.Right - 4, r.Y + 6); ctx.LineTo(r.X + 6, r.Bottom - 4);
+                ctx.MoveTo(r.Right - 4, r.Y + 11); ctx.LineTo(r.X + 11, r.Bottom - 4);
+                ctx.Stroke();
+            }
+        }
+    }
+
+    /// <summary>"#rgb" or "#rrggbb" as a CSS colour with the given opacity.</summary>
+    static string Rgba(string hex, double alpha)
+    {
+        var h = hex.TrimStart('#');
+        if (h.Length == 3) h = string.Concat(h.Select(c => new string(c, 2)));
+        if (h.Length != 6 || !int.TryParse(h, System.Globalization.NumberStyles.HexNumber, null, out var v)) return $"rgba(63,120,158,{alpha})";
+        return $"rgba({(v >> 16) & 255},{(v >> 8) & 255},{v & 255},{alpha.ToString(System.Globalization.CultureInfo.InvariantCulture)})";
     }
 
     static Rect Pad(Rect r, double p) => new(r.X - p, r.Y - p, r.Width + 2 * p, r.Height + 2 * p);

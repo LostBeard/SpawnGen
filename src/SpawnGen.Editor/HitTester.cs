@@ -2,9 +2,9 @@ using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Editor;
 
-public enum HitKind { None, NodeBody, TitleBar, CollapseButton, InputSlot, OutputSlot, Widget, ResizeHandle, Link }
+public enum HitKind { None, NodeBody, TitleBar, CollapseButton, InputSlot, OutputSlot, Widget, ResizeHandle, Link, GroupTitle, GroupResize }
 
-/// <summary>What is under a point. <see cref="Name"/> is the slot's or widget's input/output name; <see cref="LinkId"/> is set for links.</summary>
+/// <summary>What is under a point. <see cref="Name"/> is the slot's or widget's input/output name; <see cref="LinkId"/> is set for links; for groups <see cref="NodeId"/> is the group's id.</summary>
 public readonly record struct Hit(HitKind Kind, int NodeId = 0, string? Name = null, int Index = -1, int LinkId = 0);
 
 /// <summary>Finds what is under a world-space point: slots first, then resize handle, widgets, title, body, and last the links behind the nodes.</summary>
@@ -49,6 +49,13 @@ public sealed class HitTester(EditorDocument document, Func<string, double>? mea
             if (g.TitleBar.Contains(world))
                 return world.X <= g.TitleBar.X + 22 ? new Hit(HitKind.CollapseButton, node.Id) : new Hit(HitKind.TitleBar, node.Id);
             return new Hit(HitKind.NodeBody, node.Id);
+        }
+
+        // Group boxes are behind the nodes: only their title bar and resize corner are grabbed (the rest of the box is the canvas), topmost group first.
+        foreach (var group in document.Graph.Groups.Reverse())
+        {
+            if (group.ResizeHandle.Contains(world)) return new Hit(HitKind.GroupResize, group.Id);
+            if (group.TitleBar.Contains(world)) return new Hit(HitKind.GroupTitle, group.Id);
         }
 
         // Links are drawn behind nodes, so they are tested last.

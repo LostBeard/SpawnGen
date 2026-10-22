@@ -24,8 +24,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Widgets: number / text / multiline / combo / toggle | **done**; number drag-scrub and arrows **todo** |
 | Right-click menus | **partial** (node, link, canvas) |
 | ComfyUI workflow JSON open / save | **done** (stock workflow opens) |
-| Reroute nodes, Primitive nodes, Note nodes | todo |
-| Groups (boxes) drawn, moved with their nodes, colours | partial (preserved in the file, not drawn) |
+| Reroute, Note, Markdown Note (editor-only, compiled away); legacy PrimitiveNode folded into its widget on open (Primitive Int/Float/String are real nodes) | **done** |
+| Groups (boxes): Ctrl+G around the selection, drawn, drag the title to move with the nodes inside, resize, rename (double click), colours, delete, undo, saved in the workflow | **done** |
 | Subgraphs / group nodes | todo |
 | Minimap, node library sidebar, properties panel | todo |
 | Multiple workflows (tabs), recent files, autosave | todo |

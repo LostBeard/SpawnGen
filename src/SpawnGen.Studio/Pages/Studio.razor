@@ -128,7 +128,8 @@
     sealed class EditState
     {
         public required int NodeId { get; init; }
-        public string? Name { get; init; }           // null = editing the node title
+        public string? Name { get; init; }           // null = editing the node title (or the group title when IsGroup)
+        public bool IsGroup { get; init; }           // NodeId is a group id
         public WidgetSpec? Spec { get; init; }
         public required Rect Bounds { get; init; }
         public required string Text { get; set; }
@@ -172,6 +173,7 @@
         _doc.Changed += RefreshUi;
         _view.ViewChanged += RefreshUi;
         _view.WidgetActivated += OnWidgetActivated;
+        _view.GroupTitleEditRequested += OnGroupTitleEdit;
         _view.TitleEditRequested += OnTitleEdit;
         _view.SearchRequested += OpenSearch;
         _view.ContextMenuRequested += OnContextMenu;
@@ -352,12 +354,31 @@
         StateHasChanged();
     }
 
+    void OnGroupTitleEdit(int groupId)
+    {
+        var group = _doc.Graph.GetGroup(groupId);
+        var topLeft = _view.Viewport.WorldToScreen(new Point(group.X, group.Y));
+        var scale = _view.Viewport.Scale;
+        _edit = new EditState
+        {
+            NodeId = groupId, IsGroup = true, Name = null, Spec = null,
+            Bounds = new Rect(topLeft.X, topLeft.Y, group.Width * scale, Math.Max(EditorGroup.TitleHeight * scale, 28)),
+            Text = group.Title,
+        };
+        _focusEdit = true;
+        StateHasChanged();
+    }
+
     void CommitEdit(string? text)
     {
         if (_edit is not { } e) return;
         _edit = null;
         text ??= "";
-        if (e.Name is null)
+        if (e.IsGroup)
+        {
+            _doc.SetGroupTitle(e.NodeId, string.IsNullOrWhiteSpace(text) ? "Group" : text.Trim());
+        }
+        else if (e.Name is null)
         {
             _doc.SetTitle(e.NodeId, string.IsNullOrWhiteSpace(text) ? null : text.Trim());
         }
@@ -470,9 +491,18 @@
         {
             items.Add(new("Delete link", () => _doc.Disconnect(hit.LinkId)));
         }
+        else if (hit.Kind == HitKind.GroupTitle)
+        {
+            items.Add(new("Edit group title", () => OnGroupTitleEdit(hit.NodeId)));
+            foreach (var (name, color) in EditorGroup.Palette)
+                items.Add(new($"Colour: {name}", () => { _doc.SetGroupColor(hit.NodeId, color); _doc.EndGesture(); }));
+            items.Add(new("Delete group  (Del)", () => { _doc.DeleteGroup(hit.NodeId); }));
+        }
         else
         {
             items.Add(new("Add node...", () => OpenSearch(world, null)));
+            items.Add(new("Add group here", () => { _doc.AddGroup(world.X, world.Y, 420, 300); _doc.EndGesture(); }));
+            if (_view.SelectedNodes.Count > 0) items.Add(new("Group selected nodes  (Ctrl+G)", () => _view.GroupSelection()));
             if (_view.CanPaste) items.Add(new("Paste  (Ctrl+V)", () => _view.Paste(world)));
             items.Add(new("Fit view  (F)", () => _view.FitToView()));
         }

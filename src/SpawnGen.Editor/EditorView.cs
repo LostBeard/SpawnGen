@@ -32,7 +32,7 @@ public sealed class LinkDraft
 /// </summary>
 public sealed class EditorView
 {
-    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget }
+    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup }
 
     const double DragThresholdPixels = 3;
 
@@ -42,6 +42,8 @@ public sealed class EditorView
     bool _moved;
     Hit _pressed;
     double _resizeGrabOffset;
+    List<int> _groupCarry = [];
+    Point _groupGrabOffset;
     bool _boxAdds;
     HashSet<int> _boxBase = [];
     Clipboard? _clipboard;
@@ -59,6 +61,8 @@ public sealed class EditorView
 
     public IReadOnlyCollection<int> SelectedNodes => _selected;
     public int? SelectedLink { get; private set; }
+    /// <summary>The group whose title was last clicked (drawn highlighted; Delete removes it).</summary>
+    public int? SelectedGroup { get; private set; }
     public LinkDraft? Draft { get; private set; }
     /// <summary>The drag-select rectangle in world coordinates while one is being drawn.</summary>
     public Rect? SelectionBox { get; private set; }
@@ -75,6 +79,8 @@ public sealed class EditorView
     /// <summary>A widget was clicked: the UI edits it in place.</summary>
     public event Action<int, string>? WidgetActivated;
     public event Action<int>? TitleEditRequested;
+    /// <summary>A group's title was double-clicked: the UI edits it in place.</summary>
+    public event Action<int>? GroupTitleEditRequested;
     public event Action<Hit, Point>? ContextMenuRequested;
     /// <summary>A short message for a toast (a refused link, a paste problem).</summary>
     public event Action<string>? Message;
@@ -87,6 +93,7 @@ public sealed class EditorView
         _selected.Clear();
         _selected.Add(nodeId);
         SelectedLink = null;
+        SelectedGroup = null;
         Document.Graph.BringToFront(nodeId);
         ViewChanged?.Invoke();
     }
@@ -95,6 +102,7 @@ public sealed class EditorView
     {
         if (!_selected.Remove(nodeId)) { _selected.Add(nodeId); Document.Graph.BringToFront(nodeId); }
         SelectedLink = null;
+        SelectedGroup = null;
         ViewChanged?.Invoke();
     }
 
@@ -103,20 +111,23 @@ public sealed class EditorView
         _selected.Clear();
         foreach (var n in Document.Graph.Nodes) _selected.Add(n.Id);
         SelectedLink = null;
+        SelectedGroup = null;
         ViewChanged?.Invoke();
     }
 
     public void ClearSelection()
     {
-        if (_selected.Count == 0 && SelectedLink is null) return;
+        if (_selected.Count == 0 && SelectedLink is null && SelectedGroup is null) return;
         _selected.Clear();
         SelectedLink = null;
+        SelectedGroup = null;
         ViewChanged?.Invoke();
     }
 
     void OnDocumentChanged()
     {
         _selected.RemoveWhere(id => Document.Graph.FindNode(id) is null);
+        if (SelectedGroup is { } sg && Document.Graph.FindGroup(sg) is null) SelectedGroup = null;
         if (SelectedLink is { } l && Document.Graph.FindLink(l) is null) SelectedLink = null;
         ViewChanged?.Invoke();
     }
@@ -157,6 +168,7 @@ public sealed class EditorView
         if (button == PointerButton.Right)
         {
             if (hit.Kind is HitKind.NodeBody or HitKind.TitleBar or HitKind.Widget && !_selected.Contains(hit.NodeId)) SelectOnly(hit.NodeId);
+            if (hit.Kind == HitKind.GroupTitle) { _selected.Clear(); SelectedLink = null; SelectedGroup = hit.NodeId; ViewChanged?.Invoke(); }
             ContextMenuRequested?.Invoke(hit, screen);
             return;
         }
@@ -211,9 +223,39 @@ public sealed class EditorView
 
             case HitKind.Link:
                 _selected.Clear();
+                SelectedGroup = null;
                 SelectedLink = hit.LinkId;
                 ViewChanged?.Invoke();
                 break;
+
+            case HitKind.GroupTitle when clickCount >= 2:
+                GroupTitleEditRequested?.Invoke(hit.NodeId);
+                break;
+
+            case HitKind.GroupTitle:
+            {
+                var group = Document.Graph.GetGroup(hit.NodeId);
+                _selected.Clear();
+                SelectedLink = null;
+                SelectedGroup = group.Id;
+                // The nodes that move with the group are fixed now, so a node dragged past the edge mid-gesture does not fall out of it.
+                _groupCarry = [.. Document.Graph.NodesInside(group, n => Hits.Geometry(n).Bounds)];
+                _mode = Mode.DraggingGroup;
+                ViewChanged?.Invoke();
+                break;
+            }
+
+            case HitKind.GroupResize:
+            {
+                var group = Document.Graph.GetGroup(hit.NodeId);
+                _groupGrabOffset = new Point(group.X + group.Width - world.X, group.Y + group.Height - world.Y);
+                _selected.Clear();
+                SelectedLink = null;
+                SelectedGroup = group.Id;
+                _mode = Mode.ResizingGroup;
+                ViewChanged?.Invoke();
+                break;
+            }
 
             default: // empty canvas
                 if (clickCount >= 2) { SearchRequested?.Invoke(world, null); break; }
@@ -244,6 +286,18 @@ public sealed class EditorView
                 Viewport.Pan(screen.X - _lastScreen.X, screen.Y - _lastScreen.Y);
                 ViewChanged?.Invoke();
                 break;
+
+            case Mode.DraggingGroup when _moved && SelectedGroup is { } dragged:
+                Document.MoveGroup(dragged, world.X - _lastWorld.X, world.Y - _lastWorld.Y, _groupCarry);
+                SetCursor("move");
+                break;
+
+            case Mode.ResizingGroup when SelectedGroup is { } resized:
+            {
+                var group = Document.Graph.GetGroup(resized);
+                Document.SetGroupBounds(resized, group.X, group.Y, world.X + _groupGrabOffset.X - group.X, world.Y + _groupGrabOffset.Y - group.Y);
+                break;
+            }
 
             case Mode.DraggingNodes when _moved:
                 Document.MoveNodes(_selected, world.X - _lastWorld.X, world.Y - _lastWorld.Y);
@@ -277,8 +331,8 @@ public sealed class EditorView
                     {
                         HitKind.OutputSlot or HitKind.InputSlot => "crosshair",
                         HitKind.Widget or HitKind.CollapseButton or HitKind.Link => "pointer",
-                        HitKind.ResizeHandle => "nwse-resize",
-                        HitKind.TitleBar => "move",
+                        HitKind.ResizeHandle or HitKind.GroupResize => "nwse-resize",
+                        HitKind.TitleBar or HitKind.GroupTitle => "move",
                         _ => "default",
                     });
                     ViewChanged?.Invoke();
@@ -302,6 +356,8 @@ public sealed class EditorView
                 break;
             case Mode.DraggingNodes:
             case Mode.Resizing:
+            case Mode.DraggingGroup:
+            case Mode.ResizingGroup:
                 Document.EndGesture();
                 break;
             case Mode.PressedWidget:
@@ -464,6 +520,8 @@ public sealed class EditorView
             case "a" when ctrl:
                 SelectAll();
                 return true;
+            case "g" when ctrl:
+                return GroupSelection();
             case "c" when ctrl:
                 Copy();
                 return true;
@@ -483,8 +541,28 @@ public sealed class EditorView
         return false;
     }
 
+    /// <summary>Ctrl+G: a group box around the selected nodes. False when nothing is selected.</summary>
+    public bool GroupSelection()
+    {
+        if (_selected.Count == 0) return false;
+        var group = Document.AddGroupAround(_selected.Select(Document.Graph.GetNode), n => Hits.Geometry(n).Bounds);
+        Document.EndGesture();
+        if (group is null) return false;
+        _selected.Clear();
+        SelectedGroup = group.Id;
+        ViewChanged?.Invoke();
+        return true;
+    }
+
     public void DeleteSelection()
     {
+        if (SelectedGroup is { } sg && _selected.Count == 0 && SelectedLink is null)
+        {
+            Document.DeleteGroup(sg);
+            SelectedGroup = null;
+            ViewChanged?.Invoke();
+            return;
+        }
         if (_selected.Count == 0 && SelectedLink is null) return;
         Document.Group(() =>
         {

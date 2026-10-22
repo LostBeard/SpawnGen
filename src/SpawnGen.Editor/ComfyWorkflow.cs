@@ -69,13 +69,49 @@ public static class ComfyWorkflow
             }
 
             FoldPrimitiveNodes(doc, graph, warnings);
+            ReadGroups(root["groups"] as JsonArray, graph);
 
             graph.NextNodeId = Math.Max(graph.NextNodeId, ((int?)root["last_node_id"] ?? 0) + 1);
             graph.NextLinkId = Math.Max(graph.NextLinkId, ((int?)root["last_link_id"] ?? 0) + 1);
         });
-        doc.Groups = root["groups"] as JsonArray;
         doc.Extra = root["extra"] as JsonObject;
         return warnings;
+    }
+
+    static void ReadGroups(JsonArray? groups, EditorGraph graph)
+    {
+        foreach (var g in groups?.OfType<JsonObject>() ?? [])
+        {
+            if (g["bounding"] is not JsonArray b || b.Count < 4) continue;
+            var extra = new JsonObject();
+            foreach (var (key, value) in g)
+                if (key is not ("id" or "title" or "bounding" or "color" or "font_size")) extra[key] = value?.DeepClone();
+            graph.AddGroupRaw(new EditorGroup
+            {
+                Id = (int?)g["id"] is { } id && graph.FindGroup(id) is null ? id : graph.NextGroupId,
+                Title = (string?)g["title"] ?? "Group",
+                X = (double)b[0]!, Y = (double)b[1]!, Width = Math.Max((double)b[2]!, EditorGroup.MinWidth), Height = Math.Max((double)b[3]!, EditorGroup.MinHeight),
+                Color = (string?)g["color"] ?? (string?)g["groupcolor"] ?? EditorGroup.DefaultColor,
+                FontSize = (double?)g["font_size"] ?? 24,
+                Extra = extra.Count > 0 ? extra : null,
+            });
+        }
+    }
+
+    static JsonArray WriteGroups(EditorGraph graph)
+    {
+        var list = new JsonArray();
+        foreach (var g in graph.Groups)
+        {
+            var o = new JsonObject
+            {
+                ["id"] = g.Id, ["title"] = g.Title, ["bounding"] = new JsonArray(g.X, g.Y, g.Width, g.Height),
+                ["color"] = g.Color, ["font_size"] = g.FontSize,
+            };
+            if (g.Extra is not null) foreach (var (key, value) in g.Extra) o[key] = value?.DeepClone();
+            list.Add(o);
+        }
+        return list;
     }
 
     /// <summary>
@@ -230,7 +266,7 @@ public static class ComfyWorkflow
         {
             ["last_node_id"] = graph.NextNodeId - 1, ["last_link_id"] = graph.NextLinkId - 1,
             ["nodes"] = nodes, ["links"] = links,
-            ["groups"] = doc.Groups?.DeepClone() ?? new JsonArray(),
+            ["groups"] = WriteGroups(doc.Graph),
             ["config"] = new JsonObject(),
             ["extra"] = doc.Extra?.DeepClone() ?? new JsonObject(),
             ["version"] = 0.4,

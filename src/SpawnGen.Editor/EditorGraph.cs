@@ -58,6 +58,30 @@ public sealed class EditorGraph
     public int NextNodeId { get; set; } = 1;
     public int NextLinkId { get; set; } = 1;
 
+    readonly List<EditorGroup> _groups = [];
+    /// <summary>Group boxes, back to front.</summary>
+    public IReadOnlyList<EditorGroup> Groups => _groups;
+    public int NextGroupId { get; set; } = 1;
+    public EditorGroup? FindGroup(int id) => _groups.FirstOrDefault(g => g.Id == id);
+    public EditorGroup GetGroup(int id) => FindGroup(id) ?? throw new KeyNotFoundException($"No group {id}.");
+
+    /// <summary>The nodes a group carries when it moves: those whose centre is inside its box.</summary>
+    public IEnumerable<int> NodesInside(EditorGroup group, Func<EditorNode, Rect> bounds) =>
+        _nodes.Values.Where(n => group.Bounds.Contains(bounds(n).Center)).Select(n => n.Id);
+
+    internal void AddGroupRaw(EditorGroup group, int? index = null)
+    {
+        if (index is { } i && i >= 0 && i <= _groups.Count) _groups.Insert(i, group); else _groups.Add(group);
+        NextGroupId = Math.Max(NextGroupId, group.Id + 1);
+    }
+
+    internal int RemoveGroupRaw(int id)
+    {
+        int index = _groups.FindIndex(g => g.Id == id);
+        if (index >= 0) _groups.RemoveAt(index);
+        return index;
+    }
+
     public EditorNode? FindNode(int id) => _nodes.GetValueOrDefault(id);
     public EditorLink? FindLink(int id) => _links.GetValueOrDefault(id);
 

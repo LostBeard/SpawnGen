@@ -31,6 +31,7 @@ public sealed class Checkpoint : IDisposable
         Vae = vae;
         Tokenizer = tokenizer;
         AlphasCumprod = DiffusionScheduler.ComputeAlphasCumprod();
+        Sigmas = new ModelSigmas(AlphasCumprod);
     }
 
     public string Name { get; }
@@ -39,6 +40,8 @@ public sealed class Checkpoint : IDisposable
     public SpawnDev.ILGPU.ML.InferenceSession Vae { get; }
     public BPETokenizer Tokenizer { get; }
     public float[] AlphasCumprod { get; }
+    /// <summary>The noise levels of the model's training steps, for schedulers and for telling the model its timestep.</summary>
+    public ModelSigmas Sigmas { get; }
 
     /// <summary>The VAE encoder (pixels to latents), loaded on first use: text-to-image never needs it.</summary>
     public Task<SpawnDev.ILGPU.ML.InferenceSession> GetVaeEncoderAsync()
@@ -125,10 +128,3 @@ public sealed class ClipHandle(Checkpoint checkpoint) { public Checkpoint Checkp
 [Socket("VAE")]
 public sealed class VaeHandle(Checkpoint checkpoint) { public Checkpoint Checkpoint { get; } = checkpoint; }
 
-/// <summary>Text embeddings from CLIP, <c>[1, 77, 1024]</c>, host side (315 KB).</summary>
-[Socket("CONDITIONING")]
-public sealed class Conditioning(float[] embeddings, int[] shape)
-{
-    public float[] Embeddings { get; } = embeddings;
-    public int[] Shape { get; } = shape;
-}

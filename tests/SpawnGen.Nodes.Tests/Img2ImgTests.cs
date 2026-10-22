@@ -40,37 +40,6 @@ public class PngRoundTripTests
     }
 }
 
-public class SigmaScheduleTests
-{
-    static readonly float[] Alphas = DiffusionScheduler.ComputeAlphasCumprod();
-
-    [Test]
-    public void Full_denoise_is_the_plain_schedule()
-    {
-        var (t, s) = SigmaSchedule.Build(4, 1f, Alphas);
-        Assert.That(t, Is.EqualTo(DiffusionScheduler.GetTimesteps(4)));
-        Assert.That(s, Has.Length.EqualTo(5));
-        Assert.That(s[^1], Is.EqualTo(0f));
-    }
-
-    [Test]
-    public void Partial_denoise_runs_the_tail_of_a_longer_schedule()
-    {
-        // 2 steps at denoise 0.5 = the last 2 steps of a 4-step schedule: it starts at a lower sigma than a plain 2-step run.
-        var (t, s) = SigmaSchedule.Build(2, 0.5f, Alphas);
-        var full = DiffusionScheduler.GetTimesteps(4);
-        Assert.That(t, Is.EqualTo(full[^2..]));
-        Assert.That(s, Has.Length.EqualTo(3));
-        Assert.That(s[0], Is.LessThan(SigmaSchedule.Build(2, 1f, Alphas).Sigmas[0]));
-        Assert.That(s[^1], Is.EqualTo(0f));
-    }
-
-    [TestCase(0f)]
-    [TestCase(1.5f)]
-    public void Denoise_outside_zero_to_one_is_rejected(float denoise) =>
-        Assert.Throws<ArgumentOutOfRangeException>(() => SigmaSchedule.Build(4, denoise, Alphas));
-}
-
 /// <summary>img2img: load a picture, VAE-encode it, sample from a partly noised latent. The GPU test needs SPAWNGEN_MODELS (with vae_encoder/).</summary>
 public class Img2ImgTests
 {

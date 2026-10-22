@@ -61,6 +61,20 @@ public static class ServerApp
 
         app.MapGet("/object_info", () => Results.Content(ObjectInfo(registry).ToJsonString(), "application/json"));
 
+        app.MapGet("/object_info/{node}", (string node) =>
+            registry.GetSchema(node) is not null && ObjectInfo(registry)[node] is { } entry ? Results.Json(new JsonObject { [node] = entry.DeepClone() }) : Results.Json(new JsonObject()));
+
+        // Small endpoints other ComfyUI clients poll: what models exist (by folder) and that there are no embeddings or server-side extensions.
+        app.MapGet("/models", () => Results.Json(new[] { "checkpoints", "upscale_models", "vae", "loras", "controlnet", "embeddings" }));
+        app.MapGet("/models/{folder}", (string folder) => Results.Json(folder switch
+        {
+            "checkpoints" => SpawnGen.Nodes.ML.CheckpointCatalog.Repos.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray(),
+            "upscale_models" => SpawnGen.Nodes.ML.UpscaleModelLoader.Models(),
+            _ => Array.Empty<string>(),
+        }));
+        app.MapGet("/embeddings", () => Results.Json(Array.Empty<string>()));
+        app.MapGet("/extensions", () => Results.Json(Array.Empty<string>()));
+        app.MapPost("/free", () => Results.Ok()); // models stay loaded: this server frees them when it stops
         app.MapGet("/system_stats", () => Results.Json(new
         {
             system = new { os = Environment.OSVersion.Platform.ToString(), spawngen_version = typeof(ServerApp).Assembly.GetName().Version?.ToString() ?? "0" },

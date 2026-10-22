@@ -299,6 +299,24 @@ public class ServerTests
     }
 
     [Test]
+    public async Task Small_ComfyUI_client_endpoints_answer()
+    {
+        var one = JsonNode.Parse(await _http.GetStringAsync("/object_info/KSampler"))!.AsObject();
+        Assert.That(one.Select(kv => kv.Key), Is.EqualTo(new[] { "KSampler" }));
+        Assert.That((string?)one["KSampler"]!["display_name"], Is.EqualTo("KSampler"));
+        Assert.That(JsonNode.Parse(await _http.GetStringAsync("/object_info/NoSuchNode"))!.AsObject(), Is.Empty);
+
+        var folders = JsonNode.Parse(await _http.GetStringAsync("/models"))!.AsArray().Select(f => (string?)f).ToList();
+        Assert.That(folders, Does.Contain("checkpoints"));
+        var checkpoints = JsonNode.Parse(await _http.GetStringAsync("/models/checkpoints"))!.AsArray().Select(f => (string?)f).ToList();
+        Assert.That(checkpoints, Does.Contain("sd_turbo"));
+        Assert.That(JsonNode.Parse(await _http.GetStringAsync("/models/loras"))!.AsArray(), Is.Empty);
+        Assert.That(JsonNode.Parse(await _http.GetStringAsync("/embeddings"))!.AsArray(), Is.Empty);
+        Assert.That(JsonNode.Parse(await _http.GetStringAsync("/extensions"))!.AsArray(), Is.Empty);
+        Assert.That((await _http.PostAsync("/free", new StringContent("{}"))).IsSuccessStatusCode, Is.True);
+    }
+
+    [Test]
     public async Task Progress_messages_from_a_node_reach_the_client()
     {
         await ConnectAsync();

@@ -11,6 +11,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Server with ComfyUI-shaped API (headless) | **done** |
 | Browser, static files, WebGPU engine in the page (hosted on GitHub Pages: https://lostbeard.github.io/SpawnGen/, AOT build by manual workflow) | **done**: SD-Turbo, SD 1.5, FLUX.2 Klein and the vision models verified on WebGPU |
 | Same workflow file on all three | **done** (ComfyUI workflow JSON) |
+| ComfyUI HTTP API for other clients: /prompt /queue /history /view /upload/image /ws /interrupt /object_info (and /object_info/{node}) /models /models/{folder} /embeddings /extensions /free /system_stats | **done** |
 
 ## 2. Graph editor
 

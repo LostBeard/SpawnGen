@@ -177,7 +177,7 @@ public sealed class EditorDocument(NodeRegistry registry)
 
     public void MoveNodes(IEnumerable<int> ids, double dx, double dy)
     {
-        var list = ids.Distinct().Where(i => Graph.FindNode(i) is not null).ToList();
+        var list = ids.Distinct().Where(i => Graph.FindNode(i) is { Pinned: false }).ToList();
         if (list.Count > 0 && (dx != 0 || dy != 0)) Run(new MoveNodesCommand(list, dx, dy));
     }
 
@@ -234,6 +234,12 @@ public sealed class EditorDocument(NodeRegistry registry)
         if (node.Collapsed != collapsed) Run(new SetNodePropertyCommand<bool>(nodeId, "collapsed", node.Collapsed, collapsed, (n, v) => n.Collapsed = v));
     }
 
+    public void SetPinned(int nodeId, bool pinned)
+    {
+        var node = Graph.GetNode(nodeId);
+        if (node.Pinned != pinned) Run(new SetNodePropertyCommand<bool>(nodeId, "pinned", node.Pinned, pinned, (n, v) => n.Pinned = v));
+    }
+
     public void SetWidth(int nodeId, double? width)
     {
         var node = Graph.GetNode(nodeId);
@@ -271,12 +277,14 @@ public sealed class EditorDocument(NodeRegistry registry)
     /// <summary>Moves a group, and with it the nodes inside (listed by the caller at the start of a drag so they stay the same set during it).</summary>
     public void MoveGroup(int id, double dx, double dy, IReadOnlyList<int> carriedNodes)
     {
-        if (dx != 0 || dy != 0) Run(new MoveGroupCommand(id, dx, dy, [.. carriedNodes]));
+        if (Graph.FindGroup(id) is not { Pinned: false }) return;
+        if (dx != 0 || dy != 0) Run(new MoveGroupCommand(id, dx, dy, [.. carriedNodes.Where(n => Graph.FindNode(n) is { Pinned: false })]));
     }
 
     public void SetGroupBounds(int id, double x, double y, double width, double height)
     {
         var g = Graph.GetGroup(id);
+        if (g.Pinned) return;
         width = Math.Max(width, EditorGroup.MinWidth);
         height = Math.Max(height, EditorGroup.MinHeight);
         if ((g.X, g.Y, g.Width, g.Height) != (x, y, width, height)) Run(new SetGroupBoundsCommand(id, (g.X, g.Y, g.Width, g.Height), (x, y, width, height)));
@@ -286,6 +294,12 @@ public sealed class EditorDocument(NodeRegistry registry)
     {
         var g = Graph.GetGroup(id);
         if (g.Title != title) Run(new SetGroupPropertyCommand<string>(id, g.Title, title, (grp, v) => grp.Title = v));
+    }
+
+    public void SetGroupPinned(int id, bool pinned)
+    {
+        var g = Graph.GetGroup(id);
+        if (g.Pinned != pinned) Run(new SetGroupPropertyCommand<bool>(id, g.Pinned, pinned, (grp, v) => grp.Pinned = v));
     }
 
     public void SetGroupColor(int id, string color)

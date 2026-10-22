@@ -35,6 +35,25 @@ public sealed class EditorGroup
     /// <summary>Workflow fields the editor does not use (ComfyUI's <c>flags</c> and anything newer): kept and written back.</summary>
     public JsonObject? Extra { get; set; }
 
+    /// <summary>A pinned group cannot be moved, resized or deleted from the canvas (ComfyUI keeps it in the group's <c>flags.pinned</c>, which this reads and writes).</summary>
+    public bool Pinned
+    {
+        get => (bool?)Extra?["flags"]?["pinned"] == true;
+        set
+        {
+            if (value == Pinned) return;
+            Extra ??= new JsonObject();
+            if (Extra["flags"] is not JsonObject flags) Extra["flags"] = flags = new JsonObject();
+            if (value) flags["pinned"] = true;
+            else
+            {
+                flags.Remove("pinned");
+                if (flags.Count == 0) Extra.Remove("flags");
+                if (Extra.Count == 0) Extra = null;
+            }
+        }
+    }
+
     public Rect Bounds => new(X, Y, Width, Height);
     public Rect TitleBar => new(X, Y, Width, TitleHeight);
     public Rect ResizeHandle => new(X + Width - ResizeSize, Y + Height - ResizeSize, ResizeSize, ResizeSize);

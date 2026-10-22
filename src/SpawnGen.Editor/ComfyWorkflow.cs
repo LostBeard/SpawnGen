@@ -42,6 +42,7 @@ public static class ComfyWorkflow
                     Id = id, ClassType = type, Title = (string?)n["title"], Color = (string?)n["color"], BgColor = (string?)n["bgcolor"],
                     X = Pair(n["pos"]).X, Y = Pair(n["pos"]).Y,
                     Collapsed = (bool?)n["flags"]?["collapsed"] ?? false,
+                    Pinned = (bool?)n["flags"]?["pinned"] ?? false,
                     Mode = Enum.IsDefined(typeof(NodeMode), (int?)n["mode"] ?? 0) ? (NodeMode)((int?)n["mode"] ?? 0) : NodeMode.Always,
                     ZIndex = ++z,
                 };
@@ -97,6 +98,14 @@ public static class ComfyWorkflow
                 Extra = extra.Count > 0 ? extra : null,
             });
         }
+    }
+
+    static JsonObject NodeFlags(EditorNode n)
+    {
+        var flags = new JsonObject();
+        if (n.Collapsed) flags["collapsed"] = true;
+        if (n.Pinned) flags["pinned"] = true;
+        return flags;
     }
 
     static JsonArray WriteGroups(EditorGraph graph)
@@ -208,7 +217,7 @@ public static class ComfyWorkflow
                 ["id"] = n.Id, ["type"] = n.ClassType,
                 ["pos"] = new JsonArray(n.X, n.Y),
                 ["size"] = new JsonArray(geo.Bounds.Width, geo.Bounds.Height),
-                ["flags"] = n.Collapsed ? new JsonObject { ["collapsed"] = true } : new JsonObject(),
+                ["flags"] = NodeFlags(n),
                 ["order"] = order.GetValueOrDefault(n.Id),
                 ["mode"] = (int)n.Mode,
             };

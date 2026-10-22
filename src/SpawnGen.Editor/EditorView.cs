@@ -594,6 +594,8 @@ public sealed class EditorView
             case "b" when ctrl:
                 ToggleMode(NodeMode.Bypass);
                 return true;
+            case "p" when !ctrl && !shift:
+                return TogglePin();
             case "f" or "home" when !ctrl:
                 FitToView(selectionOnly: _selected.Count > 0);
                 return true;
@@ -633,22 +635,43 @@ public sealed class EditorView
         return true;
     }
 
+    /// <summary>P: pins the selected nodes (or group), or unpins them when every one is already pinned.</summary>
+    public bool TogglePin()
+    {
+        if (_selected.Count == 0 && SelectedGroup is { } sg)
+        {
+            Document.SetGroupPinned(sg, !Document.Graph.GetGroup(sg).Pinned);
+            Document.EndGesture();
+            ViewChanged?.Invoke();
+            return true;
+        }
+        if (_selected.Count == 0) return false;
+        bool allPinned = _selected.All(id => Document.Graph.GetNode(id).Pinned);
+        Document.Group(() => { foreach (var id in _selected) Document.SetPinned(id, !allPinned); });
+        Document.EndGesture();
+        ViewChanged?.Invoke();
+        return true;
+    }
+
     public void DeleteSelection()
     {
         if (SelectedGroup is { } sg && _selected.Count == 0 && SelectedLink is null)
         {
+            if (Document.Graph.GetGroup(sg).Pinned) { Message?.Invoke("The group is pinned. Unpin it (P) to delete it."); return; }
             Document.DeleteGroup(sg);
             SelectedGroup = null;
             ViewChanged?.Invoke();
             return;
         }
         if (_selected.Count == 0 && SelectedLink is null) return;
+        var deletable = _selected.Where(id => !Document.Graph.GetNode(id).Pinned).ToList();
+        if (deletable.Count < _selected.Count) Message?.Invoke(deletable.Count == 0 ? "Pinned nodes are not deleted. Unpin them (P) first." : "Pinned nodes were kept.");
         Document.Group(() =>
         {
             if (SelectedLink is { } l) Document.Disconnect(l);
-            Document.DeleteNodes(_selected.ToList());
+            Document.DeleteNodes(deletable);
         });
-        _selected.Clear();
+        _selected.RemoveWhere(deletable.Contains);
         SelectedLink = null;
         ViewChanged?.Invoke();
     }
@@ -678,6 +701,7 @@ public sealed class EditorView
     {
         if (!SnapToGrid || !Document.Graph.Nodes.Any(n => n.Id == _pressed.NodeId)) { Document.MoveNodes(_selected, dx, dy); return; }
         var lead = Document.Graph.GetNode(_pressed.NodeId);
+        if (lead.Pinned) { Document.MoveNodes(_selected, dx, dy); return; }
         _dragRaw = new Point(_dragRaw.X + dx, _dragRaw.Y + dy);
         double g = Math.Max(1, GridSize);
         double tx = Math.Round(_dragRaw.X / g) * g, ty = Math.Round(_dragRaw.Y / g) * g;

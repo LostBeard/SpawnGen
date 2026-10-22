@@ -37,7 +37,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Drop a generated PNG (ComfyUI or SpawnGen) or a workflow / API-format JSON on the canvas to open it; PNGs carry prompt + workflow | **done** |
 | Settings (remembered in the browser): link render modes (spline / straight / linear / hidden), snap to grid with its size, minimap | **done** |
 | Themes, shortcut customisation, shortcut parity check | todo |
-| Node colours (ComfyUI presets via the context menu, saved as color / bgcolor, undo, copy), custom titles | **done**; pins, badges todo |
+| Node colours (ComfyUI presets via the context menu, saved as color / bgcolor, undo, copy), custom titles | **done**; pins (P or the menu: nodes and groups cannot be moved, resized, collapsed or deleted; saved as flags.pinned) done; badges todo |
 
 ## 3. Execution
 

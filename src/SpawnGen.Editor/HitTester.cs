@@ -43,18 +43,18 @@ public sealed class HitTester(EditorDocument document, Func<string, double>? mea
                 if (world.DistanceTo(s.Position) <= SlotRadius) return new Hit(HitKind.InputSlot, node.Id, s.Name, s.Index);
 
             if (!g.Bounds.Contains(world)) continue;
-            if (!g.Collapsed && g.ResizeHandle.Contains(world)) return new Hit(HitKind.ResizeHandle, node.Id);
+            if (!g.Collapsed && !node.Pinned && g.ResizeHandle.Contains(world)) return new Hit(HitKind.ResizeHandle, node.Id);
             foreach (var w in g.Widgets)
                 if (w.Bounds.Contains(world)) return new Hit(HitKind.Widget, node.Id, w.Name);
             if (g.TitleBar.Contains(world))
-                return world.X <= g.TitleBar.X + 22 ? new Hit(HitKind.CollapseButton, node.Id) : new Hit(HitKind.TitleBar, node.Id);
+                return !node.Pinned && world.X <= g.TitleBar.X + 22 ? new Hit(HitKind.CollapseButton, node.Id) : new Hit(HitKind.TitleBar, node.Id);
             return new Hit(HitKind.NodeBody, node.Id);
         }
 
         // Group boxes are behind the nodes: only their title bar and resize corner are grabbed (the rest of the box is the canvas), topmost group first.
         foreach (var group in document.Graph.Groups.Reverse())
         {
-            if (group.ResizeHandle.Contains(world)) return new Hit(HitKind.GroupResize, group.Id);
+            if (!group.Pinned && group.ResizeHandle.Contains(world)) return new Hit(HitKind.GroupResize, group.Id);
             if (group.TitleBar.Contains(world)) return new Hit(HitKind.GroupTitle, group.Id);
         }
 

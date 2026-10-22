@@ -111,6 +111,20 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
 
     // ---- groups ----
 
+    /// <summary>A small push-pin: a round head over a needle, tilted.</summary>
+    static void DrawPin(CanvasRenderingContext2D ctx, double x, double y)
+    {
+        ctx.StrokeStyle = "#d9d9d9";
+        ctx.FillStyle = "#d9d9d9";
+        ctx.LineWidth = 1.6;
+        ctx.BeginPath();
+        ctx.MoveTo(x - 2, y + 6); ctx.LineTo(x + 1.5, y + 0.5);
+        ctx.Stroke();
+        ctx.BeginPath();
+        ctx.Arc(x + 3, y - 2.5, 3.6, 0, Math.PI * 2);
+        ctx.Fill();
+    }
+
     void DrawGroups(CanvasRenderingContext2D ctx, Rect visible, double scale)
     {
         foreach (var group in view.Document.Graph.Groups)
@@ -139,7 +153,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
                 ctx.Font = $"600 {Math.Min(group.FontSize, 20):0}px system-ui, 'Segoe UI', sans-serif";
                 ctx.TextBaseline = "middle";
                 ctx.FillStyle = Theme.TitleText;
-                ctx.FillText(Ellipsize(group.Title, b.Width - 24), b.X + 12, b.Y + EditorGroup.TitleHeight / 2);
+                ctx.FillText(Ellipsize(group.Title, b.Width - 44), b.X + 12, b.Y + EditorGroup.TitleHeight / 2);
+                if (group.Pinned) DrawPin(ctx, b.Right - 16, b.Y + EditorGroup.TitleHeight / 2);
                 var r = group.ResizeHandle;
                 ctx.StrokeStyle = Rgba(group.Color, 0.9);
                 ctx.LineWidth = 1.5;
@@ -307,6 +322,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.TextBaseline = "middle";
             ctx.FillStyle = Theme.TitleText;
             ctx.FillText(geo.Title, b.X + 26, geo.TitleBar.Y + geo.TitleBar.Height / 2);
+            if (node.Pinned) DrawPin(ctx, b.Right - 14, geo.TitleBar.Y + geo.TitleBar.Height / 2);
             // Collapse arrow.
             ctx.FillStyle = Theme.LabelText;
             ctx.BeginPath();
@@ -328,14 +344,17 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             if (detailed) foreach (var w in geo.Widgets) DrawWidget(ctx, node, w);
             if (geo.PreviewArea is { } area) DrawPreview(ctx, node, area, detailed);
             if (geo.TextArea is { } textArea && detailed) DrawResultText(ctx, geo.TextLines, textArea);
-            // Resize grip.
-            var r = geo.ResizeHandle;
-            ctx.StrokeStyle = "#5a5a5a";
-            ctx.LineWidth = 1.2;
-            ctx.BeginPath();
-            ctx.MoveTo(r.Right - 3, r.Y + 4); ctx.LineTo(r.X + 4, r.Bottom - 3);
-            ctx.MoveTo(r.Right - 3, r.Y + 9); ctx.LineTo(r.X + 9, r.Bottom - 3);
-            ctx.Stroke();
+            if (!node.Pinned)
+            {
+                // Resize grip.
+                var r = geo.ResizeHandle;
+                ctx.StrokeStyle = "#5a5a5a";
+                ctx.LineWidth = 1.2;
+                ctx.BeginPath();
+                ctx.MoveTo(r.Right - 3, r.Y + 4); ctx.LineTo(r.X + 4, r.Bottom - 3);
+                ctx.MoveTo(r.Right - 3, r.Y + 9); ctx.LineTo(r.X + 9, r.Bottom - 3);
+                ctx.Stroke();
+            }
         }
         else
         {

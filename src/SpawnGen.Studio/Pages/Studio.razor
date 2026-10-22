@@ -854,7 +854,8 @@
                 items.Add(new("Colour: default", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, null, null); _doc.EndGesture(); }));
             if (node.Previews.Count > 0)
                 items.Add(new("Save picture", () => _ = SavePicturesAsync(node)));
-            items.Add(new(node.Collapsed ? "Expand" : "Collapse", () => { _doc.SetCollapsed(hit.NodeId, !node.Collapsed); _doc.EndGesture(); }));
+            if (!node.Pinned) items.Add(new(node.Collapsed ? "Expand" : "Collapse", () => { _doc.SetCollapsed(hit.NodeId, !node.Collapsed); _doc.EndGesture(); }));
+            items.Add(new(node.Pinned ? "Unpin  (P)" : "Pin  (P)", () => _view.TogglePin()));
             items.Add(new(node.Mode == NodeMode.Never ? "Unmute" : "Mute  (Ctrl+M)", () => _view.Key("m", Modifiers.Ctrl)));
             items.Add(new(node.Mode == NodeMode.Bypass ? "Remove bypass" : "Bypass  (Ctrl+B)", () => _view.Key("b", Modifiers.Ctrl)));
             items.Add(new("Copy  (Ctrl+C)", () => _view.Copy()));
@@ -869,7 +870,9 @@
             items.Add(new("Edit group title", () => OnGroupTitleEdit(hit.NodeId)));
             foreach (var (name, color) in EditorGroup.Palette)
                 items.Add(new($"Colour: {name}", () => { _doc.SetGroupColor(hit.NodeId, color); _doc.EndGesture(); }));
-            items.Add(new("Delete group  (Del)", () => { _doc.DeleteGroup(hit.NodeId); }));
+            var pinnedGroup = _doc.Graph.GetGroup(hit.NodeId).Pinned;
+            items.Add(new(pinnedGroup ? "Unpin group  (P)" : "Pin group  (P)", () => { _doc.SetGroupPinned(hit.NodeId, !pinnedGroup); _doc.EndGesture(); }));
+            if (!pinnedGroup) items.Add(new("Delete group  (Del)", () => { _doc.DeleteGroup(hit.NodeId); }));
         }
         else
         {

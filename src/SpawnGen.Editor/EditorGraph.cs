@@ -25,6 +25,8 @@ public sealed class EditorNode
     /// <summary>Width the user dragged the node to; null = sized from its content.</summary>
     public double? Width { get; set; }
     public bool Collapsed { get; set; }
+    /// <summary>A pinned node stays where it is: it cannot be dragged, resized, collapsed or deleted from the canvas (ComfyUI's <c>flags.pinned</c>).</summary>
+    public bool Pinned { get; set; }
     public NodeMode Mode { get; set; }
     /// <summary>Drawing and hit-test order, higher is on top. View state: not undoable, not part of the saved workflow's meaning.</summary>
     public int ZIndex { get; set; }
@@ -37,7 +39,7 @@ public sealed class EditorNode
 
     public EditorNode Clone(int? newId = null) => new()
     {
-        Id = newId ?? Id, ClassType = ClassType, Title = Title, Color = Color, BgColor = BgColor, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Mode = Mode,
+        Id = newId ?? Id, ClassType = ClassType, Title = Title, Color = Color, BgColor = BgColor, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Pinned = Pinned, Mode = Mode,
         Widgets = new Dictionary<string, object?>(Widgets, StringComparer.Ordinal),
     };
 }

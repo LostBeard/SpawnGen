@@ -56,15 +56,16 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Single-file `.safetensors` checkpoints (ComfyUI's main format) | todo: **library** (needs a UNet/CLIP/VAE builder from weights) |
 | LoRA, ControlNet, IP-Adapter, embeddings, upscale models | todo: **library** (LoRA could be applied to loaded weights from SpawnGen) |
 | Upscale (ESPCN x3: Load Upscale Model + Upscale Image using Model), Remove Background (RMBG 1.4: image + mask), Depth Anything V2 small, Style Transfer (5 styles) | **done**, verified by eye on the RX 590 on the desktop (OpenCL) and, except RMBG which ran but was not looked at, in the browser (WebGPU); models download on first use (desktop: the models folder's hub cache; browser: OPFS) |
-| FLUX.2 / FLUX 3, TRELLIS.2, TTS, speech, LLM | **library** has pipelines; todo: expose as nodes |
+| FLUX.2 Klein 4B (text to image, picture edit with reference images; 4-bit or 8-bit weights; one node) | **done**, verified by eye on the RX 590 desktop (OpenCL): 512x512 apple in 142 s after the model files were downloaded; browser (WebGPU) not yet run |
+| FLUX 3 Klein, TRELLIS.2, TTS, speech, LLM | **library** has pipelines; todo: expose as nodes |
 
 ## 4. Node library (host-side nodes, SpawnGen's to write)
 
-Done: Load/Save/Preview Image, Empty Latent, CLIP Text Encode, KSampler and KSampler (Advanced) with 11 samplers (euler, euler_ancestral, heun, dpm_2, dpm_2_ancestral, lms, dpmpp_2s_ancestral, dpmpp_2m, dpmpp_2m_sde, ddim, lcm) and 6 schedulers (normal, simple, sgm_uniform, ddim_uniform, karras, exponential), CLIP Text Encode with the conditioning nodes, VAE Encode/Decode, Load Checkpoint; and 40 host-side nodes (resampling, image ops, masks, latent ops, primitives, tested against hand-computed values).
+Done: Load Image (IMAGE + MASK from the alpha, PNG and JPEG incl. progressive and EXIF orientation) and Load Image (as Mask), Save/Preview Image, Empty Latent, CLIP Text Encode, KSampler and KSampler (Advanced) with 11 samplers (euler, euler_ancestral, heun, dpm_2, dpm_2_ancestral, lms, dpmpp_2s_ancestral, dpmpp_2m, dpmpp_2m_sde, ddim, lcm) and 6 schedulers (normal, simple, sgm_uniform, ddim_uniform, karras, exponential), CLIP Text Encode with the conditioning nodes, VAE Encode/Decode, Load Checkpoint; and 40 host-side nodes (resampling, image ops, masks, latent ops, primitives, tested against hand-computed values).
 
 Todo, in priority order:
-1. **Core image** (done: scale x3, crop, pad for outpaint, blend, composite, invert, batch, from-batch, repeat, blur, sharpen, empty image): flip/rotate, color adjust, quantize, morphological ops, still todo.
-2. **Masks** (done: solid, invert, crop, composite, feather, grow, threshold, image<->mask): load image mask todo.
+1. **Core image** (done: scale x3, crop, pad for outpaint, blend, composite, invert, batch, from-batch, repeat, blur, sharpen, empty image, flip, rotate, quantize, morphology): color adjust, WebP loading, still todo.
+2. **Masks** (done: solid, invert, crop, composite, feather, grow, threshold, image<->mask, load image as mask, image color to mask).
 3. **Latent** (done: upscale, upscale by, composite, from-batch, repeat, rotate, flip, crop, blend, set noise mask): bislerp upscale todo; VAE Encode (for Inpainting) done, verified by eye (a vase painted into an apple, the rest untouched).
 4. **Sampling** (done: KSampler, KSampler Advanced, 11 samplers, 6 schedulers, denoise, noise masks): SamplerCustom and its sigma/sampler nodes (BasicScheduler, KarrasScheduler, SamplerSelect, SplitSigmas...), dpmpp_sde, dpmpp_3m_sde, uni_pc, ipndm, deis, res_multistep and other newer samplers, beta scheduler.
 5. **Conditioning** (done: combine, concat, average, set area, set area percentage, set mask, zero out, timestep range): ControlNet apply, unCLIP and the model-specific ones need library support.

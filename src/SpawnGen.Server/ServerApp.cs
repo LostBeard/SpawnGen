@@ -137,10 +137,10 @@ public static class ServerApp
             var form = await request.ReadFormAsync();
             if (form.Files["image"] is not { } file) return Results.BadRequest("no 'image' file");
             var name = Path.GetFileName(file.FileName);
-            if (!name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("only PNG images can be loaded for now");
+            if (!ImageDecoder.IsSupportedName(name)) return Results.BadRequest("only PNG and JPEG images can be loaded for now");
             var target = Path.Combine(options.InputPath, name);
             if (File.Exists(target) && (string?)form["overwrite"] != "true")
-                name = $"{Path.GetFileNameWithoutExtension(name)}_{Guid.NewGuid().ToString("N")[..6]}.png";
+                name = $"{Path.GetFileNameWithoutExtension(name)}_{Guid.NewGuid().ToString("N")[..6]}{Path.GetExtension(name)}";
             await using (var output = File.Create(Path.Combine(options.InputPath, name))) await file.CopyToAsync(output);
             return Results.Json(new { name, subfolder = "", type = "input" });
         });

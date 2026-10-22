@@ -71,7 +71,7 @@ public class VisionTests
     }
 
     /// <summary>Runs <paramref name="build"/>'s graph on the real GPU with the desktop model source (downloads the vision model into the models folder's hub cache on first use).</summary>
-    static async Task<string[]> RunAsync(string name, Func<PromptGraph> build, string? inputPicture = null)
+    internal static async Task<string[]> RunAsync(string name, Func<PromptGraph> build, string? inputPicture = null)
     {
         var root = ModelsRoot();
         if (root is null) Assert.Ignore("SPAWNGEN_MODELS is not set.");
@@ -89,7 +89,7 @@ public class VisionTests
     }
 
     /// <summary>A picture with structure to upscale: the apple picture of the txt2img tests if SPAWNGEN_TEST_PICTURE points at one, else a synthetic gradient with edges.</summary>
-    static string TestPicture(int size)
+    internal static string TestPicture(int size)
     {
         var path = Path.Combine(Path.GetTempPath(), $"spawngen-vision-in-{size}.png");
         var env = Environment.GetEnvironmentVariable("SPAWNGEN_TEST_PICTURE");

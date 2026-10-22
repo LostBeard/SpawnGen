@@ -6,7 +6,7 @@ namespace SpawnGen.Nodes.Core;
 
 /// <summary>
 /// Minimal PNG decoder (non-interlaced; grayscale, grayscale+alpha, RGB, RGBA and palette; 8 and 16 bit) so loading an image needs no imaging
-/// dependency. Alpha is dropped: the result is an RGB <see cref="ImageBatch"/> in 0..1, like ComfyUI's LoadImage IMAGE output.
+/// dependency. The result is an RGB <see cref="ImageBatch"/> in 0..1, like ComfyUI's LoadImage IMAGE output; the alpha comes back separately (it becomes the MASK output).
 /// </summary>
 public static class PngReader
 {
@@ -77,13 +77,16 @@ public static class PngReader
         catch (InvalidDataException) { return null; }
     }
 
-    public static ImageBatch Decode(byte[] png)
+    public static ImageBatch Decode(byte[] png) => Decode(png, out _);
+
+    /// <summary>Decodes the picture and its alpha (0 transparent .. 1 opaque, one value per pixel); <paramref name="alpha"/> is null when the file has none.</summary>
+    public static ImageBatch Decode(byte[] png, out float[]? alpha)
     {
         if (png.Length < 8 || !png.AsSpan(0, 8).SequenceEqual(Signature))
             throw new InvalidDataException("Not a PNG file (JPEG and other formats are not supported yet).");
 
         int width = 0, height = 0, depth = 0, colorType = -1, interlace = 0;
-        byte[]? palette = null;
+        byte[]? palette = null, paletteAlpha = null;
         using var idat = new MemoryStream();
         for (int pos = 8; pos + 12 <= png.Length;)
         {
@@ -98,6 +101,7 @@ public static class PngReader
                     depth = data[8]; colorType = data[9]; interlace = data[12];
                     break;
                 case "PLTE": palette = data.ToArray(); break;
+                case "tRNS": paletteAlpha = data.ToArray(); break;
                 case "IDAT": idat.Write(data); break;
             }
             if (type == "IEND") break;
@@ -141,6 +145,7 @@ public static class PngReader
         }
 
         var img = new ImageBatch(1, height, width, 3);
+        alpha = colorType is 4 or 6 || (colorType == 3 && paletteAlpha is not null) ? new float[width * height] : null;
         int step = depth / 8;
         for (int i = 0; i < width * height; i++)
         {
@@ -154,6 +159,8 @@ public static class PngReader
                 default: r = Sample(0); g = Sample(1); bl = Sample(2); break;
             }
             img.Data[i * 3] = r; img.Data[i * 3 + 1] = g; img.Data[i * 3 + 2] = bl;
+            if (alpha is not null)
+                alpha[i] = colorType == 3 ? (px[o] < paletteAlpha!.Length ? paletteAlpha[px[o]] / 255f : 1f) : Sample(samples - 1);
         }
         return img;
     }

@@ -49,7 +49,7 @@
                 <option>No engine available</option>
             }
         </select>
-        <label class="button" title="Upload a PNG for Load Image nodes">Upload<InputFile OnChange="OnUploadChosen" accept=".png" hidden /></label>
+        <label class="button" title="Upload a PNG or JPEG for Load Image nodes">Upload<InputFile OnChange="OnUploadChosen" accept=".png,.jpg,.jpeg" hidden /></label>
         <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
         <span class="status">@RunStatus()@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
     </div>
@@ -781,7 +781,7 @@
             await stream.CopyToAsync(memory);
             var stored = await _engine.UploadImageAsync(e.File.Name, memory.ToArray());
             await RefreshInputImagesAsync();
-            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG pictures can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image node.");
+            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG and JPEG pictures can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image node.");
         }
         catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
     }

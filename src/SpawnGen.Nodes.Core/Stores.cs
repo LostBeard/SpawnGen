@@ -103,7 +103,7 @@ public sealed class DiskInputStore(Func<string> directory) : IInputStore
 {
     public IReadOnlyList<string> List() =>
         Directory.Exists(directory())
-            ? Directory.EnumerateFiles(directory(), "*.png").Select(Path.GetFileName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray()!
+            ? Directory.EnumerateFiles(directory()).Where(ImageDecoder.IsSupportedName).Select(f => Path.GetFileName(f)!).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray()
             : [];
 
     public Task<byte[]> ReadAsync(string name) =>

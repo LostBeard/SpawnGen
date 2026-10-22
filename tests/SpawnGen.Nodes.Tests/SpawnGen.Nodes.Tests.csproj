@@ -19,4 +19,8 @@
     <ProjectReference Include="..\..\src\SpawnGen.Nodes.ML\SpawnGen.Nodes.ML.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

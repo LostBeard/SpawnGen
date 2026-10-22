@@ -52,16 +52,16 @@ public sealed class KSampler
     public static string[] SamplerNames() => Samplers.Names;
     public static string[] SchedulerNames() => ["normal"];
 
+    // Socket inputs first, then the widgets in ComfyUI's order with its defaults (so a new node is runnable as dropped on the canvas).
     public async Task<LatentBatch> ExecuteAsync(
-        ModelHandle model,
-        long seed,
-        [Input(Min = 1, Max = 10000)] int steps,
-        [Input(Min = 0, Max = 100, Step = 0.1)] float cfg,
-        [Input(OptionsProvider = nameof(SamplerNames))] string samplerName,
-        [Input(OptionsProvider = nameof(SchedulerNames))] string scheduler,
-        Conditioning positive, Conditioning negative, LatentBatch latentImage,
-        [Input(Min = 0, Max = 1, Step = 0.01)] float denoise,
-        NodeContext context, IServiceProvider services)
+        ModelHandle model, Conditioning positive, Conditioning negative, LatentBatch latentImage,
+        NodeContext context, IServiceProvider services,
+        long seed = 0,
+        [Input(Min = 1, Max = 10000)] int steps = 20,
+        [Input(Min = 0, Max = 100, Step = 0.1)] float cfg = 8f,
+        [Input(OptionsProvider = nameof(SamplerNames))] string samplerName = "euler",
+        [Input(OptionsProvider = nameof(SchedulerNames))] string scheduler = "normal",
+        [Input(Min = 0, Max = 1, Step = 0.01)] float denoise = 1f)
     {
         if (denoise <= 0f) return latentImage; // nothing to denoise: the input passes through
         if (latentImage.Channels != Checkpoint.LatentChannels)

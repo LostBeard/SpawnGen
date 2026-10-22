@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="NUnit" Version="4.3.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="NUnit.Framework" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SpawnGen.Editor\SpawnGen.Editor.csproj" />
+    <ProjectReference Include="..\..\src\SpawnGen.Nodes.Core\SpawnGen.Nodes.Core.csproj" />
+    <ProjectReference Include="..\..\src\SpawnGen.Nodes.ML\SpawnGen.Nodes.ML.csproj" />
+  </ItemGroup>
+
+</Project>

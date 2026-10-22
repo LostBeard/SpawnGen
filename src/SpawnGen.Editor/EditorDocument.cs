@@ -1,0 +1,307 @@
+using SpawnGen.Engine.Nodes;
+
+namespace SpawnGen.Editor;
+
+/// <summary>One undoable change to the graph.</summary>
+interface IEditorCommand
+{
+    void Do(EditorGraph graph);
+    void Undo(EditorGraph graph);
+    /// <summary>Folds <paramref name="next"/> into this command when they are one gesture (a drag, a slider scrub); returns false when they are separate steps.</summary>
+    bool TryMerge(IEditorCommand next) => false;
+}
+
+/// <summary>
+/// The graph plus its undo history and change notification. Every edit the user can make goes through here so it can be undone, and the
+/// UI redraws from <see cref="Changed"/>.
+/// </summary>
+public sealed class EditorDocument(NodeRegistry registry)
+{
+    readonly List<IEditorCommand> _undo = [];
+    readonly List<IEditorCommand> _redo = [];
+    List<IEditorCommand>? _group;
+
+    public NodeRegistry Registry { get; } = registry;
+    public EditorGraph Graph { get; } = new();
+    public int UndoLimit { get; set; } = 200;
+    public bool CanUndo => _undo.Count > 0;
+    public bool CanRedo => _redo.Count > 0;
+
+    /// <summary>Raised after every change, including undo and redo.</summary>
+    public event Action? Changed;
+
+    // ---- edits ----
+
+    /// <summary>Creates a node of <paramref name="classType"/> at the position with its widgets at their defaults.</summary>
+    public EditorNode AddNode(string classType, double x, double y)
+    {
+        var schema = Registry.GetSchema(classType) ?? throw new ArgumentException($"Unknown node type '{classType}'.", nameof(classType));
+        var node = new EditorNode { Id = Graph.NextNodeId, ClassType = classType, X = x, Y = y };
+        foreach (var input in schema.Inputs)
+            if (input.Widget is { } w) node.Widgets[input.Name] = DefaultValue(w);
+        Run(new AddNodeCommand(node));
+        return node;
+    }
+
+    static object? DefaultValue(WidgetSpec w) => w.Default switch
+    {
+        null => w.Kind switch
+        {
+            WidgetKind.Int => (object)(long)(w.Min ?? 0),
+            WidgetKind.Float => w.Min ?? 0.0,
+            WidgetKind.Boolean => false,
+            WidgetKind.Combo => w.ResolveOptions().FirstOrDefault() ?? "",
+            _ => "",
+        },
+        int i => (long)i,
+        float f => (double)f,
+        var v => v,
+    };
+
+    /// <summary>Deletes the nodes and every link touching them.</summary>
+    public void DeleteNodes(IEnumerable<int> ids)
+    {
+        var list = ids.Distinct().Where(i => Graph.FindNode(i) is not null).ToList();
+        if (list.Count > 0) Run(new DeleteNodesCommand(list));
+    }
+
+    public void MoveNodes(IEnumerable<int> ids, double dx, double dy)
+    {
+        var list = ids.Distinct().Where(i => Graph.FindNode(i) is not null).ToList();
+        if (list.Count > 0 && (dx != 0 || dy != 0)) Run(new MoveNodesCommand(list, dx, dy));
+    }
+
+    /// <summary>
+    /// Connects an output to an input, replacing the link the input already had. Returns the new link, or null with <paramref name="error"/> set
+    /// when the types do not match or the link would close a cycle.
+    /// </summary>
+    public EditorLink? Connect(int fromNode, int fromOutput, int toNode, string toInput, out string? error)
+    {
+        error = Graph.WhyCannotConnect(Registry, fromNode, fromOutput, toNode, toInput);
+        if (error is not null) return null;
+        var link = new EditorLink { Id = Graph.NextLinkId, FromNode = fromNode, FromOutput = fromOutput, ToNode = toNode, ToInput = toInput };
+        Run(new ConnectCommand(link, Graph.LinkInto(toNode, toInput)));
+        return link;
+    }
+
+    public void Disconnect(int linkId)
+    {
+        if (Graph.FindLink(linkId) is { } link) Run(new DisconnectCommand(link));
+    }
+
+    public void SetWidget(int nodeId, string name, object? value)
+    {
+        var node = Graph.GetNode(nodeId);
+        node.Widgets.TryGetValue(name, out var old);
+        if (Equals(old, value)) return;
+        Run(new SetWidgetCommand(nodeId, name, old, value));
+    }
+
+    public void SetTitle(int nodeId, string? title)
+    {
+        var node = Graph.GetNode(nodeId);
+        if (node.Title != title) Run(new SetNodePropertyCommand<string?>(nodeId, "title", node.Title, title,
+            (n, v) => n.Title = v));
+    }
+
+    public void SetMode(int nodeId, NodeMode mode)
+    {
+        var node = Graph.GetNode(nodeId);
+        if (node.Mode != mode) Run(new SetNodePropertyCommand<NodeMode>(nodeId, "mode", node.Mode, mode, (n, v) => n.Mode = v));
+    }
+
+    public void SetCollapsed(int nodeId, bool collapsed)
+    {
+        var node = Graph.GetNode(nodeId);
+        if (node.Collapsed != collapsed) Run(new SetNodePropertyCommand<bool>(nodeId, "collapsed", node.Collapsed, collapsed, (n, v) => n.Collapsed = v));
+    }
+
+    public void SetWidth(int nodeId, double? width)
+    {
+        var node = Graph.GetNode(nodeId);
+        if (node.Width != width) Run(new SetNodePropertyCommand<double?>(nodeId, "width", node.Width, width, (n, v) => n.Width = v));
+    }
+
+    /// <summary>Several edits as one undo step (paste, delete-and-reconnect, ...).</summary>
+    public void Group(Action edits)
+    {
+        if (_group is not null) { edits(); return; }
+        _group = [];
+        try { edits(); }
+        finally
+        {
+            var done = _group;
+            _group = null;
+            if (done.Count > 0) Push(new GroupCommand(done));
+        }
+    }
+
+    // ---- history ----
+
+    public void Undo()
+    {
+        if (_undo.Count == 0) return;
+        var cmd = _undo[^1];
+        _undo.RemoveAt(_undo.Count - 1);
+        cmd.Undo(Graph);
+        _redo.Add(cmd);
+        Changed?.Invoke();
+    }
+
+    public void Redo()
+    {
+        if (_redo.Count == 0) return;
+        var cmd = _redo[^1];
+        _redo.RemoveAt(_redo.Count - 1);
+        cmd.Do(Graph);
+        _undo.Add(cmd);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Forgets the history (after loading a workflow).</summary>
+    public void ClearHistory()
+    {
+        _undo.Clear();
+        _redo.Clear();
+    }
+
+    /// <summary>Marks the end of a gesture so the next edit of the same kind is a new undo step instead of merging into the previous one.</summary>
+    public void EndGesture() => _lastMergeable = null;
+
+    IEditorCommand? _lastMergeable;
+
+    void Run(IEditorCommand cmd)
+    {
+        cmd.Do(Graph);
+        if (_group is not null) _group.Add(cmd);
+        else Push(cmd);
+        Changed?.Invoke();
+    }
+
+    void Push(IEditorCommand cmd)
+    {
+        _redo.Clear();
+        if (_lastMergeable is not null && _undo.Count > 0 && ReferenceEquals(_undo[^1], _lastMergeable) && _lastMergeable.TryMerge(cmd))
+            return;
+        _undo.Add(cmd);
+        _lastMergeable = cmd is MoveNodesCommand or SetWidgetCommand ? cmd : null;
+        if (_undo.Count > UndoLimit) _undo.RemoveAt(0);
+    }
+
+    /// <summary>Replaces the whole graph (workflow load). Not undoable; clears the history.</summary>
+    internal void Reset(Action<EditorGraph> fill)
+    {
+        foreach (var l in Graph.Links.ToList()) Graph.RemoveLinkRaw(l.Id);
+        foreach (var n in Graph.Nodes.ToList()) Graph.RemoveNodeRaw(n.Id);
+        Graph.NextNodeId = 1;
+        Graph.NextLinkId = 1;
+        fill(Graph);
+        ClearHistory();
+        _lastMergeable = null;
+        Changed?.Invoke();
+    }
+
+    // ---- commands ----
+
+    sealed class AddNodeCommand(EditorNode node) : IEditorCommand
+    {
+        public void Do(EditorGraph g) => g.AddNodeRaw(node);
+        public void Undo(EditorGraph g) => g.RemoveNodeRaw(node.Id);
+    }
+
+    sealed class DeleteNodesCommand(List<int> ids) : IEditorCommand
+    {
+        List<EditorNode> _nodes = [];
+        List<EditorLink> _links = [];
+
+        public void Do(EditorGraph g)
+        {
+            _nodes = ids.Select(g.GetNode).ToList();
+            _links = ids.SelectMany(g.LinksOf).DistinctBy(l => l.Id).ToList();
+            foreach (var l in _links) g.RemoveLinkRaw(l.Id);
+            foreach (var n in _nodes) g.RemoveNodeRaw(n.Id);
+        }
+
+        public void Undo(EditorGraph g)
+        {
+            foreach (var n in _nodes) g.AddNodeRaw(n);
+            foreach (var l in _links) g.AddLinkRaw(l);
+        }
+    }
+
+    sealed class MoveNodesCommand(List<int> ids, double dx, double dy) : IEditorCommand
+    {
+        double _dx = dx, _dy = dy;
+
+        public void Do(EditorGraph g) => Shift(g, _dx, _dy);
+        public void Undo(EditorGraph g) => Shift(g, -_dx, -_dy);
+
+        void Shift(EditorGraph g, double x, double y)
+        {
+            foreach (var id in ids)
+                if (g.FindNode(id) is { } n) { n.X += x; n.Y += y; }
+        }
+
+        public bool TryMerge(IEditorCommand next)
+        {
+            if (next is not MoveNodesCommand m || !m.Ids.SequenceEqual(ids)) return false;
+            _dx += m._dx;
+            _dy += m._dy;
+            return true;
+        }
+
+        List<int> Ids => ids;
+    }
+
+    sealed class ConnectCommand(EditorLink link, EditorLink? replaced) : IEditorCommand
+    {
+        public void Do(EditorGraph g)
+        {
+            if (replaced is not null) g.RemoveLinkRaw(replaced.Id);
+            g.AddLinkRaw(link);
+        }
+
+        public void Undo(EditorGraph g)
+        {
+            g.RemoveLinkRaw(link.Id);
+            if (replaced is not null) g.AddLinkRaw(replaced);
+        }
+    }
+
+    sealed class DisconnectCommand(EditorLink link) : IEditorCommand
+    {
+        public void Do(EditorGraph g) => g.RemoveLinkRaw(link.Id);
+        public void Undo(EditorGraph g) => g.AddLinkRaw(link);
+    }
+
+    sealed class SetWidgetCommand(int nodeId, string name, object? before, object? after) : IEditorCommand
+    {
+        object? _after = after;
+
+        public void Do(EditorGraph g) => g.GetNode(nodeId).Widgets[name] = _after;
+        public void Undo(EditorGraph g) => g.GetNode(nodeId).Widgets[name] = before;
+
+        public bool TryMerge(IEditorCommand next)
+        {
+            if (next is not SetWidgetCommand w || w.NodeId != nodeId || w.Name != name) return false;
+            _after = w._after;
+            return true;
+        }
+
+        int NodeId => nodeId;
+        string Name => name;
+    }
+
+    sealed class SetNodePropertyCommand<T>(int nodeId, string property, T before, T after, Action<EditorNode, T> set) : IEditorCommand
+    {
+        public string Property { get; } = property;
+        public void Do(EditorGraph g) => set(g.GetNode(nodeId), after);
+        public void Undo(EditorGraph g) => set(g.GetNode(nodeId), before);
+    }
+
+    sealed class GroupCommand(List<IEditorCommand> commands) : IEditorCommand
+    {
+        public void Do(EditorGraph g) { foreach (var c in commands) c.Do(g); }
+        public void Undo(EditorGraph g) { for (int i = commands.Count - 1; i >= 0; i--) commands[i].Undo(g); }
+    }
+}

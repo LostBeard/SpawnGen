@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SpawnGen.Editor</RootNamespace>
+    <Description>UI-independent node editor core for SpawnGen: document model, layout and hit testing, viewport, interaction, undo/redo, ComfyUI workflow import/export.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpawnGen.Engine\SpawnGen.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

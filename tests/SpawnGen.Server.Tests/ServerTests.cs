@@ -276,6 +276,29 @@ public class ServerTests
     }
 
     [Test]
+    public async Task A_prompt_queued_at_the_front_runs_before_the_ones_already_waiting()
+    {
+        await ConnectAsync();
+        var image = WriteInputPng("in.png");
+        var slow = Prompt(image, middle: "WaitNode");
+        slow["2"]!["inputs"]!["seconds"] = 60;
+        await PostPrompt(slow);
+        await WaitForAsync(m => (string?)m["type"] == "executing" && (string?)m["data"]!["node"] == "2");
+
+        var waiting = (string)(await (await PostPrompt(Prompt(image))).Content.ReadFromJsonAsync<JsonObject>())!["prompt_id"]!;
+        var body = new JsonObject { ["prompt"] = Prompt(image), ["client_id"] = "test", ["front"] = true };
+        var front = (string)(await (await _http.PostAsJsonAsync("/prompt", body)).Content.ReadFromJsonAsync<JsonObject>())!["prompt_id"]!;
+
+        var pending = JsonNode.Parse(await _http.GetStringAsync("/queue"))!["queue_pending"]!.AsArray();
+        Assert.That(pending.Select(p => (string?)p![1]), Is.EqualTo(new[] { front, waiting }), "the front prompt is listed first");
+
+        await _http.PostAsync("/interrupt", null);
+        await WaitForAsync(m => (string?)m["type"] == "execution_success" && (string?)m["data"]!["prompt_id"] == waiting);
+        var finished = Messages().Where(m => (string?)m["type"] == "execution_success").Select(m => (string?)m["data"]!["prompt_id"]).ToList();
+        Assert.That(finished, Is.EqualTo(new[] { front, waiting }), "and it ran first");
+    }
+
+    [Test]
     public async Task A_waiting_prompt_can_be_deleted_from_the_queue_but_the_running_one_is_not_touched()
     {
         await ConnectAsync();

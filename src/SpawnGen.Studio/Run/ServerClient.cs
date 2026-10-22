@@ -87,9 +87,10 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
         }
     }
 
-    public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null)
+    public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false)
     {
         var body = new JsonObject { ["prompt"] = JsonNode.Parse(promptJson), ["client_id"] = ClientId };
+        if (front) body["front"] = true;
         if (workflowJson is not null)
             body["extra_data"] = new JsonObject { ["extra_pnginfo"] = new JsonObject { ["workflow"] = JsonNode.Parse(workflowJson) } };
         try

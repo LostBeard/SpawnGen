@@ -48,7 +48,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Queue, interrupt, progress, per-node status, history | **done** |
 | Run result images inside nodes | **done** |
 | "Control after generate" per seed widget: fixed / increment / decrement / randomize, applied after each queue, saved in the workflow | **done** |
-| Batch count (queue N times) | **done**; cancel queued items done (Cancel in the History panel); queue front / reorder todo |
+| Batch count (queue N times) | **done**; cancel queued items done (Cancel in the History panel); queue front done (Front button while a run is going, Ctrl+Shift+Enter, `front: true` on POST /prompt); reorder todo |
 | List inputs/outputs (`INPUT_IS_LIST`), lazy inputs, loops / node expansion | todo (engine) |
 | Latent preview during sampling (latent2rgb of the denoised estimate, shown in the sampler node each step; verified by eye: an apple emerging at step 2 of 8) | **done**; TAESD-quality previews todo |
 | Samplers ipndm_v, gradient_estimation, euler_cfg_pp, euler_ancestral_cfg_pp, dpmpp_2m_cfg_pp, gradient_estimation_cfg_pp | **done**, apples verified by eye on the RX 590 (SD-Turbo, 4 steps, cfg 1.4); gradient_estimation is noticeably harsh at 4 steps (its gamma-2 extrapolation wants more) |

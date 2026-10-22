@@ -41,10 +41,11 @@
         {
             <button class="danger" title="Stop the run in progress" @onclick="InterruptAsync">Stop</button>
         }
-        else
+        <button class="primary" disabled="@(_engine is null)" @onclick="() => QueueAsync()"
+                title="@(_engine is null ? "No engine: this browser has no WebGPU and there is no SpawnGen server." : $"Run the graph on: {_engine.Name} (Ctrl+Enter)")">Queue</button>
+        @if (_running)
         {
-            <button class="primary" disabled="@(_engine is null)" @onclick="QueueAsync"
-                    title="@(_engine is null ? "No engine: this browser has no WebGPU and there is no SpawnGen server." : $"Run the graph on: {_engine.Name} (Ctrl+Enter)")">Queue</button>
+            <button title="Put the graph at the front of the queue so it runs next (Ctrl+Shift+Enter)" @onclick="() => QueueAsync(front: true)">Front</button>
         }
         <select class="engine" title="Where graphs run" @onchange="OnEngineChosen">
             @foreach (var engine in _engines)
@@ -1139,7 +1140,7 @@
         if (key == "h" && mods == Modifiers.None) { ToggleHistory(); InvokeAsync(StateHasChanged); return true; }
         if (key == "escape" && _lightbox is not null) { _lightbox = null; InvokeAsync(StateHasChanged); return true; }
         if (key != "enter" || !mods.HasFlag(Modifiers.Ctrl)) return false;
-        _ = QueueAsync();
+        _ = QueueAsync(front: mods.HasFlag(Modifiers.Shift));
         return true;
     }
 
@@ -1267,16 +1268,16 @@
         return where + " · ";
     }
 
-    async Task QueueAsync()
+    async Task QueueAsync(bool front = false)
     {
         if (_engine is null) { ShowMessage("There is no engine: this browser has no WebGPU and no SpawnGen server serves this page."); return; }
         for (int run = 0, runs = Math.Clamp(_batchCount, 1, 100); run < runs; run++)
-            if (!await QueueOnceAsync()) break;
+            if (!await QueueOnceAsync(front)) break;
         _studio?.Focus();
     }
 
     /// <summary>Sends the graph once and then moves every seed on by its control after generate, as ComfyUI does. False when the run could not be queued.</summary>
-    async Task<bool> QueueOnceAsync()
+    async Task<bool> QueueOnceAsync(bool front = false)
     {
         var compiled = GraphCompiler.Compile(_doc.Graph, Registry);
         if (compiled.Graph.Nodes.Count == 0) { ShowMessage(compiled.Notes.FirstOrDefault() ?? "There is nothing to run."); return false; }
@@ -1284,7 +1285,7 @@
 
         // The workflow travels with the prompt so Save Image can embed it: the picture can then be dropped back on the canvas.
         var workflow = ComfyWorkflow.Save(_doc, _renderer.MeasureText);
-        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow);
+        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow, front);
         if (!result.Queued)
         {
             foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;
@@ -1293,7 +1294,12 @@
             _view.Invalidate();
             return false;
         }
-        if (result.PromptId is { } queuedId) _pending.Add(new PendingRun(queuedId, workflow, DateTime.Now, _engine.Name));
+        if (result.PromptId is { } queuedId)
+        {
+            var queued = new PendingRun(queuedId, workflow, DateTime.Now, _engine.Name);
+            // A front-of-queue batch puts each run at the very front in turn, so the batch runs in reverse order (as in ComfyUI).
+            if (front) _pending.Insert(0, queued); else _pending.Add(queued);
+        }
         if (compiled.Notes.Count > 0) ShowMessage(compiled.Notes[0]);
         ControlAfterGenerate.ApplyAfterQueue(_doc, Registry.GetSchema, Random.Shared);
         return true;

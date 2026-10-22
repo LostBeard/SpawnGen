@@ -1,4 +1,3 @@
-using System.Threading.Channels;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SpawnGen.Engine.Execution;
@@ -34,7 +33,8 @@ public sealed class PromptQueue : IDisposable
 
     readonly PromptExecutor _executor;
     readonly IRunEvents _events;
-    readonly Channel<QueuedPrompt> _channel = Channel.CreateUnbounded<QueuedPrompt>();
+    /// <summary>One permit per queued prompt: the worker waits on it, then takes whatever is first in <see cref="_pending"/> (which a front-of-queue prompt jumps to).</summary>
+    readonly SemaphoreSlim _signal = new(0);
     readonly List<QueuedPrompt> _pending = [];
     readonly List<HistoryEntry> _history = [];
     readonly object _gate = new();
@@ -54,8 +54,8 @@ public sealed class PromptQueue : IDisposable
 
     public NodeRegistry Registry { get; }
 
-    /// <summary>Validates and queues the prompt. Throws <see cref="PromptValidationException"/> (nothing is queued) when it cannot run.</summary>
-    public QueuedPrompt Enqueue(PromptGraph graph, string? clientId, IReadOnlyDictionary<string, string>? extraPngInfo = null)
+    /// <summary>Validates and queues the prompt (at the front when <paramref name="front"/>, so it runs next). Throws <see cref="PromptValidationException"/> (nothing is queued) when it cannot run.</summary>
+    public QueuedPrompt Enqueue(PromptGraph graph, string? clientId, IReadOnlyDictionary<string, string>? extraPngInfo = null, bool front = false)
     {
         var validation = _executor.Validate(graph);
         if (!validation.IsValid) throw new PromptValidationException(validation);
@@ -64,9 +64,9 @@ public sealed class PromptQueue : IDisposable
         lock (_gate)
         {
             item = new QueuedPrompt(++_number, Guid.NewGuid().ToString("D"), graph, clientId, extraPngInfo);
-            _pending.Add(item);
+            if (front) _pending.Insert(0, item); else _pending.Add(item);
         }
-        _channel.Writer.TryWrite(item);
+        _signal.Release();
         PublishStatus();
         return item;
     }
@@ -119,9 +119,9 @@ public sealed class PromptQueue : IDisposable
     public void Dispose()
     {
         _stop.Cancel();
-        _channel.Writer.TryComplete();
         try { _worker.Wait(TimeSpan.FromSeconds(10)); } catch (AggregateException) { }
         _stop.Dispose();
+        _signal.Dispose();
     }
 
     public RunEvent StatusEvent() =>
@@ -133,11 +133,15 @@ public sealed class PromptQueue : IDisposable
     {
         try
         {
-            await foreach (var item in _channel.Reader.ReadAllAsync(_stop.Token))
+            while (true)
             {
+                await _signal.WaitAsync(_stop.Token);
+                QueuedPrompt item;
                 lock (_gate)
                 {
-                    if (!_pending.Remove(item)) continue; // removed from the queue while waiting
+                    if (_pending.Count == 0) continue; // its prompt was removed from the queue while waiting
+                    item = _pending[0];
+                    _pending.RemoveAt(0);
                     _running = item;
                     _runCancel = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
                 }

@@ -803,6 +803,8 @@
         {
             var node = _doc.Graph.GetNode(hit.NodeId);
             items.Add(new("Rename", () => OnTitleEdit(hit.NodeId)));
+            if (SubgraphLibrary.Get(node.ClassType) is not null) items.Add(new("Unpack Subgraph  (Ctrl+Shift+E)", () => _view.ToggleSubgraph()));
+            else items.Add(new(_view.SelectedNodes.Count > 1 ? "Convert Selection to Subgraph  (Ctrl+Shift+E)" : "Convert to Subgraph  (Ctrl+Shift+E)", () => _view.ToggleSubgraph()));
             if (node.ClassType is "LoadImage" or "LoadImageMask")
                 items.Add(new("Open in Mask Editor", () => _ = OpenMaskEditorAsync(node)));
             foreach (var (name, color, bg) in EditorGroup.NodePalette)
@@ -1192,6 +1194,15 @@
         _studio?.Focus();
     }
 
+    /// <summary>The saved pictures (not Preview Image's temporary ones) and sounds of the running run's history entry.</summary>
+    void CollectRunOutputs(JsonObject data)
+    {
+        if (_history.FirstOrDefault(h => h.State == "running") is not { } run || _engine is null) return;
+        string Url(JsonObject f) => _engine.ViewUrl((string)f["filename"]!, (string?)f["subfolder"], (string?)f["type"]);
+        if (data["output"]?["images"] is JsonArray images) run.Urls.AddRange(images.OfType<JsonObject>().Where(i => (string?)i["type"] == "output").Select(Url));
+        if (AudioOf(data) is { } clips) run.Audio.AddRange(clips.OfType<JsonObject>().Select(Url));
+    }
+
     static JsonArray? AudioOf(JsonObject data) => data["output"]?["audio"] as JsonArray;
 
     static JsonArray? TextOf(JsonObject data) => data["output"]?["text"] as JsonArray;
@@ -1201,6 +1212,8 @@
         var type = (string?)e["type"];
         var data = e["data"] as JsonObject ?? [];
         int? node = int.TryParse((string?)data["node"], out var n) ? n : null;
+
+        if (type == "executed") CollectRunOutputs(data); // results of nodes inside subgraphs have no node here but belong in the history all the same
 
         switch (type)
         {
@@ -1232,8 +1245,6 @@
                 break;
             case "executed" when node is { } audioId && _doc.Graph.FindNode(audioId) is { } audible && AudioOf(data) is { } clips:
                 audible.ResultText = string.Join("\n", clips.OfType<JsonObject>().Select(c => "♪ " + (string?)c["filename"]));
-                if (_history.FirstOrDefault(h => h.State == "running") is { } audioRun)
-                    audioRun.Audio.AddRange(clips.OfType<JsonObject>().Select(c => _engine!.ViewUrl((string)c["filename"]!, (string?)c["subfolder"], (string?)c["type"])));
                 break;
             case "executed" when node is { } textId && _doc.Graph.FindNode(textId) is { } texted && TextOf(data) is { } texts:
                 texted.ResultText = string.Join("\n", texts.Select(t => (string?)t ?? ""));
@@ -1243,10 +1254,6 @@
                 {
                     shown.Previews = images.OfType<JsonObject>()
                         .Select(i => new NodePreview(_engine!.ViewUrl((string)i["filename"]!, (string?)i["subfolder"], (string?)i["type"]))).ToList();
-                    // Saved pictures (not Preview Image's temporary ones) are the run's results.
-                    if (_history.FirstOrDefault(h => h.State == "running") is { } activeRun)
-                        activeRun.Urls.AddRange(images.OfType<JsonObject>().Where(i => (string?)i["type"] == "output")
-                            .Select(i => _engine!.ViewUrl((string)i["filename"]!, (string?)i["subfolder"], (string?)i["type"])));
                 }
                 break;
             case "execution_error":

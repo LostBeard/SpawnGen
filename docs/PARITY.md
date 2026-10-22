@@ -26,7 +26,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | ComfyUI workflow JSON open / save | **done** (stock workflow opens) |
 | Reroute, Note, Markdown Note (editor-only, compiled away); legacy PrimitiveNode folded into its widget on open (Primitive Int/Float/String are real nodes) | **done** |
 | Groups (boxes): Ctrl+G around the selection, drawn, drag the title to move with the nodes inside, resize, rename (double click), colours, delete, undo, saved in the workflow | **done** |
-| Subgraphs / group nodes | todo |
+| Subgraphs: select nodes, Ctrl+Shift+E (or the context menu) packs them into one node whose inputs and outputs are the links that crossed the boundary; the graph runs as if they were unpacked (nested too, muted works); Ctrl+Shift+E on the node unpacks it; saved in the workflow (own layout in definitions.subgraphs, ComfyUI shows them as missing nodes); pack and unpack are one undo step | **done (v1)**; entering a subgraph to edit it in place, promoting inner widgets to the node, results of output nodes inside a subgraph shown in the node (they do reach the History panel), ComfyUI subgraph file format todo |
 | Node library sidebar (Nodes button / N key: categories, filter, click or drag onto the canvas) | **done** |
 | Minimap (bottom right: nodes, groups, the view; click or drag to move the view; Map button) | **done** |
 | Properties panel | todo |

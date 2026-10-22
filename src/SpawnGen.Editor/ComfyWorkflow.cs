@@ -27,6 +27,7 @@ public static class ComfyWorkflow
         var root = JsonNode.Parse(json) as JsonObject ?? throw new InvalidDataException("Not a workflow: the JSON is not an object.");
         if (root["nodes"] is not JsonArray nodes) throw new InvalidDataException("Not a workflow: there is no \"nodes\" list (an API-format prompt cannot be opened as a workflow).");
 
+        SubgraphJson.Register(root["definitions"]?["subgraphs"] as JsonArray); // before the nodes: an instance needs its definition to have sockets
         var nodeJson = new Dictionary<int, JsonObject>();
         doc.Reset(graph =>
         {
@@ -273,6 +274,8 @@ public static class ComfyWorkflow
             ["extra"] = doc.Extra?.DeepClone() ?? new JsonObject(),
             ["version"] = 0.4,
         };
+        var used = SubgraphLibrary.Used(graph.Nodes.Select(n => n.ClassType));
+        if (used.Count > 0) root["definitions"] = new JsonObject { ["subgraphs"] = SubgraphJson.Write(used) };
         return root.ToJsonString(Pretty);
     }
 

@@ -23,7 +23,13 @@ public sealed class EditorDocument(NodeRegistry registry)
     readonly List<IEditorCommand> _redo = [];
     List<IEditorCommand>? _group;
 
-    public NodeRegistry Registry { get; } = registry;
+    public NodeRegistry Registry { get; } = InstallSubgraphs(registry);
+
+    static NodeRegistry InstallSubgraphs(NodeRegistry registry)
+    {
+        SubgraphLibrary.Install(registry);
+        return registry;
+    }
 
     /// <summary>Part of a workflow the editor does not edit but must not lose when it is opened and saved again: ComfyUI's "extra" block.</summary>
     public System.Text.Json.Nodes.JsonObject? Extra { get; set; }
@@ -68,6 +74,105 @@ public sealed class EditorDocument(NodeRegistry registry)
     {
         var list = ids.Distinct().Where(i => Graph.FindNode(i) is not null).ToList();
         if (list.Count > 0) Run(new DeleteNodesCommand(list));
+    }
+
+    // ---- subgraphs ----
+
+    /// <summary>
+    /// Packs the nodes into one subgraph node (one undo step). Links from outside into the nodes become the subgraph's inputs (links from the same output share one input) and links from
+    /// the nodes to the outside become its outputs. Returns the new node, or null with <paramref name="error"/> when nothing sensible can be packed.
+    /// </summary>
+    public EditorNode? ConvertToSubgraph(IEnumerable<int> nodeIds, string name, out string? error)
+    {
+        var ids = nodeIds.Distinct().Where(i => Graph.FindNode(i) is not null).ToHashSet();
+        error = null;
+        if (ids.Count == 0) { error = "Select the nodes to pack first."; return null; }
+        var selected = ids.Select(Graph.GetNode).ToList();
+        if (selected.Any(n => Registry.GetSchema(n.ClassType) is null)) { error = "A node of an unknown type cannot be packed."; return null; }
+
+        var def = new SubgraphDefinition { Id = Guid.NewGuid().ToString("N"), Name = name };
+        foreach (var n in selected.OrderBy(n => n.Id)) def.Nodes.Add(n.Clone());
+        var inLinks = Graph.Links.Where(l => ids.Contains(l.ToNode) && !ids.Contains(l.FromNode)).OrderBy(l => l.ToNode).ThenBy(l => l.ToInput).ToList();
+        var outLinks = Graph.Links.Where(l => ids.Contains(l.FromNode) && !ids.Contains(l.ToNode)).OrderBy(l => l.FromNode).ThenBy(l => l.FromOutput).ThenBy(l => l.ToNode).ToList();
+        foreach (var l in Graph.Links.Where(l => ids.Contains(l.FromNode) && ids.Contains(l.ToNode)))
+            def.Links.Add(new EditorLink { Id = l.Id, FromNode = l.FromNode, FromOutput = l.FromOutput, ToNode = l.ToNode, ToInput = l.ToInput });
+
+        string Unique(string wanted, IEnumerable<string> taken)
+        {
+            var set = taken.ToHashSet();
+            if (!set.Contains(wanted)) return wanted;
+            for (int i = 2; ; i++) if (!set.Contains($"{wanted}_{i}")) return $"{wanted}_{i}";
+        }
+        // One input per distinct source output: everything it fed inside becomes a target of that input.
+        var inputPorts = new List<(SubgraphPort Port, EditorLink Outer)>();
+        foreach (var group in inLinks.GroupBy(l => (l.FromNode, l.FromOutput)))
+        {
+            var first = group.First();
+            var srcSchema = Registry.GetSchema(Graph.GetNode(first.FromNode).ClassType);
+            var type = srcSchema is not null && first.FromOutput < srcSchema.Outputs.Count ? srcSchema.Outputs[first.FromOutput].Type.Name : "*";
+            var port = new SubgraphPort { Name = Unique(first.ToInput, def.Inputs.Select(p => p.Name)), TypeName = type };
+            foreach (var l in group) port.Targets.Add((l.ToNode, l.ToInput));
+            def.Inputs.Add(port);
+            inputPorts.Add((port, first));
+        }
+        var outputPorts = new List<(SubgraphPort Port, List<EditorLink> Outer)>();
+        foreach (var group in outLinks.GroupBy(l => (l.FromNode, l.FromOutput)))
+        {
+            var first = group.First();
+            var srcSchema = Registry.GetSchema(Graph.GetNode(first.FromNode).ClassType)!;
+            var output = first.FromOutput < srcSchema.Outputs.Count ? srcSchema.Outputs[first.FromOutput] : null;
+            var port = new SubgraphPort { Name = Unique(output?.Name ?? $"output{first.FromOutput}", def.Outputs.Select(p => p.Name)), TypeName = output?.Type.Name ?? "*", Source = (first.FromNode, first.FromOutput) };
+            def.Outputs.Add(port);
+            outputPorts.Add((port, group.ToList()));
+        }
+
+        SubgraphLibrary.Register(def);
+        double x = selected.Min(n => n.X), y = selected.Min(n => n.Y);
+        EditorNode? instance = null;
+        Group(() =>
+        {
+            instance = AddNode(def.InstanceType, x, y);
+            SetTitle(instance.Id, name);
+            DeleteNodes(ids);
+            foreach (var (port, outer) in inputPorts) Connect(outer.FromNode, outer.FromOutput, instance.Id, port.Name, out _);
+            for (int k = 0; k < outputPorts.Count; k++)
+                foreach (var l in outputPorts[k].Outer) Connect(instance.Id, k, l.ToNode, l.ToInput, out _);
+        });
+        return instance;
+    }
+
+    /// <summary>Puts a subgraph instance's inner nodes back into the graph in its place, rewired to what the instance was connected to (one undo step).</summary>
+    public bool UnpackSubgraph(int instanceId, out string? error)
+    {
+        error = null;
+        var instance = Graph.FindNode(instanceId);
+        if (instance is null || SubgraphLibrary.Get(instance.ClassType) is not { } def) { error = "That is not a subgraph."; return false; }
+        double minX = def.Nodes.Count == 0 ? 0 : def.Nodes.Min(n => n.X), minY = def.Nodes.Count == 0 ? 0 : def.Nodes.Min(n => n.Y);
+        var outerIn = Graph.Links.Where(l => l.ToNode == instanceId).ToList();
+        var outerOut = Graph.Links.Where(l => l.FromNode == instanceId).ToList();
+        Group(() =>
+        {
+            var map = new Dictionary<int, int>();
+            foreach (var inner in def.Nodes)
+            {
+                var copy = AddNode(inner.ClassType, instance.X + inner.X - minX, instance.Y + inner.Y - minY);
+                map[inner.Id] = copy.Id;
+                foreach (var (name, value) in inner.Widgets) SetWidget(copy.Id, name, value);
+                if (inner.Title is not null) SetTitle(copy.Id, inner.Title);
+                if (inner.Mode != NodeMode.Always) SetMode(copy.Id, inner.Mode);
+                if (inner.Collapsed) SetCollapsed(copy.Id, true);
+                if (inner.Width is { } w) SetWidth(copy.Id, w);
+                if (inner.Color is not null || inner.BgColor is not null) SetNodeColor(copy.Id, inner.Color, inner.BgColor);
+            }
+            foreach (var l in def.Links) Connect(map[l.FromNode], l.FromOutput, map[l.ToNode], l.ToInput, out _);
+            foreach (var l in outerIn)
+                if (def.Inputs.FirstOrDefault(p => p.Name == l.ToInput) is { } port)
+                    foreach (var (node, input) in port.Targets) Connect(l.FromNode, l.FromOutput, map[node], input, out _);
+            foreach (var l in outerOut)
+                if (l.FromOutput < def.Outputs.Count) Connect(map[def.Outputs[l.FromOutput].Source.Node], def.Outputs[l.FromOutput].Source.Output, l.ToNode, l.ToInput, out _);
+            DeleteNodes([instanceId]);
+        });
+        return true;
     }
 
     public void MoveNodes(IEnumerable<int> ids, double dx, double dy)

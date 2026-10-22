@@ -580,6 +580,8 @@ public sealed class EditorView
                 return true;
             case "g" when ctrl:
                 return GroupSelection();
+            case "e" when ctrl && shift:
+                return ToggleSubgraph();
             case "c" when ctrl:
                 Copy();
                 return true;
@@ -600,6 +602,25 @@ public sealed class EditorView
     }
 
     /// <summary>Ctrl+G: a group box around the selected nodes. False when nothing is selected.</summary>
+    /// <summary>Packs the selected nodes into one subgraph node, or unpacks the selected subgraph (Ctrl+Shift+E). False when there was nothing to do (a message says why).</summary>
+    public bool ToggleSubgraph()
+    {
+        if (_selected.Count == 1 && SubgraphLibrary.Get(Document.Graph.GetNode(_selected.First()).ClassType) is not null)
+        {
+            var id = _selected.First();
+            bool ok = Document.UnpackSubgraph(id, out var problem);
+            Document.EndGesture();
+            if (!ok) Message?.Invoke(problem ?? "Could not unpack.");
+            else { _selected.Clear(); ViewChanged?.Invoke(); }
+            return ok;
+        }
+        var node = Document.ConvertToSubgraph(_selected.ToList(), "Subgraph", out var error);
+        Document.EndGesture();
+        if (node is null) { Message?.Invoke(error ?? "Could not pack the selection."); return false; }
+        SelectOnly(node.Id);
+        return true;
+    }
+
     public bool GroupSelection()
     {
         if (_selected.Count == 0) return false;

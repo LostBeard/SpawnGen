@@ -11,6 +11,7 @@ public static class GraphCompiler
 {
     public static CompileResult Compile(EditorGraph graph, NodeRegistry registry)
     {
+        graph = SubgraphExpander.Flatten(graph); // subgraph instances become their inner nodes
         var notes = new List<string>();
         var skipped = new HashSet<int>();
 

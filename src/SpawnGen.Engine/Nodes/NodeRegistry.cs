@@ -132,7 +132,10 @@ public sealed class NodeRegistry
 
     public bool TryGet(string id, out RegisteredNode node) => _nodes.TryGetValue(id, out node!);
 
-    public NodeSchema? GetSchema(string id) => _nodes.TryGetValue(id, out var n) ? n.Schema : null;
+    /// <summary>Answers for node types that are not registered (the editor's subgraph instances: their schema comes from a definition). Null = unknown.</summary>
+    public Func<string, NodeSchema?>? SchemaResolver { get; set; }
+
+    public NodeSchema? GetSchema(string id) => _nodes.TryGetValue(id, out var n) ? n.Schema : SchemaResolver?.Invoke(id);
 
     public NodeRegistry Add<T>() => Add(typeof(T));
 

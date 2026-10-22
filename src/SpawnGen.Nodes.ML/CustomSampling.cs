@@ -225,3 +225,17 @@ public sealed class SamplerCustomAdvanced
             new SamplingSettings(noise.Seed, guider.Cfg, sampler.Name, AddNoise: noise.Enabled), context);
     }
 }
+
+[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "BetaSamplingScheduler")]
+public sealed class BetaSamplingScheduler
+{
+    public Sigmas Execute(ModelHandle model, [Input(Min = 1, Max = 10000)] int steps = 20, [Input(Min = 0, Max = 50, Step = 0.01)] float alpha = 0.6f, [Input(Min = 0, Max = 50, Step = 0.01)] float beta = 0.6f) =>
+        new(model.Checkpoint.Sigmas.Beta(steps, Math.Max(alpha, 0.001), Math.Max(beta, 0.001)));
+}
+
+[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "LinearQuadraticScheduler")]
+public sealed class LinearQuadraticScheduler
+{
+    public Sigmas Execute(ModelHandle model, [Input(Min = 1, Max = 10000)] int steps = 20, [Input(Min = 0, Max = 1, Step = 0.001)] float thresholdNoise = 0.025f, [Input(Min = 0, Max = 10000)] int linearSteps = 0) =>
+        new(model.Checkpoint.Sigmas.LinearQuadratic(steps, thresholdNoise, linearSteps > 0 ? linearSteps : null));
+}

@@ -41,7 +41,7 @@ public class SamplingSetupTests
         {
             var s = m.Schedule(scheduler, steps);
             Assert.That(s[^1], Is.EqualTo(0f));
-            if (scheduler != "ddim_uniform") Assert.That(s.Length, Is.EqualTo(steps + 1), $"{scheduler} {steps}");
+            if (scheduler is not ("ddim_uniform" or "beta")) Assert.That(s.Length, Is.EqualTo(steps + 1), $"{scheduler} {steps}");
             for (int i = 1; i < s.Length; i++) Assert.That(s[i], Is.LessThanOrEqualTo(s[i - 1]), $"{scheduler} {steps} at {i}");
             if (!(scheduler == "ddim_uniform" && steps == 1)) Assert.That(s[0], Is.GreaterThan(1f), $"{scheduler} {steps} starts from a high noise level"); // ComfyUI quirk: one ddim_uniform step starts at the lowest level
         }

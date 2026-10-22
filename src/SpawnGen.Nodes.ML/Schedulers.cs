@@ -6,7 +6,7 @@ namespace SpawnGen.Nodes.ML;
 /// </summary>
 public sealed class ModelSigmas
 {
-    public static readonly string[] SchedulerNames = ["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform"];
+    public static readonly string[] SchedulerNames = ["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform", "beta", "linear_quadratic"];
 
     readonly double[] _sigmas;     // ascending, one per training timestep
     readonly double[] _logSigmas;
@@ -46,6 +46,8 @@ public sealed class ModelSigmas
     public float[] Schedule(string scheduler, int steps)
     {
         if (steps < 1) throw new ArgumentOutOfRangeException(nameof(steps));
+        if (scheduler == "beta") return Beta(steps, 0.6, 0.6);
+        if (scheduler == "linear_quadratic") return LinearQuadratic(steps);
         double[] values = scheduler switch
         {
             "normal" => Linspace(steps).Select(t => (double)Sigma(t)).ToArray(),
@@ -60,6 +62,50 @@ public sealed class ModelSigmas
     }
 
     /// <summary>
+    /// ComfyUI's beta scheduler (Lee et al., "Beta Sampling is All You Need"): the training timesteps at the quantiles of a Beta(alpha, beta) distribution, from the noisiest down,
+    /// each timestep used once (steps that land on the same one are merged, so there can be fewer than <paramref name="steps"/> + 1 values).
+    /// </summary>
+    public float[] Beta(int steps, double alpha, double beta)
+    {
+        if (steps < 1) throw new ArgumentOutOfRangeException(nameof(steps));
+        int total = _sigmas.Length - 1;
+        var result = new List<float>();
+        double last = -1;
+        for (int i = 0; i < steps; i++)
+        {
+            double q = 1.0 - (double)i / steps;            // 1 - linspace(0, 1, steps, endpoint=False)
+            double t = Math.Round(BetaMath.Ppf(q, alpha, beta) * total, MidpointRounding.ToEven);
+            if (t != last) result.Add((float)_sigmas[(int)t]);
+            last = t;
+        }
+        result.Add(0f);
+        return [.. result];
+    }
+
+    /// <summary>
+    /// ComfyUI's linear-quadratic schedule (from Mochi): the first half of the steps falls linearly, the rest along a quadratic that meets it, scaled to the model's largest sigma.
+    /// </summary>
+    public float[] LinearQuadratic(int steps, double thresholdNoise = 0.025, int? linearSteps = null)
+    {
+        if (steps < 1) throw new ArgumentOutOfRangeException(nameof(steps));
+        if (steps == 1) return [SigmaMax, 0f];
+        int linear = linearSteps ?? steps / 2;
+        var schedule = new List<double>();
+        for (int i = 0; i < linear; i++) schedule.Add(i * thresholdNoise / linear);
+        double diff = linear - thresholdNoise * steps;
+        int quadraticSteps = steps - linear;
+        if (quadraticSteps > 0)
+        {
+            double quadraticCoef = diff / (linear * (double)quadraticSteps * quadraticSteps);
+            double linearCoef = thresholdNoise / linear - 2 * diff / ((double)quadraticSteps * quadraticSteps);
+            double constant = quadraticCoef * linear * linear;
+            for (int i = linear; i < steps; i++) schedule.Add(quadraticCoef * i * i + linearCoef * i + constant);
+        }
+        schedule.Add(1.0);
+        return [.. schedule.Select(x => (float)((1.0 - x) * SigmaMax))];
+    }
+
+    /// <summary>
     /// The sigmas for a run that starts part-way down: with <paramref name="denoise"/> below 1 the full schedule has <c>steps / denoise</c> steps and only its
     /// last <paramref name="steps"/> are run (ComfyUI's rule), so sampling starts from a noised input instead of pure noise.
     /// </summary>
@@ -69,7 +115,7 @@ public sealed class ModelSigmas
         if (denoise >= 1f) return Schedule(scheduler, steps);
         int total = (int)(steps / denoise);
         var full = Schedule(scheduler, total);
-        return full[^(steps + 1)..];
+        return full[Math.Max(0, full.Length - (steps + 1))..]; // a scheduler that merges steps (beta) can return fewer than asked: take what there is, like Python slicing
     }
 
     // The training timesteps from the noisiest (TrainingSteps - 1) to the cleanest (0).

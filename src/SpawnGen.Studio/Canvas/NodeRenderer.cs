@@ -184,15 +184,27 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         }
     }
 
-    static void DrawCurve(CanvasRenderingContext2D ctx, Point from, Point to, string color, double width, double alpha, double scale)
+    /// <summary>One link in the current link style; a link being dragged (<paramref name="draft"/>) is always shown, even when links are hidden.</summary>
+    static void DrawCurve(CanvasRenderingContext2D ctx, Point from, Point to, string color, double width, double alpha, double scale, bool draft = false)
     {
-        var (p0, c1, c2, p3) = LinkGeometry.Curve(from, to);
+        var style = LinkGeometry.Style;
+        if (style == LinkStyle.Hidden && !draft) return;
         ctx.GlobalAlpha = alpha;
         ctx.StrokeStyle = color;
         ctx.LineWidth = width;
         ctx.BeginPath();
-        ctx.MoveTo(p0.X, p0.Y);
-        ctx.BezierCurveTo(c1.X, c1.Y, c2.X, c2.Y, p3.X, p3.Y);
+        if (style is LinkStyle.Straight or LinkStyle.Linear)
+        {
+            var pts = LinkGeometry.Sample(from, to);
+            ctx.MoveTo(pts[0].X, pts[0].Y);
+            for (int i = 1; i < pts.Count; i++) ctx.LineTo(pts[i].X, pts[i].Y);
+        }
+        else
+        {
+            var (p0, c1, c2, p3) = LinkGeometry.Curve(from, to);
+            ctx.MoveTo(p0.X, p0.Y);
+            ctx.BezierCurveTo(c1.X, c1.Y, c2.X, c2.Y, p3.X, p3.Y);
+        }
         ctx.Stroke();
         ctx.GlobalAlpha = 1;
     }
@@ -222,8 +234,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             if (slot is not null) end = slot.Position;
         }
         var color = d.Problem is null ? Theme.SocketColor(type) : Theme.Error;
-        if (d.StartsAtOutput) DrawCurve(ctx, start, end, color, 3, 0.85, view.Viewport.Scale);
-        else DrawCurve(ctx, end, start, color, 3, 0.85, view.Viewport.Scale);
+        if (d.StartsAtOutput) DrawCurve(ctx, start, end, color, 3, 0.85, view.Viewport.Scale, draft: true);
+        else DrawCurve(ctx, end, start, color, 3, 0.85, view.Viewport.Scale, draft: true);
 
         if (d.Target is { } target && byId.TryGetValue(target.NodeId, out var tn))
         {

@@ -2,6 +2,6 @@
   "name": "spawngen-studio-browser-test",
   "private": true,
   "description": "Drives the SpawnGen Studio in headless Chrome with real pointer and keyboard events.",
-  "scripts": { "test": "node drive.js", "test:run": "node drive-run.js", "test:browser": "node drive-browser-engine.js", "test:desktop": "node drive-run.js", "test:gpu": "node drive-browser-gpu.js", "test:roundtrip": "node drive-roundtrip.js", "test:groups": "node drive-groups.js", "test:tabs": "node drive-tabs.js", "test:vision": "node drive-browser-vision.js", "test:library": "node drive-library.js", "test:history": "node drive-history.js", "test:preview": "node drive-preview.js", "test:text": "node drive-text.js", "test:minimap": "node drive-minimap.js" },
+  "scripts": { "test": "node drive.js", "test:run": "node drive-run.js", "test:browser": "node drive-browser-engine.js", "test:desktop": "node drive-run.js", "test:gpu": "node drive-browser-gpu.js", "test:roundtrip": "node drive-roundtrip.js", "test:groups": "node drive-groups.js", "test:tabs": "node drive-tabs.js", "test:vision": "node drive-browser-vision.js", "test:library": "node drive-library.js", "test:history": "node drive-history.js", "test:preview": "node drive-preview.js", "test:text": "node drive-text.js", "test:minimap": "node drive-minimap.js", "test:settings": "node drive-settings.js" },
   "dependencies": { "playwright-core": "^1.48.0" }
 }

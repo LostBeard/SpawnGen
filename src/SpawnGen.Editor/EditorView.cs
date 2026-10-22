@@ -235,6 +235,7 @@ public sealed class EditorView
                 else if (!_selected.Contains(hit.NodeId)) SelectOnly(hit.NodeId);
                 else Document.Graph.BringToFront(hit.NodeId);
                 _mode = _selected.Contains(hit.NodeId) ? Mode.DraggingNodes : Mode.Idle;
+                if (_mode == Mode.DraggingNodes) { var pressedNode = Document.Graph.GetNode(hit.NodeId); _dragRaw = new Point(pressedNode.X, pressedNode.Y); }
                 break;
 
             case HitKind.Link:
@@ -351,7 +352,7 @@ public sealed class EditorView
                 break;
 
             case Mode.DraggingNodes when _moved:
-                Document.MoveNodes(_selected, world.X - _lastWorld.X, world.Y - _lastWorld.Y);
+                MoveSelectedNodes(world.X - _lastWorld.X, world.Y - _lastWorld.Y);
                 SetCursor("move");
                 break;
 
@@ -644,6 +645,23 @@ public sealed class EditorView
 
     /// <summary>Asks the UI to redraw (something outside the editor changed what is shown: a result arrived, a picture loaded).</summary>
     public void Invalidate() => ViewChanged?.Invoke();
+
+    // ---- snapping ----
+
+    /// <summary>Nodes jump to multiples of <see cref="GridSize"/> while they are dragged.</summary>
+    public bool SnapToGrid { get; set; }
+    public int GridSize { get; set; } = 10;
+    Point _dragRaw;   // where the pressed node would be without snapping: the drag accumulates here so small moves still add up to the next grid line
+
+    void MoveSelectedNodes(double dx, double dy)
+    {
+        if (!SnapToGrid || !Document.Graph.Nodes.Any(n => n.Id == _pressed.NodeId)) { Document.MoveNodes(_selected, dx, dy); return; }
+        var lead = Document.Graph.GetNode(_pressed.NodeId);
+        _dragRaw = new Point(_dragRaw.X + dx, _dragRaw.Y + dy);
+        double g = Math.Max(1, GridSize);
+        double tx = Math.Round(_dragRaw.X / g) * g, ty = Math.Round(_dragRaw.Y / g) * g;
+        Document.MoveNodes(_selected, tx - lead.X, ty - lead.Y);
+    }
 
     // ---- minimap ----
 

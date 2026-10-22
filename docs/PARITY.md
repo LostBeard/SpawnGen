@@ -32,7 +32,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Properties panel | todo |
 | Multiple workflows (tabs: new, rename, close, a file opens in its own tab), autosave to browser storage with the view; restored on reload | **done**; recent files todo |
 | Drop a generated PNG (ComfyUI or SpawnGen) or a workflow / API-format JSON on the canvas to open it; PNGs carry prompt + workflow | **done** |
-| Link render modes (spline / straight / linear / hidden), themes, snap to grid, shortcuts parity | todo |
+| Settings (remembered in the browser): link render modes (spline / straight / linear / hidden), snap to grid with its size, minimap | **done** |
+| Themes, shortcut customisation, shortcut parity check | todo |
 | Node colours, custom titles, pins, badges | partial (titles) |
 
 ## 3. Execution
@@ -80,6 +81,6 @@ Todo, in priority order:
 | Item | Status |
 |---|---|
 | C# scripting node and user node assemblies (node packs) in place of Python custom nodes | todo |
-| Settings, themes, internationalisation | todo |
+| Themes, internationalisation | todo (settings dialog exists) |
 | Model manager: list installed checkpoints from the host, download on first use (desktop), cache (browser OPFS) | partial (browser streams; desktop expects files in place) |
 | Packaging: self-contained desktop builds, hosted static browser build (GitHub Pages) | todo |

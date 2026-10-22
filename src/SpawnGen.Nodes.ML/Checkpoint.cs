@@ -84,14 +84,16 @@ public sealed class Checkpoint : IDisposable
                 onProgress: (s, p) => onProgress?.Invoke($"text_encoder:{s}", p),
                 inputShapes: new Dictionary<string, int[]> { ["input_ids"] = [1, TokenCount] });
         onProgress?.Invoke("unet", 0);
+        var info = MlRuntime.CheckpointDetails.GetValueOrDefault(name) ?? new MlRuntime.CheckpointInfo(1024);
+        await using var unetData = info.UnetExternalData is null ? null : await source.OpenAsync(repoId, info.UnetExternalData);
         await using (var m = await source.OpenAsync(repoId, "unet/model.onnx"))
-            unet = await SpawnDev.ILGPU.ML.InferenceSession.CreateFromOnnxStreamAsync(acc, m,
+            unet = await SpawnDev.ILGPU.ML.InferenceSession.CreateFromOnnxStreamAsync(acc, m, externalDataStream: unetData,
                 onProgress: (s, p) => onProgress?.Invoke($"unet:{s}", p),
                 inputShapes: new Dictionary<string, int[]>
                 {
                     ["sample"] = [1, LatentChannels, 64, 64],
                     ["timestep"] = [1],
-                    ["encoder_hidden_states"] = [1, TokenCount, 1024],
+                    ["encoder_hidden_states"] = [1, TokenCount, info.TextWidth],
                 });
         onProgress?.Invoke("vae_decoder", 0);
         await using (var m = await source.OpenAsync(repoId, "vae_decoder/model.onnx"))

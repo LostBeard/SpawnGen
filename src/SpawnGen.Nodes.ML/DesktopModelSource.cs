@@ -8,11 +8,13 @@ namespace SpawnGen.Nodes.ML;
 /// </summary>
 public sealed class DesktopModelSource : IModelSource
 {
+    readonly string _root;
     readonly FolderModelSource _local;
     readonly IReadOnlyDictionary<string, string> _localRepos;
 
     public DesktopModelSource(string modelsFolder, IReadOnlyDictionary<string, string> localRepos, HttpClient? http = null)
     {
+        _root = modelsFolder;
         _local = new FolderModelSource(modelsFolder, localRepos);
         _localRepos = localRepos;
         // A model download can take minutes: no overall timeout (the transfer resumes if it is interrupted).
@@ -22,7 +24,8 @@ public sealed class DesktopModelSource : IModelSource
     /// <summary>The caching downloader behind every repo that is not a local checkpoint (progress, cache listing).</summary>
     public HttpClientModelSource Remote { get; }
 
-    IModelSource For(string repoId) => _localRepos.ContainsKey(repoId) ? _local : Remote;
+    /// <summary>A checkpoint SpawnGen knows is read from its sub-folder when that folder exists, else downloaded like any other model.</summary>
+    IModelSource For(string repoId) => _localRepos.TryGetValue(repoId, out var folder) && Directory.Exists(Path.Combine(_root, folder)) ? _local : Remote;
 
     public Task<Stream> OpenAsync(string repoId, string filePath, CancellationToken cancellationToken = default) =>
         For(repoId).OpenAsync(repoId, filePath, cancellationToken);

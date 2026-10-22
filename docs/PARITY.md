@@ -52,7 +52,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Item | Status |
 |---|---|
 | SD-Turbo (ONNX): txt2img, img2img | **done** |
-| Other SD 1.x / 2.x / SDXL ONNX checkpoints, real CFG (two UNet passes is implemented) | todo: needs the model files and a check of the library on them |
+| SD 1.5 (ONNX export a420/stable-diffusion-v1-5_onnx, fp32 UNet with external data, real CFG 7, dpmpp_2m/karras 8 steps) | **done**, verified by eye on the RX 590 desktop: 512x512 apple in 133 s including load; browser not yet run (3.4 GB fp32 UNet: probably needs half-precision weight storage) |
+| SD 2.x, SDXL (SDXL: two text encoders, pooled/size conditioning) ONNX checkpoints | todo: SDXL needs a node-level change |
 | Single-file `.safetensors` checkpoints (ComfyUI's main format) | todo: **library** (needs a UNet/CLIP/VAE builder from weights) |
 | LoRA, ControlNet, IP-Adapter, embeddings, upscale models | todo: **library** (LoRA could be applied to loaded weights from SpawnGen) |
 | Upscale (ESPCN x3: Load Upscale Model + Upscale Image using Model), Remove Background (RMBG 1.4: image + mask), Depth Anything V2 small, Style Transfer (5 styles) | **done**, verified by eye on the RX 590 on the desktop (OpenCL) and, except RMBG which ran but was not looked at, in the browser (WebGPU); models download on first use (desktop: the models folder's hub cache; browser: OPFS) |

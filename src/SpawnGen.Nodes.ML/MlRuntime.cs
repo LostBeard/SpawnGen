@@ -18,6 +18,16 @@ public sealed class MlRuntime : IDisposable
     public static readonly IReadOnlyDictionary<string, string> KnownCheckpoints = new Dictionary<string, string>
     {
         ["sd_turbo"] = "schmuell/sd-turbo-ort-web",
+        ["sd_v1-5"] = "a420/stable-diffusion-v1-5_onnx",
+    };
+
+    /// <summary>What differs between the checkpoints that share the SD layout: the width of the text encoder's output (the UNet's cross-attention input) and whether the UNet's weights live in a separate file.</summary>
+    public sealed record CheckpointInfo(int TextWidth, string? UnetExternalData = null);
+
+    public static readonly IReadOnlyDictionary<string, CheckpointInfo> CheckpointDetails = new Dictionary<string, CheckpointInfo>
+    {
+        ["sd_turbo"] = new(1024),
+        ["sd_v1-5"] = new(768, "unet/model.onnx_data"),
     };
 
     /// <summary>Repo id to folder name, for <see cref="FolderModelSource"/>: a models folder holds one sub-folder per checkpoint name.</summary>

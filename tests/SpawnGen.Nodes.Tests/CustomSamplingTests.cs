@@ -76,6 +76,18 @@ public class CustomSamplingTests
     }
 
     [Test]
+    public void The_tiled_VAE_nodes_take_ComfyUIs_widgets_in_ComfyUIs_order()
+    {
+        var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
+        string[] Widgets(string id) => registry.GetSchema(id)!.Inputs.Where(i => i.Widget is not null).Select(i => i.Name).ToArray();
+        string[] expected = ["tile_size", "overlap", "temporal_size", "temporal_overlap"];
+        Assert.That(Widgets("VAEDecodeTiled"), Is.EqualTo(expected));
+        Assert.That(Widgets("VAEEncodeTiled"), Is.EqualTo(expected));
+        Assert.That(registry.GetSchema("VAEDecodeTiled")!.Outputs.Single().Type.Name, Is.EqualTo("IMAGE"));
+        Assert.That(registry.GetSchema("VAEEncodeTiled")!.Outputs.Single().Type.Name, Is.EqualTo("LATENT"));
+    }
+
+    [Test]
     public void A_custom_sampling_graph_validates_and_SamplerCustom_has_both_latent_outputs()
     {
         var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);

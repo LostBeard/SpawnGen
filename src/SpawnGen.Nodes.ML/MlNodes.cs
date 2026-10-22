@@ -175,6 +175,29 @@ public sealed class VAEEncode
     }
 }
 
+/// <summary>
+/// ComfyUI's tiled decode. The library's VAE already splits large pictures into overlapping tiles whose result matches the untiled decode exactly, so the
+/// tile settings are accepted for workflow compatibility and the decode is the same one VAE Decode does.
+/// </summary>
+[Node(Category = "_for_testing", DisplayName = "VAE Decode (Tiled)")]
+public sealed class VAEDecodeTiled
+{
+    public Task<ImageBatch> ExecuteAsync(LatentBatch samples, VaeHandle vae, NodeContext context, IServiceProvider services,
+        [Input(Min = 64, Max = 4096, Step = 32)] int tileSize = 512, [Input(Min = 0, Max = 4096, Step = 32)] int overlap = 64,
+        [Input(Min = 8, Max = 4096, Step = 4)] int temporalSize = 64, [Input(Min = 4, Max = 4096, Step = 4)] int temporalOverlap = 8) =>
+        new VAEDecode().ExecuteAsync(samples, vae, context, services);
+}
+
+/// <summary>ComfyUI's tiled encode; see <see cref="VAEDecodeTiled"/> for why the tile settings do not change the work.</summary>
+[Node(Category = "_for_testing", DisplayName = "VAE Encode (Tiled)")]
+public sealed class VAEEncodeTiled
+{
+    public Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, NodeContext context, IServiceProvider services,
+        [Input(Min = 64, Max = 4096, Step = 64)] int tileSize = 512, [Input(Min = 0, Max = 4096, Step = 32)] int overlap = 64,
+        [Input(Min = 8, Max = 4096, Step = 4)] int temporalSize = 64, [Input(Min = 4, Max = 4096, Step = 4)] int temporalOverlap = 8) =>
+        new VAEEncode().ExecuteAsync(pixels, vae, context, services);
+}
+
 [Node(Category = "latent/inpaint", DisplayName = "VAE Encode (for Inpainting)")]
 public sealed class VAEEncodeForInpaint
 {

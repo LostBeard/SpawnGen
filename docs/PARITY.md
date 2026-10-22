@@ -64,7 +64,7 @@ Done: Load/Save/Preview Image, Empty Latent, CLIP Text Encode, KSampler and KSam
 Todo, in priority order:
 1. **Core image** (done: scale x3, crop, pad for outpaint, blend, composite, invert, batch, from-batch, repeat, blur, sharpen, empty image): flip/rotate, color adjust, quantize, morphological ops, still todo.
 2. **Masks** (done: solid, invert, crop, composite, feather, grow, threshold, image<->mask): load image mask todo.
-3. **Latent** (done: upscale, upscale by, composite, from-batch, repeat, rotate, flip, crop, blend, set noise mask): bislerp upscale and VAE encode for inpaint todo.
+3. **Latent** (done: upscale, upscale by, composite, from-batch, repeat, rotate, flip, crop, blend, set noise mask): bislerp upscale todo; VAE Encode (for Inpainting) done, verified by eye (a vase painted into an apple, the rest untouched).
 4. **Sampling** (done: KSampler, KSampler Advanced, 11 samplers, 6 schedulers, denoise, noise masks): SamplerCustom and its sigma/sampler nodes (BasicScheduler, KarrasScheduler, SamplerSelect, SplitSigmas...), dpmpp_sde, dpmpp_3m_sde, uni_pc, ipndm, deis, res_multistep and other newer samplers, beta scheduler.
 5. **Conditioning** (done: combine, concat, average, set area, set area percentage, set mask, zero out, timestep range): ControlNet apply, unCLIP and the model-specific ones need library support.
 6. **Primitives and utilities** (done: int, float, string, multiline string, boolean): math, string ops, switch, reroute, note, "save text", "preview any" todo.

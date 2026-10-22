@@ -109,6 +109,58 @@ public class Img2ImgTests
         Assert.That(meanAbs, Is.LessThan(0.2), "At denoise 0.5 the output should stay close to the input.");
     }
 
+    [Test]
+    public async Task Inpainting_repaints_only_the_masked_square_and_the_image_is_checked_by_eye()
+    {
+        var models = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(models)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+
+        var work = Path.Combine(Path.GetTempPath(), "spawngen-inpaint-" + Guid.NewGuid().ToString("N"));
+        InputFiles.Directory = Path.Combine(work, "input");
+        Directory.CreateDirectory(InputFiles.Directory);
+        using var runtime = new MlRuntime(new FolderModelSource(models!));
+        var executor = new PromptExecutor(Registry(), new Services(runtime, new OutputOptions { Directory = Path.Combine(work, "output") }));
+
+        await executor.ExecuteAsync(Txt2ImgTests.Graph("a photo of a red apple on a wooden table", seed: 7, size: 512));
+        File.Copy(Directory.GetFiles(Path.Combine(work, "output"), "txt2img_test_*.png").Single(), Path.Combine(InputFiles.Directory, "apple.png"));
+
+        // A white square over the middle of the apple on a black picture is the mask.
+        var square = new ImageBatch(1, 512, 512, 3);
+        for (int y = 160; y < 352; y++) for (int x = 160; x < 352; x++) for (int c = 0; c < 3; c++) square.Data[(y * 512 + x) * 3 + c] = 1f;
+        File.WriteAllBytes(Path.Combine(InputFiles.Directory, "mask.png"), PngWriter.Encode(square));
+
+        var g = new PromptGraph();
+        g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "sd_turbo"));
+        g.Add("2", "CLIPTextEncode", ("text", "a photo of a blue ceramic vase on a wooden table"), ("clip", PromptInput.Link("1", 1)));
+        g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link("1", 1)));
+        g.Add("4", "LoadImage", ("image", "apple.png"));
+        g.Add("5", "LoadImage", ("image", "mask.png"));
+        g.Add("6", "ImageToMask", ("image", PromptInput.Link("5")), ("channel", "red"));
+        g.Add("7", "VAEEncodeForInpaint", ("pixels", PromptInput.Link("4")), ("vae", PromptInput.Link("1", 2)), ("mask", PromptInput.Link("6")), ("grow_mask_by", 6));
+        g.Add("8", "KSampler", ("model", PromptInput.Link("1", 0)), ("seed", 5), ("steps", 4), ("cfg", 1.0),
+            ("sampler_name", "euler_ancestral"), ("scheduler", "normal"), ("positive", PromptInput.Link("2")),
+            ("negative", PromptInput.Link("3")), ("latent_image", PromptInput.Link("7")), ("denoise", 1.0));
+        g.Add("9", "VAEDecode", ("samples", PromptInput.Link("8")), ("vae", PromptInput.Link("1", 2)));
+        g.Add("10", "SaveImage", ("images", PromptInput.Link("9")), ("filename_prefix", "inpaint_test"));
+        await executor.ExecuteAsync(g);
+
+        var outFile = Directory.GetFiles(Path.Combine(work, "output"), "inpaint_test_*.png").Single();
+        TestContext.Out.WriteLine($"input:  {Path.Combine(InputFiles.Directory, "apple.png")}");
+        TestContext.Out.WriteLine($"output: {outFile}");
+        var a = PngReader.Decode(File.ReadAllBytes(Path.Combine(InputFiles.Directory, "apple.png")));
+        var b = PngReader.Decode(File.ReadAllBytes(outFile));
+        double Diff(int x0, int x1, int y0, int y1)
+        {
+            double sum = 0; int n = 0;
+            for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) for (int c = 0; c < 3; c++) { sum += Math.Abs(a.Data[(y * 512 + x) * 3 + c] - b.Data[(y * 512 + x) * 3 + c]); n++; }
+            return sum / n;
+        }
+        double inside = Diff(176, 336, 176, 336), outside = Diff(0, 100, 0, 512);
+        TestContext.Out.WriteLine($"mean abs difference: inside the mask {inside:F3}, far outside {outside:F3}");
+        Assert.That(outside, Is.LessThan(0.08), "away from the mask the picture survives the encode/decode round trip");
+        Assert.That(inside, Is.GreaterThan(outside * 2), "the masked area was repainted");
+    }
+
     sealed class Services(params object[] instances) : IServiceProvider
     {
         public object? GetService(Type serviceType) => instances.FirstOrDefault(serviceType.IsInstanceOfType);

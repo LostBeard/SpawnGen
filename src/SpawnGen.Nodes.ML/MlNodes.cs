@@ -5,6 +5,7 @@ using SpawnDev.ILGPU.ML.Preprocessing;
 using SpawnDev.ILGPU.ML.Tensors;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
+using SpawnGen.Nodes.Core;
 
 namespace SpawnGen.Nodes.ML;
 
@@ -143,5 +144,71 @@ public sealed class VAEEncode
             context.Progress(b + 1, pixels.Batch);
         }
         return latents;
+    }
+}
+
+[Node(Category = "latent/inpaint", DisplayName = "VAE Encode (for Inpainting)")]
+public sealed class VAEEncodeForInpaint
+{
+    /// <summary>
+    /// Encodes a picture for inpainting: the area to repaint (<c>mask</c> = 1, grown by <c>grow_mask_by</c> pixels so the seam is repainted too) is blanked to
+    /// grey before encoding, and the latent carries that area as its noise mask so the sampler only changes it. Use denoise 1.0 on the sampler.
+    /// </summary>
+    public async Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, MaskBatch mask, NodeContext context, IServiceProvider services,
+        [Input(Min = 0, Max = 64)] int growMaskBy = 6)
+    {
+        int h = pixels.Height / 8 * 8, w = pixels.Width / 8 * 8;
+        if (h == 0 || w == 0) throw new ArgumentException($"Image {pixels.Width}x{pixels.Height} is smaller than 8 pixels.", nameof(pixels));
+        var grown = GrowAndCrop(mask, pixels.Batch, pixels.Height, pixels.Width, h, w, growMaskBy);
+
+        var blanked = new ImageBatch(pixels.Batch, h, w, pixels.Channels);
+        for (int b = 0; b < pixels.Batch; b++)
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float keep = 1f - grown.Data[(b * h + y) * w + x];
+                    for (int c = 0; c < pixels.Channels; c++)
+                    {
+                        // Where the mask is set the picture becomes grey (0.5); in between it fades, like ComfyUI.
+                        float v = pixels.Data[((b * pixels.Height + y) * pixels.Width + x) * pixels.Channels + c];
+                        blanked.Data[((b * h + y) * w + x) * pixels.Channels + c] = (v - 0.5f) * keep + 0.5f;
+                    }
+                }
+
+        var latent = await new VAEEncode().ExecuteAsync(blanked, vae, context, services);
+        for (int i = 0; i < grown.Data.Length; i++) grown.Data[i] = MathF.Round(grown.Data[i]);
+        return new LatentBatch(latent.Batch, latent.Channels, latent.Height, latent.Width, latent.Data) { NoiseMask = grown };
+    }
+
+    /// <summary>The mask resized to the picture, grown by a square window of <paramref name="grow"/> pixels (sum clamped to 1, ComfyUI's convolution), cropped to the encoded size.</summary>
+    internal static MaskBatch GrowAndCrop(MaskBatch mask, int batch, int imageH, int imageW, int h, int w, int grow)
+    {
+        var result = new MaskBatch(batch, h, w);
+        for (int b = 0; b < batch; b++)
+        {
+            var one = new float[mask.Height * mask.Width];
+            Array.Copy(mask.Data, (b % mask.Batch) * one.Length, one, 0, one.Length);
+            if (mask.Width != imageW || mask.Height != imageH) one = Resample.Resize(one, mask.Width, mask.Height, 1, imageW, imageH, ResampleMethod.Bilinear);
+            int pad = grow <= 1 ? 0 : (grow - 1 + 1) / 2;   // ceil((grow - 1) / 2)
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float sum = 0;
+                    if (grow <= 1) sum = one[y * imageW + x];
+                    else
+                        for (int dy = 0; dy < grow; dy++)
+                        {
+                            int yy = y - pad + dy;
+                            if (yy < 0 || yy >= imageH) continue;
+                            for (int dx = 0; dx < grow; dx++)
+                            {
+                                int xx = x - pad + dx;
+                                if (xx >= 0 && xx < imageW) sum += one[yy * imageW + xx];
+                            }
+                        }
+                    result.Data[(b * h + y) * w + x] = Math.Clamp(sum, 0f, 1f);
+                }
+        }
+        return result;
     }
 }

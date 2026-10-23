@@ -129,10 +129,13 @@ public sealed class ImageScaleToTotalPixels
 
     public ImageBatch Execute(ImageBatch image,
         [Input(OptionsProvider = "Methods")] string upscaleMethod = "nearest-exact",
-        [Input(Min = 0.01, Max = 16, Step = 0.01)] float megapixels = 1f)
+        [Input(Min = 0.01, Max = 16, Step = 0.01)] float megapixels = 1f,
+        [Input(Min = 1, Max = 256, Tooltip = "Width and height are rounded to a multiple of this")] int resolutionSteps = 1)
     {
         double total = megapixels * 1024 * 1024, scale = Math.Sqrt(total / (image.Width * image.Height));
-        return new ImageScale().Execute(image, upscaleMethod, Math.Max(1, (int)Math.Round(image.Width * scale)), Math.Max(1, (int)Math.Round(image.Height * scale)));
+        // Python's round() is round-half-to-even, as Math.Round is by default.
+        int Size(int side) => Math.Max(resolutionSteps, (int)Math.Round(side * scale / resolutionSteps) * resolutionSteps);
+        return new ImageScale().Execute(image, upscaleMethod, Size(image.Width), Size(image.Height));
     }
 }
 

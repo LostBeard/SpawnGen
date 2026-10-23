@@ -100,7 +100,7 @@ static class RegexOptionsFor
         (caseInsensitive ? RegexOptions.IgnoreCase : 0) | (multiline ? RegexOptions.Multiline : 0) | (dotAll ? RegexOptions.Singleline : 0);
 }
 
-[Node(Category = "utils/string", DisplayName = "Regex Match")]
+[Node("RegexMatch", Category = "utils/string", DisplayName = "Regex Match", Aliases = ["RegexMatchNode"])]
 public sealed class RegexMatchNode
 {
     /// <summary>True when the pattern matches anywhere in the text.</summary>
@@ -109,7 +109,7 @@ public sealed class RegexMatchNode
         Regex.IsMatch(@string, regexPattern, RegexOptionsFor.Of(caseInsensitive, multiline, dotall), TimeSpan.FromSeconds(2));
 }
 
-[Node(Category = "utils/string", DisplayName = "Regex Replace")]
+[Node("RegexReplace", Category = "utils/string", DisplayName = "Regex Replace", Aliases = ["RegexReplaceNode"])]
 public sealed class RegexReplaceNode
 {
     /// <summary>Replaces matches of the pattern (<c>$1</c> and <c>${name}</c> in the replacement refer to groups); <c>count</c> 0 replaces all of them.</summary>

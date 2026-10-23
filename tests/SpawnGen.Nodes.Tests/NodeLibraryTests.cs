@@ -76,6 +76,8 @@ public class NodeLibraryTests
         var total = new ImageScaleToTotalPixels().Execute(Img(400, 300, 0.1f), "area", 1f);
         Assert.That(total.Width * total.Height, Is.EqualTo(1024 * 1024).Within(2000));
         Assert.That((double)total.Width / total.Height, Is.EqualTo(4.0 / 3.0).Within(0.01));
+        var stepped = new ImageScaleToTotalPixels().Execute(Img(400, 300, 0.1f), "area", 1f, 64);
+        Assert.That((stepped.Width, stepped.Height), Is.EqualTo((1152, 896)), "ComfyUI: round(400 * 2.956 / 64) * 64 and round(300 * 2.956 / 64) * 64");
     }
 
     [Test]

@@ -130,12 +130,17 @@ public sealed class NodeRegistry
 
     public IEnumerable<NodeSchema> Schemas => _nodes.Values.Select(n => n.Schema);
 
-    public bool TryGet(string id, out RegisteredNode node) => _nodes.TryGetValue(id, out node!);
+    public bool TryGet(string id, out RegisteredNode node) => _nodes.TryGetValue(id, out node!) || _aliases.TryGetValue(id, out var current) && _nodes.TryGetValue(current, out node!);
 
     /// <summary>Answers for node types that are not registered (the editor's subgraph instances: their schema comes from a definition). Null = unknown.</summary>
     public Func<string, NodeSchema?>? SchemaResolver { get; set; }
 
-    public NodeSchema? GetSchema(string id) => _nodes.TryGetValue(id, out var n) ? n.Schema : SchemaResolver?.Invoke(id);
+    public NodeSchema? GetSchema(string id) => TryGet(id, out var n) ? n.Schema : SchemaResolver?.Invoke(id);
+
+    readonly Dictionary<string, string> _aliases = new(StringComparer.Ordinal);
+
+    /// <summary>The current id for <paramref name="id"/>: itself, or the node that lists it as an earlier id.</summary>
+    public string CanonicalId(string id) => !_nodes.ContainsKey(id) && _aliases.TryGetValue(id, out var current) ? current : id;
 
     public NodeRegistry Add<T>() => Add(typeof(T));
 
@@ -143,6 +148,7 @@ public sealed class NodeRegistry
     {
         var node = Build(type);
         _nodes[node.Schema.Id] = node;
+        foreach (var alias in type.GetCustomAttribute<NodeAttribute>()?.Aliases ?? []) _aliases[alias] = node.Schema.Id;
         return this;
     }
 
@@ -208,7 +214,7 @@ public sealed class NodeRegistry
             var ia = p.GetCustomAttribute<InputAttribute>();
             var name = ia?.Name ?? ToSnakeCase(p.Name!);
             inputs.Add(new InputSpec(name, SocketTypes.FromClr(p.ParameterType), Required: !p.HasDefaultValue,
-                Widget: BuildWidget(type, p, ia), Tooltip: ia?.Tooltip));
+                Widget: BuildWidget(type, p, ia), Tooltip: ia?.Tooltip) { Aliases = ia?.Aliases ?? [] });
             bindings.Add(new(p, RegisteredNode.ParamKind.Input, name));
         }
         var dup = inputs.GroupBy(i => i.Name).FirstOrDefault(g => g.Count() > 1);

@@ -13,6 +13,8 @@ public sealed class NodeAttribute(string? id = null) : Attribute
     public bool AlwaysExecute { get; init; }
     /// <summary>A node that only exists in the editor (Reroute, Note): the compiler resolves or drops it, a run never sends it.</summary>
     public bool FrontendOnly { get; init; }
+    /// <summary>Earlier ids of this node type: workflows and prompts that use them still find it.</summary>
+    public string[]? Aliases { get; init; }
 }
 
 /// <summary>Widget and socket hints for an <c>Execute</c> parameter. Unset numeric hints use <see cref="double.NaN"/>.</summary>
@@ -30,6 +32,8 @@ public sealed class InputAttribute : Attribute
     /// <summary>Name of a public static method on the node class returning the combo options (e.g. model files).</summary>
     public string? OptionsProvider { get; init; }
     public string? Tooltip { get; init; }
+    /// <summary>Earlier names of this input: a saved workflow that links to one still connects.</summary>
+    public string[]? Aliases { get; init; }
 }
 
 /// <summary>Names the socket type for a value class (e.g. <c>[Socket("MODEL")]</c>). Without it the type is the upper-cased class name.</summary>

@@ -42,14 +42,16 @@ public static class ApiPromptImport
         {
             foreach (var (key, node) in prompt.Nodes)
             {
-                var editor = new EditorNode { Id = ids[key], ClassType = node.ClassType, Title = node.Title };
-                if (doc.Registry.GetSchema(node.ClassType) is { } schema)
+                var classType = doc.Registry.CanonicalId(node.ClassType);
+                var editor = new EditorNode { Id = ids[key], ClassType = classType, Title = node.Title };
+                if (doc.Registry.GetSchema(classType) is { } schema)
                 {
                     foreach (var input in schema.Inputs)
                     {
                         if (input.Widget is null) continue;
-                        editor.Widgets[input.Name] = node.Inputs.TryGetValue(input.Name, out var v) && !v.IsLink && v.Literal is not null
-                            ? Coerce(input.Widget, v.Literal) : input.Widget.Default;
+                        // The value under the input's name, or under an earlier name of it.
+                        var v = input.Aliases.Prepend(input.Name).Select(n => node.Inputs.GetValueOrDefault(n)).FirstOrDefault(p => p.IsLink || p.Literal is not null);
+                        editor.Widgets[input.Name] = !v.IsLink && v.Literal is not null ? Coerce(input.Widget, v.Literal) : input.Widget.Default;
                     }
                 }
                 else warnings.Add($"Node {key}: type '{node.ClassType}' is not installed; it is kept as a placeholder.");
@@ -60,7 +62,8 @@ public static class ApiPromptImport
                 foreach (var (name, input) in node.Inputs.Where(i => i.Value.IsLink))
                 {
                     if (!ids.TryGetValue(input.NodeId!, out var from)) { warnings.Add($"Node {key} input '{name}' points at missing node {input.NodeId}."); continue; }
-                    graph.AddLinkRaw(new EditorLink { Id = graph.NextLinkId, FromNode = from, FromOutput = input.OutputIndex, ToNode = ids[key], ToInput = name });
+                    var toInput = doc.Registry.GetSchema(doc.Registry.CanonicalId(node.ClassType))?.CanonicalInput(name) ?? name;
+                    graph.AddLinkRaw(new EditorLink { Id = graph.NextLinkId, FromNode = from, FromOutput = input.OutputIndex, ToNode = ids[key], ToInput = toInput });
                 }
         });
 

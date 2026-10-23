@@ -17,7 +17,11 @@ public sealed record WidgetSpec(WidgetKind Kind)
     public IReadOnlyList<string> ResolveOptions() => OptionsProvider?.Invoke() ?? Options ?? [];
 }
 
-public sealed record InputSpec(string Name, SocketType Type, bool Required, WidgetSpec? Widget = null, string? Tooltip = null);
+public sealed record InputSpec(string Name, SocketType Type, bool Required, WidgetSpec? Widget = null, string? Tooltip = null)
+{
+    /// <summary>Earlier names of the input (see <see cref="InputAttribute.Aliases"/>).</summary>
+    public IReadOnlyList<string> Aliases { get; init; } = [];
+}
 
 public sealed record OutputSpec(string Name, SocketType Type, string? Tooltip = null);
 
@@ -38,4 +42,7 @@ public sealed class NodeSchema
     public bool FrontendOnly { get; init; }
 
     public InputSpec? FindInput(string name) => Inputs.FirstOrDefault(i => i.Name == name);
+
+    /// <summary>The current name of an input given by its name or an earlier one; the name itself when no input answers to it.</summary>
+    public string CanonicalInput(string name) => FindInput(name)?.Name ?? Inputs.FirstOrDefault(i => i.Aliases.Contains(name))?.Name ?? name;
 }

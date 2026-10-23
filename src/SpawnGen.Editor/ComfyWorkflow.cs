@@ -37,7 +37,7 @@ public static class ComfyWorkflow
             foreach (var n in nodes.OfType<JsonObject>().OrderBy(n => (int?)n["order"] ?? 0))
             {
                 int id = (int)n["id"]!;
-                string type = (string?)n["type"] ?? "";
+                string type = doc.Registry.CanonicalId((string?)n["type"] ?? ""); // a node saved under an earlier id opens as the current one
                 nodeJson[id] = n;
                 var node = new EditorNode
                 {
@@ -67,6 +67,7 @@ public static class ComfyWorkflow
                 int linkId = (int)l[0]!, from = (int)l[1]!, fromSlot = (int)l[2]!, to = (int)l[3]!, toSlot = (int)l[4]!;
                 if (!nodeJson.TryGetValue(to, out var target) || !nodeJson.ContainsKey(from)) { warnings.Add($"Link #{linkId} points at a missing node and was dropped."); continue; }
                 var name = (string?)(target["inputs"] as JsonArray)?.ElementAtOrDefault(toSlot)?["name"];
+                if (name is not null && doc.Registry.GetSchema(doc.Registry.CanonicalId((string?)target["type"] ?? "")) is { } targetSchema) name = targetSchema.CanonicalInput(name);
                 // ComfyUI's Reroute names its only input "": that is our node's single input.
                 if (string.IsNullOrEmpty(name) && doc.Registry.GetSchema((string?)target["type"] ?? "") is { Inputs.Count: 1 } single) name = single.Inputs[0].Name;
                 if (name is null) { warnings.Add($"Link #{linkId} has no matching input on node #{to} and was dropped."); continue; }

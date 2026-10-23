@@ -51,7 +51,8 @@ public sealed class Conditioning(IReadOnlyList<CondEntry> entries)
 public sealed class ConditioningCombine
 {
     /// <summary>Both conditionings at once: the sampler blends their predictions by area, so two prompts can steer different regions or share one.</summary>
-    public Conditioning Execute(Conditioning conditioning1, Conditioning conditioning2) => new([.. conditioning1.Entries, .. conditioning2.Entries]);
+    public Conditioning Execute([Input(Name = "conditioning_1", Aliases = ["conditioning1"])] Conditioning conditioning1, [Input(Name = "conditioning_2", Aliases = ["conditioning2"])] Conditioning conditioning2) =>
+        new([.. conditioning1.Entries, .. conditioning2.Entries]);
 }
 
 [Node(Category = "conditioning", DisplayName = "Conditioning (Concat)")]

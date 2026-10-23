@@ -318,7 +318,7 @@ public sealed class LatentInterpolate
     }
 }
 
-[Node(Category = "latent/batch", DisplayName = "Latent Batch")]
+[Node("LatentBatch", Category = "latent/batch", DisplayName = "Latent Batch", Aliases = ["LatentBatchNode"])]
 public sealed class LatentBatchNode
 {
     /// <summary>Stacks two latents into one batch; a second latent of another size is resized (bilinear, centre crop) to the first's.</summary>

@@ -137,7 +137,8 @@ public static class PromptValidator
             case WidgetKind.Boolean:
                 return literal is bool ? null : "expects true or false.";
             case WidgetKind.Color:
-                return literal is string color && System.Text.RegularExpressions.Regex.IsMatch(color, "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$") ? null : $"'{literal}' is not a colour (#rrggbb).";
+                // ComfyUI takes any text here; the nodes read what is not a colour code as their fallback (white).
+                return literal is string ? null : "expects a colour code (#rrggbb).";
             case WidgetKind.String:
                 return literal is string ? null : "expects text.";
             case WidgetKind.Combo:

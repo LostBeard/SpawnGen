@@ -3,7 +3,7 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-[Node(Category = "image/transform", DisplayName = "Image Flip")]
+[Node(Category = "image/transform", DisplayName = "Flip Image")]
 public sealed class ImageFlip
 {
     public static string[] Axes() => ["x-axis: vertically", "y-axis: horizontally"];
@@ -24,7 +24,7 @@ public sealed class ImageFlip
     }
 }
 
-[Node(Category = "image/transform", DisplayName = "Image Rotate")]
+[Node(Category = "image/transform", DisplayName = "Rotate Image")]
 public sealed class ImageRotate
 {
     public static string[] Rotations() => ["none", "90 degrees", "180 degrees", "270 degrees"];
@@ -51,7 +51,7 @@ public sealed class ImageRotate
     }
 }
 
-[Node(Category = "image/postprocessing", DisplayName = "Image Quantize")]
+[Node(Category = "image/filters", DisplayName = "Quantize Image")]
 public sealed class ImageQuantize
 {
     public static string[] Dithers() => ["none", "floyd-steinberg"];

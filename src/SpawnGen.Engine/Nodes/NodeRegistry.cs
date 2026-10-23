@@ -526,7 +526,8 @@ public sealed class NodeRegistry
         if (t == typeof(float) || t == typeof(double))
             return new WidgetSpec(WidgetKind.Float)
             {
-                Default = def is null ? 0.0 : Convert.ToDouble(def),
+                // A float default (0.6f) is read as the decimal it was written as (0.6), not widened to 0.6000000238.
+                Default = def switch { null => 0.0, float f => double.Parse(f.ToString("R", System.Globalization.CultureInfo.InvariantCulture), System.Globalization.CultureInfo.InvariantCulture), _ => Convert.ToDouble(def) },
                 Min = Opt(ia?.Min), Max = Opt(ia?.Max), Step = Opt(ia?.Step) ?? 0.01,
             };
 

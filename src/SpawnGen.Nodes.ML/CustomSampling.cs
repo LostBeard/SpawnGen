@@ -43,7 +43,7 @@ public static class SigmaSchedules
     }
 }
 
-[Node(Category = "sampling/custom_sampling/samplers", DisplayName = "KSamplerSelect")]
+[Node(Category = "model/sampling/samplers", DisplayName = "KSamplerSelect")]
 public sealed class KSamplerSelect
 {
     public static string[] SamplerNames() => Samplers.Names;
@@ -53,7 +53,7 @@ public sealed class KSamplerSelect
             : throw new ArgumentException($"Unknown sampler '{samplerName}'. Known: {string.Join(", ", Samplers.Names)}.", nameof(samplerName));
 }
 
-[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "BasicScheduler")]
+[Node(Category = "model/sampling/schedulers", DisplayName = "BasicScheduler")]
 public sealed class BasicScheduler
 {
     public static string[] SchedulerNames() => ModelSigmas.SchedulerNames;
@@ -67,7 +67,7 @@ public sealed class BasicScheduler
     }
 }
 
-[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "KarrasScheduler")]
+[Node(Category = "model/sampling/schedulers", DisplayName = "KarrasScheduler")]
 public sealed class KarrasScheduler
 {
     public Sigmas Execute([Input(Min = 1, Max = 10000)] int steps = 20, [Input(Min = 0, Max = 5000, Step = 0.01)] float sigmaMax = 14.614642f,
@@ -75,7 +75,7 @@ public sealed class KarrasScheduler
         new(SigmaSchedules.Karras(steps, sigmaMax, sigmaMin, rho));
 }
 
-[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "ExponentialScheduler")]
+[Node(Category = "model/sampling/schedulers", DisplayName = "ExponentialScheduler")]
 public sealed class ExponentialScheduler
 {
     public Sigmas Execute([Input(Min = 1, Max = 10000)] int steps = 20, [Input(Min = 0, Max = 5000, Step = 0.01)] float sigmaMax = 14.614642f,
@@ -83,7 +83,7 @@ public sealed class ExponentialScheduler
         new(SigmaSchedules.Exponential(steps, sigmaMax, sigmaMin));
 }
 
-[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "PolyexponentialScheduler")]
+[Node(Category = "model/sampling/schedulers", DisplayName = "PolyexponentialScheduler")]
 public sealed class PolyexponentialScheduler
 {
     public Sigmas Execute([Input(Min = 1, Max = 10000)] int steps = 20, [Input(Min = 0, Max = 5000, Step = 0.01)] float sigmaMax = 14.614642f,
@@ -91,7 +91,7 @@ public sealed class PolyexponentialScheduler
         new(SigmaSchedules.Polyexponential(steps, sigmaMax, sigmaMin, rho));
 }
 
-[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "VPScheduler")]
+[Node(Category = "model/sampling/schedulers", DisplayName = "VPScheduler")]
 public sealed class VPScheduler
 {
     public Sigmas Execute([Input(Min = 1, Max = 10000)] int steps = 20, [Input(Min = 0, Max = 5000, Step = 0.01)] float betaD = 19.9f,
@@ -99,14 +99,14 @@ public sealed class VPScheduler
         new(SigmaSchedules.VariancePreserving(steps, betaD, betaMin, epsS));
 }
 
-[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "SDTurboScheduler")]
+[Node(Category = "model/sampling/schedulers", DisplayName = "SDTurboScheduler")]
 public sealed class SDTurboScheduler
 {
     public Sigmas Execute(ModelHandle model, [Input(Min = 1, Max = 10)] int steps = 1, [Input(Min = 0, Max = 1, Step = 0.01)] float denoise = 1f) =>
         new(SigmaSchedules.SdTurbo(model.Checkpoint.Sigmas, steps, denoise));
 }
 
-[Node(Category = "sampling/custom_sampling/sigmas", DisplayName = "SplitSigmas")]
+[Node(Category = "model/sampling/sigmas", DisplayName = "SplitSigmas")]
 public sealed class SplitSigmas
 {
     /// <summary>Splits at step <paramref name="step"/>: high is sigmas[0..step], low is sigmas[step..] (they share the sigma at the split).</summary>
@@ -118,7 +118,7 @@ public sealed class SplitSigmas
     }
 }
 
-[Node(Category = "sampling/custom_sampling/sigmas", DisplayName = "SplitSigmasDenoise")]
+[Node(Category = "model/sampling/sigmas", DisplayName = "SplitSigmasDenoise")]
 public sealed class SplitSigmasDenoise
 {
     /// <summary>Splits so the low part holds the last <c>denoise</c> share of the steps (an image-to-image run uses it); the high part is what remains before it.</summary>
@@ -130,7 +130,7 @@ public sealed class SplitSigmasDenoise
     }
 }
 
-[Node(Category = "sampling/custom_sampling/sigmas", DisplayName = "FlipSigmas")]
+[Node(Category = "model/sampling/sigmas", DisplayName = "FlipSigmas")]
 public sealed class FlipSigmas
 {
     /// <summary>Reverses the schedule (to run it upwards, for inversion); a leading 0 becomes a tiny sigma so the first step is defined.</summary>
@@ -143,7 +143,7 @@ public sealed class FlipSigmas
     }
 }
 
-[Node(Category = "sampling/custom_sampling/sigmas", DisplayName = "SetFirstSigma")]
+[Node(Category = "model/sampling/sigmas", DisplayName = "SetFirstSigma")]
 public sealed class SetFirstSigma
 {
     public Sigmas Execute(Sigmas sigmas, [Input(Min = 0, Max = 20000, Step = 0.001)] float sigma = 136f)
@@ -154,7 +154,7 @@ public sealed class SetFirstSigma
     }
 }
 
-[Node(Category = "sampling/custom_sampling", DisplayName = "SamplerCustom")]
+[Node(Category = "model/sampling/custom", DisplayName = "SamplerCustom")]
 public sealed class SamplerCustom
 {
     /// <summary>
@@ -183,34 +183,34 @@ public sealed record NoiseChoice(long Seed, bool Enabled);
 [Socket("GUIDER")]
 public sealed record GuiderChoice(ModelHandle Model, Conditioning Positive, Conditioning Negative, float Cfg);
 
-[Node(Category = "sampling/custom_sampling/noise", DisplayName = "RandomNoise")]
+[Node(Category = "model/sampling/noise", DisplayName = "RandomNoise")]
 public sealed class RandomNoise
 {
     public NoiseChoice Execute(long noiseSeed = 0) => new(noiseSeed, true);
 }
 
-[Node(Category = "sampling/custom_sampling/noise", DisplayName = "DisableNoise")]
+[Node(Category = "model/sampling/noise", DisplayName = "DisableNoise")]
 public sealed class DisableNoise
 {
     /// <summary>No fresh noise: the run continues from the latent it is given (what a second pass of a split schedule wants).</summary>
     public NoiseChoice Execute() => new(0, false);
 }
 
-[Node(Category = "sampling/custom_sampling/guiders", DisplayName = "BasicGuider")]
+[Node(Category = "model/sampling/guiders", DisplayName = "Basic Guider")]
 public sealed class BasicGuider
 {
     /// <summary>Guidance with the prompt alone (no negative prompt, cfg 1): what distilled models like SD-Turbo and FLUX expect.</summary>
     public GuiderChoice Execute(ModelHandle model, Conditioning conditioning) => new(model, conditioning, conditioning, 1f);
 }
 
-[Node(Category = "sampling/custom_sampling/guiders", DisplayName = "CFGGuider")]
+[Node(Category = "model/sampling/guiders", DisplayName = "CFG Guider")]
 public sealed class CFGGuider
 {
     public GuiderChoice Execute(ModelHandle model, Conditioning positive, Conditioning negative, [Input(Min = 0, Max = 100, Step = 0.1)] float cfg = 8f) =>
         new(model, positive, negative, cfg);
 }
 
-[Node(Category = "sampling/custom_sampling", DisplayName = "SamplerCustomAdvanced")]
+[Node(Category = "model/sampling/custom", DisplayName = "SamplerCustomAdvanced")]
 public sealed class SamplerCustomAdvanced
 {
     /// <summary>
@@ -226,7 +226,7 @@ public sealed class SamplerCustomAdvanced
     }
 }
 
-[Node(Category = "sampling/custom_sampling/schedulers", DisplayName = "BetaSamplingScheduler")]
+[Node(Category = "model/sampling/schedulers", DisplayName = "BetaSamplingScheduler")]
 public sealed class BetaSamplingScheduler
 {
     public Sigmas Execute(ModelHandle model, [Input(Min = 1, Max = 10000)] int steps = 20, [Input(Min = 0, Max = 50, Step = 0.01)] float alpha = 0.6f, [Input(Min = 0, Max = 50, Step = 0.01)] float beta = 0.6f) =>

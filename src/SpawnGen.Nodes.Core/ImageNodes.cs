@@ -45,7 +45,7 @@ public sealed class LoadImage
     }
 }
 
-[Node(Category = "mask", DisplayName = "Load Image (as Mask)")]
+[Node(Category = "image", DisplayName = "Load Image (as Mask)")]
 public sealed class LoadImageMask
 {
     public static string[] ImageNames() => InputFiles.List();

@@ -12,7 +12,7 @@ public sealed class LoadAudio
         WavFile.Decode(await InputFiles.Store.ReadAsync(audio));
 }
 
-[Node(Category = "audio", DisplayName = "Save Audio", IsOutput = true)]
+[Node(Category = "audio", DisplayName = "Save Audio (FLAC) (DEPRECATED)", IsOutput = true)]
 public sealed class SaveAudio
 {
     /// <summary>

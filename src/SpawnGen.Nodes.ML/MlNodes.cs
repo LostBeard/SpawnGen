@@ -9,7 +9,7 @@ using SpawnGen.Nodes.Core;
 
 namespace SpawnGen.Nodes.ML;
 
-[Node(Category = "loaders", DisplayName = "Load Checkpoint")]
+[Node(Category = "model/loaders", DisplayName = "Load Checkpoint")]
 public sealed class CheckpointLoaderSimple
 {
     public static string[] CheckpointNames() => MlRuntime.KnownCheckpoints.Keys.ToArray();
@@ -34,7 +34,7 @@ public sealed class CheckpointLoaderSimple
     }
 }
 
-[Node(Category = "conditioning", DisplayName = "CLIP Text Encode (Prompt)")]
+[Node(Category = "model/conditioning", DisplayName = "CLIP Text Encode (Prompt)")]
 public sealed class CLIPTextEncode
 {
     /// <summary>
@@ -85,7 +85,7 @@ public sealed class CLIPTextEncode
     }
 }
 
-[Node(Category = "latent", DisplayName = "VAE Decode")]
+[Node(Category = "model/latent", DisplayName = "VAE Decode")]
 public sealed class VAEDecode
 {
     public async Task<ImageBatch> ExecuteAsync(LatentBatch samples, VaeHandle vae, NodeContext context, IServiceProvider services)
@@ -138,7 +138,7 @@ public sealed class VAEDecode
     }
 }
 
-[Node(Category = "latent", DisplayName = "VAE Encode")]
+[Node(Category = "model/latent", DisplayName = "VAE Encode")]
 public sealed class VAEEncode
 {
     public async Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, NodeContext context, IServiceProvider services)
@@ -179,7 +179,7 @@ public sealed class VAEEncode
 /// ComfyUI's tiled decode. The library's VAE already splits large pictures into overlapping tiles whose result matches the untiled decode exactly, so the
 /// tile settings are accepted for workflow compatibility and the decode is the same one VAE Decode does.
 /// </summary>
-[Node(Category = "_for_testing", DisplayName = "VAE Decode (Tiled)")]
+[Node(Category = "model/latent", DisplayName = "VAE Decode (Tiled)")]
 public sealed class VAEDecodeTiled
 {
     public Task<ImageBatch> ExecuteAsync(LatentBatch samples, VaeHandle vae, NodeContext context, IServiceProvider services,
@@ -189,7 +189,7 @@ public sealed class VAEDecodeTiled
 }
 
 /// <summary>ComfyUI's tiled encode; see <see cref="VAEDecodeTiled"/> for why the tile settings do not change the work.</summary>
-[Node(Category = "_for_testing", DisplayName = "VAE Encode (Tiled)")]
+[Node(Category = "model/latent", DisplayName = "VAE Encode (Tiled)")]
 public sealed class VAEEncodeTiled
 {
     public Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, NodeContext context, IServiceProvider services,
@@ -198,7 +198,7 @@ public sealed class VAEEncodeTiled
         new VAEEncode().ExecuteAsync(pixels, vae, context, services);
 }
 
-[Node(Category = "latent/inpaint", DisplayName = "VAE Encode (for Inpainting)")]
+[Node(Category = "model/latent", DisplayName = "VAE Encode (for Inpainting)")]
 public sealed class VAEEncodeForInpaint
 {
     /// <summary>

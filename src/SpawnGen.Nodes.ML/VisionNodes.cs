@@ -47,7 +47,7 @@ internal static class Rgba
     static int Byte(float v) => Math.Clamp((int)MathF.Round(v * 255f), 0, 255);
 }
 
-[Node(Category = "loaders", DisplayName = "Load Upscale Model")]
+[Node(Category = "model/loaders", DisplayName = "Load Upscale Model")]
 public sealed class UpscaleModelLoader
 {
     /// <summary>The upscalers the library can run, by the name the node shows.</summary>
@@ -91,7 +91,7 @@ public sealed class ImageUpscaleWithModel
     }
 }
 
-[Node(Category = "image/preprocessors", DisplayName = "Remove Background")]
+[Node(Category = "image/background removal", DisplayName = "Remove Background")]
 public sealed class RemoveBackground
 {
     const string Repo = "briaai/RMBG-1.4", File = "onnx/model.onnx";

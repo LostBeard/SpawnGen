@@ -73,8 +73,7 @@ public class ComfyImageNodeTests
         Assert.That(W("PorterDuffImageComposite", "mode").ResolveOptions(), Has.Count.EqualTo(18).And.Contains("SRC_OVER"));
         Assert.That(W("PorterDuffImageComposite", "mode").Default, Is.EqualTo("DST"));
         Assert.That(W("ImageColorSpace", "source").ResolveOptions(), Is.EqualTo(new[] { "sRGB", "HDR", "HDR PQ", "linear", "HDR LogC3", "HDR ACEScct" }));
-        Assert.That((W("Canny", "low_threshold").Default, W("Canny", "high_threshold").Default), Is.EqualTo((0.4f, 0.8f)).Using<(object?, object?)>((a, b) =>
-            Math.Abs(Convert.ToDouble(a.Item1) - Convert.ToDouble(b.Item1)) < 1e-6 && Math.Abs(Convert.ToDouble(a.Item2) - Convert.ToDouble(b.Item2)) < 1e-6));
+        Assert.That((W("Canny", "low_threshold").Default, W("Canny", "high_threshold").Default), Is.EqualTo(((object?)0.4, (object?)0.8)), "ComfyUI's decimal defaults, not the float parameter widened");
         Assert.That(W("Morphology", "operation").Default, Is.EqualTo("erode"));
         Assert.That((W("ImageCropToMask", "width").Min, W("ImageCropToMask", "width").Max, W("ImageCropToMask", "width").Step), Is.EqualTo(((double?)64, (double?)4096, (double?)8)));
         Assert.That(W("ImageCropToMask", "background").Default, Is.EqualTo("#000000"));

@@ -125,20 +125,20 @@ public sealed class ImageScaleToTotalPixels
     }
 }
 
-[Node(Category = "image", DisplayName = "Invert Image")]
+[Node(Category = "image/color", DisplayName = "Invert Image Colors")]
 public sealed class ImageInvert
 {
     public ImageBatch Execute(ImageBatch image) => Pixels.Map(image, f => f.Select(v => 1f - v).ToArray());
 }
 
-[Node("ImageBatch", Category = "image", DisplayName = "Batch Images")]
+[Node("ImageBatch", Category = "image/batch", DisplayName = "Batch Images (DEPRECATED)")]
 public sealed class ImageBatchNode
 {
     /// <summary>Stacks two batches; an RGB picture next to an RGBA one gets full alpha, and a picture of another size is scaled to the first's (bilinear, centred crop), like ComfyUI.</summary>
     public ImageBatch Execute(ImageBatch image1, ImageBatch image2) => Batching.Images([image1, image2]);
 }
 
-[Node(Category = "image/transform", DisplayName = "Image Crop")]
+[Node(Category = "image/transform", DisplayName = "Crop Image (DEPRECATED)")]
 public sealed class ImageCrop
 {
     public ImageBatch Execute(ImageBatch image,
@@ -188,7 +188,7 @@ public sealed class EmptyImage
     }
 }
 
-[Node(Category = "image/postprocessing", DisplayName = "Image Blend")]
+[Node(Category = "image/filters", DisplayName = "Blend Images")]
 public sealed class ImageBlend
 {
     public static string[] Modes() => ["normal", "multiply", "screen", "overlay", "soft_light", "difference"];
@@ -219,14 +219,14 @@ public sealed class ImageBlend
     }
 }
 
-[Node(Category = "image/postprocessing", DisplayName = "Image Blur")]
+[Node(Category = "image/filters", DisplayName = "Blur Image")]
 public sealed class ImageBlur
 {
     public ImageBatch Execute(ImageBatch image, [Input(Min = 1, Max = 31)] int blurRadius = 1, [Input(Min = 0.1, Max = 10, Step = 0.1)] float sigma = 1f) =>
         Pixels.Map(image, f => Pixels.Gaussian(f, image.Width, image.Height, image.Channels, blurRadius, sigma));
 }
 
-[Node(Category = "image/postprocessing", DisplayName = "Image Sharpen")]
+[Node(Category = "image/filters", DisplayName = "Sharpen Image")]
 public sealed class ImageSharpen
 {
     /// <summary>ComfyUI's unsharp mask: <c>image + 10 * alpha * (image - blur)</c>, clamped.</summary>

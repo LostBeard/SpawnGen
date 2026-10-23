@@ -3,7 +3,7 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.ML;
 
-[Node(Category = "sampling", DisplayName = "KSampler")]
+[Node(Category = "model/sampling", DisplayName = "KSampler")]
 public sealed class KSampler
 {
     public static string[] SamplerNames() => Samplers.Names;
@@ -27,7 +27,7 @@ public sealed class KSampler
     }
 }
 
-[Node(Category = "advanced/model", DisplayName = "RescaleCFG")]
+[Node(Category = "model/patch", DisplayName = "RescaleCFG")]
 public sealed class RescaleCFG
 {
     /// <summary>
@@ -38,7 +38,7 @@ public sealed class RescaleCFG
         new(model.Checkpoint) { RescaleCfg = multiplier, PreCfg = model.PreCfg };
 }
 
-[Node(Category = "sampling", DisplayName = "KSampler (Advanced)")]
+[Node(Category = "model/sampling", DisplayName = "KSampler (Advanced)")]
 public sealed class KSamplerAdvanced
 {
     public static string[] Toggle() => ["enable", "disable"];

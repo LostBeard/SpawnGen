@@ -47,7 +47,7 @@ public sealed class Conditioning(IReadOnlyList<CondEntry> entries)
     public Conditioning Map(Func<CondEntry, CondEntry> change) => new([.. Entries.Select(change)]);
 }
 
-[Node(Category = "conditioning", DisplayName = "Conditioning (Combine)")]
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Combine)")]
 public sealed class ConditioningCombine
 {
     /// <summary>Both conditionings at once: the sampler blends their predictions by area, so two prompts can steer different regions or share one.</summary>
@@ -55,7 +55,7 @@ public sealed class ConditioningCombine
         new([.. conditioning1.Entries, .. conditioning2.Entries]);
 }
 
-[Node(Category = "conditioning", DisplayName = "Conditioning (Concat)")]
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Concat)")]
 public sealed class ConditioningConcat
 {
     /// <summary>Appends the first entry of <c>conditioning_from</c> to every entry of <c>conditioning_to</c> along the token axis (a longer prompt).</summary>
@@ -71,7 +71,7 @@ public sealed class ConditioningConcat
     }
 }
 
-[Node(Category = "conditioning", DisplayName = "ConditioningAverage")]
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Average)")]
 public sealed class ConditioningAverage
 {
     /// <summary>Blends two prompts' embeddings: <c>to * strength + from * (1 - strength)</c> (the first token set of <c>from</c> is padded or cut to the length of <c>to</c>).</summary>
@@ -91,13 +91,13 @@ public sealed class ConditioningAverage
     }
 }
 
-[Node(Category = "conditioning", DisplayName = "ConditioningZeroOut")]
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning Zero Out")]
 public sealed class ConditioningZeroOut
 {
     public Conditioning Execute(Conditioning conditioning) => conditioning.Map(e => e with { Embeddings = new float[e.Embeddings.Length] });
 }
 
-[Node(Category = "conditioning", DisplayName = "Conditioning (Set Area)")]
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Set Area)")]
 public sealed class ConditioningSetArea
 {
     /// <summary>Restricts the prompt to a rectangle (in pixels; the latent works in 8-pixel cells).</summary>
@@ -106,7 +106,7 @@ public sealed class ConditioningSetArea
         conditioning.Map(e => e with { Area = new CondArea(x / 8, y / 8, Math.Max(1, width / 8), Math.Max(1, height / 8)), Strength = strength });
 }
 
-[Node(Category = "conditioning", DisplayName = "Conditioning (Set Area with Percentage)")]
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Set Area with Percentage)")]
 public sealed class ConditioningSetAreaPercentage
 {
     /// <summary>Like Set Area, but the rectangle is given as fractions of the picture (resolved against the latent when sampling).</summary>
@@ -115,7 +115,7 @@ public sealed class ConditioningSetAreaPercentage
         conditioning.Map(e => e with { Area = new CondArea(x, y, width, height, Fractional: true), Strength = strength });
 }
 
-[Node(Category = "conditioning", DisplayName = "Conditioning (Set Mask)")]
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Set Mask)")]
 public sealed class ConditioningSetMask
 {
     public static string[] AreaModes() => ["default", "mask bounds"];
@@ -125,14 +125,14 @@ public sealed class ConditioningSetMask
         conditioning.Map(e => e with { Mask = mask, Strength = strength });
 }
 
-[Node(Category = "advanced/conditioning", DisplayName = "ConditioningSetTimestepRange")]
+[Node(Category = "model/conditioning/transform", DisplayName = "ConditioningSetTimestepRange")]
 public sealed class ConditioningSetTimestepRange
 {
     public Conditioning Execute(Conditioning conditioning, [Input(Min = 0, Max = 1, Step = 0.001)] float start = 0f, [Input(Min = 0, Max = 1, Step = 0.001)] float end = 1f) =>
         conditioning.Map(e => e with { StartPercent = start, EndPercent = end });
 }
 
-[Node(Category = "conditioning", DisplayName = "ConditioningSetAreaStrength")]
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Set Area Strength)")]
 public sealed class ConditioningSetAreaStrength
 {
     /// <summary>Sets how strongly every entry of the conditioning counts where it applies (its area or mask weight is multiplied by it).</summary>

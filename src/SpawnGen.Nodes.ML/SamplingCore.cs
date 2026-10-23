@@ -9,7 +9,7 @@ using SpawnGen.Nodes.Core;
 
 namespace SpawnGen.Nodes.ML;
 
-internal sealed record SamplingSettings(long Seed, float Cfg, string Sampler, bool AddNoise = true, float RescaleCfg = 0f);
+internal sealed record SamplingSettings(long Seed, float Cfg, string Sampler, bool AddNoise = true, float RescaleCfg = 0f, IReadOnlyList<PreCfgFunction>? PreCfg = null);
 
 /// <summary>
 /// One sampling run over a latent batch: noise it to the first sigma, then step down the given sigmas with the chosen sampler, asking the UNet for
@@ -45,8 +45,8 @@ internal static class SamplingCore
             var pos = positive.Entries.Select(e => (Entry: e, Tensor: Upload(e))).ToList();
             var neg = negative.Entries.Select(e => (Entry: e, Tensor: Upload(e))).ToList();
 
-            var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, SameNoise = latent.SameNoise };
-            var denoisedResult = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, SameNoise = latent.SameNoise };
+            var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };
+            var denoisedResult = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };
             bool maxDenoise = MathF.Abs(sigmas[0] - ckpt.Sigmas.SigmaMax) <= 1e-5f * ckpt.Sigmas.SigmaMax || sigmas[0] > ckpt.Sigmas.SigmaMax;
 
             for (int b = 0; b < latent.Batch; b++)
@@ -56,7 +56,8 @@ internal static class SamplingCore
                 var mask = ResizedMask(latent.NoiseMask, b, h, w);
 
                 // Start: the latent plus noise at the first sigma. From the top of the schedule the noise is scaled so the model's input has unit variance.
-                int noiseIndex = latent.SameNoise ? 0 : b;
+                // ComfyUI's batch_index picks which of the seed's noises a picture gets (Get Latent From Batch keeps a picture's own; "fixed" seed behaviour shares one).
+                int noiseIndex = latent.BatchIndex is { } batchIndex && b < batchIndex.Length ? batchIndex[b] : b;
                 var noise = settings.AddNoise ? DiffusionScheduler.GenerateNoise(Checkpoint.LatentChannels, h, w, unchecked((int)(settings.Seed + noiseIndex))) : new float[perImage];
                 float noiseScale = maxDenoise ? MathF.Sqrt(1f + sigmas[0] * sigmas[0]) : sigmas[0];
                 var x = new float[perImage];
@@ -72,14 +73,15 @@ internal static class SamplingCore
 
                     // Run progress as the share of sigma range covered, for the timestep ranges of conditioning entries.
                     var cond = await GuidedAsync(pos, scaled, shape, timestep, sigma, ckpt, acc, h, w);
+                    float[]? uncondEps = settings.Cfg != 1f ? await GuidedAsync(neg, scaled, shape, timestep, sigma, ckpt, acc, h, w) : null;
+                    // Model patches that work on the two predictions before cfg mixes them (Latent Apply Operation CFG).
+                    if (settings.PreCfg is { Count: > 0 } preCfg)
+                        (cond, uncondEps) = PreCfg.Apply(preCfg, sample, cond, uncondEps, sigma, settings.Cfg, b, Checkpoint.LatentChannels, h, w);
                     float[] eps = cond;
-                    float[]? uncondEps = null;
-                    if (settings.Cfg != 1f)
+                    if (uncondEps is not null)
                     {
-                        var uncond = await GuidedAsync(neg, scaled, shape, timestep, sigma, ckpt, acc, h, w);
-                        uncondEps = uncond;
                         eps = new float[perImage];
-                        for (int i = 0; i < perImage; i++) eps[i] = uncond[i] + settings.Cfg * (cond[i] - uncond[i]);
+                        for (int i = 0; i < perImage; i++) eps[i] = uncondEps[i] + settings.Cfg * (cond[i] - uncondEps[i]);
                     }
                     var denoised = new float[perImage];
                     if (settings.RescaleCfg > 0f && uncondEps is not null) RescaledDenoised(sample, cond, uncondEps, settings.Cfg, sigma, settings.RescaleCfg, denoised);

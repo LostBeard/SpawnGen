@@ -44,8 +44,8 @@ public class EditorDocumentTests
         var doc = new EditorDocument(Fixtures.Registry());
         var node = doc.AddNode("EmptyLatentImage", 10, 20);
         Assert.That((node.X, node.Y), Is.EqualTo((10.0, 20.0)));
-        Assert.That(node.Widgets["width"], Is.EqualTo(512L));
-        Assert.That(node.Widgets["height"], Is.EqualTo(512L));
+        Assert.That(node.Widgets["width"], Is.EqualTo(1024L), "ComfyUI's default");
+        Assert.That(node.Widgets["height"], Is.EqualTo(1024L));
         Assert.That(node.Widgets["batch_size"], Is.EqualTo(1L));
     }
 

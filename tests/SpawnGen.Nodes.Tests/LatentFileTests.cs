@@ -118,9 +118,13 @@ public class LatentFileTests
         var mask = MaskBatch.Filled(2, 2, 2, 1f);
         var source = new LatentBatch(2, 4, 2, 2) { NoiseMask = mask };
         var fixedNoise = new LatentBatchSeedBehavior().Execute(source, "fixed");
-        Assert.That(fixedNoise.SameNoise, Is.True);
+        Assert.That(fixedNoise.BatchIndex, Is.EqualTo(new[] { 0, 0 }), "ComfyUI: batch_index = [0] * batch");
         Assert.That(fixedNoise.NoiseMask, Is.SameAs(mask));
-        Assert.That(new LatentBatchSeedBehavior().Execute(fixedNoise, "random").SameNoise, Is.False);
+        Assert.That(new LatentBatchSeedBehavior().Execute(fixedNoise, "random").BatchIndex, Is.Null, "random drops batch_index");
+        // A picture taken from a batch keeps its index, and "fixed" spreads that one: [batch_index[0]] * batch.
+        var picked = new LatentFromBatch().Execute(new LatentBatch(4, 4, 2, 2), 2, 2);
+        Assert.That(picked.BatchIndex, Is.EqualTo(new[] { 2, 3 }));
+        Assert.That(new LatentBatchSeedBehavior().Execute(picked, "fixed").BatchIndex, Is.EqualTo(new[] { 2, 2 }));
     }
 
     [Test]

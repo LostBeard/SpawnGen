@@ -85,7 +85,7 @@ public static class Safetensors
     }
 }
 
-[Node(Category = "latent", DisplayName = "Load Latent")]
+[Node(Category = "model/latent", DisplayName = "Load Latent")]
 public sealed class LoadLatent
 {
     public static string[] LatentNames() => [.. InputFiles.Store.List(n => n.EndsWith(".latent", StringComparison.OrdinalIgnoreCase))];
@@ -100,24 +100,30 @@ public sealed class LoadLatent
         if (t.Shape.Length != 4) throw new InvalidDataException($"The latent has {t.Shape.Length} dimensions; a picture latent has 4 (batch, channels, height, width).");
         var data = Safetensors.ToFloats(t);
         if (!tensors.ContainsKey("latent_format_version_0"))
-            for (int i = 0; i < data.Length; i++) data[i] *= 1f / 0.18215f; // the earliest files stored unscaled latents
+        {
+            float multiplier = (float)(1.0 / 0.18215); // the earliest files stored unscaled latents (ComfyUI's Python float, applied in float32)
+            for (int i = 0; i < data.Length; i++) data[i] *= multiplier;
+        }
         return new LatentBatch(t.Shape[0], t.Shape[1], t.Shape[2], t.Shape[3], data);
     }
 }
 
-[Node(Category = "latent", DisplayName = "Save Latent", IsOutput = true)]
+[Node(Category = "model/latent", DisplayName = "Save Latent", IsOutput = true)]
 public sealed class SaveLatent
 {
-    /// <summary>Writes the latent as a <c>.latent</c> file (safetensors, ComfyUI's layout) in the output folder: <c>prefix_00001_.latent</c>.</summary>
-    public async Task<UiOutput> ExecuteAsync(LatentBatch samples, IServiceProvider services, string filenamePrefix = "latents/ComfyUI")
+    /// <summary>
+    /// Writes the latent as a <c>.latent</c> file (safetensors, ComfyUI's layout, with the prompt and the workflow as metadata) in the output folder:
+    /// <c>prefix_00001_.latent</c>. The latent also passes through to the output, as in ComfyUI.
+    /// </summary>
+    public async Task<(LatentBatch Samples, UiOutput Ui)> ExecuteAsync(LatentBatch samples, NodeContext context, IServiceProvider services, string filenamePrefix = "latents/ComfyUI")
     {
-        var file = await Results.For(services).SaveAsync("output", filenamePrefix, Encode(samples), "latent");
-        return new UiOutput("latents", new object[] { file });
+        var file = await Results.For(services).SaveAsync("output", filenamePrefix, Encode(samples, Results.Metadata(context)), "latent");
+        return (samples, new UiOutput("latents", new object[] { file }));
     }
 
-    public static byte[] Encode(LatentBatch samples) => Safetensors.Write(
+    public static byte[] Encode(LatentBatch samples, IReadOnlyDictionary<string, string>? metadata = null) => Safetensors.Write(
     [
         ("latent_tensor", [samples.Batch, samples.Channels, samples.Height, samples.Width], samples.Data),
         ("latent_format_version_0", [0], []),
-    ]);
+    ], metadata);
 }

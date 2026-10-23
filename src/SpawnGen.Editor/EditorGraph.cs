@@ -38,11 +38,14 @@ public sealed class EditorNode
     public IReadOnlyList<string> ResultModels { get; set; } = [];
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
+    /// <summary>ComfyUI's per-node <c>properties</c> object ("Node name for S&amp;R", cnr_id, ver, ...): kept as read so a saved workflow loses nothing.</summary>
+    public System.Text.Json.Nodes.JsonObject Properties { get; init; } = [];
 
     public EditorNode Clone(int? newId = null) => new()
     {
         Id = newId ?? Id, ClassType = ClassType, Title = Title, Color = Color, BgColor = BgColor, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Pinned = Pinned, Mode = Mode,
         Widgets = new Dictionary<string, object?>(Widgets, StringComparer.Ordinal),
+        Properties = (System.Text.Json.Nodes.JsonObject)Properties.DeepClone(),
     };
 }
 

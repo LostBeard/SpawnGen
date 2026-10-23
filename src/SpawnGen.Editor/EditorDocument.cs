@@ -240,6 +240,16 @@ public sealed class EditorDocument(NodeRegistry registry)
         if (node.Pinned != pinned) Run(new SetNodePropertyCommand<bool>(nodeId, "pinned", node.Pinned, pinned, (n, v) => n.Pinned = v));
     }
 
+    /// <summary>Sets one entry of the node's <see cref="EditorNode.Properties"/> to a string (null removes it). One undo step.</summary>
+    public void SetNodeProperty(int nodeId, string key, string? value)
+    {
+        var node = Graph.GetNode(nodeId);
+        var old = node.Properties[key]?.DeepClone();
+        if (value is null ? old is null : old is System.Text.Json.Nodes.JsonValue v && v.TryGetValue<string>(out var s) && s == value) return;
+        Run(new SetNodePropertyCommand<System.Text.Json.Nodes.JsonNode?>(nodeId, "properties." + key, old, value is null ? null : System.Text.Json.Nodes.JsonValue.Create(value),
+            (n, v) => { if (v is null) n.Properties.Remove(key); else n.Properties[key] = v.DeepClone(); }));
+    }
+
     public void SetWidth(int nodeId, double? width)
     {
         var node = Graph.GetNode(nodeId);

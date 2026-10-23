@@ -1,0 +1,290 @@
+@using System.Globalization
+@using System.Text.Json.Nodes
+@using SpawnGen.Editor
+@using SpawnGen.Engine.Nodes
+
+@* The properties panel (ComfyUI's node Properties Panel): everything about the selected node as a form. Every change is one undo step. *@
+<div class="props @(BesideHistory ? "beside" : "")">
+    <div class="props-head">
+        <span>Properties</span>
+        <button title="Close (I)" @onclick="OnClose">&times;</button>
+    </div>
+    <div class="props-body">
+        @{ var selected = View.SelectedNodes.Where(id => Doc.Graph.FindNode(id) is not null).OrderBy(id => id).ToList(); }
+        @if (selected.Count == 0)
+        {
+            <div class="props-none">Select a node to see and change its properties. Select several to change them together.</div>
+        }
+        else if (selected.Count > 1)
+        {
+            var nodes = selected.Select(Doc.Graph.GetNode).ToList();
+            <div class="props-title">@nodes.Count nodes selected</div>
+            <label>Mode
+                <select @onchange="e => ForAll(nodes, n => Doc.SetMode(n.Id, ParseMode(e.Value)))">
+                    @if (nodes.Select(n => n.Mode).Distinct().Count() > 1)
+                    {
+                        <option value="" selected>(mixed)</option>
+                    }
+                    @foreach (var (mode, label) in Modes)
+                    {
+                        <option value="@((int)mode)" selected="@(nodes.All(n => n.Mode == mode))">@label</option>
+                    }
+                </select>
+            </label>
+            <label>Colour
+                <select @onchange="e => ForAll(nodes, n => SetColour(n.Id, e.Value?.ToString()))">
+                    @ColourOptions(nodes)
+                </select>
+            </label>
+            <label class="row"><input type="checkbox" checked="@nodes.All(n => n.Pinned)" @onchange="e => ForAll(nodes, n => Doc.SetPinned(n.Id, e.Value is true))" /> Pinned</label>
+        }
+        else
+        {
+            var node = Doc.Graph.GetNode(selected[0]);
+            var schema = Doc.Registry.GetSchema(node.ClassType);
+            <div @key="node.Id">
+                <div class="props-section">Node</div>
+                <label>Title
+                    <input type="text" value="@(node.Title ?? schema?.DisplayName ?? node.ClassType)" placeholder="@(schema?.DisplayName ?? node.ClassType)"
+                           @onchange="e => Commit(() => Doc.SetTitle(node.Id, Blank(e.Value?.ToString()) ? null : e.Value!.ToString()!.Trim()))" />
+                </label>
+                <div class="props-kv"><span>Type</span><span title="@node.ClassType">@(schema?.DisplayName ?? "not installed") <code>@node.ClassType</code></span></div>
+                <div class="props-kv"><span>Id</span><span>#@node.Id</span></div>
+                @if (schema is not null)
+                {
+                    <div class="props-kv"><span>Category</span><span>@schema.Category</span></div>
+                    @if (!string.IsNullOrWhiteSpace(schema.Description))
+                    {
+                        <div class="props-desc">@schema.Description</div>
+                    }
+                }
+                <label>Mode
+                    <select @onchange="e => Commit(() => Doc.SetMode(node.Id, ParseMode(e.Value)))">
+                        @foreach (var (mode, label) in Modes)
+                        {
+                            <option value="@((int)mode)" selected="@(node.Mode == mode)">@label</option>
+                        }
+                    </select>
+                </label>
+                <label>Colour
+                    <select @onchange="e => Commit(() => SetColour(node.Id, e.Value?.ToString()))">
+                        @ColourOptions([node])
+                    </select>
+                </label>
+                <label class="row"><input type="checkbox" checked="@node.Pinned" @onchange="e => Commit(() => Doc.SetPinned(node.Id, e.Value is true))" /> Pinned</label>
+                <label class="row"><input type="checkbox" checked="@node.Collapsed" @onchange="e => Commit(() => Doc.SetCollapsed(node.Id, e.Value is true))" /> Collapsed</label>
+                <label title="The name %Name.widget% in a file name prefix finds this node by (ComfyUI's search and replace)">Name for S&amp;R
+                    <input type="text" value="@GraphCompiler.SearchReplaceName(node)"
+                           @onchange="e => Commit(() => Doc.SetNodeProperty(node.Id, ComfyWorkflow.NameForSearchReplace, Blank(e.Value?.ToString()) ? null : e.Value!.ToString()!.Trim()))" />
+                </label>
+
+                @if (schema is not null && schema.Inputs.Any(i => i.Widget is not null))
+                {
+                    <div class="props-section">Parameters</div>
+                    @foreach (var input in schema.Inputs.Where(i => i.Widget is not null))
+                    {
+                        var name = input.Name;
+                        var spec = input.Widget!;
+                        var linked = Doc.Graph.LinkInto(node.Id, name) is not null;
+                        @Widget(node, name, spec, linked, input.Tooltip)
+                        @if (ControlAfterGenerate.HasControl(input))
+                        {
+                            @Widget(node, ControlAfterGenerate.Name, ControlAfterGenerate.Spec, false, "What happens to the seed after each queue")
+                        }
+                    }
+                }
+
+                @if (schema is not null && schema.Inputs.Any(i => i.Widget is null || Doc.Graph.LinkInto(node.Id, i.Name) is not null))
+                {
+                    <div class="props-section">Inputs</div>
+                    @foreach (var input in schema.Inputs.Where(i => i.Widget is null || Doc.Graph.LinkInto(node.Id, i.Name) is not null))
+                    {
+                        var link = Doc.Graph.LinkInto(node.Id, input.Name);
+                        <div class="props-kv">
+                            <span>@input.Name <i>@input.Type.Name</i></span>
+                            @if (link is not null && Doc.Graph.FindNode(link.FromNode) is { } from)
+                            {
+                                var fromId = from.Id;
+                                var source = SourceText(from, link.FromOutput);
+                                <button class="link" title="Go to @source" @onclick="() => Reveal(fromId)">@source</button>
+                            }
+                            else
+                            {
+                                <span class="@(input.Required ? "missing" : "dim")">@(input.Required ? "not connected" : "optional")</span>
+                            }
+                        </div>
+                    }
+                }
+
+                @if (schema is not null && schema.Outputs.Count > 0)
+                {
+                    <div class="props-section">Outputs</div>
+                    @for (int o = 0; o < schema.Outputs.Count; o++)
+                    {
+                        var targets = Doc.Graph.LinksFrom(node.Id, o).Select(l => Doc.Graph.FindNode(l.ToNode)).OfType<EditorNode>().ToList();
+                        <div class="props-kv">
+                            <span>@schema.Outputs[o].Name <i>@schema.Outputs[o].Type.Name</i></span>
+                            <span>
+                                @if (targets.Count == 0)
+                                {
+                                    <span class="dim">not used</span>
+                                }
+                                @foreach (var t in targets)
+                                {
+                                    var toId = t.Id;
+                                    <button class="link" title="Go to @Label(t)" @onclick="() => Reveal(toId)">@Label(t)</button>
+                                }
+                            </span>
+                        </div>
+                    }
+                }
+
+                @{ var other = node.Properties.Where(p => p.Key != ComfyWorkflow.NameForSearchReplace).ToList(); }
+                @if (other.Count > 0)
+                {
+                    <div class="props-section">Other properties</div>
+                    @foreach (var p in other)
+                    {
+                        <div class="props-kv"><span>@p.Key</span><code>@(p.Value?.ToJsonString() ?? "null")</code></div>
+                    }
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EditorDocument Doc { get; set; } = default!;
+    [Parameter, EditorRequired] public EditorView View { get; set; } = default!;
+    [Parameter] public EventCallback OnClose { get; set; }
+    /// <summary>The history panel is open too: this panel moves left of it.</summary>
+    [Parameter] public bool BesideHistory { get; set; }
+    /// <summary>Reports what could not be applied (a number that is not one).</summary>
+    [Parameter] public Action<string>? Message { get; set; }
+
+    static readonly (NodeMode Mode, string Label)[] Modes = [(NodeMode.Always, "Always"), (NodeMode.Never, "Never (muted)"), (NodeMode.Bypass, "Bypass")];
+
+    static bool Blank(string? s) => string.IsNullOrWhiteSpace(s);
+
+    static NodeMode ParseMode(object? value) =>
+        int.TryParse(value?.ToString(), out var i) && Enum.IsDefined(typeof(NodeMode), i) ? (NodeMode)i : NodeMode.Always;
+
+    void Commit(Action edit)
+    {
+        edit();
+        Doc.EndGesture();
+    }
+
+    /// <summary>One change to several nodes is one undo step.</summary>
+    void ForAll(IReadOnlyList<EditorNode> nodes, Action<EditorNode> edit)
+    {
+        Doc.Group(() => { foreach (var n in nodes) edit(n); });
+        Doc.EndGesture();
+    }
+
+    void SetColour(int nodeId, string? name)
+    {
+        if (name == "default") Doc.SetNodeColor(nodeId, null, null);
+        else if (EditorGroup.NodePalette.FirstOrDefault(p => p.Name == name) is { Name: not null } p) Doc.SetNodeColor(nodeId, p.Color, p.BgColor);
+    }
+
+    RenderFragment ColourOptions(IReadOnlyList<EditorNode> nodes) => __builder =>
+    {
+        var current = nodes.Select(n => EditorGroup.NodePalette.FirstOrDefault(p => p.Color == n.Color && p.BgColor == n.BgColor).Name ?? (n.Color is null && n.BgColor is null ? "default" : "custom")).Distinct().ToList();
+        var one = current.Count == 1 ? current[0] : null;
+        if (one is null)
+        {
+            <option value="" selected>(mixed)</option>
+        }
+        else if (one == "custom")
+        {
+            <option value="" selected>custom</option>
+        }
+        <option value="default" selected="@(one == "default")">default</option>
+        foreach (var (name, _, _) in EditorGroup.NodePalette)
+        {
+            <option value="@name" selected="@(one == name)">@name</option>
+        }
+    };
+
+    RenderFragment Widget(EditorNode node, string name, WidgetSpec spec, bool linked, string? tooltip) => __builder =>
+    {
+        var value = node.Widgets.GetValueOrDefault(name) ?? spec.Default;
+        var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
+        <label class="@(spec.Multiline ? "multi" : spec.Kind == WidgetKind.Boolean ? "row" : "")" title="@tooltip">
+            @if (spec.Kind == WidgetKind.Boolean)
+            {
+                <input type="checkbox" checked="@(value is true)" disabled="@linked" @onchange="e => Commit(() => Doc.SetWidget(node.Id, name, e.Value is true))" />
+                @name
+            }
+            else
+            {
+                <span>@name@(linked ? " (linked)" : "")</span>
+                @if (linked)
+                {
+                    <span class="dim">set by its link</span>
+                }
+                else if (spec.Kind == WidgetKind.Combo)
+                {
+                    var options = spec.ResolveOptions();
+                    <select @onchange="e => SetText(node.Id, name, e.Value)">
+                        @if (!options.Contains(text))
+                        {
+                            <option value="@text" selected>@text</option>
+                        }
+                        @foreach (var o in options)
+                        {
+                            <option value="@o" selected="@(o == text)">@o</option>
+                        }
+                    </select>
+                }
+                else if (spec.Multiline)
+                {
+                    <textarea rows="4" value="@text" @onchange="e => SetText(node.Id, name, e.Value)"></textarea>
+                }
+                else if (spec.Kind is WidgetKind.Int or WidgetKind.Float)
+                {
+                    <input type="number" value="@text" step="@(spec.Step?.ToString(CultureInfo.InvariantCulture) ?? (spec.Kind == WidgetKind.Float ? "any" : "1"))"
+                           min="@spec.Min?.ToString(CultureInfo.InvariantCulture)" max="@spec.Max?.ToString(CultureInfo.InvariantCulture)"
+                           @onchange="e => SetNumber(node.Id, name, spec, e.Value?.ToString())" />
+                }
+                else
+                {
+                    <input type="text" value="@text" @onchange="e => SetText(node.Id, name, e.Value)" />
+                }
+            }
+        </label>
+    };
+
+    void SetText(int nodeId, string name, object? value) => Commit(() => Doc.SetWidget(nodeId, name, value?.ToString() ?? ""));
+
+    void SetNumber(int nodeId, string name, WidgetSpec spec, string? text)
+    {
+        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || double.IsNaN(v) || double.IsInfinity(v))
+        {
+            Message?.Invoke($"'{text}' is not a valid number.");
+            return;
+        }
+        if (spec.Min is { } min) v = Math.Max(v, min);
+        if (spec.Max is { } max) v = Math.Min(v, max);
+        Commit(() => Doc.SetWidget(nodeId, name, spec.Kind == WidgetKind.Int ? (object)(long)Math.Round(v) : v));
+    }
+
+    string Label(EditorNode n) => $"{n.Title ?? Doc.Registry.GetSchema(n.ClassType)?.DisplayName ?? n.ClassType} #{n.Id}";
+
+    /// <summary>The node a link comes from, and which of its outputs when it has more than one.</summary>
+    string SourceText(EditorNode n, int output)
+    {
+        var outputs = Doc.Registry.GetSchema(n.ClassType)?.Outputs;
+        return outputs is { Count: > 1 } ? $"{Label(n)} · {outputs.ElementAtOrDefault(output)?.Name ?? $"output {output}"}" : Label(n);
+    }
+
+    /// <summary>Selects another node and brings it to the middle of the view (the panel then shows it).</summary>
+    void Reveal(int nodeId)
+    {
+        var node = Doc.Graph.GetNode(nodeId);
+        View.SelectOnly(nodeId);
+        View.Viewport.CenterOn(View.Hits.Geometry(node).Bounds.Center, View.ScreenSize.X, View.ScreenSize.Y);
+        View.Invalidate();
+    }
+}

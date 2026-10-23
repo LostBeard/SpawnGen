@@ -71,8 +71,9 @@ public sealed class SaveImage
     {
         var store = Results.For(services);
         var saved = new List<object>();
+        filenamePrefix = SavePrefix.ComputeVars(filenamePrefix, images.Width, images.Height, DateTime.Now);
         for (int i = 0; i < images.Batch; i++)
-            saved.Add(await store.SaveAsync("output", filenamePrefix, PngWriter.Encode(images, i, Results.Metadata(context))));
+            saved.Add(await store.SaveAsync("output", filenamePrefix,PngWriter.Encode(images, i, Results.Metadata(context))));
         return new UiOutput("images", saved);
     }
 }

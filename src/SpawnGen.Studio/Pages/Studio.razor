@@ -27,6 +27,7 @@
         <span class="sep"></span>
         <button class="@(_libraryOpen ? "on" : "")" title="Node library: browse every node by category, click or drag one onto the canvas (N)" @onclick="() => { ToggleLibrary(); }">Nodes</button>
         <button class="@(_historyOpen ? "on" : "")" title="Queue and history: every run of this session with its pictures; load the workflow of a run back (H)" @onclick="ToggleHistory">History@(_history.Count > 0 ? $" ({_history.Count})" : "")</button>
+        <button class="@(_propsOpen ? "on" : "")" title="Properties of the selected node: title, mode, colour, every parameter and where its inputs come from (I)" @onclick="ToggleProperties">Properties</button>
         <button class="@(_modelsOpen ? "on" : "")" title="Models: what this engine has downloaded, what is downloading, free the space" @onclick="ToggleModels">Models</button>
         <button class="@(_settingsOpen ? "on" : "")" title="Settings: how links are drawn, snap to grid, minimap" @onclick="() => { _settingsOpen = !_settingsOpen; _studio?.Focus(); }">Settings</button>
         <button title="Add a node (double-click the canvas)" @onclick="() => OpenSearch(CenterWorld(), null)">Add node</button>
@@ -59,7 +60,8 @@
         </select>
         <label class="button" title="Upload a PNG or JPEG for Load Image nodes, a WAV for Load Audio, or a .latent for Load Latent">Upload<InputFile OnChange="OnUploadChosen" accept=".png,.jpg,.jpeg,.wav,.latent" hidden /></label>
         <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
-        <span class="status">@RunStatus()@_doc.Graph.Nodes.Count nodes, @_doc.Graph.Links.Count links, @((int)Math.Round(_view.Viewport.Scale * 100))%</span>
+        @{ var statusText = $"{RunStatus()}{_doc.Graph.Nodes.Count} nodes, {_doc.Graph.Links.Count} links, {(int)Math.Round(_view.Viewport.Scale * 100)}%"; }
+        <span class="status" title="@statusText">@statusText</span>
     </div>
 
     <div class="tabs" @onpointerdown="CloseMenus">
@@ -107,6 +109,11 @@
                     }
                 </div>
             </div>
+        }
+
+        @if (_propsOpen)
+        {
+            <PropertiesPanel Doc="_doc" View="_view" BesideHistory="_historyOpen" Message="ShowMessage" OnClose="ToggleProperties" />
         }
 
         @if (_historyOpen)
@@ -861,6 +868,7 @@
         {
             var node = _doc.Graph.GetNode(hit.NodeId);
             items.Add(new("Rename", () => OnTitleEdit(hit.NodeId)));
+            items.Add(new("Properties Panel  (I)", () => { _propsOpen = true; InvokeAsync(StateHasChanged); }));
             if (SubgraphLibrary.Get(node.ClassType) is not null) items.Add(new("Unpack Subgraph  (Ctrl+Shift+E)", () => _view.ToggleSubgraph()));
             else items.Add(new(_view.SelectedNodes.Count > 1 ? "Convert Selection to Subgraph  (Ctrl+Shift+E)" : "Convert to Subgraph  (Ctrl+Shift+E)", () => _view.ToggleSubgraph()));
             if (node.ClassType is "LoadImage" or "LoadImageMask")
@@ -950,6 +958,14 @@
     {
         _pending.Remove(run);
         if (_engine is not null) await _engine.CancelQueuedAsync(run.Id);
+    }
+
+    bool _propsOpen;
+
+    void ToggleProperties()
+    {
+        _propsOpen = !_propsOpen;
+        _studio?.Focus();
     }
 
     void ToggleHistory()
@@ -1164,6 +1180,7 @@
     {
         if (key == "n" && mods == Modifiers.None) { ToggleLibrary(); InvokeAsync(StateHasChanged); return true; }
         if (key == "h" && mods == Modifiers.None) { ToggleHistory(); InvokeAsync(StateHasChanged); return true; }
+        if (key == "i" && mods == Modifiers.None) { ToggleProperties(); InvokeAsync(StateHasChanged); return true; }
         if (key == "escape" && _lightbox is not null) { _lightbox = null; InvokeAsync(StateHasChanged); return true; }
         if (key != "enter" || !mods.HasFlag(Modifiers.Ctrl)) return false;
         _ = QueueAsync(front: mods.HasFlag(Modifiers.Shift));

@@ -41,7 +41,7 @@ public static class SavePrefix
 {
     public static (string Subfolder, string Name) Split(string prefix)
     {
-        prefix = (prefix ?? "").Replace('\\', '/');
+        prefix = ComputeVars(prefix ?? "", 0, 0, DateTime.Now).Replace('\\', '/');
         int slash = prefix.LastIndexOf('/');
         if (slash < 0) return ("", prefix);
         var subfolder = prefix[..slash].Trim('/');
@@ -49,6 +49,19 @@ public static class SavePrefix
         if (prefix.StartsWith('/') || subfolder.Contains(':') || segments.Any(s => s == ".." || s == "."))
             throw new ArgumentException($"The file name prefix '{prefix}' must stay inside the output folder: no '..', drive letters or leading slash.", nameof(prefix));
         return (string.Join('/', segments), prefix[(slash + 1)..]);
+    }
+
+    /// <summary>
+    /// ComfyUI's <c>compute_vars</c>: %width% and %height% of the picture (0 for files that are not pictures), and %year%, %month%, %day%, %hour%,
+    /// %minute%, %second% of the local time. The Studio has already filled %date:...% and %Node.widget% when it made the prompt.
+    /// </summary>
+    public static string ComputeVars(string prefix, int width, int height, DateTime now)
+    {
+        if (!prefix.Contains('%')) return prefix;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        return prefix.Replace("%width%", width.ToString(inv)).Replace("%height%", height.ToString(inv))
+            .Replace("%year%", now.Year.ToString(inv)).Replace("%month%", now.Month.ToString("00", inv)).Replace("%day%", now.Day.ToString("00", inv))
+            .Replace("%hour%", now.Hour.ToString("00", inv)).Replace("%minute%", now.Minute.ToString("00", inv)).Replace("%second%", now.Second.ToString("00", inv));
     }
 }
 

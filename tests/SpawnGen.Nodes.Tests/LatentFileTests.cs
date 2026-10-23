@@ -163,6 +163,17 @@ public class LatentFileTests
     }
 
     [Test]
+    public void Save_prefixes_fill_ComfyUIs_size_and_time_variables()
+    {
+        var at = new DateTime(2026, 3, 7, 9, 5, 2);
+        Assert.That(SavePrefix.ComputeVars("%year%-%month%-%day%/%width%x%height%_%hour%%minute%%second%_%date:yy%", 768, 512, at),
+            Is.EqualTo("2026-03-07/768x512_090502_%date:yy%"), "%date:..% is the Studio's job, done before the prompt is sent");
+        Assert.That(SavePrefix.ComputeVars("plain", 1, 1, at), Is.EqualTo("plain"));
+        Assert.That(SavePrefix.Split("%year%/%width%_x").Subfolder, Is.EqualTo(DateTime.Now.Year.ToString()), "a store fills the time and 0 for sizes it does not know");
+        Assert.That(SavePrefix.Split("%year%/%width%_x").Name, Is.EqualTo("0_x"));
+    }
+
+    [Test]
     public async Task Results_with_a_subfolder_prefix_are_kept_in_that_subfolder_on_disk_and_in_memory()
     {
         var dir = Path.Combine(Path.GetTempPath(), "spawngen-sub-" + Guid.NewGuid().ToString("N"));

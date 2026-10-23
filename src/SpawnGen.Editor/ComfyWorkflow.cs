@@ -16,6 +16,8 @@ public static class ComfyWorkflow
     static readonly HashSet<string> ControlValues = ["fixed", "increment", "decrement", "randomize"];
 
     public const string RawWidgetsKey = "__widgets_values";
+    /// <summary>The node property ComfyUI's search-and-replace in file names uses (%KSampler.seed%); written with the node type when the node has none.</summary>
+    public const string NameForSearchReplace = "Node name for S&R";
     static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
 
     // ---- load ----
@@ -45,6 +47,7 @@ public static class ComfyWorkflow
                     Pinned = (bool?)n["flags"]?["pinned"] ?? false,
                     Mode = Enum.IsDefined(typeof(NodeMode), (int?)n["mode"] ?? 0) ? (NodeMode)((int?)n["mode"] ?? 0) : NodeMode.Always,
                     ZIndex = ++z,
+                    Properties = n["properties"] is JsonObject props ? (JsonObject)props.DeepClone() : [],
                 };
                 if (Pair(n["size"]).X is > 0 and var w) node.Width = w;
 
@@ -260,7 +263,9 @@ public static class ComfyWorkflow
                 obj["outputs"] = outputs;
                 if (n.Widgets.GetValueOrDefault(RawWidgetsKey) is JsonNode raw) obj["widgets_values"] = raw.DeepClone();
             }
-            obj["properties"] = new JsonObject { ["Node name for S&R"] = n.ClassType };
+            var properties = (JsonObject)n.Properties.DeepClone();
+            if (!properties.ContainsKey(NameForSearchReplace)) properties.Insert(0, NameForSearchReplace, n.ClassType);
+            obj["properties"] = properties;
             nodes.Add(obj);
         }
 

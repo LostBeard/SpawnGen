@@ -3,7 +3,7 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-[Node(Category = "mask", DisplayName = "SolidMask")]
+[Node(Category = "image/mask", DisplayName = "Create Solid Mask")]
 public sealed class SolidMask
 {
     public MaskBatch Execute([Input(Min = 0, Max = 1, Step = 0.01)] float value = 1f,
@@ -11,7 +11,7 @@ public sealed class SolidMask
         MaskBatch.Filled(1, height, width, value);
 }
 
-[Node(Category = "mask", DisplayName = "InvertMask")]
+[Node(Category = "image/mask", DisplayName = "Invert Mask")]
 public sealed class InvertMask
 {
     public MaskBatch Execute(MaskBatch mask)
@@ -22,14 +22,15 @@ public sealed class InvertMask
     }
 }
 
-[Node(Category = "mask", DisplayName = "CropMask")]
+[Node(Category = "image/mask", DisplayName = "Crop Mask")]
 public sealed class CropMask
 {
+    /// <summary>ComfyUI's slice <c>mask[:, y:y+height, x:x+width]</c>: the part past an edge is cut off, and a corner outside the mask gives an empty mask (unlike Image Crop, nothing is clamped).</summary>
     public MaskBatch Execute(MaskBatch mask, [Input(Min = 0, Max = 16384)] int x = 0, [Input(Min = 0, Max = 16384)] int y = 0,
         [Input(Min = 1, Max = 16384)] int width = 512, [Input(Min = 1, Max = 16384)] int height = 512)
     {
-        x = Math.Min(x, mask.Width - 1);
-        y = Math.Min(y, mask.Height - 1);
+        x = Math.Min(x, mask.Width);
+        y = Math.Min(y, mask.Height);
         int w = Math.Min(width, mask.Width - x), h = Math.Min(height, mask.Height - y);
         var r = new MaskBatch(mask.Batch, h, w);
         for (int b = 0; b < mask.Batch; b++)
@@ -39,7 +40,7 @@ public sealed class CropMask
     }
 }
 
-[Node(Category = "mask", DisplayName = "MaskComposite")]
+[Node(Category = "image/mask", DisplayName = "Combine Masks")]
 public sealed class MaskComposite
 {
     public static string[] Operations() => ["multiply", "add", "subtract", "and", "or", "xor"];
@@ -64,7 +65,7 @@ public sealed class MaskComposite
                     if (dx >= destination.Width) break;
                     int di = (b * destination.Height + dy) * destination.Width + dx;
                     float d = r.Data[di], s = source.Data[(sb * source.Height + sy) * source.Width + sx];
-                    r.Data[di] = Math.Clamp(operation switch
+                    r.Data[di] = operation switch
                     {
                         "multiply" => d * s,
                         "add" => d + s,
@@ -72,15 +73,17 @@ public sealed class MaskComposite
                         "and" => MathF.Round(d) != 0 && MathF.Round(s) != 0 ? 1f : 0f,
                         "or" => MathF.Round(d) != 0 || MathF.Round(s) != 0 ? 1f : 0f,
                         _ => (MathF.Round(d) != 0) ^ (MathF.Round(s) != 0) ? 1f : 0f,
-                    }, 0f, 1f);
+                    };
                 }
             }
         }
+        // ComfyUI clamps the whole result, the destination outside the source too.
+        for (int i = 0; i < r.Data.Length; i++) r.Data[i] = Math.Clamp(r.Data[i], 0f, 1f);
         return r;
     }
 }
 
-[Node(Category = "mask", DisplayName = "FeatherMask")]
+[Node(Category = "image/mask", DisplayName = "Feather Mask")]
 public sealed class FeatherMask
 {
     /// <summary>Fades the mask to 0 towards each edge over the given number of pixels (a linear ramp that reaches 1 at the inner end).</summary>
@@ -103,7 +106,7 @@ public sealed class FeatherMask
     }
 }
 
-[Node(Category = "mask", DisplayName = "GrowMask")]
+[Node(Category = "image/mask", DisplayName = "Grow Mask")]
 public sealed class GrowMask
 {
     /// <summary>Grows (positive) or shrinks (negative) the selected area by <c>expand</c> pixels. Tapered corners use a plus-shaped step (rounder results), otherwise a full 3x3 square.</summary>
@@ -143,7 +146,7 @@ public sealed class GrowMask
     }
 }
 
-[Node(Category = "mask", DisplayName = "ThresholdMask")]
+[Node(Category = "image/mask", DisplayName = "Threshold Mask")]
 public sealed class ThresholdMask
 {
     public MaskBatch Execute(MaskBatch mask, [Input(Min = 0, Max = 1, Step = 0.01)] float value = 0.5f)

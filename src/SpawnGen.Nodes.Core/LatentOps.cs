@@ -455,15 +455,7 @@ public sealed class LatentBatchNode
     /// Stacks two latents into one batch; a second latent of another size is resized (bilinear, centre crop) to the first's. The batch indexes are joined, so
     /// the second latent's pictures keep their own noise (index 0 on); the first latent's noise mask is kept.
     /// </summary>
-    public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2)
-    {
-        var second = Latents.ReshapeTo(samples1, samples2, repeatBatch: false);
-        if (second.Channels != samples1.Channels) throw new ArgumentException($"The latents have {samples1.Channels} and {second.Channels} channels and cannot be batched.");
-        var frames = Enumerable.Range(0, samples1.Batch).Select(i => Latents.Frame(samples1, i))
-            .Concat(Enumerable.Range(0, second.Batch).Select(i => Latents.Frame(second, i))).ToList();
-        int[] batch = [.. samples1.BatchIndex ?? Enumerable.Range(0, samples1.Batch).ToArray(), .. samples2.BatchIndex ?? Enumerable.Range(0, samples2.Batch).ToArray()];
-        return Latents.From(frames, samples1.Channels, samples1.Height, samples1.Width, samples1.NoiseMask, batch);
-    }
+    public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2) => Batching.Latents([samples1, samples2]);
 }
 
 [Node(Category = "model/latent/advanced", DisplayName = "LatentBatchSeedBehavior")]

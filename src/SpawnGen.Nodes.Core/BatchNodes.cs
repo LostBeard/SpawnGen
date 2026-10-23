@@ -45,21 +45,24 @@ public static class Batching
         return new MaskBatch(batch, h, w, [.. data]);
     }
 
-    /// <summary>One batch of every latent, each scaled to the first one's size (bilinear, centre crop); the first one's noise mask is kept.</summary>
+    /// <summary>
+    /// One batch of every latent, each reshaped to the first one's size (ComfyUI's reshape_latent_to: bilinear, centre crop). The batch indexes are
+    /// joined, so each picture keeps its own noise; the first one's noise mask is kept.
+    /// </summary>
     public static LatentBatch Latents(IReadOnlyList<LatentBatch> latents)
     {
         if (latents.Count == 0) throw new ArgumentException("There are no latents to batch.", nameof(latents));
         var first = latents[0];
         var frames = new List<float[]>();
+        var batchIndex = new List<int>();
         foreach (var latent in latents)
         {
-            if (latent.Channels != first.Channels) throw new ArgumentException($"The latents have {first.Channels} and {latent.Channels} channels and cannot be batched.");
-            var same = latent.Height == first.Height && latent.Width == first.Width
-                ? latent : new LatentUpscale().Execute(latent, "bilinear", first.Width * 8, first.Height * 8, "center");
+            var same = Core.Latents.ReshapeTo(first, latent, repeatBatch: false);
+            if (same.Channels != first.Channels) throw new ArgumentException($"The latents have {first.Channels} and {same.Channels} channels and cannot be batched.");
             for (int b = 0; b < same.Batch; b++) frames.Add(Core.Latents.Frame(same, b));
+            batchIndex.AddRange(latent.BatchIndex ?? Enumerable.Range(0, latent.Batch));
         }
-        var batched = Core.Latents.From(frames, first.Channels, first.Height, first.Width);
-        return new LatentBatch(batched.Batch, batched.Channels, batched.Height, batched.Width, batched.Data) { NoiseMask = first.NoiseMask };
+        return Core.Latents.From(frames, first.Channels, first.Height, first.Width, first.NoiseMask, [.. batchIndex]);
     }
 
     /// <summary>ComfyUI pads a narrower picture with one channel of 1.0 (torch pad (0, 1)): RGB becomes RGBA with full alpha.</summary>

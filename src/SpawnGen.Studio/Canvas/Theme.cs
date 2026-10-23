@@ -75,8 +75,13 @@ public static class Theme
     public const string Font = "12px system-ui, 'Segoe UI', sans-serif";
     public const string TitleFont = "600 13px system-ui, 'Segoe UI', sans-serif";
 
-    /// <summary>The title-bar colour for a node category (ComfyUI tints by category the same way).</summary>
-    public static string TitleColor(string category) => Current.CategoryTitles.TryGetValue(category.Split('/')[0], out var c) ? c : Current.DefaultTitle;
+    /// <summary>The title-bar colour for a node category, by its first part; ComfyUI's newer "model/..." categories are tinted by the part after "model".</summary>
+    public static string TitleColor(string category)
+    {
+        var parts = category.Split('/');
+        var key = parts[0] == "model" && parts.Length > 1 ? parts[1] : parts[0];
+        return Current.CategoryTitles.TryGetValue(key, out var c) ? c : Current.DefaultTitle;
+    }
 
     public static string SocketColor(string type) => type switch
     {

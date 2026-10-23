@@ -8,11 +8,14 @@
   "2": {
     "class_type": "RemoveBackground",
     "inputs": {
+      "bg_removal_model": [
+        "9",
+        0
+      ],
       "image": [
         "1",
         0
-      ],
-      "threshold": 0.5
+      ]
     }
   },
   "3": {
@@ -20,7 +23,7 @@
     "inputs": {
       "mask": [
         "2",
-        1
+        0
       ]
     }
   },
@@ -62,7 +65,7 @@
       "resize_source": false,
       "mask": [
         "2",
-        1
+        0
       ]
     }
   },
@@ -84,6 +87,12 @@
         0
       ],
       "filename_prefix": "cutout"
+    }
+  },
+  "9": {
+    "class_type": "LoadBackgroundRemovalModel",
+    "inputs": {
+      "bg_removal_name": "RMBG-1.4"
     }
   }
 }

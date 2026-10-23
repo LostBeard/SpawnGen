@@ -33,8 +33,8 @@ public sealed class TrellisImageTo3D
         else
         {
             context.Status("cutting out the object");
-            var cut = await new RemoveBackground().ExecuteAsync(image, context, services, 0.5f);
-            Array.Copy(cut.Mask.Data, foreground, foreground.Length);
+            var cut = await RemoveBackground.MasksAsync(image, context, services, 0.5f);
+            Array.Copy(cut.Data, foreground, foreground.Length);
         }
 
         var packed = Rgba.Pack(image, 0);

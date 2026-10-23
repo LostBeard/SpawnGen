@@ -91,17 +91,37 @@ public sealed class ImageUpscaleWithModel
     }
 }
 
-[Node(Category = "image/background removal", DisplayName = "Remove Background")]
+/// <summary>A background removal model as Load Background Removal Model hands it on (ComfyUI's BACKGROUND_REMOVAL); it is loaded when first used.</summary>
+[Socket("BACKGROUND_REMOVAL")]
+public sealed class BackgroundRemovalModel(string name)
+{
+    public string Name { get; } = name;
+}
+
+/// <summary>ComfyUI's Load Background Removal Model. ComfyUI loads BiRefNet weights from its background_removal folder; SpawnGen offers RMBG 1.4 (ONNX), downloaded on first use.</summary>
+[Node(Category = "model/loaders", DisplayName = "Load Background Removal Model", OutputNames = ["bg_model"])]
+public sealed class LoadBackgroundRemovalModel
+{
+    public static string[] Models() => [RemoveBackground.Rmbg14];
+
+    public BackgroundRemovalModel Execute([Input(OptionsProvider = nameof(Models), Tooltip = "The model used to remove backgrounds from images")] string bgRemovalName = RemoveBackground.Rmbg14) =>
+        Models().Contains(bgRemovalName) ? new BackgroundRemovalModel(bgRemovalName) : throw new ArgumentException($"Unknown background removal model '{bgRemovalName}'.", nameof(bgRemovalName));
+}
+
+/// <summary>ComfyUI's Remove Background: the foreground mask of each picture (1 foreground, 0 background), from the model Load Background Removal Model gives.</summary>
+[Node(Category = "image/background removal", DisplayName = "Remove Background", OutputNames = ["mask"],
+    Description = "Generates a foreground mask to remove the background from an image using a background removal model.")]
 public sealed class RemoveBackground
 {
+    public const string Rmbg14 = "RMBG-1.4";
     const string Repo = "briaai/RMBG-1.4", File = "onnx/model.onnx";
 
-    /// <summary>
-    /// Finds the foreground with RMBG 1.4: the picture comes back unchanged and the mask says how much of each pixel is foreground (1) or background (0).
-    /// Combine them with Composite Image (masked), or invert the mask to select the background.
-    /// </summary>
-    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync(ImageBatch image, NodeContext context, IServiceProvider services,
-        [Input(Min = 0, Max = 1, Step = 0.01)] float threshold = 0.5f)
+    public async Task<MaskBatch> ExecuteAsync([Input(Tooltip = "Background removal model used to generate the mask")] BackgroundRemovalModel bgRemovalModel,
+        [Input(Tooltip = "Input image to remove the background from")] ImageBatch image, NodeContext context, IServiceProvider services) =>
+        await MasksAsync(image, context, services, MaskThreshold);
+
+    /// <summary>The RMBG 1.4 foreground mask of every picture, with the pipeline's <paramref name="threshold"/> (TRELLIS.2 cuts its object out at 0.5).</summary>
+    internal static async Task<MaskBatch> MasksAsync(ImageBatch image, NodeContext context, IServiceProvider services, float threshold)
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var pipeline = await runtime.GetOrLoadAsync($"rmbg:{Repo}", async () =>
@@ -113,15 +133,19 @@ public sealed class RemoveBackground
         });
 
         var mask = new MaskBatch(image.Batch, image.Height, image.Width);
+        int n = image.Width * image.Height;
         for (int b = 0; b < image.Batch; b++)
         {
             context.CancellationToken.ThrowIfCancellationRequested();
             var result = await pipeline.RemoveBackgroundAsync(Rgba.Pack(image, b), image.Width, image.Height, threshold);
-            for (int i = 0; i < image.Width * image.Height; i++) mask.Data[b * image.Width * image.Height + i] = ((result.ResultPixels[i] >>> 24) & 255) / 255f;
+            Array.Copy(result.Mask, 0, mask.Data, b * n, n);
             context.Progress(b + 1, image.Batch);
         }
-        return (image, mask);
+        return mask;
     }
+
+    /// <summary>The pipeline's threshold; 0 keeps the model's soft mask, as ComfyUI's mask is the model's own probability.</summary>
+    internal const float MaskThreshold = 0f;
 }
 
 [Node(Category = "image/preprocessors", DisplayName = "Depth Anything V2")]

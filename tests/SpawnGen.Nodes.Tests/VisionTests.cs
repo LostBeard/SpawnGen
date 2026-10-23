@@ -140,8 +140,9 @@ public class VisionTests
         {
             var g = new PromptGraph();
             g.Add("1", "LoadImage", ("image", "in.png"));
-            g.Add("2", "RemoveBackground", ("image", PromptInput.Link("1")), ("threshold", 0.5));
-            g.Add("3", "MaskToImage", ("mask", PromptInput.Link("2", 1)));
+            g.Add("9", "LoadBackgroundRemovalModel", ("bg_removal_name", "RMBG-1.4"));
+            g.Add("2", "RemoveBackground", ("bg_removal_model", PromptInput.Link("9")), ("image", PromptInput.Link("1")));
+            g.Add("3", "MaskToImage", ("mask", PromptInput.Link("2")));
             g.Add("4", "SaveImage", ("images", PromptInput.Link("3")), ("filename_prefix", "rmbg_mask"));
             return g;
         }, TestPicture(512));
@@ -155,6 +156,9 @@ public class VisionTests
         }
         TestContext.Out.WriteLine($"mask mean: centre {centre / 1024:F2}, corner {corner / 1024:F2}");
         Assert.That(centre / 1024, Is.GreaterThan(corner / 1024 + 0.3), "the object in the middle is foreground, the corner is background");
+        var levels = Enumerable.Range(0, mask.Width * mask.Height).Select(i => mask.Data[i * mask.Channels]).Distinct().Count();
+        TestContext.Out.WriteLine($"distinct mask levels: {levels}");
+        Assert.That(levels, Is.GreaterThan(16), "the mask is the model's soft probability, as in ComfyUI, not a cut at a threshold");
     }
 
     [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU, and the network on first use (Depth Anything V2 small). Look at the saved picture.")]

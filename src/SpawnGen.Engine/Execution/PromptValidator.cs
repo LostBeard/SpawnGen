@@ -112,9 +112,15 @@ public static class PromptValidator
     static string? CheckLiteral(RegisteredNode node, InputSpec spec, object literal)
     {
         var w = spec.Widget;
-        if (w is null && spec.Group is not null && spec.Type.Name is "INT" or "FLOAT" or "BOOLEAN" or "STRING")
-            // A member of an Autogrow group is a socket in the editor, but a prompt may give it a value (ComfyUI's templates can be widgets).
-            return ValueCoercion.TryCoerce(literal, MemberClr(spec.Type), out _) ? null : $"'{literal}' is not a valid {spec.Type}.";
+        if (w is null && spec.Group is not null)
+        {
+            // A member of an Autogrow group is a socket in the editor, but a prompt may give it a value (ComfyUI's templates can be widgets):
+            // any value for an any-type member, one that fits a part of a union, or one of the member's own type.
+            if (spec.Type.IsAny) return null;
+            var parts = spec.Type.Name.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (parts.All(p => p is "INT" or "FLOAT" or "BOOLEAN" or "STRING"))
+                return parts.Any(p => ValueCoercion.TryCoerce(literal, MemberClr(new SocketType(p)), out _)) ? null : $"'{literal}' is not a valid {spec.Type}.";
+        }
         if (w is null) return $"expects a {spec.Type} link, not a value.";
 
         switch (w.Kind)

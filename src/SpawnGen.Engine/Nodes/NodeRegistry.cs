@@ -368,7 +368,7 @@ public sealed class NodeRegistry
             {
                 var (members, memberType, socketType) = Autogrow(id, p, name, grow, inputIsList);
                 for (int m = 0; m < members.Length; m++)
-                    inputs.Add(new InputSpec(members[m].Input, SocketTypes.FromClr(socketType), Required: m < grow.Min && !(ia?.Optional ?? false), Tooltip: ia?.Tooltip)
+                    inputs.Add(new InputSpec(members[m].Input, ia?.Type is { } declaredMember ? new SocketType(declaredMember) : SocketTypes.FromClr(socketType), Required: m < grow.Min && !(ia?.Optional ?? false), Tooltip: ia?.Tooltip)
                     {
                         Group = name, GroupMin = grow.Min, Optional = m >= grow.Min || (ia?.Optional ?? false), Lazy = ia?.Lazy ?? false,
                     });

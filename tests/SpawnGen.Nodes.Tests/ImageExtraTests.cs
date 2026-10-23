@@ -44,17 +44,21 @@ public class ImageExtraTests
     [Test]
     public void Quantize_to_two_colours_splits_dark_from_light_and_one_colour_is_the_mean()
     {
+        // Greys 0, 0.1, 0.9, 1 are bytes 0, 25, 229, 255 (* 255, truncated). Pillow's median cut splits along green (weight 150), walking the sorted
+        // values from the top until more than half the pixels are taken: {255, 229, 25} | {0}. Box means (rounded half up): 170 and 0.
         var img = new ImageBatch(1, 1, 4, 3);
         float[] values = [0f, 0.1f, 0.9f, 1f];
         for (int i = 0; i < 4; i++) img.Data[i * 3] = img.Data[i * 3 + 1] = img.Data[i * 3 + 2] = values[i];
-        var two = new ImageQuantize().Execute(img, 2, "none");
-        Assert.That(two.Data[0], Is.EqualTo(0.05f).Within(1e-5)); Assert.That(two.Data[3], Is.EqualTo(0.05f).Within(1e-5));
-        Assert.That(two.Data[6], Is.EqualTo(0.95f).Within(1e-5)); Assert.That(two.Data[9], Is.EqualTo(0.95f).Within(1e-5));
+        float[] Reds(ImageBatch b) => [b.Data[0], b.Data[3], b.Data[6], b.Data[9]];
+        Assert.That(Reds(new ImageQuantize().Execute(img, 2, "none")), Is.EqualTo(new[] { 0f, 0f, 170 / 255f, 170 / 255f }));
+        // One colour: (0 + 25 + 229 + 255) / 4 = 127.25 -> 127.
         var one = new ImageQuantize().Execute(img, 1, "none");
-        Assert.That(one.Data.Distinct().Count(), Is.EqualTo(1));
-        Assert.That(one.Data[0], Is.EqualTo(0.5f).Within(1e-5));
-        var dithered = new ImageQuantize().Execute(img, 2, "floyd-steinberg");
-        Assert.That(dithered.Data.Distinct().Count(), Is.LessThanOrEqualTo(2));
+        Assert.That(one.Data.Distinct(), Is.EqualTo(new[] { 127 / 255f }));
+        // Floyd-Steinberg: 25 -> 0 leaves 25, 7/16 of it lifts 229 to 239 -> 170, whose error 69 lifts 255 past the top -> 170.
+        Assert.That(Reds(new ImageQuantize().Execute(img, 2, "floyd-steinberg")), Is.EqualTo(new[] { 0f, 0f, 170 / 255f, 170 / 255f }));
+        // bayer-2 with two palette entries: spread 256, thresholds 256 * [[-3/8, 1/8], [3/8, -1/8]] + 0.5 on the top row: -95.5 and 32.5.
+        // 0 - 95.5 -> 0; 25 + 32.5 -> 57 (nearest 0); 229 - 95.5 -> 133 (170); 255 + 32.5 -> 255 (170).
+        Assert.That(Reds(new ImageQuantize().Execute(img, 2, "bayer-2")), Is.EqualTo(new[] { 0f, 0f, 170 / 255f, 170 / 255f }));
     }
 
     [Test]

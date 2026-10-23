@@ -5,7 +5,7 @@ using SpawnGen.Engine.Types;
 namespace SpawnGen.Nodes.Core;
 
 /// <summary>Minimal 8-bit RGB PNG encoder, so saving an image needs no imaging dependency.</summary>
-public static class PngWriter
+public static partial class PngWriter
 {
     static readonly uint[] CrcTable = BuildCrcTable();
 

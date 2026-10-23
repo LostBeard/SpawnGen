@@ -16,5 +16,15 @@ public class PreviewAnyTests
         g.Add("2", "PreviewAny", ("source", PromptInput.Link("1")));
         var result = await new PromptExecutor(registry).ExecuteAsync(g);
         Assert.That(((string[])result.Outputs["2"].Ui!["text"]!)[0], Is.EqualTo("hello\nworld"));
+        Assert.That(result.Outputs["2"].Values[0], Is.EqualTo("hello\nworld"), "the text is also an output");
     }
+
+    [TestCase(120L, "120")]
+    [TestCase(1.0, "1.0")]
+    [TestCase(0.1, "0.1")]
+    [TestCase(1.5e-5, "1.5e-05")]
+    [TestCase(1e16, "1e+16")]
+    [TestCase(true, "True")]
+    [TestCase(null, "None")]
+    public void Values_read_as_Python_prints_them(object? value, string expected) => Assert.That(PreviewAny.Format(value), Is.EqualTo(expected));
 }

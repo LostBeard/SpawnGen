@@ -39,6 +39,10 @@ public sealed class RegisteredNode
         public (string Input, string Key)[]? Members { get; init; }
         /// <summary>For an Autogrow parameter: the type each member's value is coerced to.</summary>
         public Type? MemberType { get; init; }
+        /// <summary>For a dynamic combo parameter: each option's inputs (full names) and the names the choice reports them by.</summary>
+        public Dictionary<string, (string Input, string Key)[]>? DynamicOptions { get; init; }
+        /// <summary>For a dynamic combo parameter: the option chosen when the prompt names none.</summary>
+        public string? DynamicDefault { get; init; }
     }
 
     internal Type Type { get; init; } = default!;
@@ -106,6 +110,16 @@ public sealed class RegisteredNode
                     if (p.Members is { } members)
                     {
                         args[i] = BuildGroup(p, members, inputs);
+                        break;
+                    }
+                    if (p.DynamicOptions is { } options)
+                    {
+                        var key = inputs.TryGetValue(p.InputName!, out var chosen) && chosen is string s ? s : p.DynamicDefault!;
+                        var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+                        if (options.TryGetValue(key, out var optionInputs))
+                            foreach (var (input, name) in optionInputs)
+                                if (inputs.TryGetValue(input, out var value)) values[name] = value;
+                        args[i] = new DynamicChoice(key, values);
                         break;
                     }
                     if (p.ElementType is { } element && inputs.TryGetValue(p.InputName!, out var rawList) && rawList is IReadOnlyList<object?> items)
@@ -267,7 +281,7 @@ public sealed class NodeRegistry
             Id = node.Schema.Id, DisplayName = node.Schema.DisplayName, Category = node.Schema.Category, Description = node.Schema.Description,
             Inputs = node.Schema.Inputs.Select(i => i.Name == input ? i with { Widget = widget } : i).ToList(),
             Outputs = node.Schema.Outputs, IsOutputNode = node.Schema.IsOutputNode, AlwaysExecute = node.Schema.AlwaysExecute, FrontendOnly = node.Schema.FrontendOnly,
-            InputIsList = node.Schema.InputIsList,
+            InputIsList = node.Schema.InputIsList, DynamicCombos = node.Schema.DynamicCombos,
         };
         _nodes[nodeId] = new RegisteredNode
         {
@@ -309,6 +323,7 @@ public sealed class NodeRegistry
         var method = methods[0];
 
         var inputIsList = attr?.InputIsList ?? false;
+        var dynamicCombos = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>(StringComparer.Ordinal);
         var inputs = new List<InputSpec>();
         var bindings = new List<RegisteredNode.ParamBinding>();
         foreach (var p in method.GetParameters())
@@ -319,6 +334,36 @@ public sealed class NodeRegistry
 
             var ia = p.GetCustomAttribute<InputAttribute>();
             var name = ia?.Name ?? ToSnakeCase(p.Name!);
+            if (p.GetCustomAttribute<DynamicComboAttribute>() is { } dynamic)
+            {
+                var provider = type.GetMethod(dynamic.OptionsMethod, BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes)
+                    ?? throw new InvalidOperationException($"Node '{id}': dynamic combo options method '{dynamic.OptionsMethod}' not found as a public static method.");
+                var options = ((IEnumerable<DynamicOption>)provider.Invoke(null, null)!).ToList();
+                var keys = options.Select(o => o.Key).ToList();
+                var chosenByDefault = ia?.Default as string ?? (p.HasDefaultValue ? p.DefaultValue as string : null) ?? keys[0];
+                inputs.Add(new InputSpec(name, SocketType.String, Required: true, new WidgetSpec(WidgetKind.Combo) { Options = keys, Default = chosenByDefault }, ia?.Tooltip));
+                // Options may share an input name (two ways to scale both have "width"): one input, brought by every option that has it.
+                var nested = new Dictionary<string, (DynamicInput Spec, List<string> Options)>(StringComparer.Ordinal);
+                var order = new List<string>();
+                foreach (var option in options)
+                    foreach (var input in option.Inputs)
+                    {
+                        if (!nested.TryGetValue(input.Name, out var entry)) { nested[input.Name] = entry = (input, []); order.Add(input.Name); }
+                        entry.Options.Add(option.Key);
+                    }
+                foreach (var n in order)
+                    inputs.Add(new InputSpec($"{name}.{n}", nested[n].Spec.Type, Required: false, nested[n].Spec.Widget, nested[n].Spec.Tooltip)
+                    {
+                        DynamicParent = name, DynamicOptions = nested[n].Options, Optional = !nested[n].Spec.Required,
+                    });
+                dynamicCombos[name] = options.ToDictionary(o => o.Key, o => (IReadOnlyList<string>)o.Inputs.Select(i => $"{name}.{i.Name}").ToList(), StringComparer.Ordinal);
+                bindings.Add(new(p, RegisteredNode.ParamKind.Input, name)
+                {
+                    DynamicOptions = options.ToDictionary(o => o.Key, o => o.Inputs.Select(i => ($"{name}.{i.Name}", i.Name)).ToArray(), StringComparer.Ordinal),
+                    DynamicDefault = chosenByDefault,
+                });
+                continue;
+            }
             if (p.GetCustomAttribute<AutogrowAttribute>() is { } grow)
             {
                 var (members, memberType, socketType) = Autogrow(id, p, name, grow, inputIsList);
@@ -334,7 +379,7 @@ public sealed class NodeRegistry
             var element = inputIsList ? ListElementType(p.ParameterType)
                 ?? throw new InvalidOperationException($"Node '{id}' takes whole lists (InputIsList): parameter '{p.Name}' must be a list such as IReadOnlyList<T>.") : null;
             var valueType = element ?? p.ParameterType;
-            inputs.Add(new InputSpec(name, SocketTypes.FromClr(valueType), Required: !p.HasDefaultValue,
+            inputs.Add(new InputSpec(name, ia?.Type is { } declared ? new SocketType(declared) : SocketTypes.FromClr(valueType), Required: !p.HasDefaultValue,
                 Widget: BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip) { Aliases = ia?.Aliases ?? [], Lazy = ia?.Lazy ?? false, Optional = ia?.Optional ?? false });
             bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { ElementType = element });
         }
@@ -394,6 +439,7 @@ public sealed class NodeRegistry
             AlwaysExecute = attr?.AlwaysExecute ?? false,
             FrontendOnly = attr?.FrontendOnly ?? false,
             InputIsList = inputIsList,
+            DynamicCombos = dynamicCombos,
         };
 
         return new RegisteredNode

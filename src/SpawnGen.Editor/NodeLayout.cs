@@ -187,7 +187,7 @@ public static class NodeLayout
             shown[group.Key] = Math.Min(members.Count, Math.Max(members[0].GroupMin, last + 2));
         }
         var seen = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var input in schema.Inputs)
+        foreach (var input in OrderedInputs(schema, node.Widgets))
         {
             if (input.Group is { } g)
             {
@@ -195,6 +195,27 @@ public static class NodeLayout
                 if (index > shown[g]) continue;
             }
             yield return input;
+        }
+    }
+
+    /// <summary>
+    /// The node's inputs in ComfyUI's order: a dynamic combo is followed by the inputs of its chosen option, in the order that option declares them;
+    /// the other options' inputs are left out (ComfyUI shows, saves and sends only the chosen one's). The choice is read when the combo is reached,
+    /// so a reader that sets the combo's value while walking (opening a workflow) gets the right option's inputs next.
+    /// </summary>
+    public static IEnumerable<InputSpec> OrderedInputs(NodeSchema schema, IReadOnlyDictionary<string, object?> widgets)
+    {
+        foreach (var input in schema.Inputs)
+        {
+            if (input.DynamicParent is not null) continue;
+            yield return input;
+            if (input.Widget is null || !schema.Inputs.Any(i => i.DynamicParent == input.Name)) continue;
+            var chosen = widgets.GetValueOrDefault(input.Name) as string ?? input.Widget.Default as string;
+            if (chosen is null) continue;
+            IEnumerable<InputSpec?> nested = schema.DynamicCombos.TryGetValue(input.Name, out var options)
+                ? options.TryGetValue(chosen, out var names) ? names.Select(schema.FindInput) : []
+                : schema.Inputs.Where(i => i.DynamicParent == input.Name && i.DynamicOptions.Contains(chosen)); // a remote schema: schema order
+            foreach (var n in nested) if (n is not null) yield return n;
         }
     }
 

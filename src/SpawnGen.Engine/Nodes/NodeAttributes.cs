@@ -32,6 +32,11 @@ public sealed class InputAttribute : Attribute
 {
     /// <summary>Overrides the snake_case name derived from the parameter name.</summary>
     public string? Name { get; init; }
+    /// <summary>
+    /// Overrides the socket type derived from the parameter type: a union such as <c>"IMAGE,MASK"</c> for an <c>object</c> parameter that takes
+    /// either (ComfyUI's MultiType and MatchType inputs).
+    /// </summary>
+    public string? Type { get; init; }
     public double Min { get; init; } = double.NaN;
     public double Max { get; init; } = double.NaN;
     public double Step { get; init; } = double.NaN;

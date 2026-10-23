@@ -83,7 +83,7 @@ public static class GraphCompiler
             var schema = registry.GetSchema(n.ClassType)!;
             var node = prompt.Add(n.Id.ToString(), n.ClassType);
             node.Title = n.Title;
-            foreach (var input in schema.Inputs)
+            foreach (var input in NodeLayout.OrderedInputs(schema, n.Widgets))
             {
                 if (graph.LinkInto(n.Id, input.Name) is { } link)
                 {

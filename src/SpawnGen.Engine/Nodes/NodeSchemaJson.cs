@@ -53,7 +53,9 @@ public static class NodeSchemaJson
     {
         var config = entry.Count > 1 ? entry[1] as JsonObject : null;
         return Plain(name, entry, required, config) with { Lazy = config?["lazy"] is JsonValue lazy && lazy.TryGetValue<bool>(out var isLazy) && isLazy, Optional = !required,
-            Group = (string?)config?["autogrow_group"], GroupMin = (int?)config?["autogrow_min"] ?? 0 };
+            Group = (string?)config?["autogrow_group"], GroupMin = (int?)config?["autogrow_min"] ?? 0,
+            DynamicParent = (string?)config?["dynamic_parent"],
+            DynamicOptions = config?["dynamic_options"] is JsonArray options ? options.Select(o => (string)o!).ToList() : [] };
     }
 
     static InputSpec Plain(string name, JsonArray entry, bool required, JsonObject? config)

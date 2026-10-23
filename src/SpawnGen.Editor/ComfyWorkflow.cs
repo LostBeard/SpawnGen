@@ -168,7 +168,8 @@ public static class ComfyWorkflow
         }
         var list = values as JsonArray ?? [];
         int pos = 0;
-        foreach (var w in widgetInputs)
+        // A dynamic combo's values follow it: only the chosen option's inputs are in the list (the walk reads the combo's value as it reaches it).
+        foreach (var w in NodeLayout.OrderedInputs(schema, node.Widgets).Where(i => i.Widget is not null))
         {
             node.Widgets[w.Name] = w.Widget!.Default is { } d && pos >= list.Count ? d : node.Widgets.GetValueOrDefault(w.Name);
             if (pos >= list.Count) continue;
@@ -312,7 +313,7 @@ public static class ComfyWorkflow
     static JsonArray WriteWidgets(NodeSchema schema, EditorNode n)
     {
         var list = new JsonArray();
-        foreach (var w in schema.Inputs.Where(i => i.Widget is not null))
+        foreach (var w in NodeLayout.OrderedInputs(schema, n.Widgets).Where(i => i.Widget is not null))
         {
             var v = n.Widgets.GetValueOrDefault(w.Name) ?? w.Widget!.Default;
             list.Add(v switch

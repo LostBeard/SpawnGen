@@ -295,6 +295,7 @@ public static class ServerApp
         var config = new JsonObject();
         if (i.Lazy) config["lazy"] = true;
         if (i.Group is { } group) { config["autogrow_group"] = group; config["autogrow_min"] = i.GroupMin; }
+        if (i.DynamicParent is { } parent) { config["dynamic_parent"] = parent; config["dynamic_options"] = new JsonArray(i.DynamicOptions.Select(o => (JsonNode)o).ToArray()); }
         if (i.Widget is not { } w) return config.Count > 0 ? new JsonArray(i.Type.Name, config) : new JsonArray(i.Type.Name);
         if (w.Default is { } d) config["default"] = JsonSerializer.SerializeToNode(d);
         if (w.Min is { } min) config["min"] = min;

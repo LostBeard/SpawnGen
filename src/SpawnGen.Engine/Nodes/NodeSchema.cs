@@ -29,6 +29,10 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
     public string? Group { get; init; }
     /// <summary>For a group member: how many members the editor always shows (the group's minimum).</summary>
     public int GroupMin { get; init; }
+    /// <summary>For an input of a dynamic combo option: the combo's input name (<c>resize_type</c> for <c>resize_type.width</c>).</summary>
+    public string? DynamicParent { get; init; }
+    /// <summary>For an input of a dynamic combo option: the options that bring it (shown, saved and sent only while one of them is chosen).</summary>
+    public IReadOnlyList<string> DynamicOptions { get; init; } = [];
 
     /// <summary>Where ComfyUI's object_info lists the input: "required" for sockets that must be linked and for widgets not declared optional.</summary>
     public bool ListedAsRequired => !Optional && (Required || Widget is not null);
@@ -57,6 +61,9 @@ public sealed class NodeSchema
     public bool FrontendOnly { get; init; }
     /// <summary>ComfyUI's <c>INPUT_IS_LIST</c>: one run with whole lists rather than one run per item.</summary>
     public bool InputIsList { get; init; }
+    /// <summary>For each dynamic combo (by input name): each option's inputs (full names) in the order the option declares them.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DynamicCombos { get; init; } =
+        new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>();
 
     public InputSpec? FindInput(string name) => Inputs.FirstOrDefault(i => i.Name == name);
 

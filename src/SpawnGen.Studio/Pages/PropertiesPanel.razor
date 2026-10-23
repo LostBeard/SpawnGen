@@ -78,10 +78,11 @@
                            @onchange="e => Commit(() => Doc.SetNodeProperty(node.Id, ComfyWorkflow.NameForSearchReplace, Blank(e.Value?.ToString()) ? null : e.Value!.ToString()!.Trim()))" />
                 </label>
 
-                @if (schema is not null && schema.Inputs.Any(i => i.Widget is not null))
+                @{ var shown = schema is null ? [] : NodeLayout.VisibleInputs(schema, node, Doc.Graph).ToList(); }
+                @if (shown.Any(i => i.Widget is not null))
                 {
                     <div class="props-section">Parameters</div>
-                    @foreach (var input in schema.Inputs.Where(i => i.Widget is not null))
+                    @foreach (var input in shown.Where(i => i.Widget is not null))
                     {
                         var name = input.Name;
                         var spec = input.Widget!;
@@ -94,10 +95,10 @@
                     }
                 }
 
-                @if (schema is not null && schema.Inputs.Any(i => i.Widget is null || Doc.Graph.LinkInto(node.Id, i.Name) is not null))
+                @if (shown.Any(i => i.Widget is null || Doc.Graph.LinkInto(node.Id, i.Name) is not null))
                 {
                     <div class="props-section">Inputs</div>
-                    @foreach (var input in schema.Inputs.Where(i => i.Widget is null || Doc.Graph.LinkInto(node.Id, i.Name) is not null))
+                    @foreach (var input in shown.Where(i => i.Widget is null || Doc.Graph.LinkInto(node.Id, i.Name) is not null))
                     {
                         var link = Doc.Graph.LinkInto(node.Id, input.Name);
                         <div class="props-kv">

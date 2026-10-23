@@ -59,9 +59,9 @@ public class CustomSamplingTests
         var (high, low) = new SplitSigmas().Execute(s, 2);
         Assert.That(high.Values, Is.EqualTo(new[] { 4f, 3f, 2f })); Assert.That(low.Values, Is.EqualTo(new[] { 2f, 1f, 0f }));
         var (h2, l2) = new SplitSigmasDenoise().Execute(s, 0.5f);
-        Assert.That(h2.Values, Is.EqualTo(new[] { 4f, 3f })); Assert.That(l2.Values, Is.EqualTo(new[] { 2f, 1f, 0f }));
+        Assert.That(h2.Values, Is.EqualTo(new[] { 4f, 3f, 2f }), "ComfyUI: sigmas[:-2], which shares the split sigma"); Assert.That(l2.Values, Is.EqualTo(new[] { 2f, 1f, 0f }));
         var (h3, l3) = new SplitSigmasDenoise().Execute(s, 1f);
-        Assert.That(h3.Values, Is.Empty); Assert.That(l3.Values, Is.EqualTo(s.Values));
+        Assert.That(h3.Values, Is.EqualTo(new[] { 4f }), "ComfyUI: sigmas[:-4] keeps the first"); Assert.That(l3.Values, Is.EqualTo(s.Values));
         Assert.That(new FlipSigmas().Execute(s).Values, Is.EqualTo(new[] { 1e-4f, 1f, 2f, 3f, 4f }), "a leading 0 becomes tiny");
         Assert.That(new FlipSigmas().Execute(new Sigmas([3f, 2f, 1f])).Values, Is.EqualTo(new[] { 1f, 2f, 3f }));
         Assert.That(new SetFirstSigma().Execute(s, 9f).Values, Is.EqualTo(new[] { 9f, 3f, 2f, 1f, 0f }));

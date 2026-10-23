@@ -9,45 +9,57 @@ using SpawnGen.Nodes.Core;
 
 namespace SpawnGen.Nodes.ML;
 
-internal sealed record SamplingSettings(long Seed, float Cfg, string Sampler, bool AddNoise = true, float RescaleCfg = 0f, IReadOnlyList<PreCfgFunction>? PreCfg = null);
+internal sealed record SamplingSettings(long Seed, string Sampler, bool AddNoise = true, SamplerOptions? Options = null);
 
 /// <summary>
-/// One sampling run over a latent batch: noise it to the first sigma, then step down the given sigmas with the chosen sampler, asking the UNet for
-/// guided predictions (CFG over possibly several conditioning entries with areas, masks and timestep ranges) and holding the unmasked part of an
-/// inpainting latent at the original. The maths follows ComfyUI so results and workflows behave the same.
+/// One sampling run over a latent batch: noise it to the first sigma, then step down the given sigmas with the chosen sampler, asking the guider for
+/// guided predictions (CFG over possibly several conditioning entries with areas, masks and timestep ranges, with the model's guidance patches) and holding the
+/// unmasked part of an inpainting latent at the original. The maths follows ComfyUI (KSAMPLER, KSamplerX0Inpaint, CFGGuider) so results and workflows behave the same.
 /// </summary>
 internal static class SamplingCore
 {
-    public static async Task<LatentBatch> RunAsync(Accelerator acc, Checkpoint ckpt, Conditioning positive, Conditioning negative, LatentBatch latent,
-        float[] sigmas, SamplingSettings settings, NodeContext context) =>
-        (await RunWithDenoisedAsync(acc, ckpt, positive, negative, latent, sigmas, settings, context)).Output;
+    public static async Task<LatentBatch> RunAsync(Accelerator acc, GuiderChoice guider, LatentBatch latent, float[] sigmas, SamplingSettings settings, NodeContext context) =>
+        (await RunWithDenoisedAsync(acc, guider, latent, sigmas, settings, context)).Output;
+
+    /// <summary>
+    /// The noise a run starts from for picture <paramref name="index"/> of a batch (also AddNoise's). ComfyUI's batch_index picks which of the seed's noises a
+    /// picture gets: Get Latent From Batch keeps a picture's own, "fixed" seed behaviour gives every picture the first one's.
+    /// </summary>
+    internal static float[] InitialNoise(long seed, int index, LatentBatch latent) =>
+        DiffusionScheduler.GenerateNoise(latent.Channels, latent.Height, latent.Width, unchecked((int)(seed + NoiseIndex(latent, index))));
+
+    internal static int NoiseIndex(LatentBatch latent, int index) => latent.BatchIndex is { } batchIndex && index < batchIndex.Length ? batchIndex[index] : index;
 
     /// <summary>Like <see cref="RunAsync"/>, also returning the model's last denoised estimate (SamplerCustom's <c>denoised_output</c>).</summary>
-    public static async Task<(LatentBatch Output, LatentBatch Denoised)> RunWithDenoisedAsync(Accelerator acc, Checkpoint ckpt, Conditioning positive, Conditioning negative, LatentBatch latent,
+    public static async Task<(LatentBatch Output, LatentBatch Denoised)> RunWithDenoisedAsync(Accelerator acc, GuiderChoice guider, LatentBatch latent,
         float[] sigmas, SamplingSettings settings, NodeContext context)
     {
+        var ckpt = guider.Model.Checkpoint;
+        var sampling = guider.Model.Sampling;
         if (latent.Channels != Checkpoint.LatentChannels)
             throw new ArgumentException($"Latent has {latent.Channels} channels; this checkpoint expects {Checkpoint.LatentChannels}.", nameof(latent));
         int steps = sigmas.Length - 1, h = latent.Height, w = latent.Width, perImage = Checkpoint.LatentChannels * h * w;
-        if (steps < 1) return (latent, latent); // nothing to sample (a start step past the end, for instance)
+        if (sigmas.Length == 0) return (latent, latent); // nothing to sample; a single sigma only noises the latent, as in ComfyUI
 
         var shape = new[] { 1, Checkpoint.LatentChannels, h, w };
-        var uploaded = new List<(MemoryBuffer1D<float, Stride1D.Dense> Buffer, Tensor Tensor)>();
+        var uploaded = new Dictionary<CondEntry, (MemoryBuffer1D<float, Stride1D.Dense> Buffer, Tensor Tensor)>(ReferenceEqualityComparer.Instance);
         try
         {
             // The embeddings go to the GPU once per run, not once per step.
             Tensor Upload(CondEntry e)
             {
-                var (buf, tensor) = GpuHelpers.Upload(acc, e.Embeddings, e.Shape);
-                uploaded.Add((buf, tensor));
-                return tensor;
+                if (uploaded.TryGetValue(e, out var known)) return known.Tensor;
+                var pair = GpuHelpers.Upload(acc, e.Embeddings, e.Shape);
+                uploaded[e] = pair;
+                return pair.Tensor;
             }
-            var pos = positive.Entries.Select(e => (Entry: e, Tensor: Upload(e))).ToList();
-            var neg = negative.Entries.Select(e => (Entry: e, Tensor: Upload(e))).ToList();
+            foreach (var c in guider.Conditionings)
+                foreach (var e in c.Entries) Upload(e);
 
             var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };
             var denoisedResult = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };
-            bool maxDenoise = MathF.Abs(sigmas[0] - ckpt.Sigmas.SigmaMax) <= 1e-5f * ckpt.Sigmas.SigmaMax || sigmas[0] > ckpt.Sigmas.SigmaMax;
+            bool maxDenoise = sampling.IsMaxDenoise(sigmas[0]);
+            var runSigmas = sigmas.Select(v => (double)v).ToArray();
 
             for (int b = 0; b < latent.Batch; b++)
             {
@@ -55,149 +67,112 @@ internal static class SamplingCore
                 Array.Copy(latent.Data, b * perImage, original, 0, perImage);
                 var mask = ResizedMask(latent.NoiseMask, b, h, w);
 
-                // Start: the latent plus noise at the first sigma. From the top of the schedule the noise is scaled so the model's input has unit variance.
-                // ComfyUI's batch_index picks which of the seed's noises a picture gets (Get Latent From Batch keeps a picture's own; "fixed" seed behaviour shares one).
-                int noiseIndex = latent.BatchIndex is { } batchIndex && b < batchIndex.Length ? batchIndex[b] : b;
-                var noise = settings.AddNoise ? DiffusionScheduler.GenerateNoise(Checkpoint.LatentChannels, h, w, unchecked((int)(settings.Seed + noiseIndex))) : new float[perImage];
-                float noiseScale = maxDenoise ? MathF.Sqrt(1f + sigmas[0] * sigmas[0]) : sigmas[0];
-                var x = new float[perImage];
-                for (int i = 0; i < perImage; i++) x[i] = original[i] + noise[i] * noiseScale;
-                var lastDenoised = x;
-                float[]? lastUncond = null;
+                int noiseIndex = NoiseIndex(latent, b);
+                int itemSeed = unchecked((int)(settings.Seed + noiseIndex));
+                var noise = settings.AddNoise ? InitialNoise(settings.Seed, b, latent) : new float[perImage];
+                // ddim is euler with fresh noise for the kept area of an inpainting run (ComfyUI's inpaint_options "random").
+                var inpaintNoise = settings.Sampler == "ddim" && mask is not null
+                    ? DiffusionScheduler.GenerateNoise(Checkpoint.LatentChannels, h, w, itemSeed ^ 0x1A1D) : noise;
+                var x = sampling.NoiseScaling(sigmas[0], noise, original, maxDenoise);
+                float[]? lastDenoised = null; // ComfyUI's x0_output: the last callback's estimate, else the output itself
 
-                async Task<float[]> Denoise(float[] sample, float sigma)
-                {
-                    float scale = 1f / MathF.Sqrt(sigma * sigma + 1f), timestep = ckpt.Sigmas.Timestep(sigma);
-                    var scaled = new float[perImage];
-                    for (int i = 0; i < perImage; i++) scaled[i] = sample[i] * scale;
+                var guidance = new GuidanceRun(guider, Checkpoint.LatentChannels, h, w, Samplers.DisablesCfg1Optimization(settings.Sampler)) { BatchIndex = b };
 
-                    // Run progress as the share of sigma range covered, for the timestep ranges of conditioning entries.
-                    var cond = await GuidedAsync(pos, scaled, shape, timestep, sigma, ckpt, acc, h, w);
-                    float[]? uncondEps = settings.Cfg != 1f ? await GuidedAsync(neg, scaled, shape, timestep, sigma, ckpt, acc, h, w) : null;
-                    // Model patches that work on the two predictions before cfg mixes them (Latent Apply Operation CFG).
-                    if (settings.PreCfg is { Count: > 0 } preCfg)
-                        (cond, uncondEps) = PreCfg.Apply(preCfg, sample, cond, uncondEps, sigma, settings.Cfg, b, Checkpoint.LatentChannels, h, w);
-                    float[] eps = cond;
-                    if (uncondEps is not null)
-                    {
-                        eps = new float[perImage];
-                        for (int i = 0; i < perImage; i++) eps[i] = uncondEps[i] + settings.Cfg * (cond[i] - uncondEps[i]);
-                    }
-                    var denoised = new float[perImage];
-                    if (settings.RescaleCfg > 0f && uncondEps is not null) RescaledDenoised(sample, cond, uncondEps, settings.Cfg, sigma, settings.RescaleCfg, denoised);
-                    else for (int i = 0; i < perImage; i++) denoised[i] = sample[i] - sigma * eps[i];
-                    if (Samplers.UsesUncond(settings.Sampler))
-                    {
-                        // CFG++ samplers re-noise along the unconditional direction.
-                        var unc = new float[perImage];
-                        var epsU = settings.Cfg != 1f ? uncondEps! : cond;
-                        for (int i = 0; i < perImage; i++) unc[i] = sample[i] - sigma * epsU[i];
-                        lastUncond = unc;
-                    }
-                    if (mask is not null)
-                    {
-                        // Inpainting: the part outside the mask is held at the original latent.
-                        int plane = h * w;
-                        for (int c = 0; c < Checkpoint.LatentChannels; c++)
-                            for (int i = 0; i < plane; i++)
-                                denoised[c * plane + i] = denoised[c * plane + i] * mask[i] + original[c * plane + i] * (1f - mask[i]);
-                    }
-                    lastDenoised = denoised;
-                    return denoised;
-                }
+                Task<float[]> Denoise(float[] sample, float sigma) =>
+                    InpaintedCall(sample, sigma, mask, guider.Model.Patches.DenoiseMask, runSigmas, sampling, original, inpaintNoise, h * w,
+                        input => guidance.PredictAsync(input, sigma,
+                            (cond, scheduled) => GuidedAsync(cond.Entries, input, shape, sigma, sampling, ckpt, Upload, acc, h, w, scheduled)));
 
                 int item = b;
-                x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise, new Samplers.NoiseSource(unchecked((int)(settings.Seed + noiseIndex) ^ 0x5EED), Checkpoint.LatentChannels, h, w),
-                    done =>
+                x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise,
+                    new Samplers.NoiseSource(itemSeed ^ 0x5EED, Checkpoint.LatentChannels, h, w),
+                    done => context.Progress(item * steps + Math.Min(done, steps), Math.Max(1, latent.Batch * steps)),
+                    context.CancellationToken, () => guidance.Last, settings.Options, sampling,
+                    d =>
                     {
-                        context.Progress(item * steps + done, latent.Batch * steps);
-                        if (item == 0 && context.WantsPreview) context.Preview(LatentPreview.Png(lastDenoised, h, w));
-                    }, context.CancellationToken, () => lastUncond);
+                        lastDenoised = d;
+                        if (item == 0 && context.WantsPreview) context.Preview(LatentPreview.Png(d, h, w));
+                    });
+                x = sampling.InverseNoiseScaling(sigmas[^1], x);
                 Array.Copy(x, 0, result.Data, b * perImage, perImage);
-                Array.Copy(lastDenoised, 0, denoisedResult.Data, b * perImage, perImage);
+                Array.Copy(lastDenoised ?? x, 0, denoisedResult.Data, b * perImage, perImage);
             }
             return (result, denoisedResult);
         }
         finally
         {
-            foreach (var (buf, _) in uploaded) buf.Dispose();
+            foreach (var (buf, _) in uploaded.Values) buf.Dispose();
         }
     }
 
     /// <summary>
-    /// ComfyUI's RescaleCFG (arXiv 2305.08891, "Common Diffusion Noise Schedules and Sample Steps are Flawed"): the guided prediction is formed in v-space, rescaled to
-    /// the standard deviation of the prompt's own prediction and blended back by <paramref name="multiplier"/> (0 = plain CFG), which tames the over-saturation of a high cfg.
-    /// <paramref name="sample"/> is the noisy sample, the two predictions are the UNet's eps outputs; the result is the denoised estimate written to <paramref name="denoised"/>.
+    /// ComfyUI's KSamplerX0Inpaint around one model call: with an inpainting mask (possibly reshaped per step by a denoise mask function such as Differential
+    /// Diffusion's) the kept area of the input is the original latent noised to this sigma with the run's noise, and the kept area of the output is the original itself.
     /// </summary>
-    internal static void RescaledDenoised(float[] sample, float[] epsCond, float[] epsUncond, float cfg, float sigma, float multiplier, float[] denoised)
+    internal static async Task<float[]> InpaintedCall(float[] sample, double sigma, float[]? mask, Func<double, float[], double[], ModelSampling, float[]>? denoiseMask,
+        double[] runSigmas, ModelSampling sampling, float[] original, float[] inpaintNoise, int plane, Func<float[], Task<float[]>> predict)
     {
-        int n = sample.Length;
-        double k = Math.Sqrt((double)sigma * sigma + 1.0), scaledInput = 1.0 / ((double)sigma * sigma + 1.0);
-        var cond = new double[n];
-        var guided = new double[n];
-        for (int i = 0; i < n; i++)
-        {
-            double b = sample[i] / (sigma * k);          // the part of v that comes from the sample itself
-            double vc = b - k * epsCond[i], vu = b - k * epsUncond[i];
-            cond[i] = vc;
-            guided[i] = vu + cfg * (vc - vu);
-        }
-        double ratio = Std(cond) / Math.Max(Std(guided), 1e-12);
-        for (int i = 0; i < n; i++)
-        {
-            double final = multiplier * (guided[i] * ratio) + (1.0 - multiplier) * guided[i];
-            denoised[i] = (float)(sample[i] - (sample[i] * scaledInput - final * sigma / k));
-        }
+        if (mask is null) return await predict(sample);
+        var m = denoiseMask is null ? mask : denoiseMask(sigma, mask, runSigmas, sampling);
+        var input = Blend(sample, sampling.NoiseScaling(sigma, inpaintNoise, original), m, plane);
+        return Blend(await predict(input), original, m, plane);
     }
 
-    static double Std(double[] v)
+    /// <summary>a * m + b * (1 - m) with a per-pixel mask broadcast over the channels.</summary>
+    internal static float[] Blend(float[] a, float[] b, float[] m, int plane)
     {
-        double mean = v.Average(), sum = 0;
-        foreach (var x in v) sum += (x - mean) * (x - mean);
-        return Math.Sqrt(sum / Math.Max(1, v.Length - 1));
+        var r = new float[a.Length];
+        for (int i = 0; i < r.Length; i++)
+        {
+            float mi = m[i % plane];
+            r[i] = a[i] * mi + b[i] * (1f - mi);
+        }
+        return r;
     }
 
     /// <summary>
-    /// The UNet's prediction for a set of conditioning entries: each active entry is evaluated and blended by its area weight (strength x area x mask),
-    /// like ComfyUI. Pixels no entry covers get 0. A single entry that applies everywhere is just its own prediction.
+    /// ComfyUI's calc_cond_batch for one conditioning: each active entry's denoised estimate, blended by its weight (strength x area x mask) over a count that starts at
+    /// 1e-37, so pixels no entry covers come out 0. <paramref name="scheduled"/> false ignores the entries' timestep ranges.
     /// </summary>
-    static async Task<float[]> GuidedAsync(List<(CondEntry Entry, Tensor Tensor)> entries, float[] scaled, int[] shape, float timestep, float sigma,
-        Checkpoint ckpt, Accelerator acc, int h, int w)
+    static async Task<float[]> GuidedAsync(IReadOnlyList<CondEntry> entries, float[] x, int[] shape, double sigma, ModelSampling sampling, Checkpoint ckpt,
+        Func<CondEntry, Tensor> upload, Accelerator acc, int h, int w, bool scheduled)
     {
         int plane = h * w, perImage = Checkpoint.LatentChannels * plane;
-        var active = entries.Where(e => IsActive(e.Entry, sigma, ckpt.Sigmas)).ToList();
+        var active = entries.Where(e => !scheduled || IsActive(e, sigma, sampling)).ToList();
         if (active.Count == 0) return new float[perImage];
 
-        if (active.Count == 1 && active[0].Entry.Area is null && active[0].Entry.Mask is null)
-            return await PredictAsync(acc, ckpt.Unet, scaled, shape, timestep, active[0].Tensor); // the common case: one plain prompt
+        var input = sampling.CalculateInput(sigma, x);
+        float timestep = sampling.Timestep(sigma);
+        async Task<float[]> Predict(CondEntry e) =>
+            sampling.CalculateDenoised(sigma, await PredictAsync(acc, ckpt.Unet, input, shape, timestep, upload(e)), x);
+
+        if (active.Count == 1 && active[0].Area is null && active[0].Mask is null && active[0].Strength != 0f)
+            return await Predict(active[0]); // the common case: one plain prompt (strength cancels in the blend)
 
         var sum = new float[perImage];
         var weightSum = new float[plane];
-        foreach (var (entry, tensor) in active)
+        Array.Fill(weightSum, 1e-37f);
+        foreach (var entry in active)
         {
-            var eps = await PredictAsync(acc, ckpt.Unet, scaled, shape, timestep, tensor);
+            var den = await Predict(entry);
             var weight = Weight(entry, h, w);
             for (int i = 0; i < plane; i++)
             {
                 if (weight[i] == 0f) continue;
                 weightSum[i] += weight[i];
-                for (int c = 0; c < Checkpoint.LatentChannels; c++) sum[c * plane + i] += eps[c * plane + i] * weight[i];
+                for (int c = 0; c < Checkpoint.LatentChannels; c++) sum[c * plane + i] += den[c * plane + i] * weight[i];
             }
         }
         for (int i = 0; i < plane; i++)
-            for (int c = 0; c < Checkpoint.LatentChannels; c++) sum[c * plane + i] = weightSum[i] > 0f ? sum[c * plane + i] / weightSum[i] : 0f;
+            for (int c = 0; c < Checkpoint.LatentChannels; c++) sum[c * plane + i] /= weightSum[i];
         return sum;
     }
 
-    /// <summary>An entry is active while the run's sigma is inside its percent range (start 0 = from the very beginning, end 1 = to the very end).</summary>
-    internal static bool IsActive(CondEntry e, float sigma, ModelSigmas sigmas)
-    {
-        float startSigma = PercentToSigma(e.StartPercent, sigmas), endSigma = PercentToSigma(e.EndPercent, sigmas);
-        return sigma <= startSigma && sigma > endSigma;
-    }
+    /// <summary>An entry is active while the run's sigma is inside its percent range: end sigma &lt;= sigma &lt;= start sigma (ComfyUI's timestep_start / timestep_end).</summary>
+    internal static bool IsActive(CondEntry e, double sigma, ModelSampling sampling) =>
+        sigma <= PercentToSigma(e.StartPercent, sampling) && sigma >= PercentToSigma(e.EndPercent, sampling);
 
-    internal static float PercentToSigma(float percent, ModelSigmas sigmas) =>
-        percent <= 0f ? float.PositiveInfinity : percent >= 1f ? 0f : sigmas.Sigma((1f - percent) * (sigmas.TrainingSteps - 1));
+    internal static double PercentToSigma(float percent, ModelSampling sampling) => sampling.PercentToSigma(percent);
 
     /// <summary>Where and how much one entry counts, over the latent: strength x (1 inside its area) x its mask.</summary>
     internal static float[] Weight(CondEntry e, int h, int w)

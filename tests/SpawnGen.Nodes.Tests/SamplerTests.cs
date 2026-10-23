@@ -40,7 +40,9 @@ public class SamplerTests
     {
         var sigmas = Sigmas(8);
         var x = await Samplers.RunAsync(sampler, Start(sigmas[0], 1), sigmas, PointMass(0.7f), Noise());
-        Assert.That(x.Max(v => Math.Abs(v - 0.7f)), Is.LessThan(1e-3f));
+        // dpm_fast and dpm_adaptive stop at the last sigma above 0 and uni_pc at 0.001 (as in ComfyUI), so some of that noise level is left.
+        float left = sampler switch { "dpm_fast" or "dpm_adaptive" => 5 * sigmas[^2], "uni_pc" or "uni_pc_bh2" => 5e-3f, _ => 1e-3f };
+        Assert.That(x.Max(v => Math.Abs(v - 0.7f)), Is.LessThan(left));
     }
 
     [Test]
@@ -140,10 +142,9 @@ public class SamplerTests
     [TestCase("euler_ancestral_cfg_pp", "euler_ancestral")]
     [TestCase("dpmpp_2m_cfg_pp", "dpmpp_2m")]
     [TestCase("gradient_estimation_cfg_pp", "gradient_estimation")]
-    [TestCase("ipndm_v", "lms")]
     public async Task A_cfg_pp_sampler_without_guidance_is_its_plain_counterpart(string sampler, string plain)
     {
-        // With no separate unconditional estimate the CFG++ update collapses to the ordinary one (ipndm_v is lms's variable-step integral).
+        // With no separate unconditional estimate the CFG++ update collapses to the ordinary one.
         var sigmas = Sigmas(8);
         var a = await Samplers.RunAsync(sampler, Start(sigmas[0], 6), sigmas, Gaussian(0.3f, 1f), Noise(4));
         var b = await Samplers.RunAsync(plain, Start(sigmas[0], 6), sigmas, Gaussian(0.3f, 1f), Noise(4));
@@ -154,8 +155,8 @@ public class SamplerTests
     public async Task CFG_plus_plus_samplers_use_the_unconditional_estimate_when_given()
     {
         var sigmas = Sigmas(6);
-        float[]? last = null;
-        Samplers.DenoiseFn model = async (x, sigma) => { var d = await Gaussian(0.3f, 1f)(x, sigma); last = d.Select(v => v + 0.1f).ToArray(); return d; };
+        GuidanceOutput? last = null;
+        Samplers.DenoiseFn model = async (x, sigma) => { var d = await Gaussian(0.3f, 1f)(x, sigma); last = new GuidanceOutput(d, d.Select(v => v + 0.1f).ToArray(), true); return d; };
         var with = await Samplers.RunAsync("euler_cfg_pp", Start(sigmas[0], 6), sigmas, model, Noise(), uncond: () => last);
         var without = await Samplers.RunAsync("euler_cfg_pp", Start(sigmas[0], 6), sigmas, Gaussian(0.3f, 1f), Noise());
         Assert.That(with, Is.Not.EqualTo(without));

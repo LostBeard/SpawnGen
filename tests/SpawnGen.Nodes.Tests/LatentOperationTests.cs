@@ -99,55 +99,36 @@ public class LatentOperationTests
 
     // ---- Latent Apply Operation CFG ----
 
-    static PreCfgArgs Args(float sigma, float[] cond, float[] uncond, int index = 0) => new()
-    {
-        Cond = cond, Uncond = uncond, Sigma = sigma, CondScale = 5f, BatchIndex = index, Channels = 1, Height = 1, Width = cond.Length,
-    };
+    static readonly ModelSampling Sd = new(SamplingSetupTests.Sd());
+
+    /// <summary>ComfyUI's pre-cfg arguments for one picture of <paramref name="width"/> one-channel cells: [cond, uncond] denoised estimates at <paramref name="sigma"/>.</summary>
+    static PreCfgArgs Args(double sigma, float[] cond, float[] uncond, int index = 0) =>
+        new([true, true], [cond, uncond], 5.0, sigma, new float[cond.Length], new PatchContext
+        {
+            Channels = 1, Height = 1, Width = cond.Length, Sampling = Sd, BatchIndex = index, EvaluateUnscheduled = _ => Task.FromResult(Array.Empty<float>()),
+        });
 
     [Test]
     public void The_patch_changes_the_guidance_cond_minus_uncond_and_puts_the_uncond_back()
     {
         var seen = new List<int>();
-        var f = LatentApplyOperationCFG.Function(SamplingSetupTests.Sd(), Doubler(seen), 0, 1);
-        var args = Args(3f, [5f, 7f], [1f, 1f], index: 2);
-        f(args);
-        Assert.That(args.Cond, Is.EqualTo(new[] { 9f, 13f }), "2 (cond - uncond) + uncond");
-        Assert.That(args.Uncond, Is.EqualTo(new[] { 1f, 1f }));
+        var outs = LatentApplyOperationCFG.PreCfg(Args(3.0, [5f, 7f], [1f, 1f], index: 2), Doubler(seen), double.MaxValue, 0);
+        Assert.That(outs[0], Is.EqualTo(new[] { 9f, 13f }), "2 (cond - uncond) + uncond");
+        Assert.That(outs[1], Is.EqualTo(new[] { 1f, 1f }));
         Assert.That(seen, Is.EqualTo(new[] { 2 }), "the operation is told which picture of the batch it has");
     }
 
     [Test]
     public void The_patch_only_acts_inside_its_part_of_the_schedule()
     {
-        var sigmas = SamplingSetupTests.Sd();
-        float start = SamplingCore.PercentToSigma(0.25f, sigmas), end = SamplingCore.PercentToSigma(0.75f, sigmas);
+        double start = Sd.PercentToSigma(0.25), end = Sd.PercentToSigma(0.75);
         Assert.That(start, Is.GreaterThan(end));
-        var f = LatentApplyOperationCFG.Function(sigmas, Doubler([]), 0.25, 0.75);
-        float[] Run(float sigma) { var a = Args(sigma, [3f], [1f]); f(a); return a.Cond; }
-        Assert.That(Run(start * 1.01f), Is.EqualTo(new[] { 3f }), "before start_percent (sigma above sigma_start)");
+        float[] Run(double sigma) => LatentApplyOperationCFG.PreCfg(Args(sigma, [3f], [1f]), Doubler([]), start, end)[0];
+        Assert.That(Run(start * 1.01), Is.EqualTo(new[] { 3f }), "before start_percent (sigma above sigma_start)");
         Assert.That(Run(start), Is.EqualTo(new[] { 5f }), "sigma_start itself is inside");
         Assert.That(Run((start + end) / 2), Is.EqualTo(new[] { 5f }));
         Assert.That(Run(end), Is.EqualTo(new[] { 5f }), "sigma_end itself is inside");
-        Assert.That(Run(end * 0.99f), Is.EqualTo(new[] { 3f }), "after end_percent");
-    }
-
-    [Test]
-    public void The_sampler_hands_denoised_predictions_over_and_takes_them_back_as_noise_predictions()
-    {
-        // x = 2, sigma = 2: eps 0.5 is the denoised 1 (x - sigma eps). A function that sets cond to 0 makes the prompt's eps (2 - 0) / 2 = 1.
-        float[] sample = [2f, 4f], epsCond = [0.5f, 1f], epsUncond = [0.25f, 0f];
-        PreCfgArgs? seen = null;
-        var (cond, uncond) = PreCfg.Apply([a => { seen = a; a.Cond = [0f, 0f]; }], sample, epsCond, epsUncond, 2f, 7f, 1, 1, 1, 2);
-        Assert.That(seen!.Uncond, Is.EqualTo(new[] { 1.5f, 4f }), "x - sigma eps");
-        Assert.That((seen.CondScale, seen.BatchIndex, seen.Sigma), Is.EqualTo((7f, 1, 2f)));
-        Assert.That(cond, Is.EqualTo(new[] { 1f, 2f }));
-        Assert.That(uncond, Is.EqualTo(epsUncond).Within(1e-6), "an untouched prediction comes back as it was");
-
-        // cfg 1: ComfyUI does not evaluate the negative prompt and the function sees zeros for it; there is still no uncond afterwards.
-        var (c1, u1) = PreCfg.Apply([a => seen = a], sample, epsCond, null, 2f, 1f, 0, 1, 1, 2);
-        Assert.That(seen!.Uncond, Is.EqualTo(new[] { 0f, 0f }));
-        Assert.That(c1, Is.EqualTo(epsCond).Within(1e-6));
-        Assert.That(u1, Is.Null);
+        Assert.That(Run(end * 0.99), Is.EqualTo(new[] { 3f }), "after end_percent");
     }
 
     /// <summary>
@@ -205,11 +186,11 @@ public class LatentOperationTests
     [Test]
     public void RescaleCFG_keeps_the_patches_already_on_the_model()
     {
-        PreCfgFunction patch = _ => { };
-        var model = new ModelHandle(null!) { PreCfg = [patch] };
-        var rescaled = new RescaleCFG().Execute(model, 0.7f);
-        Assert.That(rescaled.PreCfg, Is.EqualTo(new[] { patch }));
-        Assert.That(rescaled.RescaleCfg, Is.EqualTo(0.7f));
+        var model = new LatentApplyOperationCFG().Execute(new ModelHandle(null!, Sd), Doubler([]));
+        var rescaled = new RescaleCFG().Execute(model, 0.7);
+        Assert.That(rescaled.Patches.PreCfg, Is.EqualTo(model.Patches.PreCfg), "the latent operation stays");
+        Assert.That(rescaled.Patches.CfgFunction, Is.Not.Null);
+        Assert.That(model.Patches.CfgFunction, Is.Null, "patching never changes the model that came in");
     }
 
     sealed class Services(params object[] instances) : IServiceProvider

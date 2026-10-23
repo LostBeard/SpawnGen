@@ -31,7 +31,8 @@ public sealed class Checkpoint : IDisposable
         Vae = vae;
         Tokenizer = tokenizer;
         AlphasCumprod = DiffusionScheduler.ComputeAlphasCumprod();
-        Sigmas = new ModelSigmas(AlphasCumprod);
+        Sigmas = ModelSigmas.LinearSchedule(); // ComfyUI's float64 table (the library's alphas are float32 products, about 1e-5 off)
+        Sampling = new ModelSampling(Sigmas);
     }
 
     public string Name { get; }
@@ -50,6 +51,8 @@ public sealed class Checkpoint : IDisposable
     public float[] AlphasCumprod { get; }
     /// <summary>The noise levels of the model's training steps, for schedulers and for telling the model its timestep.</summary>
     public ModelSigmas Sigmas { get; }
+    /// <summary>The model's own sampling: SD's eps prediction over <see cref="Sigmas"/>.</summary>
+    public ModelSampling Sampling { get; }
 
     /// <summary>The VAE encoder (pixels to latents), loaded on first use: text-to-image never needs it.</summary>
     public Task<SpawnDev.ILGPU.ML.InferenceSession> GetVaeEncoderAsync()
@@ -128,13 +131,18 @@ public sealed class Checkpoint : IDisposable
 
 /// <summary>The denoiser (UNet) of a loaded checkpoint, with the sampling math constants.</summary>
 [Socket("MODEL")]
-public sealed class ModelHandle(Checkpoint checkpoint)
+public sealed class ModelHandle(Checkpoint checkpoint, ModelSampling sampling)
 {
+    public ModelHandle(Checkpoint checkpoint) : this(checkpoint, checkpoint?.Sampling!) { }
+
     public Checkpoint Checkpoint { get; } = checkpoint;
-    /// <summary>RescaleCFG's multiplier (0 = off): sampling rescales the guided prediction towards the spread of the prompt's own (see <see cref="SamplingCore.RescaledDenoised"/>).</summary>
-    public float RescaleCfg { get; init; }
-    /// <summary>Functions run on the predictions before cfg at every step, in order (Latent Apply Operation CFG adds one; see <see cref="PreCfgArgs"/>).</summary>
-    public IReadOnlyList<PreCfgFunction> PreCfg { get; init; } = [];
+    /// <summary>How the denoiser is driven: its noise levels, timesteps and prediction type (ModelSamplingDiscrete swaps it).</summary>
+    public ModelSampling Sampling { get; init; } = sampling;
+    /// <summary>The guidance patches (RescaleCFG, CFGNorm, APG, ...) sampling applies, ComfyUI's model_options.</summary>
+    public ModelPatches Patches { get; init; } = ModelPatches.None;
+
+    /// <summary>A copy with other patches: patch nodes never change the model that came in, like ComfyUI's model.clone().</summary>
+    public ModelHandle WithPatches(Func<ModelPatches, ModelPatches> change) => new(Checkpoint, Sampling) { Patches = change(Patches) };
 }
 
 /// <summary>The CLIP text encoder and tokenizer of a loaded checkpoint.</summary>

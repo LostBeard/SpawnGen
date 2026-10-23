@@ -261,7 +261,7 @@ public sealed class ImageSharpen
         });
 }
 
-[Node(Category = "image", DisplayName = "Composite Image (masked)")]
+[Node(Category = "image/compositing", DisplayName = "Image Composite Masked")]
 public sealed class ImageCompositeMasked
 {
     /// <summary>Pastes <paramref name="source"/> onto <paramref name="destination"/> at (x, y), where the mask is 1 (or everywhere with no mask). Parts outside are cut off.</summary>
@@ -291,11 +291,12 @@ public sealed class ImageCompositeMasked
                 {
                     int dx = x + sx;
                     if (dx >= destination.Width) break;
-                    float k = m is null ? 1f : Math.Clamp(m[sy * source.Width + sx], 0f, 1f);
+                    float k = m is null ? 1f : m[sy * source.Width + sx]; // not clamped, like ComfyUI
                     for (int ch = 0; ch < c; ch++)
                     {
                         int di = ((b * destination.Height + dy) * destination.Width + dx) * c + ch;
-                        float s = source.Data[((sb * source.Height + sy) * source.Width + sx) * source.Channels + Math.Min(ch, source.Channels - 1)];
+                        // ComfyUI's image_alpha_fix: an RGB source over an RGBA destination gets an opaque alpha (1).
+                        float s = ch < source.Channels ? source.Data[((sb * source.Height + sy) * source.Width + sx) * source.Channels + ch] : 1f;
                         result.Data[di] = s * k + result.Data[di] * (1 - k);
                     }
                 }
@@ -305,7 +306,7 @@ public sealed class ImageCompositeMasked
     }
 }
 
-[Node(Category = "mask", DisplayName = "Convert Image to Mask")]
+[Node(Category = "image/mask", DisplayName = "Convert Image to Mask")]
 public sealed class ImageToMask
 {
     public static string[] Channels() => ["red", "green", "blue", "alpha"];
@@ -322,7 +323,7 @@ public sealed class ImageToMask
     }
 }
 
-[Node(Category = "mask", DisplayName = "Convert Mask to Image")]
+[Node(Category = "image/mask", DisplayName = "Convert Mask to Image")]
 public sealed class MaskToImage
 {
     public ImageBatch Execute(MaskBatch mask)

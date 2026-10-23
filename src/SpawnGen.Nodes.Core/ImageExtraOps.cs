@@ -186,19 +186,18 @@ public sealed class Morphology
     }
 }
 
-[Node(Category = "mask", DisplayName = "Image Color to Mask")]
+[Node(Category = "image/mask", DisplayName = "Convert Image Color to Mask")]
 public sealed class ImageColorToMask
 {
-    /// <summary>1 where a pixel is exactly the colour (0xRRGGBB as a number, like ComfyUI), else 0.</summary>
+    /// <summary>1 where a pixel is exactly the colour (0xRRGGBB as a number, like ComfyUI), else 0. Channels are clamped to 0..1, then rounded to 0..255 (half to even).</summary>
     public MaskBatch Execute(ImageBatch image, [Input(Min = 0, Max = 0xFFFFFF)] int color = 0)
     {
-        int r = (color >> 16) & 255, g = (color >> 8) & 255, b = color & 255;
         var mask = new MaskBatch(image.Batch, image.Height, image.Width);
         int c = image.Channels;
         for (int i = 0; i < mask.Data.Length; i++)
         {
-            int Q(int k) => (int)MathF.Round(image.Data[i * c + Math.Min(k, c - 1)] * 255f);
-            mask.Data[i] = Q(0) == r && Q(1) == g && Q(2) == b ? 1f : 0f;
+            int Q(int k) => (int)MathF.Round(Math.Clamp(image.Data[i * c + Math.Min(k, c - 1)], 0f, 1f) * 255f);
+            mask.Data[i] = (Q(0) << 16) + (Q(1) << 8) + Q(2) == color ? 1f : 0f;
         }
         return mask;
     }

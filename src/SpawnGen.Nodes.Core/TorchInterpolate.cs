@@ -12,119 +12,38 @@ public static class TorchInterpolate
 
     /// <summary>
     /// <c>interpolate(x, size=(newH, newW), mode)</c> for <paramref name="planes"/> planes of h x w (batch x channels of an NCHW tensor).
-    /// Modes: nearest, nearest-exact, bilinear, bicubic, area.
+    /// Modes: nearest, nearest-exact, bilinear, bicubic, area (all but the legacy "nearest" go through <see cref="Core.CommonUpscale"/>).
     /// </summary>
     public static float[] Resize(float[] src, int planes, int h, int w, int newH, int newW, string mode)
     {
         if (h <= 0 || w <= 0 || newH <= 0 || newW <= 0)
             throw new ArgumentException($"Cannot resize {w}x{h} to {newW}x{newH}: every size must be at least 1 (PyTorch refuses it too).");
-        var dst = new float[planes * newH * newW];
-        if (mode == "area")
+        if (mode is "nearest-exact" or "bilinear" or "bicubic" or "area")
         {
-            Area(src, dst, planes, h, w, newH, newW);
-            return dst;
-        }
-        var xs = Taps(w, newW, mode);
-        var ys = Taps(h, newH, mode);
-        var row = new float[newW];
-        var rows = new float[h * newW];
-        for (int p = 0; p < planes; p++)
-        {
-            int inBase = p * h * w, outBase = p * newH * newW;
-            // Across: every input row to the new width.
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < newW; x++)
-                {
-                    var (idx, wts) = xs[x];
-                    float acc = src[inBase + y * w + idx[0]] * wts[0];
-                    for (int k = 1; k < idx.Length; k++) acc += src[inBase + y * w + idx[k]] * wts[k];
-                    rows[y * newW + x] = acc;
-                }
-            // Down: the new rows from those.
-            for (int y = 0; y < newH; y++)
+            // One implementation of PyTorch's kernels: the picture one (CommonUpscale), plane by plane.
+            var result = new float[planes * newH * newW];
+            var plane = new float[h * w];
+            for (int p = 0; p < planes; p++)
             {
-                var (idx, wts) = ys[y];
-                for (int x = 0; x < newW; x++)
-                {
-                    float acc = rows[idx[0] * newW + x] * wts[0];
-                    for (int k = 1; k < idx.Length; k++) acc += rows[idx[k] * newW + x] * wts[k];
-                    row[x] = acc;
-                }
-                Array.Copy(row, 0, dst, outBase + y * newW, newW);
+                Array.Copy(src, p * h * w, plane, 0, h * w);
+                Array.Copy(Core.CommonUpscale.Resize(plane, w, h, 1, newW, newH, mode), 0, result, p * newH * newW, newH * newW);
             }
+            return result;
         }
+        if (mode != "nearest") throw new ArgumentException($"Unknown interpolation mode '{mode}'.", nameof(mode));
+        // PyTorch's legacy "nearest": source index floor(o * in / out) (exact when doubling), each axis on its own.
+        int[] xs = Nearest(w, newW), ys = Nearest(h, newH);
+        var dst = new float[planes * newH * newW];
+        for (int p = 0; p < planes; p++)
+            for (int y = 0; y < newH; y++)
+                for (int x = 0; x < newW; x++) dst[(p * newH + y) * newW + x] = src[(p * h + ys[y]) * w + xs[x]];
         return dst;
     }
 
-    /// <summary>For each output index along one axis: the input indices it reads and their weights, as PyTorch's upsample kernels compute them.</summary>
-    static (int[] Index, float[] Weight)[] Taps(int inSize, int outSize, string mode)
+    static int[] Nearest(int inSize, int outSize)
     {
         float scale = (float)inSize / outSize; // area_pixel_compute_scale with no explicit scale factor
-        var taps = new (int[], float[])[outSize];
-        for (int o = 0; o < outSize; o++)
-        {
-            switch (mode)
-            {
-                case "nearest":
-                {
-                    int i = inSize == outSize ? o : outSize == 2 * inSize ? o >> 1 : Math.Min((int)MathF.Floor(o * scale), inSize - 1);
-                    taps[o] = ([i], [1f]);
-                    break;
-                }
-                case "nearest-exact":
-                {
-                    int i = inSize == outSize ? o : Math.Min((int)MathF.Floor((float)((o + 0.5) * scale)), inSize - 1);
-                    taps[o] = ([i], [1f]);
-                    break;
-                }
-                case "bilinear":
-                {
-                    float real = scale * (o + 0.5f) - 0.5f;
-                    if (real < 0) real = 0;
-                    int i0 = Math.Min((int)MathF.Floor(real), inSize - 1);
-                    float l1 = Math.Min(Math.Max(real - i0, 0f), 1f), l0 = 1f - l1;
-                    int i1 = i0 + (i0 < inSize - 1 ? 1 : 0);
-                    taps[o] = ([i0, i1], [l0, l1]);
-                    break;
-                }
-                case "bicubic":
-                {
-                    // Not clamped at the edges like linear: the taps past the border repeat the edge sample.
-                    float real = scale * (o + 0.5f) - 0.5f;
-                    int i0 = Math.Min((int)MathF.Floor(real), inSize - 1);
-                    float t = Math.Min(Math.Max(real - i0, 0f), 1f);
-                    const float A = -0.75f;
-                    static float Conv1(float x) => ((A + 2) * x - (A + 3)) * x * x + 1;
-                    static float Conv2(float x) => ((A * x - 5 * A) * x + 8 * A) * x - 4 * A;
-                    float t2 = 1f - t;
-                    taps[o] = ([Clamp(i0 - 1, inSize), Clamp(i0, inSize), Clamp(i0 + 1, inSize), Clamp(i0 + 2, inSize)], [Conv2(t + 1f), Conv1(t), Conv1(t2), Conv2(t2 + 1f)]);
-                    break;
-                }
-                default:
-                    throw new ArgumentException($"Unknown interpolation mode '{mode}'.", nameof(mode));
-            }
-        }
-        return taps;
-    }
-
-    static int Clamp(int i, int size) => Math.Min(Math.Max(i, 0), size - 1);
-
-    /// <summary><c>adaptive_avg_pool2d</c> (what mode "area" is): the plain mean of the input cells from floor(o * in / out) to ceil((o + 1) * in / out).</summary>
-    static void Area(float[] src, float[] dst, int planes, int h, int w, int newH, int newW)
-    {
-        for (int p = 0; p < planes; p++)
-            for (int oy = 0; oy < newH; oy++)
-            {
-                int y0 = (int)((long)oy * h / newH), y1 = (int)(((long)(oy + 1) * h + newH - 1) / newH);
-                for (int ox = 0; ox < newW; ox++)
-                {
-                    int x0 = (int)((long)ox * w / newW), x1 = (int)(((long)(ox + 1) * w + newW - 1) / newW);
-                    float sum = 0;
-                    for (int y = y0; y < y1; y++)
-                        for (int x = x0; x < x1; x++) sum += src[(p * h + y) * w + x];
-                    dst[(p * newH + oy) * newW + ox] = sum / (y1 - y0) / (x1 - x0);
-                }
-            }
+        return Enumerable.Range(0, outSize).Select(o => inSize == outSize ? o : outSize == 2 * inSize ? o >> 1 : Math.Min((int)MathF.Floor(o * scale), inSize - 1)).ToArray();
     }
 
     /// <summary>

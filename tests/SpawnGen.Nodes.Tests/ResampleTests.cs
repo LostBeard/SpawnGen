@@ -19,7 +19,9 @@ public class ResampleTests
     public void A_picture_resized_to_its_own_size_is_unchanged(ResampleMethod m)
     {
         var src = Ramp(7, 5, 3);
-        Assert.That(Resample.Resize(src, 7, 5, 3, 7, 5, m), Is.EqualTo(src));
+        // ComfyUI's lanczos goes through Pillow on 8-bit pictures (truncated with astype(uint8)), so even an unchanged size comes back quantised.
+        var expected = m == ResampleMethod.Lanczos ? src.Select(v => MathF.Floor(Math.Clamp(255f * v, 0, 255)) / 255f).ToArray() : src;
+        Assert.That(Resample.Resize(src, 7, 5, 3, 7, 5, m), Is.EqualTo(expected).Within(1e-6f));
     }
 
     [Test]
@@ -31,7 +33,9 @@ public class ResampleTests
                 var flat = Enumerable.Repeat(0.37f, 8 * 6 * 3).ToArray();
                 var r = Resample.Resize(flat, 8, 6, 3, nw, nh, m);
                 Assert.That(r, Has.Length.EqualTo(nw * nh * 3));
-                Assert.That(r.All(v => Math.Abs(v - 0.37f) < 1e-5f), Is.True, $"{m} {nw}x{nh}");
+                // Lanczos: 0.37 * 255 = 94.35 is truncated to 94 on the way into Pillow (ComfyUI does the same).
+                float level = m == ResampleMethod.Lanczos ? 94f / 255f : 0.37f;
+                Assert.That(r.All(v => Math.Abs(v - level) < 1e-5f), Is.True, $"{m} {nw}x{nh}");
             }
     }
 

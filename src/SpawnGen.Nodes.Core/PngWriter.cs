@@ -20,7 +20,7 @@ public static partial class PngWriter
         {
             raw[o++] = 0; // filter: none
             for (int x = 0; x < w * ch; x++)
-                raw[o++] = (byte)Math.Clamp((int)MathF.Round(images.Data[src++] * 255f), 0, 255);
+                raw[o++] = (byte)Math.Clamp(images.Data[src++] * 255f, 0f, 255f); // ComfyUI: np.clip(255. * i, 0, 255).astype(np.uint8), truncated, not rounded
         }
 
         using var idat = new MemoryStream();

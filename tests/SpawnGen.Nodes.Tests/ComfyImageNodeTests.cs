@@ -267,7 +267,7 @@ public class ComfyImageNodeTests
 
     static NodeContext Context(IServiceProvider services, string prompt = "{\"1\":{\"class_type\":\"X\"}}") =>
         (NodeContext)Activator.CreateInstance(typeof(NodeContext), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
-            ["1", "X", services, CancellationToken.None, null, new Lazy<string>(() => prompt), new Dictionary<string, string> { ["workflow"] = "{\"nodes\":[\"é\"]}" }, null], null)!;
+            ["1", "X", services, CancellationToken.None, null, new Lazy<string>(() => prompt), new Dictionary<string, string> { ["workflow"] = "{\"nodes\":[\"é\"]}" }, null, null, 0], null)!;
 
     static List<(string Type, byte[] Data)> Chunks(byte[] png)
     {

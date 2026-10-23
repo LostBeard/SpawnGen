@@ -29,59 +29,92 @@ public static class ComfyWorkflow
         var root = JsonNode.Parse(json) as JsonObject ?? throw new InvalidDataException("Not a workflow: the JSON is not an object.");
         if (root["nodes"] is not JsonArray nodes) throw new InvalidDataException("Not a workflow: there is no \"nodes\" list (an API-format prompt cannot be opened as a workflow).");
 
-        SubgraphJson.Register(root["definitions"]?["subgraphs"] as JsonArray); // before the nodes: an instance needs its definition to have sockets
-        var nodeJson = new Dictionary<int, JsonObject>();
+        // Before the nodes: an instance needs its definition to have sockets.
+        var subgraphIds = SubgraphJson.Register(root["definitions"]?["subgraphs"] as JsonArray, doc.Registry, warnings);
         doc.Reset(graph =>
         {
-            int z = 0;
-            foreach (var n in nodes.OfType<JsonObject>().OrderBy(n => (int?)n["order"] ?? 0))
-            {
-                int id = (int)n["id"]!;
-                string type = doc.Registry.CanonicalId((string?)n["type"] ?? ""); // a node saved under an earlier id opens as the current one
-                nodeJson[id] = n;
-                var node = new EditorNode
-                {
-                    Id = id, ClassType = type, Title = (string?)n["title"], Color = (string?)n["color"], BgColor = (string?)n["bgcolor"],
-                    X = Pair(n["pos"]).X, Y = Pair(n["pos"]).Y,
-                    Collapsed = (bool?)n["flags"]?["collapsed"] ?? false,
-                    Pinned = (bool?)n["flags"]?["pinned"] ?? false,
-                    Mode = Enum.IsDefined(typeof(NodeMode), (int?)n["mode"] ?? 0) ? (NodeMode)((int?)n["mode"] ?? 0) : NodeMode.Always,
-                    ZIndex = ++z,
-                    Properties = n["properties"] is JsonObject props ? (JsonObject)props.DeepClone() : [],
-                };
-                if (Pair(n["size"]).X is > 0 and var w) node.Width = w;
-
-                var values = n["widgets_values"];
-                if (doc.Registry.GetSchema(type) is { } schema) ReadWidgets(node, schema, values, warnings);
-                else
-                {
-                    warnings.Add($"Node #{id}: type '{type}' is not installed; it is kept as a placeholder.");
-                    if (values is not null) node.Widgets[RawWidgetsKey] = values.DeepClone();
-                }
-                graph.AddNodeRaw(node);
-            }
-
-            foreach (var l in (root["links"] as JsonArray)?.OfType<JsonArray>() ?? [])
-            {
-                // [id, from_node, from_slot, to_node, to_slot, type]
-                int linkId = (int)l[0]!, from = (int)l[1]!, fromSlot = (int)l[2]!, to = (int)l[3]!, toSlot = (int)l[4]!;
-                if (!nodeJson.TryGetValue(to, out var target) || !nodeJson.ContainsKey(from)) { warnings.Add($"Link #{linkId} points at a missing node and was dropped."); continue; }
-                var name = (string?)(target["inputs"] as JsonArray)?.ElementAtOrDefault(toSlot)?["name"];
-                if (name is not null && doc.Registry.GetSchema(doc.Registry.CanonicalId((string?)target["type"] ?? "")) is { } targetSchema) name = targetSchema.CanonicalInput(name);
-                // ComfyUI's Reroute names its only input "": that is our node's single input.
-                if (string.IsNullOrEmpty(name) && doc.Registry.GetSchema((string?)target["type"] ?? "") is { Inputs.Count: 1 } single) name = single.Inputs[0].Name;
-                if (name is null) { warnings.Add($"Link #{linkId} has no matching input on node #{to} and was dropped."); continue; }
-                graph.AddLinkRaw(new EditorLink { Id = linkId, FromNode = from, FromOutput = fromSlot, ToNode = to, ToInput = name });
-            }
+            var nodeJson = ReadNodes(nodes, doc.Registry, graph, subgraphIds, warnings);
+            foreach (var link in Links(root["links"]))
+                if (ReadLink(link, nodeJson, doc.Registry, warnings) is { } l) graph.AddLinkRaw(l);
 
             FoldPrimitiveNodes(doc, graph, warnings);
             ReadGroups(root["groups"] as JsonArray, graph);
 
-            graph.NextNodeId = Math.Max(graph.NextNodeId, ((int?)root["last_node_id"] ?? 0) + 1);
-            graph.NextLinkId = Math.Max(graph.NextLinkId, ((int?)root["last_link_id"] ?? 0) + 1);
+            graph.NextNodeId = Math.Max(graph.NextNodeId, (Int(root["last_node_id"]) ?? 0) + 1);
+            graph.NextLinkId = Math.Max(graph.NextLinkId, (Int(root["last_link_id"]) ?? 0) + 1);
         });
         doc.Extra = root["extra"] as JsonObject;
         return warnings;
+    }
+
+    /// <summary>The nodes of a workflow (or of a subgraph definition) into <paramref name="graph"/>; returns each node's JSON by id, for reading links.</summary>
+    internal static Dictionary<int, JsonObject> ReadNodes(JsonArray nodes, NodeRegistry registry, EditorGraph graph, IReadOnlySet<string> subgraphIds, List<string> warnings)
+    {
+        var nodeJson = new Dictionary<int, JsonObject>();
+        int z = 0;
+        foreach (var n in nodes.OfType<JsonObject>().OrderBy(n => (int?)n["order"] ?? 0))
+        {
+            int id = Int(n["id"]) ?? throw new InvalidDataException("A node has no id.");
+            var saved = (string?)n["type"] ?? "";
+            // A subgraph instance is saved under its definition's id; a node saved under an earlier id opens as the current one.
+            string type = subgraphIds.Contains(saved) ? SubgraphDefinition.Prefix + saved : registry.CanonicalId(saved);
+            nodeJson[id] = n;
+            var node = new EditorNode
+            {
+                Id = id, ClassType = type, Title = (string?)n["title"], Color = (string?)n["color"], BgColor = (string?)n["bgcolor"],
+                X = Pair(n["pos"]).X, Y = Pair(n["pos"]).Y,
+                Collapsed = (bool?)n["flags"]?["collapsed"] ?? false,
+                Pinned = (bool?)n["flags"]?["pinned"] ?? false,
+                Mode = Enum.IsDefined(typeof(NodeMode), (int?)n["mode"] ?? 0) ? (NodeMode)((int?)n["mode"] ?? 0) : NodeMode.Always,
+                ZIndex = ++z,
+                Properties = n["properties"] is JsonObject props ? (JsonObject)props.DeepClone() : [],
+            };
+            if (Pair(n["size"]).X is > 0 and var w) node.Width = w;
+
+            var values = n["widgets_values"];
+            if (registry.GetSchema(type) is { } schema) ReadWidgets(node, schema, values, warnings);
+            else
+            {
+                warnings.Add($"Node #{id}: type '{type}' is not installed; it is kept as a placeholder.");
+                if (values is not null) node.Widgets[RawWidgetsKey] = values.DeepClone();
+            }
+            graph.AddNodeRaw(node);
+        }
+        return nodeJson;
+    }
+
+    /// <summary>One saved link, from either form ComfyUI writes: <c>[id, from, from_slot, to, to_slot, type]</c> or <c>{id, origin_id, origin_slot, target_id, target_slot, type}</c>.</summary>
+    internal readonly record struct SavedLink(int Id, int From, int FromSlot, int To, int ToSlot, string? Type);
+
+    internal static IEnumerable<SavedLink> Links(JsonNode? links)
+    {
+        foreach (var l in (links as JsonArray) ?? [])
+        {
+            if (l is JsonArray a && a.Count >= 5 && Int(a[0]) is { } id && Int(a[1]) is { } from && Int(a[2]) is { } fromSlot && Int(a[3]) is { } to && Int(a[4]) is { } toSlot)
+                yield return new(id, from, fromSlot, to, toSlot, a.Count > 5 ? a[5]?.ToString() : null);
+            else if (l is JsonObject o && Int(o["id"]) is { } oid && Int(o["origin_id"]) is { } ofrom && Int(o["origin_slot"]) is { } oslot && Int(o["target_id"]) is { } oto && Int(o["target_slot"]) is { } otoSlot)
+                yield return new(oid, ofrom, oslot, oto, otoSlot, o["type"]?.ToString());
+        }
+    }
+
+    /// <summary>The editor link for a saved link between two read nodes: the target slot becomes the input's name. Null (with a warning) when it cannot be placed.</summary>
+    internal static EditorLink? ReadLink(SavedLink l, Dictionary<int, JsonObject> nodeJson, NodeRegistry registry, List<string> warnings)
+    {
+        if (!nodeJson.TryGetValue(l.To, out var target) || !nodeJson.ContainsKey(l.From)) { warnings.Add($"Link #{l.Id} points at a missing node and was dropped."); return null; }
+        var name = InputName(target, l.ToSlot, registry);
+        if (name is null) { warnings.Add($"Link #{l.Id} has no matching input on node #{l.To} and was dropped."); return null; }
+        return new EditorLink { Id = l.Id, FromNode = l.From, FromOutput = l.FromSlot, ToNode = l.To, ToInput = name };
+    }
+
+    /// <summary>The input a saved node lists at <paramref name="slot"/>, by its current name.</summary>
+    internal static string? InputName(JsonObject node, int slot, NodeRegistry registry)
+    {
+        var name = (string?)(node["inputs"] as JsonArray)?.ElementAtOrDefault(slot)?["name"];
+        var schema = registry.GetSchema(registry.CanonicalId((string?)node["type"] ?? ""));
+        if (name is not null && schema is not null) name = schema.CanonicalInput(name);
+        // ComfyUI's Reroute names its only input "": that is our node's single input.
+        if (string.IsNullOrEmpty(name) && schema is { Inputs.Count: 1 }) name = schema.Inputs[0].Name;
+        return name;
     }
 
     static void ReadGroups(JsonArray? groups, EditorGraph graph)
@@ -148,6 +181,15 @@ public static class ComfyWorkflow
         }
     }
 
+    /// <summary>An integer that ComfyUI may have saved as a number or as text ("34"); null when there is none.</summary>
+    internal static int? Int(JsonNode? node) => node switch
+    {
+        JsonValue v when v.TryGetValue<int>(out var i) => i,
+        JsonValue v when v.TryGetValue<double>(out var d) && d == Math.Floor(d) && Math.Abs(d) < int.MaxValue => (int)d,
+        JsonValue v when v.TryGetValue<string>(out var s) && int.TryParse(s, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var p) => p,
+        _ => null,
+    };
+
     /// <summary>ComfyUI saves a pair either as <c>[a, b]</c> or, in older files, as <c>{"0": a, "1": b}</c>.</summary>
     static (double X, double Y) Pair(JsonNode? node) => node switch
     {
@@ -210,18 +252,40 @@ public static class ComfyWorkflow
     {
         var graph = doc.Graph;
         var hits = new HitTester(doc, measureText);
-        var order = TopologicalOrder(graph);
+        var nodes = WriteNodes(graph, doc.Registry, n => hits.Geometry(n).Bounds);
+        var links = new JsonArray(WriteLinks(graph, doc.Registry, null).Select(l => (JsonNode)new JsonArray(l.Id, l.From, l.FromSlot, l.To, l.ToSlot, l.Type)).ToArray());
 
+        var root = new JsonObject
+        {
+            ["last_node_id"] = graph.NextNodeId - 1, ["last_link_id"] = graph.NextLinkId - 1,
+            ["nodes"] = nodes, ["links"] = links,
+            ["groups"] = WriteGroups(doc.Graph),
+            ["config"] = new JsonObject(),
+            ["extra"] = doc.Extra?.DeepClone() ?? new JsonObject(),
+            ["version"] = 0.4,
+        };
+        var used = SubgraphLibrary.Used(graph.Nodes.Select(n => n.ClassType));
+        if (used.Count > 0) root["definitions"] = new JsonObject { ["subgraphs"] = SubgraphJson.Write(used, doc.Registry) };
+        return root.ToJsonString(Pretty);
+    }
+
+    /// <summary>
+    /// The nodes of a graph as ComfyUI saves them. Links may come from or go to the subgraph boundary (node -10 for the subgraph's inputs, -20 for its
+    /// outputs): those count like any other link.
+    /// </summary>
+    internal static JsonArray WriteNodes(EditorGraph graph, NodeRegistry registry, Func<EditorNode, Rect> bounds)
+    {
+        var order = TopologicalOrder(graph);
         var nodes = new JsonArray();
         foreach (var n in graph.Nodes.OrderBy(n => n.Id))
         {
-            var schema = doc.Registry.GetSchema(n.ClassType);
-            var geo = hits.Geometry(n);
+            var schema = registry.GetSchema(n.ClassType);
+            var size = bounds(n);
             var obj = new JsonObject
             {
-                ["id"] = n.Id, ["type"] = n.ClassType,
+                ["id"] = n.Id, ["type"] = SubgraphLibrary.Get(n.ClassType) is { } def ? def.Id : n.ClassType, // an instance is saved under its definition's id
                 ["pos"] = new JsonArray(n.X, n.Y),
-                ["size"] = new JsonArray(geo.Bounds.Width, geo.Bounds.Height),
+                ["size"] = new JsonArray(size.Width, size.Height),
                 ["flags"] = NodeFlags(n),
                 ["order"] = order.GetValueOrDefault(n.Id),
                 ["mode"] = (int)n.Mode,
@@ -270,40 +334,36 @@ public static class ComfyWorkflow
             obj["properties"] = properties;
             nodes.Add(obj);
         }
+        return nodes;
+    }
 
-        var links = new JsonArray();
+    /// <summary>
+    /// The links of a graph with the target slot as ComfyUI counts it (the position in the target's saved "inputs" list). A link to the subgraph's
+    /// outputs (node -20) keeps its port index as the slot; <paramref name="boundaryType"/> names the type of a link from the inputs (node -10).
+    /// </summary>
+    internal static List<SavedLink> WriteLinks(EditorGraph graph, NodeRegistry registry, Func<int, string>? boundaryType)
+    {
+        var result = new List<SavedLink>();
         foreach (var l in graph.Links.OrderBy(l => l.Id))
         {
             var from = graph.FindNode(l.FromNode);
-            var type = from is null ? "*" : doc.Registry.GetSchema(from.ClassType)?.Outputs.ElementAtOrDefault(l.FromOutput)?.Type.Name ?? "*";
-            // The slot index is the position in the target node's saved "inputs" list.
-            int slot = SlotIndex(doc, l);
-            links.Add(new JsonArray(l.Id, l.FromNode, l.FromOutput, l.ToNode, slot, type));
+            var type = from is not null ? registry.GetSchema(from.ClassType)?.Outputs.ElementAtOrDefault(l.FromOutput)?.Type.Name ?? "*"
+                : boundaryType?.Invoke(l.FromOutput) ?? "*";
+            int slot = l.ToNode < 0 ? int.Parse(l.ToInput, System.Globalization.CultureInfo.InvariantCulture) : SlotIndex(graph, registry, l);
+            result.Add(new(l.Id, l.FromNode, l.FromOutput, l.ToNode, slot, type));
         }
-
-        var root = new JsonObject
-        {
-            ["last_node_id"] = graph.NextNodeId - 1, ["last_link_id"] = graph.NextLinkId - 1,
-            ["nodes"] = nodes, ["links"] = links,
-            ["groups"] = WriteGroups(doc.Graph),
-            ["config"] = new JsonObject(),
-            ["extra"] = doc.Extra?.DeepClone() ?? new JsonObject(),
-            ["version"] = 0.4,
-        };
-        var used = SubgraphLibrary.Used(graph.Nodes.Select(n => n.ClassType));
-        if (used.Count > 0) root["definitions"] = new JsonObject { ["subgraphs"] = SubgraphJson.Write(used) };
-        return root.ToJsonString(Pretty);
+        return result;
     }
 
-    static int SlotIndex(EditorDocument doc, EditorLink l)
+    static int SlotIndex(EditorGraph graph, NodeRegistry registry, EditorLink l)
     {
-        var to = doc.Graph.GetNode(l.ToNode);
-        if (doc.Registry.GetSchema(to.ClassType) is not { } schema)
-            return doc.Graph.Links.Where(x => x.ToNode == l.ToNode).OrderBy(x => x.Id).ToList().FindIndex(x => x.Id == l.Id);
+        var to = graph.GetNode(l.ToNode);
+        if (registry.GetSchema(to.ClassType) is not { } schema)
+            return graph.Links.Where(x => x.ToNode == l.ToNode).OrderBy(x => x.Id).ToList().FindIndex(x => x.Id == l.Id);
         int idx = 0;
-        foreach (var i in NodeLayout.VisibleInputs(schema, to, doc.Graph))
+        foreach (var i in NodeLayout.VisibleInputs(schema, to, graph))
         {
-            bool listed = i.Widget is null || doc.Graph.LinkInto(l.ToNode, i.Name) is not null;
+            bool listed = i.Widget is null || graph.LinkInto(l.ToNode, i.Name) is not null;
             if (i.Name == l.ToInput) return listed ? idx : -1;
             if (listed) idx++;
         }

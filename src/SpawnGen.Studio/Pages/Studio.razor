@@ -88,6 +88,19 @@
     <div class="stage">
         <canvas @ref="_canvasRef" tabindex="0"></canvas>
 
+        @if (_subgraphStack.Count > 0)
+        {
+            <div class="crumbs" title="Inside a subgraph: edits change every use of it. Click a name to go back out.">
+                @for (int i = 0; i < _subgraphStack.Count; i++)
+                {
+                    var level = i;
+                    <button @onclick="() => ExitSubgraphTo(level)">@(level == 0 ? _tabs.Active?.Name ?? "Workflow" : _subgraphStack[level].Name)</button>
+                    <span>›</span>
+                }
+                <b>@(SubgraphLibrary.Get(SubgraphEditing.EditedId(_doc) ?? "")?.Name ?? "Subgraph")</b>
+            </div>
+        }
+
         @if (_libraryOpen)
         {
             <div class="library">
@@ -566,8 +579,72 @@
     /// <summary>The graph as workflow JSON, or null when saving it fails.</summary>
     string? Snapshot()
     {
-        try { return ComfyWorkflow.Save(_doc, _renderer.MeasureText); }
+        try { return _subgraphStack.Count > 0 ? RootJson() : ComfyWorkflow.Save(_doc, _renderer.MeasureText); }
         catch (Exception) { return null; }
+    }
+
+    // ---- inside a subgraph ----
+
+    /// <summary>An outer level while a subgraph is open: its graph as workflow JSON, its view, and the name shown in the breadcrumbs.</summary>
+    sealed record SubgraphLevel(string Json, double Scale, double OffsetX, double OffsetY, string Name);
+
+    /// <summary>The levels outside the open subgraph, the tab's own workflow first. Empty when the tab's workflow itself is on the canvas.</summary>
+    readonly List<SubgraphLevel> _subgraphStack = [];
+
+    /// <summary>Opens a subgraph instance to edit its inside (ComfyUI's "open subgraph"): the canvas shows its nodes between its input and output boundary.</summary>
+    void EnterSubgraph(EditorNode instance)
+    {
+        if (SubgraphLibrary.Get(instance.ClassType) is not { } def) return;
+        var vp = _view.Viewport;
+        var name = SubgraphEditing.EditedId(_doc) is { } outer ? SubgraphLibrary.Get(outer)?.Name ?? "Subgraph" : _tabs.Active?.Name ?? "Workflow";
+        _subgraphStack.Add(new SubgraphLevel(ComfyWorkflow.Save(_doc, _renderer.MeasureText), vp.Scale, vp.OffsetX, vp.OffsetY, name));
+        _restoring = true;
+        try { SubgraphEditing.Open(_doc, def); } finally { _restoring = false; }
+        _view.ClearSelection();
+        _view.FitToView();
+        StateHasChanged();
+        _studio?.Focus();
+    }
+
+    /// <summary>Goes back out to level <paramref name="level"/> (0 is the tab's workflow), writing each subgraph that was open back into its definition.</summary>
+    void ExitSubgraphTo(int level)
+    {
+        _restoring = true;
+        try
+        {
+            while (_subgraphStack.Count > level)
+            {
+                if (SubgraphEditing.EditedId(_doc) is { } id && SubgraphLibrary.Get(id) is { } def) SubgraphEditing.Commit(_doc, def);
+                var outer = _subgraphStack[^1];
+                _subgraphStack.RemoveAt(_subgraphStack.Count - 1);
+                ComfyWorkflow.Load(outer.Json, _doc); // the newer revision of what was just edited is kept
+                _view.ClearSelection();
+                _view.Viewport.Set(outer.Scale, outer.OffsetX, outer.OffsetY);
+            }
+        }
+        finally { _restoring = false; }
+        _view.Invalidate();
+        ScheduleAutosave();
+        StateHasChanged();
+        _studio?.Focus();
+    }
+
+    /// <summary>
+    /// The tab's whole workflow while a subgraph is open: every open level is written into its definition (innermost first), then the tab's own
+    /// workflow is saved again, so it carries the edited definitions. Nothing on the canvas changes.
+    /// </summary>
+    string RootJson()
+    {
+        if (SubgraphEditing.EditedId(_doc) is { } id && SubgraphLibrary.Get(id) is { } def) SubgraphEditing.Commit(_doc, def);
+        for (int i = _subgraphStack.Count - 1; i >= 1; i--)
+        {
+            var level = new EditorDocument(Registry);
+            ComfyWorkflow.Load(_subgraphStack[i].Json, level);
+            if (SubgraphEditing.EditedId(level) is { } levelId && SubgraphLibrary.Get(levelId) is { } levelDef) SubgraphEditing.Commit(level, levelDef);
+        }
+        var root = new EditorDocument(Registry);
+        ComfyWorkflow.Load(_subgraphStack[0].Json, root);
+        return ComfyWorkflow.Save(root, _renderer.MeasureText);
     }
 
     /// <summary>Writes the graph and the view into the active tab.</summary>
@@ -651,6 +728,7 @@
     {
         if (id == _tabs.ActiveId || _renamingTab is not null) return;
         CaptureActiveTab();
+        _subgraphStack.Clear();
         _tabs.Activate(id);
         ActivateCurrent();
         PersistTabs();
@@ -660,6 +738,7 @@
     void NewTab()
     {
         CaptureActiveTab();
+        _subgraphStack.Clear();
         _tabs.Add("Workflow");
         _restoring = true;
         try { LoadExample(); } finally { _restoring = false; }
@@ -670,6 +749,7 @@
     void CloseTab(string id)
     {
         bool wasActive = id == _tabs.ActiveId;
+        if (wasActive && _subgraphStack.Count > 0) ExitSubgraphTo(0);
         if (!_tabs.Close(id))
         {
             // The only tab: closing it starts over with the example.
@@ -875,7 +955,11 @@
             var node = _doc.Graph.GetNode(hit.NodeId);
             items.Add(new("Rename", () => OnTitleEdit(hit.NodeId)));
             items.Add(new("Properties Panel  (I)", () => { _propsOpen = true; InvokeAsync(StateHasChanged); }));
-            if (SubgraphLibrary.Get(node.ClassType) is not null) items.Add(new("Unpack Subgraph  (Ctrl+Shift+E)", () => _view.ToggleSubgraph()));
+            if (SubgraphLibrary.Get(node.ClassType) is not null)
+            {
+                items.Add(new("Open Subgraph", () => EnterSubgraph(node)));
+                items.Add(new("Unpack Subgraph  (Ctrl+Shift+E)", () => _view.ToggleSubgraph()));
+            }
             else items.Add(new(_view.SelectedNodes.Count > 1 ? "Convert Selection to Subgraph  (Ctrl+Shift+E)" : "Convert to Subgraph  (Ctrl+Shift+E)", () => _view.ToggleSubgraph()));
             if (node.ClassType is "LoadImage" or "LoadImageMask")
                 items.Add(new("Open in Mask Editor", () => _ = OpenMaskEditorAsync(node)));
@@ -1328,12 +1412,19 @@
     /// <summary>Sends the graph once and then moves every seed on by its control after generate, as ComfyUI does. False when the run could not be queued.</summary>
     async Task<bool> QueueOnceAsync(bool front = false)
     {
-        var compiled = GraphCompiler.Compile(_doc.Graph, Registry);
+        // Inside a subgraph the canvas shows only its inside: run the tab's whole workflow, with the edit.
+        var runDoc = _doc;
+        if (_subgraphStack.Count > 0)
+        {
+            runDoc = new EditorDocument(Registry);
+            ComfyWorkflow.Load(RootJson(), runDoc);
+        }
+        var compiled = GraphCompiler.Compile(runDoc.Graph, Registry);
         if (compiled.Graph.Nodes.Count == 0) { ShowMessage(compiled.Notes.FirstOrDefault() ?? "There is nothing to run."); return false; }
         _visuals.Errors.Clear();
 
         // The workflow travels with the prompt so Save Image can embed it: the picture can then be dropped back on the canvas.
-        var workflow = ComfyWorkflow.Save(_doc, _renderer.MeasureText);
+        var workflow = ComfyWorkflow.Save(runDoc, _renderer.MeasureText);
         var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow, front);
         if (!result.Queued)
         {

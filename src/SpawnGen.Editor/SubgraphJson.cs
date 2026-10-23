@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using SpawnGen.Engine.Nodes;
@@ -59,7 +58,7 @@ public static class SubgraphJson
         {
             ["id"] = def.Id, ["version"] = 1,
             ["state"] = new JsonObject { ["lastGroupId"] = 0, ["lastNodeId"] = def.Nodes.Select(n => n.Id).DefaultIfEmpty(0).Max(), ["lastLinkId"] = linkId - 1, ["lastRerouteId"] = 0 },
-            ["revision"] = 0, ["config"] = new JsonObject(), ["name"] = def.Name,
+            ["revision"] = def.Revision, ["config"] = new JsonObject(), ["name"] = def.Name,
             ["inputNode"] = new JsonObject { ["id"] = InputNodeId, ["bounding"] = new JsonArray(left, top, 120, 60) },
             ["outputNode"] = new JsonObject { ["id"] = OutputNodeId, ["bounding"] = new JsonArray(right, top, 120, 60) },
             ["inputs"] = Ports(def.Inputs, inputLinks, "in", left + 100),
@@ -68,9 +67,19 @@ public static class SubgraphJson
         };
     }
 
-    /// <summary>A stable id for a port (ComfyUI gives each one a uuid; ours are made from the definition and the slot so saving twice gives the same file).</summary>
-    static string PortId(string definitionId, string side, int index) =>
-        new Guid(MD5.HashData(Encoding.UTF8.GetBytes($"{definitionId}/{side}/{index}"))).ToString();
+    /// <summary>
+    /// A stable id for a port (ComfyUI gives each one a uuid; ours are made from the definition and the slot so saving twice gives the same file).
+    /// Two 64-bit FNV-1a hashes make the 16 bytes: no System.Security.Cryptography, whose MD5 the browser runtime does not have.
+    /// </summary>
+    static string PortId(string definitionId, string side, int index)
+    {
+        var bytes = Encoding.UTF8.GetBytes($"{definitionId}/{side}/{index}");
+        ulong Fnv(ulong hash) { foreach (var b in bytes) hash = (hash ^ b) * 1099511628211UL; return hash; }
+        var id = new byte[16];
+        BitConverter.TryWriteBytes(id.AsSpan(0, 8), Fnv(14695981039346656037UL));
+        BitConverter.TryWriteBytes(id.AsSpan(8, 8), Fnv(1469598103934665603UL));
+        return new Guid(id).ToString();
+    }
 
     /// <summary>
     /// Reads the definitions and registers them in the <see cref="SubgraphLibrary"/>. Every definition's ports are known before any inner node is
@@ -89,12 +98,13 @@ public static class SubgraphJson
         {
             try
             {
-                var def = new SubgraphDefinition { Id = (string)item["id"]!, Name = (string?)item["name"] ?? "Subgraph" };
+                var def = new SubgraphDefinition { Id = (string)item["id"]!, Name = (string?)item["name"] ?? "Subgraph", Revision = ComfyWorkflow.Int(item["revision"]) ?? 0 };
                 foreach (var p in (item["inputs"] as JsonArray ?? []).OfType<JsonObject>()) def.Inputs.Add(new SubgraphPort { Name = (string)p["name"]!, TypeName = (string?)p["type"] ?? "*" });
                 foreach (var p in (item["outputs"] as JsonArray ?? []).OfType<JsonObject>()) def.Outputs.Add(new SubgraphPort { Name = (string)p["name"]!, TypeName = (string?)p["type"] ?? "*" });
-                SubgraphLibrary.Register(def);
+                // A newer revision already known (edited in this session) is kept; this file's copy is then only read for its id.
+                var used = SubgraphLibrary.RegisterUnlessOlder(def);
                 ids.Add(def.Id);
-                shells.Add((item, def));
+                if (ReferenceEquals(used, def)) shells.Add((item, def));
             }
             catch (Exception ex) when (ex is InvalidCastException or FormatException or NullReferenceException or InvalidOperationException)
             {

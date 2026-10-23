@@ -29,6 +29,11 @@ public sealed class SubgraphDefinition
     public List<EditorLink> Links { get; } = [];
     public List<SubgraphPort> Inputs { get; } = [];
     public List<SubgraphPort> Outputs { get; } = [];
+    /// <summary>
+    /// Counts edits (ComfyUI's <c>revision</c>). A workflow read later that carries an older copy of this definition does not replace it, so a definition
+    /// edited inside one workflow stays edited when another tab, or the workflow it came from, is opened again.
+    /// </summary>
+    public int Revision { get; set; }
 
     public string InstanceType => Prefix + Id;
 
@@ -52,11 +57,16 @@ public static class SubgraphLibrary
 
     public static void Register(SubgraphDefinition definition) => Definitions[definition.Id] = definition;
 
+    /// <summary>Registers <paramref name="definition"/> unless a newer revision of it is already known. Returns the definition in use.</summary>
+    public static SubgraphDefinition RegisterUnlessOlder(SubgraphDefinition definition) =>
+        Definitions.AddOrUpdate(definition.Id, definition, (_, known) => known.Revision > definition.Revision ? known : definition);
+
     public static SubgraphDefinition? Get(string classTypeOrId) =>
         Definitions.TryGetValue(classTypeOrId.StartsWith(SubgraphDefinition.Prefix, StringComparison.Ordinal) ? classTypeOrId[SubgraphDefinition.Prefix.Length..] : classTypeOrId, out var d) ? d : null;
 
     /// <summary>Lets a registry answer for subgraph instance types (their schema comes from the definition). Safe to call more than once.</summary>
-    public static void Install(NodeRegistry registry) => registry.SchemaResolver = type => type.StartsWith(SubgraphDefinition.Prefix, StringComparison.Ordinal) ? Get(type)?.ToSchema() : null;
+    public static void Install(NodeRegistry registry) => registry.SchemaResolver = type =>
+        type.StartsWith(SubgraphDefinition.Prefix, StringComparison.Ordinal) ? Get(type)?.ToSchema() : SubgraphEditing.BoundarySchema(type);
 
     /// <summary>The definitions a graph needs, including those nested inside them, each once, innermost first.</summary>
     public static IReadOnlyList<SubgraphDefinition> Used(IEnumerable<string> classTypes)
@@ -138,5 +148,83 @@ public static class SubgraphExpander
             else flat.AddLinkRaw(new EditorLink { Id = linkId++, FromNode = srcNode, FromOutput = srcOutput, ToNode = l.ToNode, ToInput = l.ToInput });
         }
         return flat;
+    }
+}
+
+/// <summary>
+/// Editing a subgraph's inside on the canvas, as ComfyUI does when one is opened: the inner nodes and links, with two boundary nodes standing for the
+/// subgraph's inputs (left, its outputs are the input ports) and its outputs (right, its inputs are the output ports). <see cref="Commit"/> writes the
+/// edited inside back to the definition, which every instance shares.
+/// </summary>
+public static class SubgraphEditing
+{
+    public const string InputsPrefix = "subgraph-inputs:", OutputsPrefix = "subgraph-outputs:";
+    /// <summary>The boundary nodes' ids, ComfyUI's -10 and -20.</summary>
+    public const int InputsNodeId = -10, OutputsNodeId = -20;
+
+    /// <summary>The schema of a boundary node type (editor-only: never compiled), or null for any other type.</summary>
+    public static NodeSchema? BoundarySchema(string type)
+    {
+        if (type.StartsWith(InputsPrefix, StringComparison.Ordinal) && SubgraphLibrary.Get(type[InputsPrefix.Length..]) is { } inDef)
+            return new NodeSchema
+            {
+                Id = type, DisplayName = "Subgraph Inputs", Category = "subgraph", FrontendOnly = true,
+                Outputs = inDef.Inputs.Select(p => new OutputSpec(p.Name, new SocketType(p.TypeName))).ToList(),
+            };
+        if (type.StartsWith(OutputsPrefix, StringComparison.Ordinal) && SubgraphLibrary.Get(type[OutputsPrefix.Length..]) is { } outDef)
+            return new NodeSchema
+            {
+                Id = type, DisplayName = "Subgraph Outputs", Category = "subgraph", FrontendOnly = true,
+                Inputs = outDef.Outputs.Select(p => new InputSpec(p.Name, new SocketType(p.TypeName), Required: false)).ToList(),
+            };
+        return null;
+    }
+
+    /// <summary>Fills <paramref name="doc"/> with the inside of <paramref name="def"/> (copies: nothing changes until <see cref="Commit"/>). Clears undo.</summary>
+    public static void Open(EditorDocument doc, SubgraphDefinition def)
+    {
+        doc.Reset(graph =>
+        {
+            foreach (var n in def.Nodes) graph.AddNodeRaw(n.Clone());
+            foreach (var l in def.Links) graph.AddLinkRaw(new EditorLink { Id = l.Id, FromNode = l.FromNode, FromOutput = l.FromOutput, ToNode = l.ToNode, ToInput = l.ToInput });
+            double left = def.Nodes.Select(n => n.X).DefaultIfEmpty(0).Min() - 260, right = def.Nodes.Select(n => n.X + (n.Width ?? 240)).DefaultIfEmpty(400).Max() + 80;
+            double top = def.Nodes.Select(n => n.Y).DefaultIfEmpty(0).Min();
+            graph.AddNodeRaw(new EditorNode { Id = InputsNodeId, ClassType = InputsPrefix + def.Id, X = left, Y = top, Pinned = true });
+            graph.AddNodeRaw(new EditorNode { Id = OutputsNodeId, ClassType = OutputsPrefix + def.Id, X = right, Y = top, Pinned = true });
+            int linkId = def.Links.Select(l => l.Id).DefaultIfEmpty(0).Max() + 1;
+            for (int p = 0; p < def.Inputs.Count; p++)
+                foreach (var (node, input) in def.Inputs[p].Targets)
+                    graph.AddLinkRaw(new EditorLink { Id = linkId++, FromNode = InputsNodeId, FromOutput = p, ToNode = node, ToInput = input });
+            for (int p = 0; p < def.Outputs.Count; p++)
+                if (def.Nodes.Any(n => n.Id == def.Outputs[p].Source.Node))
+                    graph.AddLinkRaw(new EditorLink { Id = linkId++, FromNode = def.Outputs[p].Source.Node, FromOutput = def.Outputs[p].Source.Output, ToNode = OutputsNodeId, ToInput = def.Outputs[p].Name });
+        });
+    }
+
+    /// <summary>True when <paramref name="doc"/> holds the inside of a subgraph (it has the boundary nodes); the definition's id, or null.</summary>
+    public static string? EditedId(EditorDocument doc) =>
+        doc.Graph.FindNode(InputsNodeId)?.ClassType is { } t && t.StartsWith(InputsPrefix, StringComparison.Ordinal) ? t[InputsPrefix.Length..] : null;
+
+    /// <summary>
+    /// Writes the edited inside back into <paramref name="def"/>: its nodes, inner links, which inner inputs each input port feeds and which inner output
+    /// each output port shows. The ports themselves stay as they are. Raises the revision, so older copies of the definition no longer replace it.
+    /// </summary>
+    public static void Commit(EditorDocument doc, SubgraphDefinition def)
+    {
+        var graph = doc.Graph;
+        bool Boundary(int id) => id is InputsNodeId or OutputsNodeId;
+        def.Nodes.Clear();
+        def.Nodes.AddRange(graph.Nodes.Where(n => !Boundary(n.Id)).Select(n => n.Clone()));
+        def.Links.Clear();
+        def.Links.AddRange(graph.Links.Where(l => !Boundary(l.FromNode) && !Boundary(l.ToNode))
+            .Select(l => new EditorLink { Id = l.Id, FromNode = l.FromNode, FromOutput = l.FromOutput, ToNode = l.ToNode, ToInput = l.ToInput }));
+        for (int p = 0; p < def.Inputs.Count; p++)
+        {
+            def.Inputs[p].Targets.Clear();
+            foreach (var l in graph.LinksFrom(InputsNodeId, p).OrderBy(l => l.Id)) def.Inputs[p].Targets.Add((l.ToNode, l.ToInput));
+        }
+        foreach (var port in def.Outputs)
+            port.Source = graph.LinkInto(OutputsNodeId, port.Name) is { } l ? (l.FromNode, l.FromOutput) : (0, 0);
+        def.Revision++;
     }
 }

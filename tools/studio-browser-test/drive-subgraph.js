@@ -43,7 +43,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
   await download.saveAs(path.join(OUT, 'subgraph-saved.json'));
   const saved = fs.readFileSync(path.join(OUT, 'subgraph-saved.json'), 'utf8');
-  check('the saved workflow carries the definition', /"definitions"/.test(saved) && /subgraph:/.test(saved) && /StringConcatenate/.test(saved));
+  check('the saved workflow carries the definition', /"definitions"/.test(saved) && /"inputNode"/.test(saved) && /"target_id": -20/.test(saved) && /StringConcatenate/.test(saved));
 
   await page.locator('canvas').focus(); // Queue and Save took the keyboard focus; the subgraph node is still selected
   await page.keyboard.press('Control+Shift+E');

@@ -153,3 +153,7 @@ body { background: var(--bg-2); color: var(--fg); font-family: system-ui, "Segoe
 .props .missing { color: #e05555; }
 .props button.link { background: none; border: 0; padding: 0 0 0 6px; color: #4f8fe8; cursor: pointer; font: inherit; text-align: right; max-width: 190px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; margin-left: auto; }
 .props button.link:hover { text-decoration: underline; }
+.crumbs { position: absolute; left: 12px; top: 10px; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 6px; color: var(--fg-mid); font-size: 13px; }
+.crumbs button { background: none; border: 0; padding: 0; color: #4f8fe8; cursor: pointer; font: inherit; }
+.crumbs button:hover { text-decoration: underline; }
+.crumbs b { color: var(--fg-strong); font-weight: 600; }

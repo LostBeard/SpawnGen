@@ -302,6 +302,7 @@ public static class ServerApp
         if (w.Max is { } max) config["max"] = max;
         if (w.Step is { } step) config["step"] = step;
         if (w.Multiline) config["multiline"] = true;
+        if (w.Kind == WidgetKind.Color) config["socketless"] = true;
         return w.Kind switch
         {
             WidgetKind.Combo => new JsonArray(new JsonArray(w.ResolveOptions().Select(o => (JsonNode)o).ToArray()), config),

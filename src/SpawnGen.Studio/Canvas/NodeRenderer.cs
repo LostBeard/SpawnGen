@@ -509,6 +509,25 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             return;
         }
 
+        if (w.Spec.Kind == WidgetKind.Color)
+        {
+            // A colour: its swatch at the right end of the row, the hex code beside it.
+            var hex = value as string ?? "#ffffff";
+            ctx.FillStyle = Theme.LabelText;
+            ctx.TextAlign = "left";
+            ctx.FillText(Ellipsize(w.Name, Math.Max(24, r.Width - 110)), r.X + 10, cy);
+            ctx.FillStyle = Theme.ValueText;
+            ctx.TextAlign = "right";
+            ctx.FillText(hex, r.Right - 34, cy);
+            ctx.TextAlign = "left";
+            ctx.FillStyle = hex;
+            ctx.FillRect(r.Right - 28, r.Y + 4, 20, r.Height - 8);
+            ctx.StrokeStyle = Theme.WidgetBorder;
+            ctx.LineWidth = 1;
+            ctx.StrokeRect(r.Right - 28, r.Y + 4, 20, r.Height - 8);
+            return;
+        }
+
         string text = w.Spec.Kind switch
         {
             WidgetKind.Float => Convert.ToDouble(value ?? 0.0).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),

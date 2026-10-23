@@ -41,14 +41,14 @@ internal static class PyInt
         TryParse(text, numberBase, out var v) ? v : throw new FormatException($"invalid literal for int() with base {numberBase}: '{text}'");
 }
 
-[Node(Category = "utilities", DisplayName = "Color Picker", Description = "Return a color RGB integer value and hexadecimal representation.")]
+[Node(Category = "utilities", DisplayName = "Color Picker", Description = "Return a color RGB integer value and hexadecimal representation.", OutputTypes = [null, "COLOR", null])]
 public sealed class ColorToRGBInt
 {
     /// <summary>
     /// A colour code <c>#RRGGBB</c> or <c>#RRGGBBAA</c> as the number 0xRRGGBB (what Empty Image and Image Color to Mask take), the <c>#RRGGBB</c> part, and the
-    /// alpha (AA / 255, 1 without it). ComfyUI's colour picker widget is a text field here.
+    /// alpha (AA / 255, 1 without it).
     /// </summary>
-    public (int RgbInt, string Hex, double Alpha) Execute(string color = "#ffffff")
+    public (int RgbInt, string Hex, double Alpha) Execute([Input(Color = true)] string color = "#ffffff")
     {
         const string message = "Color must be in format #RRGGBB or #RRGGBBAA";
         if (color.Length is not (7 or 9) || color[0] != '#' || !PyInt.TryParse(color[1..], 16, out _)) throw new ArgumentException(message, nameof(color));

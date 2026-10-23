@@ -209,7 +209,7 @@ public sealed class ImageCropToMask
         [Input(Min = 64, Max = 4096, Step = 8, Tooltip = "Output height in pixels.")] int height = 1024,
         [Input(Min = 1.0, Max = 2.0, Step = 0.01, Tooltip = "Extra margin around the mask bounding box as a multiplier.")] double padFactor = 1.0,
         [Input(Min = -32, Max = 32, Step = 1, Tooltip = "Grow or shrink the mask by this many pixels before cropping.")] int growMask = 0,
-        [Input(Tooltip = "Background color behind the masked subject.")] string background = "#000000")
+        [Input(Color = true, Tooltip = "Background color behind the masked subject.")] string background = "#000000")
     {
         var hex = background.TrimStart('#');
         float[] bg = hex.Length == 6

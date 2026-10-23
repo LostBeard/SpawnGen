@@ -379,7 +379,7 @@ public sealed class NodeRegistry
             var element = inputIsList ? ListElementType(p.ParameterType)
                 ?? throw new InvalidOperationException($"Node '{id}' takes whole lists (InputIsList): parameter '{p.Name}' must be a list such as IReadOnlyList<T>.") : null;
             var valueType = element ?? p.ParameterType;
-            inputs.Add(new InputSpec(name, ia?.Type is { } declared ? new SocketType(declared) : SocketTypes.FromClr(valueType), Required: !p.HasDefaultValue,
+            inputs.Add(new InputSpec(name, ia?.Type is { } declared ? new SocketType(declared) : ia?.Color == true ? new SocketType("COLOR") : SocketTypes.FromClr(valueType), Required: !p.HasDefaultValue,
                 Widget: BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip) { Aliases = ia?.Aliases ?? [], Lazy = ia?.Lazy ?? false, Optional = ia?.Optional ?? false });
             bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { ElementType = element });
         }
@@ -409,7 +409,7 @@ public sealed class NodeRegistry
             var isList = attr?.OutputIsList is { } flags && outputs.Count < flags.Length && flags[outputs.Count];
             var clr = isList ? ListElementType(elementTypes[i])
                 ?? throw new InvalidOperationException($"Node '{id}': output {outputs.Count} is a list output (OutputIsList) and must return a list such as IReadOnlyList<T>.") : elementTypes[i];
-            var socket = SocketTypes.FromClr(clr);
+            var socket = attr?.OutputTypes is { } types && outputs.Count < types.Length && types[outputs.Count] is { } declaredType ? new SocketType(declaredType) : SocketTypes.FromClr(clr);
             var given = tupleNames is not null && i < tupleNames.Count ? tupleNames[i] : null;
             var named = attr?.OutputNames is { } outputNames && outputs.Count < outputNames.Length ? outputNames[outputs.Count] : null;
             outputs.Add(new OutputSpec(named ?? (given is null ? socket.Name : ToSnakeCase(given)), socket) { IsList = isList });
@@ -496,6 +496,8 @@ public sealed class NodeRegistry
                 Options = Enum.GetNames(t),
                 Default = def is null ? null : def.ToString(),
             };
+
+        if (t == typeof(string) && ia?.Color == true) return new WidgetSpec(WidgetKind.Color) { Default = def ?? "#ffffff" };
 
         if (t == typeof(string))
         {

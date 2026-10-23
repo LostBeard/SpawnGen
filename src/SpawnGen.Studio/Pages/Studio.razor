@@ -272,6 +272,10 @@
                         }
                     </select>
                 }
+                else if (e.Spec?.Kind == WidgetKind.Color)
+                {
+                    <input @ref="_editRef" type="color" value="@e.Text" @onchange="args => CommitEdit(args.Value?.ToString())" @onkeydown="EditKey" />
+                }
                 else if (e.Spec?.Multiline == true)
                 {
                     <textarea @ref="_editRef" @bind="e.Text" @bind:event="oninput" @onblur="() => CommitEdit(e.Text)" @onkeydown="EditKey"></textarea>

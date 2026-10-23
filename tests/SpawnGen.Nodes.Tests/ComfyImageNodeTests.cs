@@ -85,7 +85,7 @@ public class ComfyImageNodeTests
         Assert.That(Outs("PorterDuffImageComposite"), Is.EqualTo(new[] { "IMAGE", "MASK" }));
         Assert.That(Outs("SplitImageWithAlpha"), Is.EqualTo(new[] { "IMAGE", "MASK" }));
         Assert.That(Outs("ImageRGBToYUV"), Is.EqualTo(new[] { "IMAGE", "IMAGE", "IMAGE" }));
-        Assert.That(Outs("ColorToRGBInt"), Is.EqualTo(new[] { "INT", "STRING", "FLOAT" }));
+        Assert.That(Outs("ColorToRGBInt"), Is.EqualTo(new[] { "INT", "COLOR", "FLOAT" }));
         Assert.That(Schema("ColorToRGBInt").Outputs.Select(o => o.Name), Is.EqualTo(new[] { "rgb_int", "hex", "alpha" }));
         Assert.That(Outs("PrimitiveBoundingBox"), Is.EqualTo(new[] { "BOUNDING_BOX" }));
         Assert.That(Outs("SaveSVGNode"), Is.EqualTo(new[] { "SVG" }));

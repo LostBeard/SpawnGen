@@ -64,7 +64,7 @@ public static class NodeSchemaJson
             return new InputSpec(name, SocketType.String, required, new WidgetSpec(WidgetKind.Combo) { Options = options.Select(o => (string)o!).ToList(), Default = options.Count > 0 ? (string?)options[0] : null });
         var type = (string)entry[0]!;
         if (config is null) return new InputSpec(name, new SocketType(type), required);
-        var kind = type switch { "INT" => WidgetKind.Int, "FLOAT" => WidgetKind.Float, "BOOLEAN" => WidgetKind.Boolean, "STRING" => WidgetKind.String, _ => (WidgetKind?)null };
+        var kind = type switch { "INT" => WidgetKind.Int, "FLOAT" => WidgetKind.Float, "BOOLEAN" => WidgetKind.Boolean, "STRING" => WidgetKind.String, "COLOR" => WidgetKind.Color, _ => (WidgetKind?)null };
         if (kind is null) return new InputSpec(name, new SocketType(type), required);
         return new InputSpec(name, new SocketType(type), required, new WidgetSpec(kind.Value)
         {

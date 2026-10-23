@@ -24,6 +24,8 @@ public sealed class NodeAttribute(string? id = null) : Attribute
     public bool[]? OutputIsList { get; init; }
     /// <summary>Output names in order, where ComfyUI names them (a single return value cannot carry a tuple name).</summary>
     public string[]? OutputNames { get; init; }
+    /// <summary>Socket types of the outputs in order, where the CLR type does not say it (a string that is a COLOR); null entries keep the derived type.</summary>
+    public string?[]? OutputTypes { get; init; }
 }
 
 /// <summary>Widget and socket hints for an <c>Execute</c> parameter. Unset numeric hints use <see cref="double.NaN"/>.</summary>
@@ -57,6 +59,8 @@ public sealed class InputAttribute : Attribute
     /// default (it always has a value); a socket parameter with a default (<c>MaskBatch? mask = null</c>) is optional without saying so.
     /// </summary>
     public bool Optional { get; init; }
+    /// <summary>A COLOR widget for a string parameter ("#rrggbb", ComfyUI's colour picker; default "#ffffff"). It has no socket, as in ComfyUI.</summary>
+    public bool Color { get; init; }
     /// <summary>The widget's default when the parameter cannot carry one itself (a list parameter of an <see cref="NodeAttribute.InputIsList"/> node).</summary>
     public object? Default { get; init; }
 }

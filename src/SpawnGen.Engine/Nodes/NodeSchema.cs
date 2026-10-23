@@ -1,6 +1,7 @@
 namespace SpawnGen.Engine.Nodes;
 
-public enum WidgetKind { Int, Float, String, Boolean, Combo }
+/// <summary>The widget an input shows. <see cref="Color"/> is ComfyUI's COLOR: a "#rrggbb" text picked with a colour picker, never a socket.</summary>
+public enum WidgetKind { Int, Float, String, Boolean, Combo, Color }
 
 /// <summary>Editor/validation metadata for an input that can be set from a literal value.</summary>
 public sealed record WidgetSpec(WidgetKind Kind)

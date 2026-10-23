@@ -239,6 +239,10 @@
                         }
                     </select>
                 }
+                else if (spec.Kind == WidgetKind.Color)
+                {
+                    <input type="color" value="@text" @onchange="e => SetText(node.Id, name, e.Value)" />
+                }
                 else if (spec.Multiline)
                 {
                     <textarea rows="4" value="@text" @onchange="e => SetText(node.Id, name, e.Value)"></textarea>

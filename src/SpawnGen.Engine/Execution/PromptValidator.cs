@@ -136,6 +136,8 @@ public static class PromptValidator
                 return null;
             case WidgetKind.Boolean:
                 return literal is bool ? null : "expects true or false.";
+            case WidgetKind.Color:
+                return literal is string color && System.Text.RegularExpressions.Regex.IsMatch(color, "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$") ? null : $"'{literal}' is not a colour (#rrggbb).";
             case WidgetKind.String:
                 return literal is string ? null : "expects text.";
             case WidgetKind.Combo:

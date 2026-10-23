@@ -133,6 +133,8 @@ public sealed class ModelHandle(Checkpoint checkpoint)
     public Checkpoint Checkpoint { get; } = checkpoint;
     /// <summary>RescaleCFG's multiplier (0 = off): sampling rescales the guided prediction towards the spread of the prompt's own (see <see cref="SamplingCore.RescaledDenoised"/>).</summary>
     public float RescaleCfg { get; init; }
+    /// <summary>Functions run on the predictions before cfg at every step, in order (Latent Apply Operation CFG adds one; see <see cref="PreCfgArgs"/>).</summary>
+    public IReadOnlyList<PreCfgFunction> PreCfg { get; init; } = [];
 }
 
 /// <summary>The CLIP text encoder and tokenizer of a loaded checkpoint.</summary>

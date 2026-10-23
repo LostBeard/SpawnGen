@@ -173,7 +173,7 @@ public class WorkflowTests
         var json = ComfySamples.DefaultWorkflow.Replace("[512, 512, 1]", "[\"wide\", 512, 1]");
         var doc = Open(json, out var warnings);
         Assert.That(warnings.Single(), Does.Contain("width"));
-        Assert.That(doc.Graph.GetNode(5).Widgets["width"], Is.EqualTo(512L));
+        Assert.That(doc.Graph.GetNode(5).Widgets["width"], Is.EqualTo(1024L), "Empty Latent Image's default width (ComfyUI's)");
     }
 
     [Test]

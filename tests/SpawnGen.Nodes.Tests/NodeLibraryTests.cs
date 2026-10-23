@@ -289,22 +289,26 @@ public class NodeLibraryTests
     public void LatentCrop_and_FromBatch_and_Repeat()
     {
         var l = Lat(1, 4, 4, i => i);
-        var crop = new LatentCrop().Execute(l, 128, 128, 8 * 1, 8 * 1); // pixel units: 128 px = 16 latent, clamped to what is left
-        Assert.That((crop.Width, crop.Height), Is.EqualTo((3, 3)));
-        Assert.That(crop.Data[0], Is.EqualTo(5f));
+        // Pixel units: 128 px = 16 latent. ComfyUI pulls the start back to width - 8 = -4 (a 4-wide latent), and Python's [-4:12] is the whole row.
+        var crop = new LatentCrop().Execute(l, 128, 128, 8 * 1, 8 * 1);
+        Assert.That((crop.Width, crop.Height), Is.EqualTo((4, 4)));
+        Assert.That(crop.Data[0], Is.EqualTo(0f));
+        var big = Lat(1, 12, 12, i => i);
+        var inner = new LatentCrop().Execute(big, 64, 64, 8 * 6, 8 * 2); // x 6 > 12 - 8: pulled back to 4; y 2 stays
+        Assert.That((inner.Width, inner.Height), Is.EqualTo((8, 8)));
+        Assert.That(inner.Data[0], Is.EqualTo(2 * 12 + 4f));
         var two = new RepeatLatentBatch().Execute(l, 2);
         Assert.That(two.Batch, Is.EqualTo(2));
         Assert.That(new LatentFromBatch().Execute(two, 1, 1).Data, Is.EqualTo(l.Data));
     }
 
     [Test]
-    public void LatentUpscale_changes_the_size_in_latent_units_and_keeps_the_noise_mask_in_step()
+    public void LatentUpscale_changes_the_size_in_latent_units_and_keeps_the_noise_mask_as_it_is()
     {
         var l = new SetLatentNoiseMask().Execute(Lat(2, 4, 4, i => 1f), Mask(4, 4, Enumerable.Repeat(1f, 16).ToArray()));
         var up = new LatentUpscale().Execute(l, "nearest-exact", 64, 64); // 64 px = 8 latent
         Assert.That((up.Width, up.Height, up.Channels), Is.EqualTo((8, 8, 2)));
-        Assert.That(up.NoiseMask, Is.Not.Null);
-        Assert.That((up.NoiseMask!.Width, up.NoiseMask.Height), Is.EqualTo((8, 8)));
+        Assert.That(up.NoiseMask, Is.SameAs(l.NoiseMask), "ComfyUI copies the dict: the mask is not resized (the sampler fits it to the latent)");
         var by = new LatentUpscaleBy().Execute(l, "bilinear", 1.5f);
         Assert.That(by.Width, Is.EqualTo(6));
         Assert.That(new LatentUpscale().Execute(l, "nearest-exact", 0, 0), Is.SameAs(l));

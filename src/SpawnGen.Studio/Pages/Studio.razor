@@ -469,6 +469,8 @@
             Add("save", "SaveImage", 1230, 240);
             _doc.SetWidget(ids["ckpt"], "ckpt_name", "sd_turbo");
             _doc.SetWidget(ids["pos"], "text", "a photo of a red apple on a wooden table");
+            _doc.SetWidget(ids["latent"], "width", 512L); // SD-Turbo's size (Empty Latent Image defaults to ComfyUI's 1024)
+            _doc.SetWidget(ids["latent"], "height", 512L);
             _doc.SetWidget(ids["sampler"], "steps", 1L);
             _doc.SetWidget(ids["sampler"], "cfg", 1.0);
             void C(string from, int o, string to, string input) => _doc.Connect(ids[from], o, ids[to], input, out _);

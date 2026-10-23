@@ -54,82 +54,96 @@ public sealed class ImageRotate
 [Node(Category = "image/filters", DisplayName = "Quantize Image")]
 public sealed class ImageQuantize
 {
-    public static string[] Dithers() => ["none", "floyd-steinberg"];
+    public static string[] Dithers() => ["none", "floyd-steinberg", "bayer-2", "bayer-4", "bayer-8", "bayer-16"];
 
-    /// <summary>Reduces each picture to at most <paramref name="colors"/> colours: a palette by median cut, every pixel mapped to the nearest entry, optionally with error diffusion.</summary>
+    /// <summary>
+    /// ComfyUI's Quantize, byte for byte: each picture's RGB goes to 8 bits by <c>(rgb * 255).to(torch.uint8)</c> (truncation; outside 0..255 it wraps like
+    /// torch's cast), Pillow builds a palette of at most <paramref name="colors"/> entries by median cut (<c>quantize(colors)</c>), and every pixel takes its
+    /// nearest entry, with Pillow's Floyd-Steinberg or after adding ComfyUI's ordered (bayer) threshold map. The result is <c>/ 255</c>; an alpha channel
+    /// is passed through, and other extra channels are dropped like ComfyUI does.
+    /// </summary>
     public ImageBatch Execute(ImageBatch image, [Input(Min = 1, Max = 256)] int colors = 256, [Input(OptionsProvider = nameof(Dithers))] string dither = "none")
     {
-        if (dither is not ("none" or "floyd-steinberg")) throw new ArgumentException($"Unknown dither '{dither}'.", nameof(dither));
-        int w = image.Width, h = image.Height, c = image.Channels;
-        if (c < 3) throw new ArgumentException("Quantize needs a colour picture.");
-        return Pixels.Map(image, f =>
+        int order = dither switch
         {
-            var palette = MedianCut(f, w * h, c, Math.Clamp(colors, 1, 256));
-            var o = (float[])f.Clone();
-            var work = dither == "none" ? null : (float[])f.Clone();
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    int p = (y * w + x) * c;
-                    var src = work ?? f;
-                    int best = 0;
-                    float bestD = float.MaxValue;
-                    for (int k = 0; k < palette.Length; k++)
-                    {
-                        float dr = src[p] - palette[k][0], dg = src[p + 1] - palette[k][1], db = src[p + 2] - palette[k][2];
-                        float d = dr * dr + dg * dg + db * db;
-                        if (d < bestD) { bestD = d; best = k; }
-                    }
-                    for (int ch = 0; ch < 3; ch++)
-                    {
-                        o[p + ch] = palette[best][ch];
-                        if (work is null) continue;
-                        float err = src[p + ch] - palette[best][ch];
-                        void Push(int dx, int dy, float weight)
-                        {
-                            int nx = x + dx, ny = y + dy;
-                            if (nx >= 0 && nx < w && ny < h) work[(ny * w + nx) * c + ch] += err * weight;
-                        }
-                        Push(1, 0, 7 / 16f); Push(-1, 1, 3 / 16f); Push(0, 1, 5 / 16f); Push(1, 1, 1 / 16f);
-                    }
-                }
-            return o;
-        });
+            "none" or "floyd-steinberg" => 0,
+            "bayer-2" => 2, "bayer-4" => 4, "bayer-8" => 8, "bayer-16" => 16,
+            _ => throw new ArgumentException($"Unknown dither '{dither}'.", nameof(dither)),
+        };
+        if (colors is < 1 or > 256) throw new ArgumentOutOfRangeException(nameof(colors), "bad number of colors");
+        int w = image.Width, h = image.Height, c = image.Channels, n = w * h;
+        if (c < 3) throw new ArgumentException("Quantize needs a colour picture.");
+        int oc = c == 4 ? 4 : 3;
+        var result = new ImageBatch(image.Batch, h, w, oc);
+        for (int b = 0; b < image.Batch; b++)
+        {
+            int src = b * n * c, dst = b * n * oc;
+            var rgb = new byte[n * 3];
+            for (int i = 0; i < n; i++)
+                for (int ch = 0; ch < 3; ch++) rgb[i * 3 + ch] = TorchToUInt8(image.Data[src + i * c + ch] * 255f);
+
+            var palette = PilQuantize.MedianCutPalette(rgb, colors);
+            var index = order == 0
+                ? PilQuantize.ToPalette(rgb, w, h, palette, dither == "floyd-steinberg")
+                : PilQuantize.ToPalette(Bayer(rgb, w, h, order, palette.Length / 3), w, h, palette, dither: false);
+
+            for (int i = 0; i < n; i++)
+            {
+                for (int ch = 0; ch < 3; ch++) result.Data[dst + i * oc + ch] = palette[index[i] * 3 + ch] / 255f;
+                if (oc == 4) result.Data[dst + i * 4 + 3] = image.Data[src + i * 4 + 3];
+            }
+        }
+        return result;
     }
 
-    static float[][] MedianCut(float[] f, int pixels, int c, int colors)
+    /// <summary>torch's float32 to uint8 cast on the CPU: truncation toward zero, then the low byte (so -1 is 255 and 256 is 0); NaN, infinities and anything past int32 give 0.</summary>
+    public static byte TorchToUInt8(float x) => MathF.Abs(x) < 2147483648f ? unchecked((byte)(int)x) : (byte)0;
+
+    /// <summary>
+    /// Quantize.bayer before its palette step: <c>spread * normalized_bayer_matrix(log2 order) + 0.5</c> with spread = 512 / palette size (numpy float64),
+    /// tiled over the picture from the top left and added to the 8-bit values (float32 += float64, so the sum is rounded to float32), clamped to 0..255
+    /// and truncated back to 8 bits.
+    /// </summary>
+    static byte[] Bayer(byte[] rgb, int w, int h, int order, int paletteSize)
     {
-        // Boxes of pixel indices; split the box with the widest colour range at the median of that channel until there are enough.
-        var boxes = new List<int[]> { Enumerable.Range(0, pixels).ToArray() };
-        while (boxes.Count < colors)
-        {
-            int pick = -1, channel = 0;
-            float widest = 0;
-            for (int b = 0; b < boxes.Count; b++)
+        double spread = 2 * 256 / (double)paletteSize;
+        var m = NormalizedBayer((int)Math.Log2(order));
+        var o = new byte[rgb.Length];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
             {
-                if (boxes[b].Length < 2) continue;
+                double t = spread * m[y % order, x % order] + 0.5;
                 for (int ch = 0; ch < 3; ch++)
                 {
-                    float lo = float.MaxValue, hi = float.MinValue;
-                    foreach (int i in boxes[b]) { float v = f[i * c + ch]; if (v < lo) lo = v; if (v > hi) hi = v; }
-                    if (hi - lo > widest) { widest = hi - lo; pick = b; channel = ch; }
+                    int p = (y * w + x) * 3 + ch;
+                    float v = (float)(rgb[p] + t);
+                    o[p] = (byte)Math.Clamp(v, 0f, 255f);
                 }
             }
-            if (pick < 0) break; // every box is one colour already
-            var sorted = boxes[pick].OrderBy(i => f[i * c + channel]).ToArray();
-            int half = sorted.Length / 2;
-            boxes[pick] = sorted[..half];
-            boxes.Add(sorted[half..]);
-        }
-        return boxes.Select(box =>
-        {
-            var mean = new float[3];
-            foreach (int i in box) for (int ch = 0; ch < 3; ch++) mean[ch] += f[i * c + ch];
-            for (int ch = 0; ch < 3; ch++) mean[ch] /= box.Length;
-            return mean;
-        }).ToArray();
+        return o;
+    }
+
+    /// <summary>ComfyUI's normalized_bayer_matrix: M(0) = 0; M(n) = [[m - 1.5, m + 0.5], [m + 1.5, m - 0.5]] / 4^n with m = 4^n M(n - 1) (all exact in binary).</summary>
+    static double[,] NormalizedBayer(int n)
+    {
+        if (n == 0) return new double[1, 1];
+        var prev = NormalizedBayer(n - 1);
+        int half = 1 << (n - 1), size = half * 2;
+        double q = Math.Pow(4, n);
+        var r = new double[size, size];
+        for (int y = 0; y < half; y++)
+            for (int x = 0; x < half; x++)
+            {
+                double v = q * prev[y, x];
+                r[y, x] = (v - 1.5) / q;
+                r[y, x + half] = (v + 0.5) / q;
+                r[y + half, x] = (v + 1.5) / q;
+                r[y + half, x + half] = (v - 0.5) / q;
+            }
+        return r;
     }
 }
+
 
 [Node(Category = "image/filters", DisplayName = "Apply Morphology")]
 public sealed class Morphology

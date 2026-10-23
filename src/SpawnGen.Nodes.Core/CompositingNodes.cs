@@ -6,7 +6,7 @@ namespace SpawnGen.Nodes.Core;
 /// <summary>ComfyUI's Porter-Duff operators (nodes_compositing.py), in the order of its PorterDuffMode enum.</summary>
 public enum PorterDuffMode { ADD, CLEAR, DARKEN, DST, DST_ATOP, DST_IN, DST_OUT, DST_OVER, LIGHTEN, MULTIPLY, OVERLAY, SCREEN, SRC, SRC_ATOP, SRC_IN, SRC_OUT, SRC_OVER, XOR }
 
-[Node(Category = "image/compositing", DisplayName = "Porter-Duff Image Composite")]
+[Node(Category = "image/compositing", DisplayName = "Porter-Duff Image Composite", OutputNames = ["IMAGE", "MASK"])]
 public sealed class PorterDuffImageComposite
 {
     public static string[] Modes() => Enum.GetNames<PorterDuffMode>();
@@ -102,7 +102,7 @@ public sealed class PorterDuffImageComposite
     };
 }
 
-[Node(Category = "image/compositing", DisplayName = "Split Image with Alpha")]
+[Node(Category = "image/compositing", DisplayName = "Split Image with Alpha", OutputNames = ["IMAGE", "MASK"])]
 public sealed class SplitImageWithAlpha
 {
     /// <summary>The colour channels (the first three) and the alpha channel as a MASK (1 - alpha; all 0 for a picture without alpha).</summary>

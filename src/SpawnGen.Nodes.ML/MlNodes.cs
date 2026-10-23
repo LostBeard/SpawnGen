@@ -9,7 +9,7 @@ using SpawnGen.Nodes.Core;
 
 namespace SpawnGen.Nodes.ML;
 
-[Node(Category = "model/loaders", DisplayName = "Load Checkpoint")]
+[Node(Category = "model/loaders", DisplayName = "Load Checkpoint", OutputNames = ["MODEL", "CLIP", "VAE"])]
 public sealed class CheckpointLoaderSimple
 {
     public static string[] CheckpointNames() => MlRuntime.KnownCheckpoints.Keys.ToArray();

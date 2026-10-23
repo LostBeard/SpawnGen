@@ -195,7 +195,7 @@ public sealed class ImageStitch
     }
 }
 
-[Node(Category = "image/transform", DisplayName = "Crop Image to Mask")]
+[Node(Category = "image/transform", DisplayName = "Crop Image to Mask", OutputNames = ["images"])]
 public sealed class ImageCropToMask
 {
     /// <summary>

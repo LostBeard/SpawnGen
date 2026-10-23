@@ -93,7 +93,7 @@ public class CustomSamplingTests
         var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
         var outputs = registry.GetSchema("SamplerCustom")!.Outputs.Select(o => o.Name).ToArray();
         Assert.That(outputs, Is.EqualTo(new[] { "output", "denoised_output" }));
-        Assert.That(registry.GetSchema("SplitSigmas")!.Outputs.Select(o => o.Name), Is.EqualTo(new[] { "high", "low" }));
+        Assert.That(registry.GetSchema("SplitSigmas")!.Outputs.Select(o => o.Name), Is.EqualTo(new[] { "high_sigmas", "low_sigmas" }));
 
         var g = new PromptGraph();
         g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "sd_turbo"));

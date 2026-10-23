@@ -160,9 +160,11 @@ public sealed class ImageCrop
 [Node(Category = "image/batch", DisplayName = "Get Image from Batch")]
 public sealed class ImageFromBatch
 {
-    public ImageBatch Execute(ImageBatch image, [Input(Min = 0, Max = 4095)] int batchIndex = 0, [Input(Min = 1, Max = 4096)] int length = 1)
+    /// <summary>Pictures from <paramref name="batchIndex"/> on (a negative index counts from the end), at most <paramref name="length"/> of them, as ComfyUI cuts them.</summary>
+    public ImageBatch Execute(ImageBatch image, [Input(Min = -16384, Max = 16384)] int batchIndex = 0, [Input(Min = 1, Max = 4096)] int length = 1)
     {
-        int start = Math.Min(batchIndex, image.Batch - 1), count = Math.Min(length, image.Batch - start);
+        if (batchIndex < 0) batchIndex += image.Batch;
+        int start = Math.Max(0, Math.Min(image.Batch - 1, batchIndex)), count = Math.Min(length, image.Batch - start);
         return Pixels.From(Enumerable.Range(start, count).Select(i => Pixels.Frame(image, i)).ToList(), image.Height, image.Width, image.Channels);
     }
 }
@@ -312,7 +314,7 @@ public sealed class MaskToImage
     }
 }
 
-[Node(Category = "image/transform", DisplayName = "Pad Image for Outpainting")]
+[Node(Category = "image/transform", DisplayName = "Pad Image for Outpainting", OutputNames = ["IMAGE", "MASK"])]
 public sealed class ImagePadForOutpaint
 {
     /// <summary>Adds grey (0.5) borders and returns the picture plus a mask that is 1 on the new area, softened towards the old picture by <c>feathering</c> pixels.</summary>

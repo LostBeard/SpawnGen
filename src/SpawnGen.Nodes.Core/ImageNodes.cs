@@ -30,7 +30,7 @@ internal static class Results
         ?? new DiskResultStore(services.GetService(typeof(OutputOptions)) as OutputOptions ?? new OutputOptions());
 }
 
-[Node(Category = "image", DisplayName = "Load Image")]
+[Node(Category = "image", DisplayName = "Load Image", OutputNames = ["IMAGE", "MASK"])]
 public sealed class LoadImage
 {
     public static string[] ImageNames() => InputFiles.List();
@@ -67,14 +67,16 @@ public sealed class LoadImageMask
 [Node(Category = "image", DisplayName = "Save Image", IsOutput = true)]
 public sealed class SaveImage
 {
-    public async Task<UiOutput> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services, string filenamePrefix = "ComfyUI")
+    /// <summary>Writes every picture as a PNG with the workflow inside, and passes the pictures on (ComfyUI's node has the same output).</summary>
+    public async Task<(ImageBatch Images, UiOutput Ui)> ExecuteAsync([Input(Tooltip = "The images to save.")] ImageBatch images, NodeContext context, IServiceProvider services,
+        [Input(Tooltip = "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes.")] string filenamePrefix = "ComfyUI")
     {
         var store = Results.For(services);
         var saved = new List<object>();
         filenamePrefix = SavePrefix.ComputeVars(filenamePrefix, images.Width, images.Height, DateTime.Now);
         for (int i = 0; i < images.Batch; i++)
-            saved.Add(await store.SaveAsync("output", filenamePrefix,PngWriter.Encode(images, i, Results.Metadata(context))));
-        return new UiOutput("images", saved);
+            saved.Add(await store.SaveAsync("output", filenamePrefix, PngWriter.Encode(images, i, Results.Metadata(context))));
+        return (images, new UiOutput("images", saved));
     }
 }
 
@@ -82,12 +84,12 @@ public sealed class SaveImage
 [Node(Category = "image", DisplayName = "Preview Image", IsOutput = true)]
 public sealed class PreviewImage
 {
-    public async Task<UiOutput> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services)
+    public async Task<(ImageBatch Images, UiOutput Ui)> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services)
     {
         var store = Results.For(services);
         var saved = new List<object>();
         for (int i = 0; i < images.Batch; i++)
             saved.Add(await store.SaveAsync("temp", "preview", PngWriter.Encode(images, i, Results.Metadata(context))));
-        return new UiOutput("images", saved);
+        return (images, new UiOutput("images", saved));
     }
 }

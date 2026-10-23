@@ -63,8 +63,8 @@ public sealed class LatentApplyOperationCFG
     /// to the guidance (prompt prediction minus negative prediction) before cfg scales it. Connect it between the model loader and the sampler.
     /// </summary>
     public ModelHandle Execute(ModelHandle model, LatentOperation operation,
-        [Input(Min = 0, Max = 1, Step = 0.001, Tooltip = "Start applying the operation at this fraction of the model's denoising schedule. 0 is the beginning.")] double startPercent = 0.0,
-        [Input(Min = 0, Max = 1, Step = 0.001, Tooltip = "Stop applying the operation at this fraction of the model's denoising schedule. 1 is the end.")] double endPercent = 1.0) =>
+        [Input(Optional = true, Min = 0, Max = 1, Step = 0.001, Tooltip = "Start applying the operation at this fraction of the model's denoising schedule. 0 is the beginning.")] double startPercent = 0.0,
+        [Input(Optional = true, Min = 0, Max = 1, Step = 0.001, Tooltip = "Stop applying the operation at this fraction of the model's denoising schedule. 1 is the end.")] double endPercent = 1.0) =>
         new(model.Checkpoint) { RescaleCfg = model.RescaleCfg, PreCfg = [.. model.PreCfg, Function(model.Checkpoint.Sigmas, operation, startPercent, endPercent)] };
 
     /// <summary>ComfyUI's <c>pre_cfg_function</c> for this node, with the percents turned into sigmas the way the model's sampling does.</summary>

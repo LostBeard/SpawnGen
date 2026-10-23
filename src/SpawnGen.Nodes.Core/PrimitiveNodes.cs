@@ -67,13 +67,13 @@ public sealed class PrimitiveStringMultiline
 [Node(Category = "utilities/primitive", DisplayName = "Int")]
 public sealed class PrimitiveInt
 {
-    public long Execute([Input(Min = -9007199254740991, Max = 9007199254740991)] long value = 0) => value;
+    public long Execute([Input(Min = -9223372036854775807, Max = 9223372036854775807)] long value = 0) => value;
 }
 
 [Node(Category = "utilities/primitive", DisplayName = "Float")]
 public sealed class PrimitiveFloat
 {
-    public double Execute([Input(Min = -1e15, Max = 1e15, Step = 0.01)] double value = 0) => value;
+    public double Execute([Input(Min = -9223372036854775807, Max = 9223372036854775807, Step = 0.1)] double value = 0) => value;
 }
 
 [Node(Category = "utilities/primitive", DisplayName = "Boolean")]

@@ -3,7 +3,7 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-[Node(Category = "image/color", DisplayName = "Image RGB to YUV")]
+[Node(Category = "image/color", DisplayName = "Image RGB to YUV", OutputNames = ["Y", "U", "V"])]
 public sealed class ImageRGBToYUV
 {
     /// <summary>kornia's <c>rgb_to_ycbcr</c>: Y = 0.299 R + 0.587 G + 0.114 B, U = (B - Y) 0.564 + 0.5, V = (R - Y) 0.713 + 0.5; each as a grey picture.</summary>

@@ -37,6 +37,7 @@ def normal_default(kind_name, entry, value, options):
         if kind_name == "COMBO": return options[0] if options else None
         if kind_name == "STRING": return ""
         if kind_name == "BOOLEAN": return False
+        if kind_name in ("INT", "FLOAT"): return 0
     return value
 
 def kind(entry):
@@ -53,7 +54,8 @@ def widget_order(info):
 def compare(cid, c, s):
     problems = []
     for key in ("display_name", "category", "output_node"):
-        if c.get(key) != s.get(key): problems.append(f"{key}: comfy={c.get(key)!r} ours={s.get(key)!r}")
+        cv = c.get(key) or (cid if key == "display_name" else c.get(key))  # no display name: ComfyUI shows the id
+        if cv != s.get(key): problems.append(f"{key}: comfy={c.get(key)!r} ours={s.get(key)!r}")
     ci, si = inputs(c), inputs(s)
     missing = [n for n in ci if n not in si]
     extra = [n for n in si if n not in ci]

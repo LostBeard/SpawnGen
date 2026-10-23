@@ -21,7 +21,7 @@ public sealed class StringSubstring
     public string Execute([Input(Multiline = true)] string @string = "", long start = 0, long end = 0) => PyText.Slice(@string, start, end);
 }
 
-[Node(Category = "text", DisplayName = "Text Length")]
+[Node(Category = "text", DisplayName = "Text Length", OutputNames = ["length"])]
 public sealed class StringLength
 {
     /// <summary>The number of characters as Python counts them (an emoji is one).</summary>
@@ -67,7 +67,7 @@ public sealed class StringReplace
         PyText.Replace(@string, find, replace);
 }
 
-[Node(Category = "text", DisplayName = "Contains Text")]
+[Node(Category = "text", DisplayName = "Contains Text", OutputNames = ["contains"])]
 public sealed class StringContains
 {
     public bool Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string substring = "", bool caseSensitive = true) =>
@@ -93,7 +93,7 @@ public sealed class StringCompare
     }
 }
 
-[Node("RegexMatch", Category = "text", DisplayName = "Match Text", Aliases = ["RegexMatchNode"])]
+[Node("RegexMatch", Category = "text", DisplayName = "Match Text", Aliases = ["RegexMatchNode"], OutputNames = ["matches"])]
 public sealed class RegexMatchNode
 {
     /// <summary>True when the Python regex matches anywhere in the text; a pattern Python cannot compile gives false (ComfyUI catches <c>re.error</c>).</summary>
@@ -119,9 +119,9 @@ public sealed class RegexReplaceNode
     /// <c>count</c> 0 replaces every match.
     /// </summary>
     public string Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string regexPattern = "", [Input(Multiline = true)] string replace = "",
-        bool caseInsensitive = true, bool multiline = false,
-        [Input(Tooltip = "When enabled, the dot (.) character will match any character including newline characters. When disabled, dots won't match newlines.")] bool dotall = false,
-        [Input(Min = 0, Max = 100, Tooltip = "Maximum number of replacements to make. Set to 0 to replace all occurrences (default). Set to 1 to replace only the first match, 2 for the first two matches, etc.")] int count = 0) =>
+        [Input(Optional = true)] bool caseInsensitive = true, [Input(Optional = true)] bool multiline = false,
+        [Input(Optional = true, Tooltip = "When enabled, the dot (.) character will match any character including newline characters. When disabled, dots won't match newlines.")] bool dotall = false,
+        [Input(Optional = true, Min = 0, Max = 100, Tooltip = "Maximum number of replacements to make. Set to 0 to replace all occurrences (default). Set to 1 to replace only the first match, 2 for the first two matches, etc.")] int count = 0) =>
         PyRegex.Compile(regexPattern, caseInsensitive, multiline, dotall).Sub(replace, @string, count);
 }
 

@@ -106,7 +106,7 @@ public sealed class SDTurboScheduler
         new(SigmaSchedules.SdTurbo(model.Checkpoint.Sigmas, steps, denoise));
 }
 
-[Node(Category = "model/sampling/sigmas", DisplayName = "SplitSigmas")]
+[Node(Category = "model/sampling/sigmas", DisplayName = "SplitSigmas", OutputNames = ["high_sigmas", "low_sigmas"])]
 public sealed class SplitSigmas
 {
     /// <summary>Splits at step <paramref name="step"/>: high is sigmas[0..step], low is sigmas[step..] (they share the sigma at the split).</summary>
@@ -118,7 +118,7 @@ public sealed class SplitSigmas
     }
 }
 
-[Node(Category = "model/sampling/sigmas", DisplayName = "SplitSigmasDenoise")]
+[Node(Category = "model/sampling/sigmas", DisplayName = "SplitSigmasDenoise", OutputNames = ["high_sigmas", "low_sigmas"])]
 public sealed class SplitSigmasDenoise
 {
     /// <summary>Splits so the low part holds the last <c>denoise</c> share of the steps (an image-to-image run uses it); the high part is what remains before it.</summary>
@@ -165,7 +165,7 @@ public sealed class SamplerCustom
         ModelHandle model, Conditioning positive, Conditioning negative, SamplerChoice sampler, Sigmas sigmas, LatentBatch latentImage,
         NodeContext context, IServiceProvider services,
         bool addNoise = true,
-        long noiseSeed = 0,
+        [Input(Min = 0, Max = 18446744073709551615d)] long noiseSeed = 0,
         [Input(Min = 0, Max = 100, Step = 0.1)] float cfg = 8f)
     {
         if (sigmas.Values.Length < 2) return (latentImage, latentImage);
@@ -186,7 +186,7 @@ public sealed record GuiderChoice(ModelHandle Model, Conditioning Positive, Cond
 [Node(Category = "model/sampling/noise", DisplayName = "RandomNoise")]
 public sealed class RandomNoise
 {
-    public NoiseChoice Execute(long noiseSeed = 0) => new(noiseSeed, true);
+    public NoiseChoice Execute([Input(Min = 0, Max = 18446744073709551615d)] long noiseSeed = 0) => new(noiseSeed, true);
 }
 
 [Node(Category = "model/sampling/noise", DisplayName = "DisableNoise")]

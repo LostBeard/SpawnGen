@@ -5,7 +5,7 @@ namespace SpawnGen.Nodes.Core;
 
 // ComfyUI's small utility nodes: comfy_extras/nodes_seed.py, nodes_number_convert.py and the backend half of nodes_logic.py.
 
-[Node("SeedNode", Category = "utilities", DisplayName = "Seed")]
+[Node("SeedNode", Category = "utilities", DisplayName = "Seed", OutputNames = ["seed"])]
 public sealed class SeedNode
 {
     /// <summary>One seed that can feed several samplers. (ComfyUI starts this node's control at "fixed"; the editor gives seed widgets "randomize".)</summary>

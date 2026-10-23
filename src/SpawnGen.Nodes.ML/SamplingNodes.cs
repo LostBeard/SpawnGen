@@ -13,7 +13,7 @@ public sealed class KSampler
     public async Task<LatentBatch> ExecuteAsync(
         ModelHandle model, Conditioning positive, Conditioning negative, LatentBatch latentImage,
         NodeContext context, IServiceProvider services,
-        long seed = 0,
+        [Input(Min = 0, Max = 18446744073709551615d)] long seed = 0,
         [Input(Min = 1, Max = 10000)] int steps = 20,
         [Input(Min = 0, Max = 100, Step = 0.1)] float cfg = 8f,
         [Input(OptionsProvider = nameof(SamplerNames))] string samplerName = "euler",
@@ -54,7 +54,7 @@ public sealed class KSamplerAdvanced
         ModelHandle model, Conditioning positive, Conditioning negative, LatentBatch latentImage,
         NodeContext context, IServiceProvider services,
         [Input(OptionsProvider = nameof(Toggle))] string addNoise = "enable",
-        long noiseSeed = 0,
+        [Input(Min = 0, Max = 18446744073709551615d)] long noiseSeed = 0,
         [Input(Min = 1, Max = 10000)] int steps = 20,
         [Input(Min = 0, Max = 100, Step = 0.1)] float cfg = 8f,
         [Input(OptionsProvider = nameof(SamplerNames))] string samplerName = "euler",

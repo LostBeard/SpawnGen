@@ -8,7 +8,7 @@ namespace SpawnGen.Nodes.ML;
 public sealed class CFGNorm
 {
     public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 100, Step = 0.01)] double strength = 1.0,
-        [Input(Tooltip = "If true, rescale the combined noise BEFORE the sampler's CFG combine, without clamping (can amplify). Matches the norm-scaled CFG used by models like Lens. Default false keeps the original post-CFG x0-space attenuate-only behavior.")]
+        [Input(Optional = true, Tooltip = "If true, rescale the combined noise BEFORE the sampler's CFG combine, without clamping (can amplify). Matches the norm-scaled CFG used by models like Lens. Default false keeps the original post-CFG x0-space attenuate-only behavior.")]
         bool preCfg = false) =>
         preCfg
             ? model.WithPatches(p => p.WithCfgFunction(ModelPatches.Stateless<Func<CfgFunctionArgs, Task<float[]>>>(a => Task.FromResult(GuidancePatches.CfgNormPre(a, strength)))))
@@ -110,7 +110,7 @@ public sealed class RenormCFG
 public sealed class DifferentialDiffusion
 {
     /// <summary>Makes a soft inpainting mask a per-pixel denoise strength: a pixel is regenerated only while the run is past its mask value.</summary>
-    public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 1, Step = 0.01)] double strength = 1.0) =>
+    public ModelHandle Execute(ModelHandle model, [Input(Optional = true, Min = 0, Max = 1, Step = 0.01)] double strength = 1.0) =>
         model.WithPatches(p => p with { DenoiseMask = (sigma, mask, sigmas, sampling) => GuidancePatches.DifferentialDiffusionMask(sigma, mask, sigmas, sampling, strength) });
 }
 

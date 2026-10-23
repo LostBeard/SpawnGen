@@ -118,15 +118,15 @@ public class AudioOpsTests
         Assert.That(new SplitAudioChannels().Execute(null), Is.EqualTo(((AudioClip?)null, (AudioClip?)null)));
 
         // Join trims to the shorter channel.
-        var (joined, ui) = new JoinAudioChannels().Execute(Clip(8000, l), Clip(8000, [7, 8]));
-        Assert.That((joined!.ChannelCount, joined.Channels[0], joined.Channels[1], ui), Is.EqualTo((2, new[] { 1f, 2f }, new[] { 7f, 8f }, (UiOutput?)null)));
+        var joined = new JoinAudioChannels().Execute(Clip(8000, l), Clip(8000, [7, 8]));
+        Assert.That((joined!.ChannelCount, joined.Channels[0], joined.Channels[1]), Is.EqualTo((2, new[] { 1f, 2f }, new[] { 7f, 8f })));
         // Different rates: the lower one is resampled up first (3 samples at 8 kHz become 5 at 12 kHz, then both are cut to 5).
-        var mixed = new JoinAudioChannels().Execute(Clip(8000, Five[..3]), Clip(12000, Five)).Audio!;
+        var mixed = new JoinAudioChannels().Execute(Clip(8000, Five[..3]), Clip(12000, Five))!;
         Assert.That((mixed.SampleRate, mixed.Length), Is.EqualTo((12000, 5)));
         Assert.That(mixed.Channels[0], Is.EqualTo(AudioDsp.Resample(Five[..3], 8000, 12000)));
         Assert.That(() => new JoinAudioChannels().Execute(Clip(8000, l, r), Clip(8000, l)), Throws.ArgumentException);
         var only = Clip(8000, l);
-        Assert.That(new JoinAudioChannels().Execute(null, only).Audio, Is.SameAs(only));
+        Assert.That(new JoinAudioChannels().Execute(null, only), Is.SameAs(only));
     }
 
     [Test]

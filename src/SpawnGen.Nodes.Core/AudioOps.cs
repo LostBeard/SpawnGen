@@ -63,18 +63,17 @@ public sealed class SplitAudioChannels
     }
 }
 
-[Node(Category = "audio", DisplayName = "Join Audio Channels", Description = "Joins left and right mono audio channels into a stereo audio.")]
+[Node(Category = "audio", DisplayName = "Join Audio Channels", Description = "Joins left and right mono audio channels into a stereo audio.", OutputNames = ["audio"])]
 public sealed class JoinAudioChannels
 {
     /// <summary>The lower sample rate is resampled to the higher one and the longer channel is trimmed to the shorter.</summary>
-    // The tuple only names the output "audio" as ComfyUI does (a single return value would be called AUDIO); there is never anything to show.
-    public (AudioClip? Audio, UiOutput? Ui) Execute(AudioClip? audioLeft, AudioClip? audioRight)
+    public AudioClip? Execute(AudioClip? audioLeft, AudioClip? audioRight)
     {
-        if (audioLeft is null || audioRight is null) return (audioLeft ?? audioRight, null);
+        if (audioLeft is null || audioRight is null) return audioLeft ?? audioRight;
         if (audioLeft.ChannelCount != 1 || audioRight.ChannelCount != 1) throw new ArgumentException("AudioJoin: Both input audios must be mono.");
         var (left, right, rate) = AudioDsp.MatchSampleRates(audioLeft, audioRight);
         int length = Math.Min(left.Length, right.Length);
-        return (new AudioClip([left.Channels[0][..length], right.Channels[0][..length]], rate), null);
+        return new AudioClip([left.Channels[0][..length], right.Channels[0][..length]], rate);
     }
 }
 

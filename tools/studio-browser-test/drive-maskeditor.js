@@ -21,7 +21,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await page.waitForSelector('canvas');
   await page.waitForTimeout(3500);
   await page.selectOption('select.engine', { label: 'This browser (WebGPU)' });
-  await page.setInputFiles('input[accept=".png,.jpg,.jpeg,.wav"]', path.join(__dirname, 'apple.png'));
+  await page.setInputFiles('input[accept*=".wav"]', path.join(__dirname, 'apple.png'));
   await page.waitForTimeout(800);
   await page.setInputFiles('input[accept=".json,.png"]', path.join(__dirname, 'mask-workflow.json'));
   await page.waitForTimeout(1200);

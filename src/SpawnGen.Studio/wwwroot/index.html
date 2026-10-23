@@ -111,6 +111,9 @@
         };
         // Browser storage for the open workflows (tabs, autosave). It can be missing or full: every call is allowed to fail quietly.
         window.spawngenStoreGet = function (key) { try { return localStorage.getItem(key); } catch (e) { return null; } };
+        window.spawngenSetTheme = function (id) { document.documentElement.dataset.theme = id === 'light' ? 'light' : 'dark'; };
+        // Applied before the app boots, so a light page does not flash dark first.
+        try { window.spawngenSetTheme(JSON.parse(localStorage.getItem('spawngen.settings') || '{}').Palette); } catch (e) { }
         window.spawngenStoreSet = function (key, value) { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } };
         // Saves a picture (a data or same-origin URL) as a file download.
         window.spawngenDownloadUrl = function (name, url) {

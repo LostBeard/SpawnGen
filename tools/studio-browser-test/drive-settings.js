@@ -24,24 +24,24 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const spline = await hash();
   await page.click('button:has-text("Settings")');
   await page.waitForSelector('.settings');
-  await page.selectOption('.settings select', { label: 'Straight' });
+  await page.selectOption('.settings label:has-text("Link style") select', { label: 'Straight' });
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(OUT, 'settings-straight.png') });
   const straight = await hash();
   check('Straight links look different from splines', straight !== spline);
 
-  await page.selectOption('.settings select', { label: 'Hidden' });
+  await page.selectOption('.settings label:has-text("Link style") select', { label: 'Hidden' });
   await page.waitForTimeout(400);
   const hidden = await hash();
   check('hidden links draw nothing (another picture again)', hidden !== straight && hidden !== spline);
 
-  await page.selectOption('.settings select', { label: 'Linear' });
+  await page.selectOption('.settings label:has-text("Link style") select', { label: 'Linear' });
   await page.waitForTimeout(300);
   await page.waitForTimeout(1500);
   await open();
   await page.click('button:has-text("Settings")');
   await page.waitForSelector('.settings');
-  const chosen = await page.locator('.settings select').evaluate(s => s.options[s.selectedIndex].text);
+  const chosen = await page.locator('.settings label:has-text("Link style") select').evaluate(s => s.options[s.selectedIndex].text);
   check('the choice survives a reload', chosen === 'Linear', chosen);
 
   await page.click('.settings label.row:has-text("minimap") input');

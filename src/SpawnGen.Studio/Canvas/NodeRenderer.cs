@@ -80,9 +80,9 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         var r = view.MinimapScreenRect;
         var (scale, _) = view.MinimapMapping();
         RoundRect(ctx, r, 6);
-        ctx.FillStyle = "rgba(20,20,20,0.96)";
+        ctx.FillStyle = Theme.Current.MinimapFill;
         ctx.Fill();
-        ctx.StrokeStyle = "#555";
+        ctx.StrokeStyle = Theme.Current.MinimapBorder;
         ctx.LineWidth = 1;
         ctx.Stroke();
         ctx.Save();
@@ -98,12 +98,12 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         foreach (var (node, geo) in geometries)
         {
             var a = view.WorldToMinimap(new Point(geo.Bounds.X, geo.Bounds.Y));
-            ctx.FillStyle = selected.Contains(node.Id) ? "#4f8fe8" : "#7a7a7a";
+            ctx.FillStyle = selected.Contains(node.Id) ? Theme.Accent : Theme.Current.MinimapNode;
             ctx.FillRect(a.X, a.Y, Math.Max(2, geo.Bounds.Width * scale), Math.Max(2, geo.Bounds.Height * scale));
         }
         var vis = view.Viewport.VisibleWorld(cssWidth, cssHeight);
         var v = view.WorldToMinimap(new Point(vis.X, vis.Y));
-        ctx.StrokeStyle = "#f0f0f0";
+        ctx.StrokeStyle = Theme.Current.MinimapView;
         ctx.LineWidth = 1.5;
         ctx.StrokeRect(v.X, v.Y, vis.Width * scale, vis.Height * scale);
         ctx.Restore();
@@ -114,8 +114,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
     /// <summary>A small push-pin: a round head over a needle, tilted.</summary>
     static void DrawPin(CanvasRenderingContext2D ctx, double x, double y)
     {
-        ctx.StrokeStyle = "#d9d9d9";
-        ctx.FillStyle = "#d9d9d9";
+        ctx.StrokeStyle = Theme.Current.PinColor;
+        ctx.FillStyle = Theme.Current.PinColor;
         ctx.LineWidth = 1.6;
         ctx.BeginPath();
         ctx.MoveTo(x - 2, y + 6); ctx.LineTo(x + 1.5, y + 0.5);
@@ -267,7 +267,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         if (d.Target is { } target && byId.TryGetValue(target.NodeId, out var tn))
         {
             var slot = target.Kind == HitKind.InputSlot ? tn.Input(target.Name!) : tn.Outputs.ElementAtOrDefault(target.Index);
-            if (slot is not null) Ring(ctx, slot.Position, 9, "#ffffff");
+            if (slot is not null) Ring(ctx, slot.Position, 9, Theme.Current.LinkTargetRing);
         }
         else if (d.Problem is not null)
         {
@@ -291,14 +291,14 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         // Body and title.
         RoundRect(ctx, b, 8);
         bool isNote = schema is { FrontendOnly: true } && schema.Id != "Reroute";
-        ctx.FillStyle = node.Mode == NodeMode.Bypass ? "#4a3a5a" : node.BgColor ?? (isNote ? "#4d4630" : Theme.NodeBody);
+        ctx.FillStyle = node.Mode == NodeMode.Bypass ? Theme.Current.BypassBody : node.BgColor ?? (isNote ? Theme.Current.NoteBody : Theme.NodeBody);
         ctx.Fill();
         if (!geo.Collapsed || true)
         {
             ctx.Save();
             RoundRect(ctx, b, 8);
             ctx.Clip();
-            ctx.FillStyle = schema is null ? "#5a2a2a" : node.Color ?? (isNote ? "#7a6a2a" : Theme.TitleColor(schema.Category));
+            ctx.FillStyle = schema is null ? Theme.Current.MissingTitle : node.Color ?? (isNote ? Theme.Current.NoteTitle : Theme.TitleColor(schema.Category));
             ctx.FillRect(geo.TitleBar.X, geo.TitleBar.Y, geo.TitleBar.Width, geo.TitleBar.Height);
             ctx.Restore();
         }
@@ -359,7 +359,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             {
                 // Resize grip.
                 var r = geo.ResizeHandle;
-                ctx.StrokeStyle = "#5a5a5a";
+                ctx.StrokeStyle = Theme.Current.ResizeGrip;
                 ctx.LineWidth = 1.2;
                 ctx.BeginPath();
                 ctx.MoveTo(r.Right - 3, r.Y + 4); ctx.LineTo(r.X + 4, r.Bottom - 3);
@@ -393,13 +393,13 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
     void DrawResultText(CanvasRenderingContext2D ctx, IReadOnlyList<string> lines, Rect area)
     {
         RoundRect(ctx, area, 5);
-        ctx.FillStyle = "#141414";
+        ctx.FillStyle = Theme.Current.TextBoxFill;
         ctx.Fill();
         ctx.Save();
         RoundRect(ctx, area, 5);
         ctx.Clip();
         ctx.Font = Theme.Font;
-        ctx.FillStyle = "#d8d8d8";
+        ctx.FillStyle = Theme.Current.TextBoxText;
         ctx.TextBaseline = "middle";
         for (int i = 0; i < lines.Count; i++)
             ctx.FillText(lines[i], area.X + 8, area.Y + 6 + (i + 0.5) * NodeLayout.TextLineHeight);
@@ -417,7 +417,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         });
 
         RoundRect(ctx, area, 5);
-        ctx.FillStyle = "#141414";
+        ctx.FillStyle = Theme.Current.TextBoxFill;
         ctx.Fill();
         if (image is not null)
         {
@@ -526,7 +526,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
 
         if (w.Spec.Kind is WidgetKind.Int or WidgetKind.Float or WidgetKind.Combo)
         {
-            ctx.FillStyle = "#6f6f6f";
+            ctx.FillStyle = Theme.Current.WidgetArrow;
             ctx.BeginPath(); // little arrows at the edges, as ComfyUI's number and combo widgets have
             ctx.MoveTo(r.X + 4, cy); ctx.LineTo(r.X + 8, cy - 3); ctx.LineTo(r.X + 8, cy + 3);
             ctx.MoveTo(r.Right - 4, cy); ctx.LineTo(r.Right - 8, cy - 3); ctx.LineTo(r.Right - 8, cy + 3);

@@ -175,6 +175,14 @@
         {
             <div class="settings">
                 <div class="set-head"><span>Settings</span><button title="Close" @onclick="() => _settingsOpen = false">&times;</button></div>
+                <label>Colour palette
+                    <select @onchange="OnPaletteChosen">
+                        @foreach (var palette in Theme.All)
+                        {
+                            <option value="@palette.Id" selected="@(palette.Id == Theme.Current.Id)">@palette.Name</option>
+                        }
+                    </select>
+                </label>
                 <label>Link style
                     <select @onchange="OnLinkStyleChosen">
                         @foreach (var style in Enum.GetValues<LinkStyle>())
@@ -384,6 +392,7 @@
             _view.GridSize = _settings.GridSize;
             _view.MinimapVisible = _settings.ShowMinimap;
             _view.ShowNodeIds = _settings.ShowNodeIds;
+            Theme.Use(_settings.Palette); // the page itself was already themed by index.html before the app booted
             await RestoreTabsAsync();
             _doc.Changed += ScheduleAutosave;
             _view.ViewChanged += OnViewMovedForAutosave;
@@ -1079,6 +1088,9 @@
         _view.GridSize = _settings.GridSize;
         _view.MinimapVisible = _settings.ShowMinimap;
         _view.ShowNodeIds = _settings.ShowNodeIds;
+        _settings.Palette = Theme.Use(_settings.Palette).Id;
+        _ = Interop.InvokeVoidAsync("spawngenSetTheme", _settings.Palette);
+        _studio?.MarkDirty();
         _view.Invalidate();
         _ = Interop.InvokeVoidAsync("spawngenStoreSet", SettingsKey, _settings.ToJson());
         InvokeAsync(StateHasChanged);
@@ -1087,6 +1099,12 @@
     void OnLinkStyleChosen(ChangeEventArgs e)
     {
         if (int.TryParse(e.Value?.ToString(), out var i) && Enum.IsDefined(typeof(LinkStyle), i)) { _settings.LinkStyle = (LinkStyle)i; ApplySettings(); }
+    }
+
+    void OnPaletteChosen(ChangeEventArgs e)
+    {
+        _settings.Palette = e.Value?.ToString() ?? "dark";
+        ApplySettings();
     }
 
     void OnGridSizeChosen(ChangeEventArgs e)

@@ -59,7 +59,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await page.keyboard.type('preview');
   await page.waitForTimeout(300);
   const listed = await page.locator('.search li').allTextContents();
-  check('search filters the node list', listed.length >= 1 && /Preview Image/i.test(listed[0]), listed.join(' | '));
+  check('search filters the node list', listed.length >= 1 && listed.every(t => /preview/i.test(t)) && listed.some(t => /Preview Image/i.test(t)), listed.join(' | '));
   await page.keyboard.press('Enter');
   await page.waitForTimeout(500);
   check('Enter in search places the node', /^8 nodes/.test(await status()), await status());

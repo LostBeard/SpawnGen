@@ -36,7 +36,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Examples menu: 14 ready workflows (text to image, SD 1.5, image to image, hires fix, inpainting, FLUX.2 Klein and its edit, LLM-written prompt, upscale, remove background, depth, detection, speech), each opens in its own tab; every one is validated by a test | **done** |
 | Drop a generated PNG (ComfyUI or SpawnGen) or a workflow / API-format JSON on the canvas to open it; PNGs carry prompt + workflow | **done** |
 | Settings (remembered in the browser): link render modes (spline / straight / linear / hidden), snap to grid with its size, minimap | **done** |
-| Themes, shortcut customisation, shortcut parity check | todo |
+| Themes, shortcut customisation, shortcut parity check | **themes done**: Settings > Colour palette (Dark, Light) recolours the canvas (grid, nodes, category title tints, widgets, minimap) and the page (CSS variables, applied before the app boots so there is no dark flash), saved with the settings; socket and link colours stay ComfyUI's in every palette. More palettes are data in `Theme.cs`. Shortcut customisation and parity check todo |
 | Node colours (ComfyUI presets via the context menu, saved as color / bgcolor, undo, copy), custom titles | **done**; pins (P or the menu: nodes and groups cannot be moved, resized, collapsed or deleted; saved as flags.pinned) done; node id badges (Settings > Show node ids) done; source badges todo |
 
 ## 3. Execution
@@ -90,7 +90,7 @@ Todo, in priority order:
 | Item | Status |
 |---|---|
 | C# node packs in place of Python custom nodes: DLLs in the server's custom_nodes folder are loaded at start, the Studio learns them from /object_info and runs them on the server (docs/CUSTOM_NODES.md, samples/SpawnGen.SampleNodes) | **done**; C# scripting node (code typed in the editor) and browser-side packs todo |
-| Themes, internationalisation | todo (settings dialog exists) |
+| Themes, internationalisation | themes **done** (Dark, Light); internationalisation todo |
 | Model manager: checkpoints the host knows (checkpoints.json in the models folder pointing at any Optimum-style ONNX Stable Diffusion repo, or a folder in the models folder), listed in Load Checkpoint while the server engine is selected; download on first use (desktop), cache (browser OPFS) | **partial**: ONNX checkpoints only (single-file .safetensors needs the library). The Models panel lists downloaded files by size (desktop hub cache or browser OPFS), deletes one or all, and shows download progress (also in the status line during runs); verified in the page (drive-models.js) |
 | Hosted static browser build on GitHub Pages (https://lostbeard.github.io/SpawnGen/), AOT compiled by a manual workflow (about an hour): 400 nodes open in under a second and pan at 60 fps (the interpreter build needs 40 s) | **done** |
 | Packaging: self-contained desktop builds (Photino app as an installer / single file) | todo |

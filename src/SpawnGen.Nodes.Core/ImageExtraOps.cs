@@ -131,21 +131,25 @@ public sealed class ImageQuantize
     }
 }
 
-[Node(Category = "image/postprocessing", DisplayName = "ImageMorphology")]
+[Node(Category = "image/filters", DisplayName = "Apply Morphology")]
 public sealed class Morphology
 {
     public static string[] Operations() => ["erode", "dilate", "open", "close", "gradient", "bottom_hat", "top_hat"];
 
-    /// <summary>Grey-scale morphology with a square kernel, per channel (ComfyUI's Morphology node): erode takes the minimum, dilate the maximum, and the rest combine them.</summary>
-    public ImageBatch Execute(ImageBatch image, [Input(OptionsProvider = nameof(Operations))] string operation = "dilate", [Input(Min = 3, Max = 999)] int kernelSize = 3)
+    /// <summary>
+    /// Grey-scale morphology with a flat square kernel, per channel (ComfyUI's Morphology node, kornia.morphology): erode takes the minimum, dilate the
+    /// maximum, and the rest combine them. Like kornia, the window of pixel x runs from x - k/2 to x - k/2 + k - 1 (one pixel more before than after
+    /// for an even size), and pixels outside the picture are ignored (kornia's geodesic border).
+    /// </summary>
+    public ImageBatch Execute(ImageBatch image, [Input(OptionsProvider = nameof(Operations))] string operation = "erode", [Input(Min = 3, Max = 999)] int kernelSize = 3)
     {
         if (!Operations().Contains(operation)) throw new ArgumentException($"Unknown operation '{operation}'.", nameof(operation));
-        int radius = Math.Max(1, kernelSize) / 2;
+        int before = kernelSize / 2, after = kernelSize - before - 1;
         int w = image.Width, h = image.Height, c = image.Channels;
         return Pixels.Map(image, f =>
         {
-            float[] Erode(float[] s) => Extreme(s, w, h, c, radius, min: true);
-            float[] Dilate(float[] s) => Extreme(s, w, h, c, radius, min: false);
+            float[] Erode(float[] s) => Extreme(s, w, h, c, before, after, min: true);
+            float[] Dilate(float[] s) => Extreme(s, w, h, c, before, after, min: false);
             float[] Sub(float[] a, float[] b) { var r = new float[a.Length]; for (int i = 0; i < r.Length; i++) r[i] = a[i] - b[i]; return r; }
             return operation switch
             {
@@ -160,8 +164,8 @@ public sealed class Morphology
         });
     }
 
-    /// <summary>Minimum or maximum over a (2r+1) square, as two 1D passes; pixels outside the picture are ignored.</summary>
-    static float[] Extreme(float[] src, int w, int h, int c, int radius, bool min)
+    /// <summary>Minimum or maximum over the square from -before to +after around each pixel, as two 1D passes; pixels outside the picture are ignored.</summary>
+    static float[] Extreme(float[] src, int w, int h, int c, int before, int after, bool min)
     {
         float Pick(float a, float b) => min ? Math.Min(a, b) : Math.Max(a, b);
         var tmp = new float[src.Length];
@@ -170,7 +174,7 @@ public sealed class Morphology
                 for (int ch = 0; ch < c; ch++)
                 {
                     float v = src[(y * w + x) * c + ch];
-                    for (int k = Math.Max(0, x - radius); k <= Math.Min(w - 1, x + radius); k++) v = Pick(v, src[(y * w + k) * c + ch]);
+                    for (int k = Math.Max(0, x - before); k <= Math.Min(w - 1, x + after); k++) v = Pick(v, src[(y * w + k) * c + ch]);
                     tmp[(y * w + x) * c + ch] = v;
                 }
         var dst = new float[src.Length];
@@ -179,7 +183,7 @@ public sealed class Morphology
                 for (int ch = 0; ch < c; ch++)
                 {
                     float v = tmp[(y * w + x) * c + ch];
-                    for (int k = Math.Max(0, y - radius); k <= Math.Min(h - 1, y + radius); k++) v = Pick(v, tmp[(k * w + x) * c + ch]);
+                    for (int k = Math.Max(0, y - before); k <= Math.Min(h - 1, y + after); k++) v = Pick(v, tmp[(k * w + x) * c + ch]);
                     dst[(y * w + x) * c + ch] = v;
                 }
         return dst;

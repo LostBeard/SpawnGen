@@ -71,6 +71,7 @@ public sealed class CLIPTextEncode
 
     static async Task<(float[] Embeddings, int[] Shape)> EncodeAsync(Accelerator acc, Checkpoint ckpt, int[] ids)
     {
+        ids = ClipPadding.Pad(ids, ckpt.PadToken);
         var (buf, tokens) = GpuHelpers.Upload(acc, ids.Select(t => (float)t).ToArray(), [1, Checkpoint.TokenCount]);
         using (buf)
         {
@@ -82,6 +83,28 @@ public sealed class CLIPTextEncode
             int count = embeddings.Shape.Aggregate(1, (x, y) => x * y);
             return (await GpuHelpers.ReadAsync(acc, embeddings, count), embeddings.Shape.ToArray());
         }
+    }
+}
+
+/// <summary>
+/// What fills a CLIP prompt after its end token. ComfyUI pads SD 1.x's CLIP-L with the end token itself (pad_with_end) but SD 2.x's OpenCLIP-H (SD 2.1, SD-Turbo)
+/// with token 0 ("!"); the UNet attends to all 77 rows, so the padding changes every prediction, most of all the empty prompt's (the negative of a CFG++ sampler).
+/// </summary>
+public static class ClipPadding
+{
+    public const int End = 49407;
+
+    /// <summary>The pad token of a text encoder by its width: 1024 (OpenCLIP-H) pads with 0, 768 (CLIP-L) with the end token.</summary>
+    public static int ForTextWidth(int textWidth) => textWidth == 1024 ? 0 : End;
+
+    /// <summary>The ids with everything after the first end token set to <paramref name="pad"/> (the tokenizer pads with the end token).</summary>
+    public static int[] Pad(int[] ids, int pad)
+    {
+        int first = Array.IndexOf(ids, End);
+        if (pad == End || first < 0) return ids;
+        var r = (int[])ids.Clone();
+        for (int i = first + 1; i < r.Length; i++) r[i] = pad;
+        return r;
     }
 }
 

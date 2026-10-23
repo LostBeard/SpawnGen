@@ -21,7 +21,7 @@ public sealed class Checkpoint : IDisposable
     Task<SpawnDev.ILGPU.ML.InferenceSession>? _vaeEncoder;
 
     Checkpoint(MlRuntime runtime, string repoId, string name, SpawnDev.ILGPU.ML.InferenceSession textEncoder,
-        SpawnDev.ILGPU.ML.InferenceSession unet, SpawnDev.ILGPU.ML.InferenceSession vae, BPETokenizer tokenizer)
+        SpawnDev.ILGPU.ML.InferenceSession unet, SpawnDev.ILGPU.ML.InferenceSession vae, BPETokenizer tokenizer, int textWidth)
     {
         _runtime = runtime;
         _repoId = repoId;
@@ -30,12 +30,16 @@ public sealed class Checkpoint : IDisposable
         Unet = unet;
         Vae = vae;
         Tokenizer = tokenizer;
+        PadToken = ClipPadding.ForTextWidth(textWidth);
         AlphasCumprod = DiffusionScheduler.ComputeAlphasCumprod();
         Sigmas = ModelSigmas.LinearSchedule(); // ComfyUI's float64 table (the library's alphas are float32 products, about 1e-5 off)
         Sampling = new ModelSampling(Sigmas);
     }
 
     public string Name { get; }
+
+    /// <summary>What a prompt is padded with after its end token (ComfyUI: the end token for CLIP-L, 0 for OpenCLIP-H).</summary>
+    public int PadToken { get; }
 
     Task<float[]>? _emptyPrompt;
 
@@ -117,7 +121,7 @@ public sealed class Checkpoint : IDisposable
         unet.CacheShapeReadbacks = true;
         vae.CacheShapeReadbacks = true;
         onProgress?.Invoke("done", 100);
-        return new Checkpoint(runtime, repoId, name, te, unet, vae, tokenizer);
+        return new Checkpoint(runtime, repoId, name, te, unet, vae, tokenizer, info.TextWidth);
     }
 
     public void Dispose()

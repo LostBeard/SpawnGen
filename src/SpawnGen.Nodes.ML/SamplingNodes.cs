@@ -3,7 +3,7 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.ML;
 
-[Node(Category = "sampling", DisplayName = "KSampler")]
+[Node(Category = "model/sampling", DisplayName = "KSampler")]
 public sealed class KSampler
 {
     public static string[] SamplerNames() => Samplers.Names;
@@ -15,30 +15,53 @@ public sealed class KSampler
         NodeContext context, IServiceProvider services,
         long seed = 0,
         [Input(Min = 1, Max = 10000)] int steps = 20,
-        [Input(Min = 0, Max = 100, Step = 0.1)] float cfg = 8f,
+        [Input(Min = 0, Max = 100, Step = 0.1)] double cfg = 8.0,
         [Input(OptionsProvider = nameof(SamplerNames))] string samplerName = "euler",
-        [Input(OptionsProvider = nameof(SchedulerNames))] string scheduler = "normal",
-        [Input(Min = 0, Max = 1, Step = 0.01)] float denoise = 1f)
+        [Input(OptionsProvider = nameof(SchedulerNames))] string scheduler = "simple",
+        [Input(Min = 0, Max = 1, Step = 0.01)] double denoise = 1.0)
     {
-        if (denoise <= 0f) return latentImage; // nothing to denoise: the input passes through
+        var sigmas = Sigmas(model.Sampling.Sigmas, samplerName, scheduler, steps, denoise);
+        if (sigmas.Length == 0) return latentImage; // nothing to denoise: the input passes through
         var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
-        var sigmas = model.Checkpoint.Sigmas.ScheduleForDenoise(scheduler, steps, denoise);
-        return await SamplingCore.RunAsync(acc, model.Checkpoint, positive, negative, latentImage, sigmas, new SamplingSettings(seed, cfg, samplerName, RescaleCfg: model.RescaleCfg), context);
+        return await SamplingCore.RunAsync(acc, new CfgGuider(model, positive, negative, cfg), latentImage, sigmas, new SamplingSettings(seed, samplerName), context);
+    }
+
+    /// <summary>
+    /// ComfyUI's KSampler.calculate_sigmas: the scheduler's sigmas, computed one step longer with the second to last dropped for dpm_2, dpm_2_ancestral and uni_pc.
+    /// </summary>
+    internal static float[] Schedule(ModelSigmas model, string sampler, string scheduler, int steps)
+    {
+        if (!Samplers.DiscardsPenultimateSigma(sampler)) return model.Schedule(scheduler, steps);
+        var s = model.Schedule(scheduler, steps + 1);
+        return s.Length < 2 ? s : [.. s[..^2], s[^1]];
+    }
+
+    /// <summary>KSampler.set_steps: the full schedule above denoise 0.9999, none at 0, else the last steps + 1 sigmas of an int(steps / denoise) step schedule.</summary>
+    internal static float[] Sigmas(ModelSigmas model, string sampler, string scheduler, int steps, double denoise)
+    {
+        if (denoise > 0.9999) return Schedule(model, sampler, scheduler, steps);
+        if (denoise <= 0.0) return [];
+        var full = Schedule(model, sampler, scheduler, (int)(steps / denoise));
+        return full[Math.Max(0, full.Length - (steps + 1))..];
     }
 }
 
-[Node(Category = "advanced/model", DisplayName = "RescaleCFG")]
+[Node(Category = "model/patch", DisplayName = "RescaleCFG")]
 public sealed class RescaleCFG
 {
     /// <summary>
     /// Lets a high cfg keep colours and contrast: the guided prediction is rescaled towards the spread of the prompt's own prediction. <c>multiplier</c> 0 does nothing,
     /// 1 rescales fully; ComfyUI's default is 0.7. Connect it between the checkpoint and the sampler.
     /// </summary>
-    public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 1, Step = 0.01)] float multiplier = 0.7f) =>
-        new(model.Checkpoint) { RescaleCfg = multiplier };
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 1, Step = 0.01)] double multiplier = 0.7)
+    {
+        bool isFlow = model.Sampling.IsConst;
+        return model.WithPatches(p => p.WithCfgFunction(ModelPatches.Stateless<Func<CfgFunctionArgs, Task<float[]>>>(
+            a => Task.FromResult(GuidancePatches.RescaleCfg(a, multiplier, isFlow)))));
+    }
 }
 
-[Node(Category = "sampling", DisplayName = "KSampler (Advanced)")]
+[Node(Category = "model/sampling", DisplayName = "KSampler (Advanced)")]
 public sealed class KSamplerAdvanced
 {
     public static string[] Toggle() => ["enable", "disable"];
@@ -56,28 +79,32 @@ public sealed class KSamplerAdvanced
         [Input(OptionsProvider = nameof(Toggle))] string addNoise = "enable",
         long noiseSeed = 0,
         [Input(Min = 1, Max = 10000)] int steps = 20,
-        [Input(Min = 0, Max = 100, Step = 0.1)] float cfg = 8f,
+        [Input(Min = 0, Max = 100, Step = 0.1)] double cfg = 8.0,
         [Input(OptionsProvider = nameof(SamplerNames))] string samplerName = "euler",
-        [Input(OptionsProvider = nameof(SchedulerNames))] string scheduler = "normal",
+        [Input(OptionsProvider = nameof(SchedulerNames))] string scheduler = "simple",
         [Input(Min = 0, Max = 10000)] int startAtStep = 0,
         [Input(Min = 0, Max = 10000)] int endAtStep = 10000,
         [Input(OptionsProvider = nameof(Leftover))] string returnWithLeftoverNoise = "disable")
     {
+        var sigmas = Slice(KSampler.Schedule(model.Sampling.Sigmas, samplerName, scheduler, steps), startAtStep, endAtStep, returnWithLeftoverNoise == "disable");
+        if (sigmas.Length == 0) return latentImage; // the start step is past the end of the schedule
         var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
-        var sigmas = Slice(model.Checkpoint.Sigmas.Schedule(scheduler, steps), startAtStep, endAtStep, returnWithLeftoverNoise == "disable");
-        if (sigmas.Length < 2) return latentImage; // the start step is past the end of the schedule
-        return await SamplingCore.RunAsync(acc, model.Checkpoint, positive, negative, latentImage, sigmas,
-            new SamplingSettings(noiseSeed, cfg, samplerName, AddNoise: addNoise == "enable", RescaleCfg: model.RescaleCfg), context);
+        return await SamplingCore.RunAsync(acc, new CfgGuider(model, positive, negative, cfg), latentImage, sigmas,
+            new SamplingSettings(noiseSeed, samplerName, AddNoise: addNoise == "enable"), context);
     }
 
-    /// <summary>The part of a schedule a run covers: sigmas[start .. end]; unless leftover noise is wanted, the last one is set to 0 so the run ends clean.</summary>
+    /// <summary>
+    /// ComfyUI's KSampler.sample slicing: an end step before the last cuts the schedule at sigma[end] (set to 0 unless leftover noise is wanted), then the run starts at
+    /// sigma[start]; a start at or past the end of what remains means nothing runs.
+    /// </summary>
     internal static float[] Slice(float[] sigmas, int start, int end, bool forceFullDenoise)
     {
-        int steps = sigmas.Length - 1;
-        if (start >= steps) return [];
-        int last = Math.Min(end, steps);          // end_at_step counts steps, so the slice ends at sigma[last]
-        var part = sigmas[start..(last + 1)];
-        if (forceFullDenoise && last < steps) part[^1] = 0f; // stop early but finish the picture, like ComfyUI
-        return part;
+        var s = (float[])sigmas.Clone();
+        if (end < s.Length - 1)
+        {
+            s = s[..(end + 1)];
+            if (forceFullDenoise) s[^1] = 0f;
+        }
+        return start < s.Length - 1 ? s[start..] : [];
     }
 }

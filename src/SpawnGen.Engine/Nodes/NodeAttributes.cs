@@ -15,6 +15,8 @@ public sealed class NodeAttribute(string? id = null) : Attribute
     public bool FrontendOnly { get; init; }
     /// <summary>Earlier ids of this node type: workflows and prompts that use them still find it.</summary>
     public string[]? Aliases { get; init; }
+    /// <summary>Output names, in order, for outputs a tuple cannot name (a single output such as ComfyUI's "patched_model"). Overrides the derived names.</summary>
+    public string[]? OutputNames { get; init; }
 }
 
 /// <summary>Widget and socket hints for an <c>Execute</c> parameter. Unset numeric hints use <see cref="double.NaN"/>.</summary>

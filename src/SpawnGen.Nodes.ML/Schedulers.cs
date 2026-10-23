@@ -2,63 +2,131 @@ namespace SpawnGen.Nodes.ML;
 
 /// <summary>
 /// The noise levels of a discrete-timestep model (SD-style: 1000 training steps, sigma_t = sqrt((1 - alphaBar_t) / alphaBar_t)) and the schedulers that
-/// pick which of them a run steps through. Same formulas as ComfyUI's <c>calculate_sigmas</c>.
+/// pick which of them a run steps through. Same formulas as ComfyUI's <c>ModelSamplingDiscrete</c> and <c>calculate_sigmas</c>.
 /// </summary>
 public sealed class ModelSigmas
 {
-    public static readonly string[] SchedulerNames = ["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform", "beta", "linear_quadratic"];
+    /// <summary>ComfyUI's SCHEDULER_NAMES, in its order (a saved workflow stores the name, the combo shows this order).</summary>
+    public static readonly string[] SchedulerNames = ["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"];
 
-    readonly double[] _sigmas;     // ascending, one per training timestep
+    readonly double[] _sigmas;     // ascending, one per (distilled) training timestep
     readonly double[] _logSigmas;
+    readonly int _skip;            // timesteps per entry: 1, or 20 for an LCM-distilled table of 50
 
     public ModelSigmas(IReadOnlyList<float> alphasCumprod)
+        : this(alphasCumprod.Select((float a) => Math.Sqrt((1 - (double)a) / a)).ToArray(), 1) { }
+
+    /// <summary>
+    /// SD's own table as ComfyUI builds it (make_beta_schedule "linear": betas = linspace(sqrt(start), sqrt(end), n)^2 in float64, then the cumulative product),
+    /// the same for SD 1.x, 2.x and SD-Turbo.
+    /// </summary>
+    public static ModelSigmas LinearSchedule(double linearStart = 0.00085, double linearEnd = 0.012, int timesteps = 1000)
     {
-        _sigmas = alphasCumprod.Select((float a) => Math.Sqrt((1 - (double)a) / a)).ToArray();
-        _logSigmas = _sigmas.Select(v => Math.Log(v)).ToArray();
+        double a = Math.Sqrt(linearStart), b = Math.Sqrt(linearEnd), step = (b - a) / (timesteps - 1), cum = 1;
+        var sigmas = new double[timesteps];
+        for (int i = 0; i < timesteps; i++)
+        {
+            double root = i < timesteps / 2 ? a + step * i : b - step * (timesteps - 1 - i); // torch.linspace's two halves
+            cum *= 1 - root * root;
+            sigmas[i] = Math.Sqrt((1 - cum) / cum);
+        }
+        return new ModelSigmas(sigmas, 1);
     }
 
+    ModelSigmas(double[] sigmas, int skip)
+    {
+        // ComfyUI keeps the table in float32.
+        _sigmas = sigmas.Select(v => (double)(float)v).ToArray();
+        _logSigmas = _sigmas.Select(v => (double)(float)Math.Log(v)).ToArray();
+        _skip = skip;
+    }
+
+    /// <summary>The table's length (1000, or 50 for an LCM-distilled one).</summary>
     public int TrainingSteps => _sigmas.Length;
     public float SigmaMin => (float)_sigmas[0];
     public float SigmaMax => (float)_sigmas[^1];
 
-    /// <summary>The sigma at a (possibly fractional) timestep: linear in log-sigma between the neighbouring training steps.</summary>
+    /// <summary>The table entry <paramref name="index"/> (ascending): what the simple and beta schedulers pick from.</summary>
+    public double TableSigma(int index) => _sigmas[index];
+
+    /// <summary>
+    /// The same schedule with zero terminal SNR (ComfyUI's <c>rescale_zero_terminal_snr_sigmas</c>, the zsnr switch): sqrt(alphaBar) is shifted so the last timestep
+    /// is pure noise and rescaled so the first is unchanged; the last alphaBar is set to 4.8973451890853435e-08 to keep sigma finite.
+    /// </summary>
+    public ModelSigmas ZeroTerminalSnr()
+    {
+        int n = _sigmas.Length;
+        var sqrtBar = _sigmas.Select(s => Math.Sqrt(1 / (s * s + 1))).ToArray();
+        double first = sqrtBar[0], last = sqrtBar[^1];
+        for (int i = 0; i < n; i++) sqrtBar[i] = (sqrtBar[i] - last) * (first / (first - last));
+        var bar = sqrtBar.Select(v => v * v).ToArray();
+        bar[^1] = 4.8973451890853435e-08;
+        return new ModelSigmas(bar.Select(a => Math.Sqrt((1 - a) / a)).ToArray(), _skip);
+    }
+
+    /// <summary>
+    /// The table of a model distilled to <paramref name="originalTimesteps"/> steps (ComfyUI's <c>ModelSamplingDiscreteDistilled</c>, used by LCM): every
+    /// (count / originalTimesteps)-th sigma from the top, and timesteps told to the model as index * skip + skip - 1.
+    /// </summary>
+    public ModelSigmas Distilled(int originalTimesteps = 50)
+    {
+        int n = _sigmas.Length, skip = n / originalTimesteps;
+        var valid = new double[originalTimesteps];
+        for (int x = 0; x < originalTimesteps; x++) valid[originalTimesteps - 1 - x] = _sigmas[n - 1 - x * skip];
+        return new ModelSigmas(valid, skip);
+    }
+
+    /// <summary>The sigma at a (possibly fractional) timestep: linear in log-sigma between the neighbouring table entries.</summary>
     public float Sigma(double timestep)
     {
-        double t = Math.Clamp(timestep, 0, _sigmas.Length - 1);
-        int low = (int)Math.Floor(t), high = Math.Min(low + 1, _sigmas.Length - 1);
+        double t = Math.Clamp((timestep - (_skip - 1)) / _skip, 0, _sigmas.Length - 1);
+        int low = (int)Math.Floor(t), high = (int)Math.Ceiling(t);
         double frac = t - low;
-        return (float)Math.Exp(_logSigmas[low] * (1 - frac) + _logSigmas[high] * frac);
+        return (float)Math.Exp((1 - frac) * _logSigmas[low] + frac * _logSigmas[high]);
     }
 
-    /// <summary>The (fractional) timestep whose sigma is <paramref name="sigma"/>: the inverse of <see cref="Sigma"/>. What the model is told as "t".</summary>
-    public float Timestep(float sigma)
+    /// <summary>
+    /// The timestep the model is told for <paramref name="sigma"/>: the table entry nearest in log-sigma (the first on a tie), as ComfyUI's <c>timestep</c> does,
+    /// so the model sees whole training timesteps even when a schedule falls between them.
+    /// </summary>
+    public float Timestep(double sigma)
     {
-        double log = Math.Log(Math.Max(sigma, 1e-10));
-        if (log <= _logSigmas[0]) return 0;
-        if (log >= _logSigmas[^1]) return _sigmas.Length - 1;
-        int lo = 0, hi = _logSigmas.Length - 1;
-        while (hi - lo > 1) { int mid = (lo + hi) / 2; if (_logSigmas[mid] <= log) lo = mid; else hi = mid; }
-        double w = (log - _logSigmas[lo]) / (_logSigmas[lo + 1] - _logSigmas[lo]);
-        return (float)(lo + w);
+        double log = Math.Log(sigma);
+        int best = 0;
+        double bestDist = double.PositiveInfinity;
+        for (int i = 0; i < _logSigmas.Length; i++)
+        {
+            double d = Math.Abs(log - _logSigmas[i]);
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+        return best * _skip + (_skip - 1);
     }
 
-    /// <summary>The sigmas of a run: <paramref name="steps"/> noise levels from high to low, then 0 (length steps + 1).</summary>
+    /// <summary>ComfyUI's <c>percent_to_sigma</c>: 0 (the start) is a huge sigma, 1 (the end) is 0, in between the sigma at timestep (1 - percent) * 999.</summary>
+    public double PercentToSigma(double percent)
+    {
+        if (percent <= 0.0) return 999999999.9;
+        if (percent >= 1.0) return 0.0;
+        return Sigma((float)((1.0 - percent) * 999.0));
+    }
+
+    /// <summary>The sigmas of a run: <paramref name="steps"/> noise levels from high to low, then 0 (length steps + 1, fewer for beta when steps merge).</summary>
     public float[] Schedule(string scheduler, int steps)
     {
         if (steps < 1) throw new ArgumentOutOfRangeException(nameof(steps));
-        if (scheduler == "beta") return Beta(steps, 0.6, 0.6);
-        if (scheduler == "linear_quadratic") return LinearQuadratic(steps);
-        double[] values = scheduler switch
+        return scheduler switch
         {
-            "normal" => Linspace(steps).Select(t => (double)Sigma(t)).ToArray(),
-            "sgm_uniform" => LinspaceExcludingEnd(steps).Select(t => (double)Sigma(t)).ToArray(),
             "simple" => Simple(steps),
+            "sgm_uniform" => Normal(steps, sgm: true),
+            "karras" => SigmaSchedules.Karras(steps, SigmaMax, SigmaMin, 7.0),
+            "exponential" => SigmaSchedules.Exponential(steps, SigmaMax, SigmaMin),
             "ddim_uniform" => DdimUniform(steps),
-            "karras" => Karras(steps),
-            "exponential" => Exponential(steps),
+            "beta" => Beta(steps, 0.6, 0.6),
+            "normal" => Normal(steps, sgm: false),
+            "linear_quadratic" => LinearQuadratic(steps),
+            "kl_optimal" => KlOptimal(steps, SigmaMin, SigmaMax),
             _ => throw new ArgumentException($"Unknown scheduler '{scheduler}'. Known: {string.Join(", ", SchedulerNames)}.", nameof(scheduler)),
         };
-        return [.. values.Select(v => (float)v), 0f];
     }
 
     /// <summary>
@@ -74,13 +142,21 @@ public sealed class ModelSigmas
         for (int i = 0; i < steps; i++)
         {
             double q = 1.0 - (double)i / steps;            // 1 - linspace(0, 1, steps, endpoint=False)
-            double t = Math.Round(BetaMath.Ppf(q, alpha, beta) * total, MidpointRounding.ToEven);
+            double t = Math.Round(BetaPpf(q, alpha, beta) * total, MidpointRounding.ToEven);
             if (t != last) result.Add((float)_sigmas[(int)t]);
             last = t;
         }
         result.Add(0f);
         return [.. result];
     }
+
+    /// <summary>
+    /// The Beta quantile as scipy returns it. At the median of a symmetric Beta(a, a) the exact answer is 0.5, where a timestep can land exactly half-way between two
+    /// and the rounding decides; scipy (boost's ibeta_inv) is an ulp off there in a direction that depends on a. For the scheduler's default 0.6 it is one ulp above,
+    /// which is reproduced so the default beta schedule matches on every table; other symmetric shapes use 0.5.
+    /// </summary>
+    static double BetaPpf(double q, double alpha, double beta) =>
+        q == 0.5 && alpha == beta ? (alpha == 0.6 ? Math.BitIncrement(0.5) : 0.5) : BetaMath.Ppf(q, alpha, beta);
 
     /// <summary>
     /// ComfyUI's linear-quadratic schedule (from Mochi): the first half of the steps falls linearly, the rest along a quadratic that meets it, scaled to the model's largest sigma.
@@ -102,62 +178,85 @@ public sealed class ModelSigmas
             for (int i = linear; i < steps; i++) schedule.Add(quadraticCoef * i * i + linearCoef * i + constant);
         }
         schedule.Add(1.0);
-        return [.. schedule.Select(x => (float)((1.0 - x) * SigmaMax))];
+        return [.. schedule.Select(x => (float)((float)(1.0 - x) * SigmaMax))];
     }
 
     /// <summary>
-    /// The sigmas for a run that starts part-way down: with <paramref name="denoise"/> below 1 the full schedule has <c>steps / denoise</c> steps and only its
+    /// ComfyUI's kl_optimal schedule (AUTOMATIC1111 PR 15608): sigmas evenly spaced in arctan(sigma) from sigma_max to sigma_min, then 0. One step divides by zero there
+    /// and gives NaN, as in ComfyUI.
+    /// </summary>
+    public static float[] KlOptimal(int steps, double sigmaMin, double sigmaMax)
+    {
+        var r = new float[steps + 1];
+        for (int i = 0; i < steps; i++)
+        {
+            float adj = (float)i / (steps - 1);
+            r[i] = MathF.Tan((float)(adj * Math.Atan(sigmaMin) + (1 - adj) * Math.Atan(sigmaMax)));
+        }
+        return r;
+    }
+
+    /// <summary>
+    /// The sigmas for a run that starts part-way down: with <paramref name="denoise"/> below 1 the full schedule has <c>int(steps / denoise)</c> steps and only its
     /// last <paramref name="steps"/> are run (ComfyUI's rule), so sampling starts from a noised input instead of pure noise.
     /// </summary>
-    public float[] ScheduleForDenoise(string scheduler, int steps, float denoise)
+    public float[] ScheduleForDenoise(string scheduler, int steps, double denoise) => ScheduleForDenoise(steps, denoise, n => Schedule(scheduler, n));
+
+    /// <summary>ScheduleForDenoise over any schedule function (KSampler's, which may discard the penultimate sigma).</summary>
+    public static float[] ScheduleForDenoise(int steps, double denoise, Func<int, float[]> schedule)
     {
-        if (denoise is <= 0f or > 1f) throw new ArgumentOutOfRangeException(nameof(denoise), "denoise must be in (0, 1].");
-        if (denoise >= 1f) return Schedule(scheduler, steps);
+        if (denoise is <= 0 or > 1) throw new ArgumentOutOfRangeException(nameof(denoise), "denoise must be in (0, 1].");
+        if (denoise >= 1) return schedule(steps);
         int total = (int)(steps / denoise);
-        var full = Schedule(scheduler, total);
+        var full = schedule(total);
         return full[Math.Max(0, full.Length - (steps + 1))..]; // a scheduler that merges steps (beta) can return fewer than asked: take what there is, like Python slicing
     }
 
-    // The training timesteps from the noisiest (TrainingSteps - 1) to the cleanest (0).
-    IEnumerable<double> Linspace(int n)
+    float[] Normal(int steps, bool sgm)
     {
-        double start = _sigmas.Length - 1;
-        for (int i = 0; i < n; i++) yield return n == 1 ? start : start + (0 - start) * i / (n - 1);
+        double start = Timestep(SigmaMax), end = Timestep(SigmaMin);
+        bool appendZero = true;
+        double[] timesteps;
+        if (sgm)
+            timesteps = Linspace(start, end, steps + 1)[..^1];
+        else
+        {
+            if (Math.Abs(Sigma(end)) <= 0.00001) { steps += 1; appendZero = false; }
+            timesteps = Linspace(start, end, steps);
+        }
+        var sigs = timesteps.Select(t => Sigma(t)).ToList();
+        if (appendZero) sigs.Add(0f);
+        return [.. sigs];
     }
 
-    IEnumerable<double> LinspaceExcludingEnd(int n)
+    /// <summary>torch.linspace in float32: start + i * step for the first half, end - (n - 1 - i) * step for the second.</summary>
+    internal static double[] Linspace(double start, double end, int n)
     {
-        double start = _sigmas.Length - 1;
-        for (int i = 0; i < n; i++) yield return start + (0 - start) * i / n; // linspace(start, 0, n + 1) without its last point
+        var r = new double[n];
+        if (n == 1) { r[0] = (float)start; return r; }
+        float step = (float)((end - start) / (n - 1));
+        int half = n / 2;
+        for (int i = 0; i < n; i++) r[i] = i < half ? (float)((float)start + step * i) : (float)((float)end - step * (n - 1 - i));
+        return r;
     }
 
-    double[] Simple(int steps)
+    float[] Simple(int steps)
     {
-        // Every (count / steps)-th training sigma, from the top.
+        // Every (count / steps)-th table sigma, from the top.
         double stride = (double)_sigmas.Length / steps;
-        return Enumerable.Range(0, steps).Select(i => _sigmas[^(1 + (int)(i * stride))]).ToArray();
+        var r = new float[steps + 1];
+        for (int i = 0; i < steps; i++) r[i] = (float)_sigmas[^(1 + (int)(i * stride))];
+        return r;
     }
 
-    double[] DdimUniform(int steps)
+    float[] DdimUniform(int steps)
     {
+        var sigs = new List<float>();
+        if (Math.Abs(_sigmas[1]) <= 0.00001) steps += 1;
+        else sigs.Add(0f);
         int stride = Math.Max(_sigmas.Length / steps, 1);
-        var picked = new List<double>();
-        for (int x = 1; x < _sigmas.Length; x += stride) picked.Add(_sigmas[x]);
-        picked.Reverse();
-        return [.. picked];
-    }
-
-    double[] Karras(int steps)
-    {
-        const double rho = 7;
-        double max = _sigmas[^1], min = _sigmas[0];
-        double minInv = Math.Pow(min, 1 / rho), maxInv = Math.Pow(max, 1 / rho);
-        return Enumerable.Range(0, steps).Select(i => Math.Pow(maxInv + (steps == 1 ? 0 : (double)i / (steps - 1)) * (minInv - maxInv), rho)).ToArray();
-    }
-
-    double[] Exponential(int steps)
-    {
-        double max = Math.Log(_sigmas[^1]), min = Math.Log(_sigmas[0]);
-        return Enumerable.Range(0, steps).Select(i => Math.Exp(max + (steps == 1 ? 0 : (double)i / (steps - 1)) * (min - max))).ToArray();
+        for (int x = 1; x < _sigmas.Length; x += stride) sigs.Add((float)_sigmas[x]);
+        sigs.Reverse();
+        return [.. sigs];
     }
 }

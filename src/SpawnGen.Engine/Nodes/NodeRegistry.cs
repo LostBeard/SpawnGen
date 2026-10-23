@@ -242,7 +242,8 @@ public sealed class NodeRegistry
             if (elementTypes[i] == typeof(UiOutput)) { uiIndex = i; continue; }
             var socket = SocketTypes.FromClr(elementTypes[i]);
             var given = tupleNames is not null && i < tupleNames.Count ? tupleNames[i] : null;
-            outputs.Add(new OutputSpec(given is null ? socket.Name : ToSnakeCase(given), socket));
+            var named = attr?.OutputNames is { } names && outputs.Count < names.Length ? names[outputs.Count] : null;
+            outputs.Add(new OutputSpec(named ?? (given is null ? socket.Name : ToSnakeCase(given)), socket));
         }
 
         var schema = new NodeSchema

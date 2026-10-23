@@ -26,8 +26,11 @@ public class SamplingSetupTests
         var m = Sd();
         Assert.That(m.SigmaMin, Is.EqualTo(0.0292f).Within(0.002f));
         Assert.That(m.SigmaMax, Is.EqualTo(14.6146f).Within(0.05f));
-        foreach (double t in new[] { 0.0, 10.5, 250.25, 500, 998.5, 999 })
-            Assert.That(m.Timestep(m.Sigma(t)), Is.EqualTo(t).Within(1e-2), $"timestep {t}");
+        // The model is told the nearest whole training timestep (ComfyUI's argmin over the table), even for a sigma between two.
+        foreach (double t in new[] { 0.0, 250, 500, 999 })
+            Assert.That(m.Timestep(m.Sigma(t)), Is.EqualTo(t), $"timestep {t}");
+        Assert.That(m.Timestep(m.Sigma(10.4)), Is.EqualTo(10f));
+        Assert.That(m.Timestep(m.Sigma(10.6)), Is.EqualTo(11f));
         Assert.That(m.Sigma(100), Is.LessThan(m.Sigma(101)));
         Assert.That(m.Timestep(0f), Is.EqualTo(0f));
         Assert.That(m.Timestep(1000f), Is.EqualTo(999f));
@@ -40,6 +43,11 @@ public class SamplingSetupTests
         foreach (int steps in new[] { 1, 4, 20 })
         {
             var s = m.Schedule(scheduler, steps);
+            if (scheduler == "kl_optimal" && steps == 1)
+            {
+                Assert.That(float.IsNaN(s[0]) && s[1] == 0f, Is.True, "ComfyUI's kl_optimal divides by steps - 1: one step is NaN there too");
+                continue;
+            }
             Assert.That(s[^1], Is.EqualTo(0f));
             if (scheduler is not ("ddim_uniform" or "beta")) Assert.That(s.Length, Is.EqualTo(steps + 1), $"{scheduler} {steps}");
             for (int i = 1; i < s.Length; i++) Assert.That(s[i], Is.LessThanOrEqualTo(s[i - 1]), $"{scheduler} {steps} at {i}");
@@ -167,15 +175,19 @@ public class SamplingSetupTests
     public void Timestep_range_activates_an_entry_only_inside_its_part_of_the_run()
     {
         var m = Sd();
+        var ms = new ModelSampling(m);
         var always = Prompt(1, 1, 1, 1).Entries[0];
         var firstHalf = new ConditioningSetTimestepRange().Execute(Prompt(1, 1, 1, 1), 0f, 0.5f).Entries[0];
         var lastHalf = new ConditioningSetTimestepRange().Execute(Prompt(1, 1, 1, 1), 0.5f, 1f).Entries[0];
         float high = m.SigmaMax, low = m.SigmaMin;
-        Assert.That(SamplingCore.IsActive(always, high, m) && SamplingCore.IsActive(always, low, m), Is.True);
-        Assert.That(SamplingCore.IsActive(firstHalf, high, m), Is.True);
-        Assert.That(SamplingCore.IsActive(firstHalf, low, m), Is.False);
-        Assert.That(SamplingCore.IsActive(lastHalf, high, m), Is.False);
-        Assert.That(SamplingCore.IsActive(lastHalf, low, m), Is.True);
+        Assert.That(SamplingCore.IsActive(always, high, ms) && SamplingCore.IsActive(always, low, ms), Is.True);
+        Assert.That(SamplingCore.IsActive(firstHalf, high, ms), Is.True);
+        Assert.That(SamplingCore.IsActive(firstHalf, low, ms), Is.False);
+        Assert.That(SamplingCore.IsActive(lastHalf, high, ms), Is.False);
+        Assert.That(SamplingCore.IsActive(lastHalf, low, ms), Is.True);
+        // ComfyUI's bounds are inclusive at both ends: end sigma <= sigma <= start sigma.
+        double half = ms.PercentToSigma(0.5);
+        Assert.That(SamplingCore.IsActive(firstHalf, half, ms) && SamplingCore.IsActive(lastHalf, half, ms), Is.True);
     }
 
     [Test]

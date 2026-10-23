@@ -56,8 +56,8 @@ public class ComfyUIRenderParityTests
             await executor.ExecuteAsync(g);
 
             var ours = LoadLatent.Decode(File.ReadAllBytes(Directory.GetFiles(outDir, "parity_*.latent", SearchOption.AllDirectories).Single())).Data;
-            // ComfyUI's LATENT is in VAE space; SpawnGen's is the model's (x 0.18215).
-            var comfy = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, sampler + ".latent"))).Data.Select(v => v * 0.18215f).ToArray();
+            // ComfyUI saved its LATENT (VAE space); LoadLatent brings it into SpawnGen's model space, as it does for our own file.
+            var comfy = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, sampler + ".latent"))).Data;
             double diff = Math.Sqrt(ours.Zip(comfy, (a, b) => (double)(a - b) * (a - b)).Average());
             double scale = Math.Sqrt(comfy.Average(v => (double)v * v));
             TestContext.Out.WriteLine($"{sampler}: rms difference {diff:F4} of rms {scale:F4}; picture {Directory.GetFiles(outDir, "parity_*.png").Single()}");

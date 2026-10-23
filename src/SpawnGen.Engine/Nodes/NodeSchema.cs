@@ -25,6 +25,10 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
     public bool Lazy { get; init; }
     /// <summary>Declared optional (see <see cref="InputAttribute.Optional"/>).</summary>
     public bool Optional { get; init; }
+    /// <summary>The Autogrow group this input belongs to (<c>images</c> for <c>images.image0</c>), null for an ordinary input.</summary>
+    public string? Group { get; init; }
+    /// <summary>For a group member: how many members the editor always shows (the group's minimum).</summary>
+    public int GroupMin { get; init; }
 
     /// <summary>Where ComfyUI's object_info lists the input: "required" for sockets that must be linked and for widgets not declared optional.</summary>
     public bool ListedAsRequired => !Optional && (Required || Widget is not null);

@@ -292,9 +292,10 @@ public static class ServerApp
 
     static JsonArray InputEntry(InputSpec i)
     {
-        if (i.Widget is not { } w) return i.Lazy ? new JsonArray(i.Type.Name, new JsonObject { ["lazy"] = true }) : new JsonArray(i.Type.Name);
         var config = new JsonObject();
         if (i.Lazy) config["lazy"] = true;
+        if (i.Group is { } group) { config["autogrow_group"] = group; config["autogrow_min"] = i.GroupMin; }
+        if (i.Widget is not { } w) return config.Count > 0 ? new JsonArray(i.Type.Name, config) : new JsonArray(i.Type.Name);
         if (w.Default is { } d) config["default"] = JsonSerializer.SerializeToNode(d);
         if (w.Min is { } min) config["min"] = min;
         if (w.Max is { } max) config["max"] = max;

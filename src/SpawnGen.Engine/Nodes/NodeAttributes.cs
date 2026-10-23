@@ -56,6 +56,22 @@ public sealed class InputAttribute : Attribute
     public object? Default { get; init; }
 }
 
+/// <summary>
+/// ComfyUI's Autogrow input: one parameter that stands for a growing row of sockets. With <see cref="Prefix"/> "image" the inputs are
+/// <c>images.image0</c>, <c>images.image1</c>, ... up to <see cref="Max"/> (the group is the parameter's input name); with <see cref="Names"/> they are
+/// <c>group.name</c> for each name. The first <see cref="Min"/> are required. The editor shows the connected ones and one free one. The parameter
+/// receives the values that were given, in order: declare it <c>IReadOnlyList&lt;T&gt;</c>, or <c>IReadOnlyDictionary&lt;string, T&gt;</c> to know which
+/// socket each came from (keyed by the name without the group).
+/// </summary>
+[AttributeUsage(AttributeTargets.Parameter)]
+public sealed class AutogrowAttribute : Attribute
+{
+    public string? Prefix { get; init; }
+    public string[]? Names { get; init; }
+    public int Min { get; init; } = 1;
+    public int Max { get; init; } = 10;
+}
+
 /// <summary>Names the socket type for a value class (e.g. <c>[Socket("MODEL")]</c>). Without it the type is the upper-cased class name.</summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface, Inherited = false)]
 public sealed class SocketAttribute(string name) : Attribute

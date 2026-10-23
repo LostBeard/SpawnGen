@@ -1354,12 +1354,12 @@
         _studio?.Focus();
     }
 
-    /// <summary>The saved pictures (not Preview Image's temporary ones) and sounds of the running run's history entry.</summary>
+    /// <summary>The pictures (saved ones and Preview Image's, as ComfyUI's queue shows both) and sounds of the running run's history entry.</summary>
     void CollectRunOutputs(JsonObject data)
     {
         if (_history.FirstOrDefault(h => h.State == "running") is not { } run || _engine is null) return;
         string Url(JsonObject f) => _engine.ViewUrl((string)f["filename"]!, (string?)f["subfolder"], (string?)f["type"]);
-        if (data["output"]?["images"] is JsonArray images) run.Urls.AddRange(images.OfType<JsonObject>().Where(i => (string?)i["type"] == "output").Select(Url));
+        if (data["output"]?["images"] is JsonArray images) run.Urls.AddRange(images.OfType<JsonObject>().Where(i => (string?)i["type"] is "output" or "temp").Select(Url));
         if (AudioOf(data) is { } clips) run.Audio.AddRange(clips.OfType<JsonObject>().Select(Url));
         if (ModelsOf(data) is { } models) run.Models.AddRange(models.OfType<JsonObject>().Select(Url));
     }

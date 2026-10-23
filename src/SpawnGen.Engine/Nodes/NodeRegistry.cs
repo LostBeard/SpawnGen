@@ -35,6 +35,10 @@ public sealed class RegisteredNode
     {
         /// <summary>For a list parameter of an <see cref="NodeAttribute.InputIsList"/> node: the item type.</summary>
         public Type? ElementType { get; init; }
+        /// <summary>For an Autogrow parameter: its member inputs (full names) and the short names the dictionary form uses.</summary>
+        public (string Input, string Key)[]? Members { get; init; }
+        /// <summary>For an Autogrow parameter: the type each member's value is coerced to.</summary>
+        public Type? MemberType { get; init; }
     }
 
     internal Type Type { get; init; } = default!;
@@ -99,6 +103,11 @@ public sealed class RegisteredNode
                 case ParamKind.CancellationToken: args[i] = context.CancellationToken; break;
                 case ParamKind.Services: args[i] = context.Services; break;
                 default:
+                    if (p.Members is { } members)
+                    {
+                        args[i] = BuildGroup(p, members, inputs);
+                        break;
+                    }
                     if (p.ElementType is { } element && inputs.TryGetValue(p.InputName!, out var rawList) && rawList is IReadOnlyList<object?> items)
                     {
                         var array = Array.CreateInstance(element, items.Count);
@@ -128,6 +137,32 @@ public sealed class RegisteredNode
             }
         }
         return args;
+    }
+
+    /// <summary>An Autogrow parameter: the members that have a value, in order, as a list or as a dictionary by short name.</summary>
+    static object BuildGroup(ParamBinding p, (string Input, string Key)[] members, IReadOnlyDictionary<string, object?> inputs)
+    {
+        var type = p.MemberType!;
+        var keys = new List<string>();
+        var values = new List<object?>();
+        foreach (var (input, key) in members)
+        {
+            if (!inputs.TryGetValue(input, out var raw) || raw is null) continue;
+            if (!ValueCoercion.TryCoerce(raw, type, out var typed))
+                throw new InvalidCastException($"Input '{input}' expects {type.Name} but got {raw.GetType().Name}.");
+            keys.Add(key);
+            values.Add(typed);
+        }
+        var param = p.Info.ParameterType;
+        if (param.IsGenericType && param.GetGenericArguments().Length == 2)
+        {
+            var dict = (System.Collections.IDictionary)Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(typeof(string), type))!;
+            for (int k = 0; k < keys.Count; k++) dict[keys[k]] = values[k];
+            return dict;
+        }
+        var array = Array.CreateInstance(type, values.Count);
+        for (int k = 0; k < values.Count; k++) array.SetValue(values[k], k);
+        return param.IsAssignableFrom(array.GetType()) ? array : Activator.CreateInstance(param, array)!;
     }
 
     internal async ValueTask<NodeOutputs> InvokeAsync(IReadOnlyDictionary<string, object?> inputs, NodeContext context)
@@ -284,6 +319,17 @@ public sealed class NodeRegistry
 
             var ia = p.GetCustomAttribute<InputAttribute>();
             var name = ia?.Name ?? ToSnakeCase(p.Name!);
+            if (p.GetCustomAttribute<AutogrowAttribute>() is { } grow)
+            {
+                var (members, memberType, socketType) = Autogrow(id, p, name, grow, inputIsList);
+                for (int m = 0; m < members.Length; m++)
+                    inputs.Add(new InputSpec(members[m].Input, SocketTypes.FromClr(socketType), Required: m < grow.Min && !(ia?.Optional ?? false), Tooltip: ia?.Tooltip)
+                    {
+                        Group = name, GroupMin = grow.Min, Optional = m >= grow.Min || (ia?.Optional ?? false), Lazy = ia?.Lazy ?? false,
+                    });
+                bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { Members = members, MemberType = memberType });
+                continue;
+            }
             // A list node's parameter is IReadOnlyList<T>: the socket and widget are T's.
             var element = inputIsList ? ListElementType(p.ParameterType)
                 ?? throw new InvalidOperationException($"Node '{id}' takes whole lists (InputIsList): parameter '{p.Name}' must be a list such as IReadOnlyList<T>.") : null;
@@ -363,6 +409,24 @@ public sealed class NodeRegistry
             UiIndex = uiIndex,
             ResultType = returnType,
         };
+    }
+
+    /// <summary>
+    /// The members of an Autogrow parameter, the type each member's value is bound as, and the socket type (for a list node each member brings a
+    /// whole list, so the socket is the list's item type).
+    /// </summary>
+    static ((string Input, string Key)[] Members, Type MemberType, Type SocketType) Autogrow(string nodeId, ParameterInfo p, string group, AutogrowAttribute grow, bool inputIsList)
+    {
+        var t = p.ParameterType;
+        Type? memberType = t.IsGenericType && t.GetGenericArguments().Length == 2 && t.GetGenericArguments()[0] == typeof(string)
+            ? t.GetGenericArguments()[1] : ListElementType(t);
+        if (memberType is null)
+            throw new InvalidOperationException($"Node '{nodeId}': Autogrow parameter '{p.Name}' must be IReadOnlyList<T> or IReadOnlyDictionary<string, T>.");
+        var socket = inputIsList ? ListElementType(memberType)
+            ?? throw new InvalidOperationException($"Node '{nodeId}' takes whole lists: Autogrow parameter '{p.Name}' must hold lists (IReadOnlyList<IReadOnlyList<T>>).") : memberType;
+        var keys = grow.Names ?? (grow.Prefix is { } prefix ? Enumerable.Range(0, grow.Max).Select(i => prefix + i).ToArray()
+            : throw new InvalidOperationException($"Node '{nodeId}': Autogrow parameter '{p.Name}' needs a Prefix or Names."));
+        return (keys.Select(k => ($"{group}.{k}", k)).ToArray(), memberType, socket);
     }
 
     /// <summary>T for T[], IReadOnlyList&lt;T&gt;, List&lt;T&gt; and other IEnumerable&lt;T&gt; (not string); null otherwise.</summary>

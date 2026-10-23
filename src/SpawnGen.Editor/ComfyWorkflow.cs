@@ -233,7 +233,7 @@ public static class ComfyWorkflow
             var outputs = new JsonArray();
             if (schema is not null)
             {
-                foreach (var i in schema.Inputs)
+                foreach (var i in NodeLayout.VisibleInputs(schema, n, graph))
                 {
                     var link = graph.LinkInto(n.Id, i.Name);
                     if (i.Widget is null || link is not null)
@@ -300,7 +300,7 @@ public static class ComfyWorkflow
         if (doc.Registry.GetSchema(to.ClassType) is not { } schema)
             return doc.Graph.Links.Where(x => x.ToNode == l.ToNode).OrderBy(x => x.Id).ToList().FindIndex(x => x.Id == l.Id);
         int idx = 0;
-        foreach (var i in schema.Inputs)
+        foreach (var i in NodeLayout.VisibleInputs(schema, to, doc.Graph))
         {
             bool listed = i.Widget is null || doc.Graph.LinkInto(l.ToNode, i.Name) is not null;
             if (i.Name == l.ToInput) return listed ? idx : -1;

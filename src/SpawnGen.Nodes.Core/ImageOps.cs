@@ -90,21 +90,7 @@ public sealed class ImageScale
         var (nw, nh) = Pixels.TargetSize(image.Width, image.Height, width, height);
         if (nw == image.Width && nh == image.Height) return image;
 
-        if (crop == "center")
-        {
-            // Scale to cover the target, then cut the middle out (the aspect ratio of the picture is kept).
-            double scale = Math.Max((double)nw / image.Width, (double)nh / image.Height);
-            int sw = Math.Max(nw, (int)Math.Round(image.Width * scale)), sh = Math.Max(nh, (int)Math.Round(image.Height * scale));
-            int x0 = (sw - nw) / 2, y0 = (sh - nh) / 2;
-            return Pixels.Map(image, f =>
-            {
-                var big = Resample.Resize(f, image.Width, image.Height, image.Channels, sw, sh, method);
-                var cut = new float[nw * nh * image.Channels];
-                for (int y = 0; y < nh; y++) Array.Copy(big, ((y0 + y) * sw + x0) * image.Channels, cut, y * nw * image.Channels, nw * image.Channels);
-                return cut;
-            }, nh, nw);
-        }
-        return Pixels.Map(image, f => Resample.Resize(f, image.Width, image.Height, image.Channels, nw, nh, method), nh, nw);
+        return Pixels.Map(image, f => Resample.CommonUpscale(f, image.Width, image.Height, image.Channels, nw, nh, method, crop == "center"), nh, nw);
     }
 }
 
@@ -148,16 +134,8 @@ public sealed class ImageInvert
 [Node("ImageBatch", Category = "image", DisplayName = "Batch Images")]
 public sealed class ImageBatchNode
 {
-    /// <summary>Stacks two batches; a picture of another size is scaled to the first's size (bicubic, centred crop), like ComfyUI.</summary>
-    public ImageBatch Execute(ImageBatch image1, ImageBatch image2)
-    {
-        if (image2.Height != image1.Height || image2.Width != image1.Width)
-            image2 = new ImageScale().Execute(image2, "bicubic", image1.Width, image1.Height, "center");
-        if (image2.Channels != image1.Channels) throw new ArgumentException("The two batches have different channel counts.");
-        var frames = Enumerable.Range(0, image1.Batch).Select(i => Pixels.Frame(image1, i))
-            .Concat(Enumerable.Range(0, image2.Batch).Select(i => Pixels.Frame(image2, i))).ToList();
-        return Pixels.From(frames, image1.Height, image1.Width, image1.Channels);
-    }
+    /// <summary>Stacks two batches; an RGB picture next to an RGBA one gets full alpha, and a picture of another size is scaled to the first's (bilinear, centred crop), like ComfyUI.</summary>
+    public ImageBatch Execute(ImageBatch image1, ImageBatch image2) => Batching.Images([image1, image2]);
 }
 
 [Node(Category = "image/transform", DisplayName = "Image Crop")]

@@ -107,9 +107,14 @@ public static class PromptValidator
         plan.Add(id);
     }
 
+    static Type MemberClr(SocketType type) => type.Name switch { "INT" => typeof(long), "FLOAT" => typeof(double), "BOOLEAN" => typeof(bool), _ => typeof(string) };
+
     static string? CheckLiteral(RegisteredNode node, InputSpec spec, object literal)
     {
         var w = spec.Widget;
+        if (w is null && spec.Group is not null && spec.Type.Name is "INT" or "FLOAT" or "BOOLEAN" or "STRING")
+            // A member of an Autogrow group is a socket in the editor, but a prompt may give it a value (ComfyUI's templates can be widgets).
+            return ValueCoercion.TryCoerce(literal, MemberClr(spec.Type), out _) ? null : $"'{literal}' is not a valid {spec.Type}.";
         if (w is null) return $"expects a {spec.Type} link, not a value.";
 
         switch (w.Kind)

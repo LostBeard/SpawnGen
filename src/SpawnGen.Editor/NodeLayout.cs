@@ -70,7 +70,7 @@ public static class NodeLayout
             {
                 NodeId = node.Id, Title = title, Bounds = pill, TitleBar = pill, Collapsed = true, ResizeHandle = new Rect(pill.Right, pill.Bottom, 0, 0),
                 // A collapsed node keeps all its links: they attach to the ends of the pill.
-                Inputs = schema.Inputs.Where(i => IsSlotRow(i, node, graph) || graph.LinkInto(node.Id, i.Name) is not null)
+                Inputs = VisibleInputs(schema, node, graph).Where(i => IsSlotRow(i, node, graph) || graph.LinkInto(node.Id, i.Name) is not null)
                     .Select((i, n) => new SlotGeometry(SlotKind.Input, i.Name, n, i.Type, left, i.Widget is not null, graph.LinkInto(node.Id, i.Name) is not null)).ToList(),
                 Outputs = schema.Outputs.Select((o, n) => new SlotGeometry(SlotKind.Output, o.Name, n, o.Type, right, false, graph.LinksFrom(node.Id, n).Any())).ToList(),
                 Widgets = [],
@@ -79,12 +79,13 @@ public static class NodeLayout
 
         if (schema.Id == "Reroute") return ComputeReroute(node, schema, graph);
 
-        var slotInputs = schema.Inputs.Where(i => IsSlotRow(i, node, graph)).ToList();
-        var widgetInputs = schema.Inputs.Where(i => i.Widget is not null && !IsSlotRow(i, node, graph)).ToList();
+        var visible = VisibleInputs(schema, node, graph).ToList();
+        var slotInputs = visible.Where(i => IsSlotRow(i, node, graph)).ToList();
+        var widgetInputs = visible.Where(i => i.Widget is not null && !IsSlotRow(i, node, graph)).ToList();
         int slotRows = Math.Max(slotInputs.Count, schema.Outputs.Count);
 
         double width = node.Width ?? Math.Max(MinWidth, Math.Max(titleWidth,
-            slotInputs.Select(i => measureText(i.Name)).DefaultIfEmpty(0).Max() + schema.Outputs.Select(o => measureText(o.Name)).DefaultIfEmpty(0).Max() + 3 * Padding + 16));
+            slotInputs.Select(i => measureText(Label(i.Name))).DefaultIfEmpty(0).Max() + schema.Outputs.Select(o => measureText(o.Name)).DefaultIfEmpty(0).Max() + 3 * Padding + 16));
         width = Math.Max(width, 90);
 
         double slotsTop = node.Y + TitleHeight;
@@ -172,6 +173,34 @@ public static class NodeLayout
     }
 
     /// <summary>A socket input, or a widget input that is fed by a link right now (its value is shown by the link, not by a widget).</summary>
+    /// <summary>
+    /// The inputs the node shows. An Autogrow group (ComfyUI's growing row of sockets, <c>images.image0</c>, <c>images.image1</c>, ...) shows its
+    /// minimum, every member up to the last connected one, and one free member after it, as ComfyUI's frontend does.
+    /// </summary>
+    public static IEnumerable<InputSpec> VisibleInputs(NodeSchema schema, EditorNode node, EditorGraph graph)
+    {
+        var shown = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var group in schema.Inputs.Where(i => i.Group is not null).GroupBy(i => i.Group!))
+        {
+            var members = group.ToList();
+            int last = members.FindLastIndex(m => graph.LinkInto(node.Id, m.Name) is not null);
+            shown[group.Key] = Math.Min(members.Count, Math.Max(members[0].GroupMin, last + 2));
+        }
+        var seen = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var input in schema.Inputs)
+        {
+            if (input.Group is { } g)
+            {
+                int index = seen[g] = seen.GetValueOrDefault(g) + 1;
+                if (index > shown[g]) continue;
+            }
+            yield return input;
+        }
+    }
+
+    /// <summary>The name a slot shows: a member of a group or of a dynamic combo shows its own part (<c>image0</c> for <c>images.image0</c>).</summary>
+    public static string Label(string inputName) => inputName.LastIndexOf('.') is var dot and >= 0 ? inputName[(dot + 1)..] : inputName;
+
     static bool IsSlotRow(InputSpec input, EditorNode node, EditorGraph graph) =>
         input.Widget is null || graph.LinkInto(node.Id, input.Name) is not null;
 }

@@ -21,6 +21,24 @@ public static class Resample
         _ => throw new ArgumentException($"Unknown upscale method '{name}'. Known: {string.Join(", ", MethodNames)}.", nameof(name)),
     };
 
+    /// <summary>
+    /// ComfyUI's <c>comfy.utils.common_upscale</c>: with <paramref name="centerCrop"/> the source is first cut to the target's aspect ratio around its
+    /// middle (offsets rounded half to even, as Python does), then resized. The crop happens before the resize, so the pixels match ComfyUI's.
+    /// </summary>
+    public static float[] CommonUpscale(float[] src, int w, int h, int channels, int newW, int newH, ResampleMethod method, bool centerCrop)
+    {
+        if (!centerCrop) return Resize(src, w, h, channels, newW, newH, method);
+        double oldAspect = (double)w / h, newAspect = (double)newW / newH;
+        int x0 = 0, y0 = 0;
+        if (oldAspect > newAspect) x0 = (int)Math.Round((w - w * (newAspect / oldAspect)) / 2);
+        else if (oldAspect < newAspect) y0 = (int)Math.Round((h - h * (oldAspect / newAspect)) / 2);
+        int cw = w - 2 * x0, ch = h - 2 * y0;
+        if (x0 == 0 && y0 == 0) return Resize(src, w, h, channels, newW, newH, method);
+        var cut = new float[cw * ch * channels];
+        for (int y = 0; y < ch; y++) Array.Copy(src, ((y0 + y) * w + x0) * channels, cut, y * cw * channels, cw * channels);
+        return Resize(cut, cw, ch, channels, newW, newH, method);
+    }
+
     /// <summary>Resizes one picture of <paramref name="channels"/> interleaved channels from (w, h) to (newW, newH).</summary>
     public static float[] Resize(float[] src, int w, int h, int channels, int newW, int newH, ResampleMethod method)
     {

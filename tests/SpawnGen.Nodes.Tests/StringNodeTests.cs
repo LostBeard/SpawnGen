@@ -24,19 +24,19 @@ public class StringNodeTests
         Assert.That(c.Execute("hello World", "UPPERCASE"), Is.EqualTo("HELLO WORLD"));
         Assert.That(c.Execute("hello World", "lowercase"), Is.EqualTo("hello world"));
         Assert.That(c.Execute("hello World", "Capitalize"), Is.EqualTo("Hello world"));
-        Assert.That(c.Execute("the quick BROWN fox's", "Title Case"), Is.EqualTo("The Quick Brown Fox's"));
+        Assert.That(c.Execute("the quick BROWN fox's", "Title Case"), Is.EqualTo("The Quick Brown Fox'S"), "Python's str.title starts a word after the apostrophe");
         var t = new StringTrim();
         Assert.That(t.Execute("  x  ", "Both"), Is.EqualTo("x"));
         Assert.That(t.Execute("  x  ", "Left"), Is.EqualTo("x  "));
         Assert.That(t.Execute("  x  ", "Right"), Is.EqualTo("  x"));
-        Assert.That(() => t.Execute("x", "Middle"), Throws.ArgumentException);
+        Assert.That(t.Execute(" x ", "Middle"), Is.EqualTo(" x "), "ComfyUI leaves the text alone for an unknown mode");
     }
 
     [Test]
     public void Replace_contains_and_compare()
     {
         Assert.That(new StringReplace().Execute("a-b-c", "-", "+"), Is.EqualTo("a+b+c"));
-        Assert.That(new StringReplace().Execute("abc", "", "x"), Is.EqualTo("abc"), "an empty search leaves the text alone");
+        Assert.That(new StringReplace().Execute("abc", "", "x"), Is.EqualTo("xaxbxcx"), "an empty search inserts between characters, as Python's str.replace");
         Assert.That(new StringContains().Execute("Hello", "ell", true), Is.True);
         Assert.That(new StringContains().Execute("Hello", "ELL", true), Is.False);
         Assert.That(new StringContains().Execute("Hello", "ELL", false), Is.True);
@@ -57,7 +57,8 @@ public class StringNodeTests
         var r = new RegexReplaceNode();
         Assert.That(r.Execute("a1b22", @"\d+", "#", true, false, false, 0), Is.EqualTo("a#b#"));
         Assert.That(r.Execute("a1b22", @"\d+", "#", true, false, false, 1), Is.EqualTo("a#b22"), "count limits the replacements");
-        Assert.That(r.Execute("John Smith", @"(\w+) (\w+)", "$2, $1", true, false, false, 0), Is.EqualTo("Smith, John"));
+        Assert.That(r.Execute("John Smith", @"(\w+) (\w+)", @"\2, \1", true, false, false, 0), Is.EqualTo("Smith, John"), "Python's group references");
+        Assert.That(r.Execute("John Smith", @"(\w+) (\w+)", "$2, $1", true, false, false, 0), Is.EqualTo("$2, $1"), "a dollar sign is plain text in Python's re.sub");
     }
 
     [Test]

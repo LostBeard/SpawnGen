@@ -1,81 +1,80 @@
-using System.Text.RegularExpressions;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-// Text nodes (ComfyUI's comfy_extras/nodes_string.py): small, exact, host-side.
+// Text nodes (ComfyUI's comfy_extras/nodes_string.py): small, exact, host-side. Python's str rules come from PyText (code points, full case mappings,
+// Python whitespace) and its re rules from PyRegex. ComfyUI marks case_sensitive / case_insensitive / multiline / dotall / group_index / count as
+// "advanced" widgets (folded away in its frontend); here they are ordinary widgets, in the same order.
 
-[Node(Category = "utils/string", DisplayName = "Concatenate")]
+[Node(Category = "text", DisplayName = "Concatenate Text")]
 public sealed class StringConcatenate
 {
     public string Execute([Input(Multiline = true)] string stringA = "", [Input(Multiline = true)] string stringB = "", string delimiter = "") =>
         stringA + delimiter + stringB;
 }
 
-[Node(Category = "utils/string", DisplayName = "Substring")]
+[Node(Category = "text", DisplayName = "Substring")]
 public sealed class StringSubstring
 {
-    /// <summary>Characters [start, end) of the text; negative values count from the end, and out-of-range values are clamped (Python slicing).</summary>
-    public string Execute([Input(Multiline = true)] string @string = "", int start = 0, int end = 0)
-    {
-        int n = @string.Length;
-        int Fix(int i) => Math.Clamp(i < 0 ? n + i : i, 0, n);
-        int s = Fix(start), e = Fix(end);
-        return e > s ? @string[s..e] : "";
-    }
+    /// <summary>Characters [start, end) of the text (Python's <c>string[start:end]</c>): negative values count from the end, out-of-range values are clamped.</summary>
+    public string Execute([Input(Multiline = true)] string @string = "", long start = 0, long end = 0) => PyText.Slice(@string, start, end);
 }
 
-[Node(Category = "utils/string", DisplayName = "Length")]
+[Node(Category = "text", DisplayName = "Text Length")]
 public sealed class StringLength
 {
-    public long Execute([Input(Multiline = true)] string @string = "") => @string.Length;
+    /// <summary>The number of characters as Python counts them (an emoji is one).</summary>
+    public long Execute([Input(Multiline = true)] string @string = "") => PyText.Length(@string);
 }
 
-[Node(Category = "utils/string", DisplayName = "Case Converter")]
+[Node(Category = "text", DisplayName = "Convert Text Case")]
 public sealed class CaseConverter
 {
     public static string[] Modes() => ["UPPERCASE", "lowercase", "Capitalize", "Title Case"];
 
+    /// <summary>Python's upper / lower / capitalize / title ("ß" upper-cases to "SS"; Title Case starts a word after any non-letter, so "it's" becomes "It'S").</summary>
     public string Execute([Input(Multiline = true)] string @string = "", [Input(OptionsProvider = nameof(Modes))] string mode = "UPPERCASE") => mode switch
     {
-        "UPPERCASE" => @string.ToUpperInvariant(),
-        "lowercase" => @string.ToLowerInvariant(),
-        "Capitalize" => @string.Length == 0 ? "" : char.ToUpperInvariant(@string[0]) + @string[1..].ToLowerInvariant(),
-        "Title Case" => Regex.Replace(@string.ToLowerInvariant(), @"\b[\p{L}\p{N}']+", m => char.ToUpperInvariant(m.Value[0]) + m.Value[1..]),
-        _ => throw new ArgumentException($"Unknown mode '{mode}'.", nameof(mode)),
+        "UPPERCASE" => PyText.Upper(@string),
+        "lowercase" => PyText.Lower(@string),
+        "Capitalize" => PyText.Capitalize(@string),
+        "Title Case" => PyText.Title(@string),
+        _ => @string,
     };
 }
 
-[Node(Category = "utils/string", DisplayName = "Trim")]
+[Node(Category = "text", DisplayName = "Trim Text")]
 public sealed class StringTrim
 {
     public static string[] Modes() => ["Both", "Left", "Right"];
 
+    /// <summary>Removes Python's whitespace (spaces, tabs, line breaks and the other Unicode spaces) from the ends.</summary>
     public string Execute([Input(Multiline = true)] string @string = "", [Input(OptionsProvider = nameof(Modes))] string mode = "Both") => mode switch
     {
-        "Both" => @string.Trim(),
-        "Left" => @string.TrimStart(),
-        "Right" => @string.TrimEnd(),
-        _ => throw new ArgumentException($"Unknown mode '{mode}'.", nameof(mode)),
+        "Both" => PyText.Strip(@string),
+        "Left" => PyText.LStrip(@string),
+        "Right" => PyText.RStrip(@string),
+        _ => @string,
     };
 }
 
-[Node(Category = "utils/string", DisplayName = "Replace")]
+[Node(Category = "text", DisplayName = "Replace Text")]
 public sealed class StringReplace
 {
+    /// <summary>Replaces every occurrence. An empty <c>find</c> inserts <c>replace</c> between all characters and at both ends, as Python's <c>str.replace</c> does.</summary>
     public string Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string find = "", [Input(Multiline = true)] string replace = "") =>
-        find.Length == 0 ? @string : @string.Replace(find, replace, StringComparison.Ordinal);
+        PyText.Replace(@string, find, replace);
 }
 
-[Node(Category = "utils/string", DisplayName = "Contains")]
+[Node(Category = "text", DisplayName = "Contains Text")]
 public sealed class StringContains
 {
     public bool Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string substring = "", bool caseSensitive = true) =>
-        @string.Contains(substring, caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
+        caseSensitive ? @string.Contains(substring, StringComparison.Ordinal) : PyText.Lower(@string).Contains(PyText.Lower(substring), StringComparison.Ordinal);
 }
 
-[Node(Category = "utils/string", DisplayName = "Compare")]
+[Node(Category = "text", DisplayName = "Compare Text")]
 public sealed class StringCompare
 {
     public static string[] Modes() => ["Starts With", "Ends With", "Equal"];
@@ -83,42 +82,47 @@ public sealed class StringCompare
     public bool Execute([Input(Multiline = true)] string stringA = "", [Input(Multiline = true)] string stringB = "",
         [Input(OptionsProvider = nameof(Modes))] string mode = "Starts With", bool caseSensitive = true)
     {
-        var c = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        string a = caseSensitive ? stringA : PyText.Lower(stringA), b = caseSensitive ? stringB : PyText.Lower(stringB);
         return mode switch
         {
-            "Starts With" => stringA.StartsWith(stringB, c),
-            "Ends With" => stringA.EndsWith(stringB, c),
-            "Equal" => string.Equals(stringA, stringB, c),
+            "Starts With" => a.StartsWith(b, StringComparison.Ordinal),
+            "Ends With" => a.EndsWith(b, StringComparison.Ordinal),
+            "Equal" => string.Equals(a, b, StringComparison.Ordinal),
             _ => throw new ArgumentException($"Unknown mode '{mode}'.", nameof(mode)),
         };
     }
 }
 
-static class RegexOptionsFor
-{
-    public static RegexOptions Of(bool caseInsensitive, bool multiline, bool dotAll) =>
-        (caseInsensitive ? RegexOptions.IgnoreCase : 0) | (multiline ? RegexOptions.Multiline : 0) | (dotAll ? RegexOptions.Singleline : 0);
-}
-
-[Node("RegexMatch", Category = "utils/string", DisplayName = "Regex Match", Aliases = ["RegexMatchNode"])]
+[Node("RegexMatch", Category = "text", DisplayName = "Match Text", Aliases = ["RegexMatchNode"])]
 public sealed class RegexMatchNode
 {
-    /// <summary>True when the pattern matches anywhere in the text.</summary>
+    /// <summary>True when the Python regex matches anywhere in the text; a pattern Python cannot compile gives false (ComfyUI catches <c>re.error</c>).</summary>
     public bool Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string regexPattern = "",
-        bool caseInsensitive = true, bool multiline = false, bool dotall = false) =>
-        Regex.IsMatch(@string, regexPattern, RegexOptionsFor.Of(caseInsensitive, multiline, dotall), TimeSpan.FromSeconds(2));
+        bool caseInsensitive = true, bool multiline = false, bool dotall = false)
+    {
+        try
+        {
+            return PyRegex.Compile(regexPattern, caseInsensitive, multiline, dotall).Search(@string) is not null;
+        }
+        catch (PyException e) when (e.PyType == "error")
+        {
+            return false;
+        }
+    }
 }
 
-[Node("RegexReplace", Category = "utils/string", DisplayName = "Regex Replace", Aliases = ["RegexReplaceNode"])]
+[Node("RegexReplace", Category = "text", DisplayName = "Replace Text (Regex)", Description = "Find and replace text using regex patterns.", Aliases = ["RegexReplaceNode"])]
 public sealed class RegexReplaceNode
 {
-    /// <summary>Replaces matches of the pattern (<c>$1</c> and <c>${name}</c> in the replacement refer to groups); <c>count</c> 0 replaces all of them.</summary>
+    /// <summary>
+    /// Python's <c>re.sub</c>: <c>\1</c>, <c>\g&lt;1&gt;</c> and <c>\g&lt;name&gt;</c> in the replacement refer to groups, <c>\n</c> is a line break, <c>$</c> is a plain dollar sign;
+    /// <c>count</c> 0 replaces every match.
+    /// </summary>
     public string Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string regexPattern = "", [Input(Multiline = true)] string replace = "",
-        bool caseInsensitive = true, bool multiline = false, bool dotall = false, [Input(Min = 0, Max = 100)] int count = 0)
-    {
-        var regex = new Regex(regexPattern, RegexOptionsFor.Of(caseInsensitive, multiline, dotall), TimeSpan.FromSeconds(2));
-        return count <= 0 ? regex.Replace(@string, replace) : regex.Replace(@string, replace, count);
-    }
+        bool caseInsensitive = true, bool multiline = false,
+        [Input(Tooltip = "When enabled, the dot (.) character will match any character including newline characters. When disabled, dots won't match newlines.")] bool dotall = false,
+        [Input(Min = 0, Max = 100, Tooltip = "Maximum number of replacements to make. Set to 0 to replace all occurrences (default). Set to 1 to replace only the first match, 2 for the first two matches, etc.")] int count = 0) =>
+        PyRegex.Compile(regexPattern, caseInsensitive, multiline, dotall).Sub(replace, @string, count);
 }
 
 [Node(Category = "utils/math", DisplayName = "Math")]

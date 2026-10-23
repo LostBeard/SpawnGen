@@ -456,7 +456,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             return;
         }
         var color = Theme.SocketColor(s.Type.Name);
-        Dot(ctx, s.Position, hovered ? 6.5 : 5, color, s.IsConnected);
+        if (s.IsList) Grid(ctx, s.Position, hovered ? 6.5 : 5, color);
+        else Dot(ctx, s.Position, hovered ? 6.5 : 5, color, s.IsConnected);
         if (!detailed) return;
         ctx.Font = Theme.Font;
         ctx.TextBaseline = "middle";
@@ -567,6 +568,16 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.LineWidth = 2;
         ctx.StrokeStyle = color;
         ctx.Stroke();
+    }
+
+    /// <summary>A list output: LiteGraph's grid-shaped slot, three by three small squares.</summary>
+    static void Grid(CanvasRenderingContext2D ctx, Point p, double radius, string color)
+    {
+        double cell = radius * 2 / 3;
+        ctx.FillStyle = color;
+        for (int row = 0; row < 3; row++)
+            for (int col = 0; col < 3; col++)
+                ctx.FillRect(p.X - radius + col * cell + 0.5, p.Y - radius + row * cell + 0.5, cell - 1, cell - 1);
     }
 
     static void Ring(CanvasRenderingContext2D ctx, Point p, double radius, string color)

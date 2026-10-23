@@ -5,7 +5,8 @@ namespace SpawnGen.Editor;
 public enum SlotKind { Input, Output }
 
 /// <summary>A connection point on a node: where links attach, and what it carries.</summary>
-public sealed record SlotGeometry(SlotKind Kind, string Name, int Index, SocketType Type, Point Position, bool IsWidgetInput, bool IsConnected);
+/// <param name="IsList">An output that sends a list on item by item (ComfyUI's OUTPUT_IS_LIST), drawn as a grid.</param>
+public sealed record SlotGeometry(SlotKind Kind, string Name, int Index, SocketType Type, Point Position, bool IsWidgetInput, bool IsConnected, bool IsList = false);
 
 /// <summary>One widget row (a number, text box, combo or toggle) inside a node body.</summary>
 public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds);
@@ -99,7 +100,7 @@ public static class NodeLayout
         {
             var spec = schema.Outputs[i];
             outputs.Add(new SlotGeometry(SlotKind.Output, spec.Name, i, spec.Type,
-                new Point(node.X + width, slotsTop + i * SlotRowHeight + SlotRowHeight / 2), false, graph.LinksFrom(node.Id, i).Any()));
+                new Point(node.X + width, slotsTop + i * SlotRowHeight + SlotRowHeight / 2), false, graph.LinksFrom(node.Id, i).Any(), spec.IsList));
         }
 
         double y = slotsTop + slotRows * SlotRowHeight + (slotRows > 0 ? 4 : 0);

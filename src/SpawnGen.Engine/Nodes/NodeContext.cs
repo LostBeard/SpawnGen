@@ -7,10 +7,14 @@ public sealed class NodeContext
     readonly Action<byte[]>? _preview;
 
     readonly Lazy<string>? _promptJson;
+    readonly Func<string, bool>? _isConnected;
 
     internal NodeContext(string nodeId, string classType, IServiceProvider services, CancellationToken cancellationToken,
-        Action<double, double, string?>? progress, Lazy<string>? promptJson = null, IReadOnlyDictionary<string, string>? extraPngInfo = null, Action<byte[]>? preview = null)
+        Action<double, double, string?>? progress, Lazy<string>? promptJson = null, IReadOnlyDictionary<string, string>? extraPngInfo = null, Action<byte[]>? preview = null,
+        Func<string, bool>? isConnected = null, int listIndex = 0)
     {
+        _isConnected = isConnected;
+        ListIndex = listIndex;
         NodeId = nodeId;
         ClassType = classType;
         Services = services;
@@ -28,6 +32,12 @@ public sealed class NodeContext
     public IReadOnlyDictionary<string, string> ExtraPngInfo { get; }
 
     public string NodeId { get; }
+
+    /// <summary>True when the input is linked or given a value in the prompt. A lazy input that is connected but not evaluated yet is null and still connected (ComfyUI tells MISSING from None the same way).</summary>
+    public bool IsConnected(string input) => _isConnected?.Invoke(input) ?? false;
+
+    /// <summary>Which item of its list inputs this call works on (0 for a node that runs once).</summary>
+    public int ListIndex { get; }
     public string ClassType { get; }
     public IServiceProvider Services { get; }
     public CancellationToken CancellationToken { get; }

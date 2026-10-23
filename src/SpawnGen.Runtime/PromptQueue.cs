@@ -255,7 +255,7 @@ public sealed class PromptQueue : IDisposable
             if (nodeId is not null) d["node_id"] = nodeId;
             var inner = error is NodeExecutionException { InnerException: { } i } ? i : error;
             d["exception_message"] = inner.Message;
-            d["exception_type"] = inner.GetType().Name;
+            d["exception_type"] = inner is ExecutionBlockedException ? "ExecutionBlocked" : inner.GetType().Name; // ComfyUI's name for it
             if (error is NodeExecutionException nee) d["node_type"] = nee.ClassType;
             events.Publish(new("execution_error", d));
         }

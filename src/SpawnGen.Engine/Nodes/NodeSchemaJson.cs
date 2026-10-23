@@ -31,7 +31,11 @@ public static class NodeSchemaJson
         }
         var types = n["output"] as JsonArray ?? [];
         var names2 = n["output_name"] as JsonArray;
-        var outputs = types.Select((t, i) => new OutputSpec(names2 is not null && i < names2.Count && (string?)names2[i] is { Length: > 0 } name ? name : (string)t!, new SocketType((string)t!))).ToList();
+        var lists = n["output_is_list"] as JsonArray;
+        var outputs = types.Select((t, i) => new OutputSpec(names2 is not null && i < names2.Count && (string?)names2[i] is { Length: > 0 } name ? name : (string)t!, new SocketType((string)t!))
+        {
+            IsList = lists is not null && i < lists.Count && lists[i] is JsonValue v && v.TryGetValue<bool>(out var isList) && isList,
+        }).ToList();
         return new NodeSchema
         {
             Id = id,
@@ -41,12 +45,18 @@ public static class NodeSchemaJson
             Inputs = inputs,
             Outputs = outputs,
             IsOutputNode = (bool?)n["output_node"] ?? false,
+            InputIsList = n["input_is_list"] is JsonValue l && l.TryGetValue<bool>(out var inputIsList) && inputIsList,
         };
     }
 
     static InputSpec Input(string name, JsonArray entry, bool required)
     {
         var config = entry.Count > 1 ? entry[1] as JsonObject : null;
+        return Plain(name, entry, required, config) with { Lazy = config?["lazy"] is JsonValue lazy && lazy.TryGetValue<bool>(out var isLazy) && isLazy, Optional = !required };
+    }
+
+    static InputSpec Plain(string name, JsonArray entry, bool required, JsonObject? config)
+    {
         if (entry[0] is JsonArray options)
             return new InputSpec(name, SocketType.String, required, new WidgetSpec(WidgetKind.Combo) { Options = options.Select(o => (string)o!).ToList(), Default = options.Count > 0 ? (string?)options[0] : null });
         var type = (string)entry[0]!;

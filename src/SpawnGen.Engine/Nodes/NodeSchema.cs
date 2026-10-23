@@ -21,9 +21,20 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
 {
     /// <summary>Earlier names of the input (see <see cref="InputAttribute.Aliases"/>).</summary>
     public IReadOnlyList<string> Aliases { get; init; } = [];
+    /// <summary>Evaluated only when the node asks for it (see <see cref="InputAttribute.Lazy"/>).</summary>
+    public bool Lazy { get; init; }
+    /// <summary>Declared optional (see <see cref="InputAttribute.Optional"/>).</summary>
+    public bool Optional { get; init; }
+
+    /// <summary>Where ComfyUI's object_info lists the input: "required" for sockets that must be linked and for widgets not declared optional.</summary>
+    public bool ListedAsRequired => !Optional && (Required || Widget is not null);
 }
 
-public sealed record OutputSpec(string Name, SocketType Type, string? Tooltip = null);
+public sealed record OutputSpec(string Name, SocketType Type, string? Tooltip = null)
+{
+    /// <summary>ComfyUI's <c>OUTPUT_IS_LIST</c> for this output.</summary>
+    public bool IsList { get; init; }
+}
 
 /// <summary>Everything the editor and validator need to know about a node type (ComfyUI's <c>object_info</c> entry).</summary>
 public sealed class NodeSchema
@@ -40,6 +51,8 @@ public sealed class NodeSchema
     public bool AlwaysExecute { get; init; }
     /// <summary>Editor-only node (Reroute, Note): not part of the prompt that is run.</summary>
     public bool FrontendOnly { get; init; }
+    /// <summary>ComfyUI's <c>INPUT_IS_LIST</c>: one run with whole lists rather than one run per item.</summary>
+    public bool InputIsList { get; init; }
 
     public InputSpec? FindInput(string name) => Inputs.FirstOrDefault(i => i.Name == name);
 

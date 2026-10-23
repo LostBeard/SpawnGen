@@ -15,6 +15,15 @@ public sealed class NodeAttribute(string? id = null) : Attribute
     public bool FrontendOnly { get; init; }
     /// <summary>Earlier ids of this node type: workflows and prompts that use them still find it.</summary>
     public string[]? Aliases { get; init; }
+    /// <summary>
+    /// ComfyUI's <c>INPUT_IS_LIST</c>: the node runs once and every input parameter receives the whole list that reaches it
+    /// (declare them as <c>IReadOnlyList&lt;T&gt;</c>). Without it the node runs once per list item, see <see cref="Execution.PromptExecutor"/>.
+    /// </summary>
+    public bool InputIsList { get; init; }
+    /// <summary>ComfyUI's <c>OUTPUT_IS_LIST</c>, one flag per output: that output returns a list (<c>IReadOnlyList&lt;T&gt;</c>) whose items flow on one by one.</summary>
+    public bool[]? OutputIsList { get; init; }
+    /// <summary>Output names in order, where ComfyUI names them (a single return value cannot carry a tuple name).</summary>
+    public string[]? OutputNames { get; init; }
 }
 
 /// <summary>Widget and socket hints for an <c>Execute</c> parameter. Unset numeric hints use <see cref="double.NaN"/>.</summary>
@@ -34,6 +43,17 @@ public sealed class InputAttribute : Attribute
     public string? Tooltip { get; init; }
     /// <summary>Earlier names of this input: a saved workflow that links to one still connects.</summary>
     public string[]? Aliases { get; init; }
+    /// <summary>
+    /// ComfyUI's lazy input: what feeds it only runs when the node's <c>CheckLazyStatus</c> method asks for it. Until then the node sees null.
+    /// </summary>
+    public bool Lazy { get; init; }
+    /// <summary>
+    /// Listed under "optional" in object_info, as ComfyUI's optional inputs are. A widget is "required" there even though its parameter has a
+    /// default (it always has a value); a socket parameter with a default (<c>MaskBatch? mask = null</c>) is optional without saying so.
+    /// </summary>
+    public bool Optional { get; init; }
+    /// <summary>The widget's default when the parameter cannot carry one itself (a list parameter of an <see cref="NodeAttribute.InputIsList"/> node).</summary>
+    public object? Default { get; init; }
 }
 
 /// <summary>Names the socket type for a value class (e.g. <c>[Socket("MODEL")]</c>). Without it the type is the upper-cased class name.</summary>

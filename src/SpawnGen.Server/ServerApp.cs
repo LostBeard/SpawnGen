@@ -265,19 +265,23 @@ public static class ServerApp
         var root = new JsonObject();
         foreach (var s in registry.Schemas.OrderBy(s => s.Id))
         {
-            var required = new JsonObject();
-            var order = new JsonArray();
+            JsonObject required = [], optional = [];
+            JsonArray requiredOrder = [], optionalOrder = [];
             foreach (var i in s.Inputs)
             {
-                order.Add(i.Name);
-                required[i.Name] = InputEntry(i);
+                (i.ListedAsRequired ? requiredOrder : optionalOrder).Add(i.Name);
+                (i.ListedAsRequired ? required : optional)[i.Name] = InputEntry(i);
             }
+            var input = new JsonObject { ["required"] = required };
+            var inputOrder = new JsonObject { ["required"] = requiredOrder };
+            if (optional.Count > 0) { input["optional"] = optional; inputOrder["optional"] = optionalOrder; }
             root[s.Id] = new JsonObject
             {
-                ["input"] = new JsonObject { ["required"] = required },
-                ["input_order"] = new JsonObject { ["required"] = order },
+                ["input"] = input,
+                ["input_order"] = inputOrder,
+                ["input_is_list"] = s.InputIsList,
                 ["output"] = new JsonArray(s.Outputs.Select(o => (JsonNode)o.Type.Name).ToArray()),
-                ["output_is_list"] = new JsonArray(s.Outputs.Select(_ => (JsonNode)false).ToArray()),
+                ["output_is_list"] = new JsonArray(s.Outputs.Select(o => (JsonNode)o.IsList).ToArray()),
                 ["output_name"] = new JsonArray(s.Outputs.Select(o => (JsonNode)o.Name).ToArray()),
                 ["name"] = s.Id, ["display_name"] = s.DisplayName, ["description"] = s.Description ?? "",
                 ["category"] = s.Category, ["output_node"] = s.IsOutputNode,
@@ -288,8 +292,9 @@ public static class ServerApp
 
     static JsonArray InputEntry(InputSpec i)
     {
-        if (i.Widget is not { } w) return new JsonArray(i.Type.Name);
+        if (i.Widget is not { } w) return i.Lazy ? new JsonArray(i.Type.Name, new JsonObject { ["lazy"] = true }) : new JsonArray(i.Type.Name);
         var config = new JsonObject();
+        if (i.Lazy) config["lazy"] = true;
         if (w.Default is { } d) config["default"] = JsonSerializer.SerializeToNode(d);
         if (w.Min is { } min) config["min"] = min;
         if (w.Max is { } max) config["max"] = max;

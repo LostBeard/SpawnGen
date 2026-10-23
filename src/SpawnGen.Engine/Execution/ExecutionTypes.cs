@@ -66,3 +66,9 @@ public interface IExecutionObserver
     void OnError(string? nodeId, Exception error) { }
     void OnFinished(ExecutionResult result) { }
 }
+
+/// <summary>A node did not run because an <see cref="ExecutionBlocker"/> with a message reached it (ComfyUI reports "Execution Blocked: ..." the same way); the run goes on.</summary>
+public sealed class ExecutionBlockedException(string nodeId, string message) : Exception("Execution Blocked: " + message)
+{
+    public string NodeId { get; } = nodeId;
+}

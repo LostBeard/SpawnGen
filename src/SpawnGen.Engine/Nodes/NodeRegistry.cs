@@ -5,14 +5,37 @@ using Microsoft.Extensions.DependencyInjection;
 namespace SpawnGen.Engine.Nodes;
 
 /// <summary>The values a node produced: socket outputs in schema order plus optional editor preview data.</summary>
-public sealed record NodeOutputs(object?[] Values, UiOutput? Ui);
+/// <remarks>
+/// Like ComfyUI, every output is really a list: a node that ran once per item of a list input (or returned a list output) has several values
+/// on one socket. <see cref="Values"/> holds the first value of each output; <see cref="Lists"/> holds them all (null when every list has one item).
+/// </remarks>
+public sealed record NodeOutputs(object?[] Values, UiOutput? Ui)
+{
+    public IReadOnlyList<object?>[]? Lists { get; init; }
+
+    /// <summary>Every value of output <paramref name="index"/>.</summary>
+    public IReadOnlyList<object?> List(int index) => Lists is not null ? Lists[index] : [Values[index]];
+}
+
+/// <summary>
+/// ComfyUI's <c>ExecutionBlocker</c>: returned as an output value it stops every node that would use it from running (output nodes simply do
+/// nothing). With a message the run reports it as the reason.
+/// </summary>
+public sealed class ExecutionBlocker(string? message = null)
+{
+    public string? Message { get; } = message;
+}
 
 /// <summary>A node type: its schema plus how to invoke it.</summary>
 public sealed class RegisteredNode
 {
     internal enum ParamKind { Input, Context, CancellationToken, Services }
 
-    internal sealed record ParamBinding(ParameterInfo Info, ParamKind Kind, string? InputName);
+    internal sealed record ParamBinding(ParameterInfo Info, ParamKind Kind, string? InputName)
+    {
+        /// <summary>For a list parameter of an <see cref="NodeAttribute.InputIsList"/> node: the item type.</summary>
+        public Type? ElementType { get; init; }
+    }
 
     internal Type Type { get; init; } = default!;
     internal MethodInfo Method { get; init; } = default!;
@@ -21,6 +44,11 @@ public sealed class RegisteredNode
     internal bool ReturnsTuple { get; init; } = default!;
     internal int UiIndex { get; init; } = default!;
     internal Type ResultType { get; init; } = default!;
+    internal MethodInfo? LazyCheck { get; init; }
+    internal ParamBinding[] LazyParams { get; init; } = [];
+
+    /// <summary>The node decides itself which of its lazy inputs it needs (it has a <c>CheckLazyStatus</c> method).</summary>
+    public bool HasLazyCheck => LazyCheck is not null;
 
     public required NodeSchema Schema { get; init; }
 
@@ -29,22 +57,61 @@ public sealed class RegisteredNode
 
     /// <summary>CLR type an input's value must be coerced to.</summary>
     internal Type? InputClrType(string inputName) =>
-        Params?.FirstOrDefault(p => p.Kind == ParamKind.Input && p.InputName == inputName)?.Info.ParameterType; // a remote node has no parameters
+        Params?.FirstOrDefault(p => p.Kind == ParamKind.Input && p.InputName == inputName) is { } p ? p.ElementType ?? p.Info.ParameterType : null; // a remote node has no parameters
 
-    internal async ValueTask<NodeOutputs> InvokeAsync(IReadOnlyDictionary<string, object?> inputs, NodeContext context)
+    /// <summary>Asks the node which lazy inputs it needs, given what has been evaluated so far (null for a linked input not evaluated yet).</summary>
+    internal async ValueTask<IReadOnlyList<string>> CheckLazyAsync(IReadOnlyDictionary<string, object?> inputs, NodeContext context)
     {
-        if (IsRemote) throw new NotSupportedException($"'{Schema.DisplayName}' is a node of the SpawnGen server (a custom node): run this graph on the server engine.");
-        var args = new object?[Params.Length];
-        for (var i = 0; i < Params.Length; i++)
+        var instance = LazyCheck!.IsStatic ? null : ActivatorUtilities.CreateInstance(context.Services, Type);
+        try
         {
-            var p = Params[i];
+            var ret = await AwaitResultAsync(Call(LazyCheck, instance, BuildArgs(LazyParams, inputs, context))).ConfigureAwait(false);
+            return ret is IEnumerable<string> names ? names.ToList() : [];
+        }
+        finally
+        {
+            (instance as IDisposable)?.Dispose();
+        }
+    }
+
+    static object? Call(MethodInfo method, object? instance, object?[] args)
+    {
+        try
+        {
+            return method.Invoke(instance, args);
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw;
+        }
+    }
+
+    static object?[] BuildArgs(ParamBinding[] ps, IReadOnlyDictionary<string, object?> inputs, NodeContext context)
+    {
+        var args = new object?[ps.Length];
+        for (var i = 0; i < ps.Length; i++)
+        {
+            var p = ps[i];
             switch (p.Kind)
             {
                 case ParamKind.Context: args[i] = context; break;
                 case ParamKind.CancellationToken: args[i] = context.CancellationToken; break;
                 case ParamKind.Services: args[i] = context.Services; break;
                 default:
-                    if (inputs.TryGetValue(p.InputName!, out var raw) && raw is not null)
+                    if (p.ElementType is { } element && inputs.TryGetValue(p.InputName!, out var rawList) && rawList is IReadOnlyList<object?> items)
+                    {
+                        var array = Array.CreateInstance(element, items.Count);
+                        for (int k = 0; k < items.Count; k++)
+                        {
+                            if (items[k] is null) continue;
+                            if (!ValueCoercion.TryCoerce(items[k]!, element, out var typedItem))
+                                throw new InvalidCastException($"Input '{p.InputName}' expects a list of {element.Name} but item {k} is {items[k]!.GetType().Name}.");
+                            array.SetValue(typedItem, k);
+                        }
+                        args[i] = p.Info.ParameterType.IsAssignableFrom(array.GetType()) ? array : Activator.CreateInstance(p.Info.ParameterType, array);
+                    }
+                    else if (inputs.TryGetValue(p.InputName!, out var raw) && raw is not null)
                     {
                         if (!ValueCoercion.TryCoerce(raw, p.Info.ParameterType, out var typed))
                             throw new InvalidCastException(
@@ -60,17 +127,18 @@ public sealed class RegisteredNode
                     break;
             }
         }
+        return args;
+    }
 
+    internal async ValueTask<NodeOutputs> InvokeAsync(IReadOnlyDictionary<string, object?> inputs, NodeContext context)
+    {
+        if (IsRemote) throw new NotSupportedException($"'{Schema.DisplayName}' is a node of the SpawnGen server (a custom node): run this graph on the server engine.");
+        var args = BuildArgs(Params, inputs, context);
         var instance = Method.IsStatic ? null : ActivatorUtilities.CreateInstance(context.Services, Type);
         object? ret;
         try
         {
-            ret = Method.Invoke(instance, args);
-        }
-        catch (TargetInvocationException tie) when (tie.InnerException is not null)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
-            throw;
+            ret = Call(Method, instance, args);
         }
         finally
         {
@@ -164,9 +232,11 @@ public sealed class NodeRegistry
             Id = node.Schema.Id, DisplayName = node.Schema.DisplayName, Category = node.Schema.Category, Description = node.Schema.Description,
             Inputs = node.Schema.Inputs.Select(i => i.Name == input ? i with { Widget = widget } : i).ToList(),
             Outputs = node.Schema.Outputs, IsOutputNode = node.Schema.IsOutputNode, AlwaysExecute = node.Schema.AlwaysExecute, FrontendOnly = node.Schema.FrontendOnly,
+            InputIsList = node.Schema.InputIsList,
         };
         _nodes[nodeId] = new RegisteredNode
         {
+            LazyCheck = node.LazyCheck, LazyParams = node.LazyParams,
             Schema = schema, IsRemote = node.IsRemote, Type = node.Type, Method = node.Method, Params = node.Params, OutputTypes = node.OutputTypes,
             ReturnsTuple = node.ReturnsTuple, UiIndex = node.UiIndex, ResultType = node.ResultType,
         };
@@ -203,6 +273,7 @@ public sealed class NodeRegistry
                 $"Node '{id}' ({type.FullName}) must declare exactly one public Execute/ExecuteAsync method; found {methods.Length}.");
         var method = methods[0];
 
+        var inputIsList = attr?.InputIsList ?? false;
         var inputs = new List<InputSpec>();
         var bindings = new List<RegisteredNode.ParamBinding>();
         foreach (var p in method.GetParameters())
@@ -213,9 +284,13 @@ public sealed class NodeRegistry
 
             var ia = p.GetCustomAttribute<InputAttribute>();
             var name = ia?.Name ?? ToSnakeCase(p.Name!);
-            inputs.Add(new InputSpec(name, SocketTypes.FromClr(p.ParameterType), Required: !p.HasDefaultValue,
-                Widget: BuildWidget(type, p, ia), Tooltip: ia?.Tooltip) { Aliases = ia?.Aliases ?? [] });
-            bindings.Add(new(p, RegisteredNode.ParamKind.Input, name));
+            // A list node's parameter is IReadOnlyList<T>: the socket and widget are T's.
+            var element = inputIsList ? ListElementType(p.ParameterType)
+                ?? throw new InvalidOperationException($"Node '{id}' takes whole lists (InputIsList): parameter '{p.Name}' must be a list such as IReadOnlyList<T>.") : null;
+            var valueType = element ?? p.ParameterType;
+            inputs.Add(new InputSpec(name, SocketTypes.FromClr(valueType), Required: !p.HasDefaultValue,
+                Widget: BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip) { Aliases = ia?.Aliases ?? [], Lazy = ia?.Lazy ?? false, Optional = ia?.Optional ?? false });
+            bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { ElementType = element });
         }
         var dup = inputs.GroupBy(i => i.Name).FirstOrDefault(g => g.Count() > 1);
         if (dup is not null) throw new InvalidOperationException($"Node '{id}' declares input '{dup.Key}' twice.");
@@ -240,10 +315,26 @@ public sealed class NodeRegistry
         for (var i = 0; i < elementTypes.Length; i++)
         {
             if (elementTypes[i] == typeof(UiOutput)) { uiIndex = i; continue; }
-            var socket = SocketTypes.FromClr(elementTypes[i]);
+            var isList = attr?.OutputIsList is { } flags && outputs.Count < flags.Length && flags[outputs.Count];
+            var clr = isList ? ListElementType(elementTypes[i])
+                ?? throw new InvalidOperationException($"Node '{id}': output {outputs.Count} is a list output (OutputIsList) and must return a list such as IReadOnlyList<T>.") : elementTypes[i];
+            var socket = SocketTypes.FromClr(clr);
             var given = tupleNames is not null && i < tupleNames.Count ? tupleNames[i] : null;
-            outputs.Add(new OutputSpec(given is null ? socket.Name : ToSnakeCase(given), socket));
+            var named = attr?.OutputNames is { } outputNames && outputs.Count < outputNames.Length ? outputNames[outputs.Count] : null;
+            outputs.Add(new OutputSpec(named ?? (given is null ? socket.Name : ToSnakeCase(given)), socket) { IsList = isList });
         }
+
+        // An optional CheckLazyStatus method (same parameter names as Execute) says which lazy inputs the node needs.
+        var lazyCheck = type.GetMethod("CheckLazyStatus", BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+        RegisteredNode.ParamBinding[] lazyParams = [];
+        if (lazyCheck is not null)
+            lazyParams = lazyCheck.GetParameters().Select(lp =>
+                lp.ParameterType == typeof(NodeContext) ? new RegisteredNode.ParamBinding(lp, RegisteredNode.ParamKind.Context, null)
+                : lp.ParameterType == typeof(CancellationToken) ? new RegisteredNode.ParamBinding(lp, RegisteredNode.ParamKind.CancellationToken, null)
+                : lp.ParameterType == typeof(IServiceProvider) ? new RegisteredNode.ParamBinding(lp, RegisteredNode.ParamKind.Services, null)
+                : bindings.FirstOrDefault(b => b.Kind == RegisteredNode.ParamKind.Input && b.Info.Name == lp.Name) is { } match
+                    ? new RegisteredNode.ParamBinding(lp, RegisteredNode.ParamKind.Input, match.InputName) { ElementType = match.ElementType }
+                    : throw new InvalidOperationException($"Node '{id}': CheckLazyStatus parameter '{lp.Name}' is not a parameter of Execute.")).ToArray();
 
         var schema = new NodeSchema
         {
@@ -256,10 +347,13 @@ public sealed class NodeRegistry
             IsOutputNode = attr?.IsOutput ?? false,
             AlwaysExecute = attr?.AlwaysExecute ?? false,
             FrontendOnly = attr?.FrontendOnly ?? false,
+            InputIsList = inputIsList,
         };
 
         return new RegisteredNode
         {
+            LazyCheck = lazyCheck,
+            LazyParams = lazyParams,
             Schema = schema,
             Type = type,
             Method = method,
@@ -271,10 +365,19 @@ public sealed class NodeRegistry
         };
     }
 
-    static WidgetSpec? BuildWidget(Type nodeType, ParameterInfo p, InputAttribute? ia)
+    /// <summary>T for T[], IReadOnlyList&lt;T&gt;, List&lt;T&gt; and other IEnumerable&lt;T&gt; (not string); null otherwise.</summary>
+    internal static Type? ListElementType(Type t)
     {
-        var t = Nullable.GetUnderlyingType(p.ParameterType) ?? p.ParameterType;
-        var def = p.HasDefaultValue && p.DefaultValue is not DBNull ? p.DefaultValue : null;
+        if (t == typeof(string)) return null;
+        if (t.IsArray) return t.GetElementType();
+        if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IEnumerable<>)) return t.GetGenericArguments()[0];
+        return t.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>))?.GetGenericArguments()[0];
+    }
+
+    static WidgetSpec? BuildWidget(Type nodeType, ParameterInfo p, InputAttribute? ia, Type valueType)
+    {
+        var t = Nullable.GetUnderlyingType(valueType) ?? valueType;
+        var def = p.HasDefaultValue && p.DefaultValue is not DBNull ? p.DefaultValue : ia?.Default;
         double? Opt(double? v) => v is null || double.IsNaN(v.Value) ? null : v;
 
         if (t.IsEnum)

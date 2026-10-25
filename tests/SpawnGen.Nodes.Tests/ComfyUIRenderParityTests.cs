@@ -107,8 +107,72 @@ public class ComfyUIRenderParityTests
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 
+    /// <summary>
+    /// SD 1.5 from ComfyUI's own component files (ModelSave / CLIPSave / VAESave of v1-5-pruned-emaonly: diffusion_models/sd15_unet.safetensors with
+    /// model.diffusion_model. names, text_encoders/sd15_clip_l.safetensors in Hugging Face names, vae/sd15_vae.safetensors in LDM names) through Load Diffusion
+    /// Model, Load CLIP and Load VAE: the same graph as the single file must land on ComfyUI's single-file render.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (diffusion_models/sd15_unet, text_encoders/sd15_clip_l, vae/sd15_vae .safetensors) and a GPU.")]
+    public async Task SD15_from_split_files_gives_ComfyUIs_single_file_result()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "", "euler", "comfyui_sd15", 10, 7.5, load: g =>
+        {
+            g.Add("11", "UNETLoader", ("unet_name", "sd15_unet.safetensors"), ("weight_dtype", "default"));
+            g.Add("12", "CLIPLoader", ("clip_name", "sd15_clip_l.safetensors"), ("type", "stable_diffusion"));
+            g.Add("13", "VAELoader", ("vae_name", "sd15_vae.safetensors"));
+            return (PromptInput.Link("11"), PromptInput.Link("12"), PromptInput.Link("13"));
+        });
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// A real standalone VAE: Stability's vae-ft-mse-840000-ema-pruned (&lt;models&gt;/vae) through Load VAE on SD 1.5's samples, against ComfyUI's picture decoded
+    /// with the same file (Fixtures/sampling/comfyui_sd15/euler_ftmse.png). Its decoder differs from the checkpoint's, so the stock picture (euler.png) would fail.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors, vae/vae-ft-mse-840000-ema-pruned.safetensors) and a GPU.")]
+    public async Task SD15_with_a_standalone_VAE_gives_ComfyUIs_picture()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "", "euler", "comfyui_sd15", 10, 7.5, picture: "euler_ftmse", load: g =>
+        {
+            g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "v1-5-pruned-emaonly.safetensors"));
+            g.Add("13", "VAELoader", ("vae_name", "vae-ft-mse-840000-ema-pruned.safetensors"));
+            return (PromptInput.Link("1"), PromptInput.Link("1", 1), PromptInput.Link("13"));
+        });
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// SDXL from ComfyUI's own component files (ModelSave / CLIPSave / VAESave of sd_xl_base_1.0) through Load Diffusion Model, Load CLIP (Dual) and Load VAE,
+    /// against ComfyUI's single-file render at 1024 (latent and picture). The two CLIP files are given bigG first: ComfyUI takes them in either order.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (diffusion_models/sdxl_unet, text_encoders/sdxl_clip_l + sdxl_clip_g, vae/sdxl_vae .safetensors) and a GPU with 8 GB.")]
+    public async Task SDXL_from_split_files_gives_ComfyUIs_single_file_result()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "", "euler", "comfyui_sdxl", 6, 7.0, load: g =>
+        {
+            g.Add("11", "UNETLoader", ("unet_name", "sdxl_unet.safetensors"), ("weight_dtype", "default"));
+            g.Add("12", "DualCLIPLoader", ("clip_name1", "sdxl_clip_g.safetensors"), ("clip_name2", "sdxl_clip_l.safetensors"), ("type", "sdxl"));
+            g.Add("13", "VAELoader", ("vae_name", "sdxl_vae.safetensors"));
+            return (PromptInput.Link("11"), PromptInput.Link("12"), PromptInput.Link("13"));
+        });
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
     static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg,
-        string? lora = null, string? result = null)
+        string? lora = null, string? result = null, Func<PromptGraph, (PromptInput Model, PromptInput Clip, PromptInput Vae)>? load = null, string? picture = null)
     {
         var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", fixture);
         var outDir = Path.Combine(Path.GetTempPath(), "spawngen-comfy-parity-" + Guid.NewGuid().ToString("N"));
@@ -119,22 +183,28 @@ public class ComfyUIRenderParityTests
             var executor = new PromptExecutor(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly),
                 new Services(runtime, new OutputOptions { Directory = outDir }));
             var g = new PromptGraph();
-            g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", checkpoint));
-            // With a LoRA, Load LoRA (Model and CLIP) sits between the checkpoint and everything that used it (as run_comfy.py builds it).
-            string from = "1";
+            // The model, CLIP and VAE come from Load Checkpoint, or from the loaders the test adds.
+            PromptInput model, clip, vae;
+            if (load is null)
+            {
+                g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", checkpoint));
+                (model, clip, vae) = (PromptInput.Link("1"), PromptInput.Link("1", 1), PromptInput.Link("1", 2));
+            }
+            else (model, clip, vae) = load(g);
+            // With a LoRA, Load LoRA (Model and CLIP) sits between the loader and everything that used it (as run_comfy.py builds it).
             if (lora is not null)
             {
-                g.Add("9", "LoraLoader", ("model", PromptInput.Link("1")), ("clip", PromptInput.Link("1", 1)), ("lora_name", lora), ("strength_model", 1.0), ("strength_clip", 1.0));
-                from = "9";
+                g.Add("9", "LoraLoader", ("model", model), ("clip", clip), ("lora_name", lora), ("strength_model", 1.0), ("strength_clip", 1.0));
+                (model, clip) = (PromptInput.Link("9"), PromptInput.Link("9", 1));
             }
-            g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", PromptInput.Link(from, 1)));
-            g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link(from, 1)));
+            g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", clip));
+            g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", clip));
             g.Add("4", "LoadLatent", ("latent", "start.latent"));
-            g.Add("5", "KSamplerAdvanced", ("model", PromptInput.Link(from)), ("add_noise", "disable"), ("noise_seed", 0), ("steps", steps), ("cfg", cfg),
+            g.Add("5", "KSamplerAdvanced", ("model", model), ("add_noise", "disable"), ("noise_seed", 0), ("steps", steps), ("cfg", cfg),
                 ("sampler_name", sampler), ("scheduler", "normal"), ("positive", PromptInput.Link("2")), ("negative", PromptInput.Link("3")),
                 ("latent_image", PromptInput.Link("4")), ("start_at_step", 0), ("end_at_step", 10000), ("return_with_leftover_noise", "disable"));
             g.Add("6", "SaveLatent", ("samples", PromptInput.Link("5")), ("filename_prefix", "parity"));
-            g.Add("7", "VAEDecode", ("samples", PromptInput.Link("5")), ("vae", PromptInput.Link("1", 2)));
+            g.Add("7", "VAEDecode", ("samples", PromptInput.Link("5")), ("vae", vae));
             g.Add("8", "SaveImage", ("images", PromptInput.Link("7")), ("filename_prefix", "parity_" + sampler));
             await executor.ExecuteAsync(g);
 
@@ -143,7 +213,18 @@ public class ComfyUIRenderParityTests
             var comfy = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, (result ?? sampler) + ".latent"))).Data;
             double diff = Math.Sqrt(ours.Zip(comfy, (a, b) => (double)(a - b) * (a - b)).Average());
             double scale = Math.Sqrt(comfy.Average(v => (double)v * v));
-            TestContext.Out.WriteLine($"{checkpoint} {sampler}: rms difference {diff:F4} of rms {scale:F4}; picture {Directory.GetFiles(outDir, "parity_*.png").Single()}");
+            TestContext.Out.WriteLine($"{(load is null ? checkpoint : "split files")} {sampler}: rms difference {diff:F4} of rms {scale:F4}; picture {Directory.GetFiles(outDir, "parity_*.png").Single()}");
+            // Where the fixture has ComfyUI's decoded picture too, the VAE is checked: mean and largest difference per channel, in 1/255 steps.
+            var comfyPng = Path.Combine(dir, (picture ?? result ?? sampler) + ".png");
+            if (File.Exists(comfyPng))
+            {
+                var theirs = ImageDecoder.Decode(File.ReadAllBytes(comfyPng)).Data;
+                var mine = ImageDecoder.Decode(File.ReadAllBytes(Directory.GetFiles(outDir, "parity_*.png").Single())).Data;
+                Assert.That(mine, Has.Length.EqualTo(theirs.Length), "picture size");
+                double mean = mine.Zip(theirs, (x, y) => Math.Abs(x - y)).Average() * 255, max = mine.Zip(theirs, (x, y) => Math.Abs(x - y)).Max() * 255;
+                TestContext.Out.WriteLine($"  picture vs ComfyUI's: mean difference {mean:F2}/255, largest {max:F0}/255");
+                Assert.That(mean, Is.LessThan(2.0), "the decoded picture is ComfyUI's (the VAE is checked)");
+            }
             return (diff, scale);
         }
         finally

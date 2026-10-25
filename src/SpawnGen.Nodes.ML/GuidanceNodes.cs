@@ -146,7 +146,7 @@ public sealed class ModelSamplingDiscrete
     /// </summary>
     public ModelHandle Execute(ModelHandle model, [Input(OptionsProvider = nameof(SamplingTypes))] string sampling = "eps", bool zsnr = false)
     {
-        var sigmas = model.Checkpoint?.Sigmas ?? model.Sampling.Sigmas;
+        var sigmas = model.Model?.Sampling.Sigmas ?? model.Sampling.Sigmas;
         if (zsnr) sigmas = sigmas.ZeroTerminalSnr();
         var prediction = sampling switch
         {
@@ -159,6 +159,6 @@ public sealed class ModelSamplingDiscrete
             _ => throw new ArgumentException($"Unknown sampling '{sampling}'. Known: {string.Join(", ", SamplingTypes())}.", nameof(sampling)),
         };
         if (prediction == PredictionType.Lcm) sigmas = sigmas.Distilled();
-        return new ModelHandle(model.Checkpoint!, new ModelSampling(sigmas, prediction)) { Patches = model.Patches, Loras = model.Loras };
+        return new ModelHandle(model.Model!, new ModelSampling(sigmas, prediction)) { Patches = model.Patches, Loras = model.Loras };
     }
 }

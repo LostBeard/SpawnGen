@@ -17,14 +17,14 @@ public sealed record TextEncoding(float[] Context, int[] Shape, float[]? Pooled)
 /// (<see cref="OnnxCheckpointModels"/>) or a single-file <c>.safetensors</c> checkpoint as ComfyUI loads them (<see cref="SafetensorsCheckpointModels"/>).
 /// Nodes talk to it in host arrays; the sampler drives the UNet through a <see cref="UNetRun"/> that keeps each run's conditioning on the GPU.
 /// </summary>
-public sealed class Checkpoint : IDisposable
+public sealed class Checkpoint : IDiffusionModel, ITextEncoderModel, IVaeModel, IDisposable
 {
     public const int LatentChannels = 4;
     public const int TokenCount = 77;
 
     readonly ICheckpointModels _models;
     readonly object _gate = new();
-    readonly Dictionary<string, Task<TextEncoding>> _emptyPrompt = new();
+    readonly EmptyPromptCache _emptyPrompt = new();
     readonly SemaphoreSlim _loraGate = new(1, 1);
     IReadOnlyList<LoraUse> _unetLoras = [], _clipLoras = [];
     string _appliedLoras = "";
@@ -42,18 +42,18 @@ public sealed class Checkpoint : IDisposable
     /// <summary>SD 1.x, SD 2.x or SDXL.</summary>
     public SdFamily Family => _models.Family;
     /// <summary>How the model's latents relate to its VAE's (scale, preview colours).</summary>
-    public LatentFormat LatentFormat => Family == SdFamily.SDXL ? LatentFormat.SDXL : LatentFormat.SD15;
+    public LatentFormat LatentFormat => SdFamilies.LatentFormat(Family);
     /// <summary>The width of a context row (768 SD 1.x, 1024 SD 2.x, 2048 SDXL).</summary>
     public int TextWidth => _models.TextWidth;
     /// <summary>The width of the first tower's part of a row (SDXL: CLIP-L's 768 of 2048); the whole row for one-tower models.</summary>
-    public int FirstTowerWidth => Family == SdFamily.SDXL ? 768 : TextWidth;
+    public int FirstTowerWidth => SdFamilies.FirstTowerWidth(Family, TextWidth);
     public BPETokenizer Tokenizer { get; }
     /// <summary>The noise levels of the model's training steps, for schedulers and for telling the model its timestep.</summary>
     public ModelSigmas Sigmas { get; }
     /// <summary>The model's own sampling: eps or v prediction over <see cref="Sigmas"/>.</summary>
     public ModelSampling Sampling { get; }
     /// <summary>The layer a prompt is read from when CLIP Set Last Layer was not used (-1 the last, -2 the penultimate), ComfyUI's per-family default.</summary>
-    public int DefaultClipLayer => Family == SdFamily.SD1 ? -1 : -2;
+    public int DefaultClipLayer => SdFamilies.DefaultClipLayer(Family);
 
     /// <summary>
     /// Encodes token ids as the tokenizer makes them (<see cref="BPETokenizer.EncodeCLIP"/>: start, tokens, end, padded with the end token).
@@ -67,17 +67,12 @@ public sealed class Checkpoint : IDisposable
     /// The empty prompt's encoding at a layer, computed once per layer and CLIP LoRA set: the baseline weighted prompts are measured against. Call it while the
     /// CLIP's LoRAs are merged (<see cref="UseLorasAsync"/>).
     /// </summary>
-    public Task<TextEncoding> EmptyPromptAsync(int? layer = null, IReadOnlyList<LoraUse>? clipLoras = null)
-    {
-        int l = layer ?? DefaultClipLayer;
-        string key = l + "|" + LoraKey(clipLoras ?? [], []);
-        lock (_gate)
-        {
-            if (!_emptyPrompt.TryGetValue(key, out var task) || task.IsFaulted || task.IsCanceled)
-                _emptyPrompt[key] = task = EncodeAsync(Tokenizer.EncodeCLIP("", TokenCount), layer: l);
-            return task;
-        }
-    }
+    public Task<TextEncoding> EmptyPromptAsync(int? layer = null, IReadOnlyList<LoraUse>? clipLoras = null) =>
+        _emptyPrompt.GetAsync(this, layer ?? DefaultClipLayer, clipLoras ?? []);
+
+    Task<TextEncoding> ITextEncoderModel.EmptyPromptAsync(int? layer, IReadOnlyList<LoraUse> loras) => EmptyPromptAsync(layer, loras);
+    Task IDiffusionModel.UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) => UseLorasAsync(loras, null, cancellationToken);
+    Task ITextEncoderModel.UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) => UseLorasAsync(null, loras, cancellationToken);
 
     /// <summary>
     /// Merges the LoRAs a model (<paramref name="unet"/>) or a CLIP (<paramref name="clip"/>) carries into the weights, keeping the other part's set (null = keep).
@@ -127,7 +122,7 @@ public sealed class Checkpoint : IDisposable
         string.Join(";", CombineLoras(unet, clip).Select(e => $"{e.Repo}/{e.File}:{e.Strength:R}:{e.ClipStrength:R}"));
 
     /// <summary>Starts a sampling run on the UNet; dispose it when the run ends (it frees the run's GPU buffers).</summary>
-    internal UNetRun BeginRun(Accelerator accelerator) => _models.BeginRun(accelerator);
+    public UNetRun BeginRun(Accelerator accelerator) => _models.BeginRun(accelerator);
 
     /// <summary>Decodes one latent in the VAE's values, [4, h, w], to a picture [3, 8h, 8w] in [-1, 1] (not clamped).</summary>
     public Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default) =>
@@ -156,7 +151,7 @@ public sealed class Checkpoint : IDisposable
     /// </summary>
     public const string ClipTokenizerRepo = "openai/clip-vit-large-patch14";
 
-    static async Task<BPETokenizer> LoadClipTokenizerAsync(SpawnDev.ILGPU.ML.Hub.IModelSource source, string repoId, string folder, Action<string, int>? onProgress)
+    internal static async Task<BPETokenizer> LoadClipTokenizerAsync(SpawnDev.ILGPU.ML.Hub.IModelSource source, string repoId, string folder, Action<string, int>? onProgress)
     {
         onProgress?.Invoke("tokenizer", 0);
         string vocabJson, mergesText;
@@ -181,7 +176,7 @@ public sealed class Checkpoint : IDisposable
 
 
 /// <summary>One sampling run's UNet: each conditioning entry goes to the GPU once, every step uploads only the latent.</summary>
-internal abstract class UNetRun : IDisposable
+public abstract class UNetRun : IDisposable
 {
     /// <summary>One prediction (eps or v, as the model was trained) for <paramref name="input"/> [4, h, w] in the model's space at <paramref name="timestep"/>.</summary>
     public abstract Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, CancellationToken cancellationToken);
@@ -204,29 +199,31 @@ internal interface ICheckpointModels : IDisposable
 
 /// <summary>The denoiser (UNet) of a loaded checkpoint, with the sampling math constants.</summary>
 [Socket("MODEL")]
-public sealed class ModelHandle(Checkpoint checkpoint, ModelSampling sampling)
+public sealed class ModelHandle(IDiffusionModel model, ModelSampling sampling)
 {
-    public ModelHandle(Checkpoint checkpoint) : this(checkpoint, checkpoint?.Sampling!) { }
+    public ModelHandle(IDiffusionModel model) : this(model, model?.Sampling!) { }
 
-    public Checkpoint Checkpoint { get; } = checkpoint;
+    /// <summary>The diffusion model (a checkpoint's UNet or one loaded alone).</summary>
+    public IDiffusionModel Model { get; } = model;
     /// <summary>How the denoiser is driven: its noise levels, timesteps and prediction type (ModelSamplingDiscrete swaps it).</summary>
     public ModelSampling Sampling { get; init; } = sampling;
     /// <summary>The model family's latent format (SD 1.5's when there is no checkpoint, as in tests of the sampling maths).</summary>
-    public LatentFormat LatentFormat => Checkpoint?.LatentFormat ?? LatentFormat.SD15;
+    public LatentFormat LatentFormat => Model?.LatentFormat ?? LatentFormat.SD15;
     /// <summary>The guidance patches (RescaleCFG, CFGNorm, APG, ...) sampling applies, ComfyUI's model_options.</summary>
     public ModelPatches Patches { get; init; } = ModelPatches.None;
     /// <summary>The LoRAs merged into the UNet while this model samples (Load LoRA adds to a copy).</summary>
     public IReadOnlyList<LoraUse> Loras { get; init; } = [];
 
     /// <summary>A copy with other patches: patch nodes never change the model that came in, like ComfyUI's model.clone().</summary>
-    public ModelHandle WithPatches(Func<ModelPatches, ModelPatches> change) => new(Checkpoint, Sampling) { Patches = change(Patches), Loras = Loras };
+    public ModelHandle WithPatches(Func<ModelPatches, ModelPatches> change) => new(Model, Sampling) { Patches = change(Patches), Loras = Loras };
 }
 
 /// <summary>The CLIP text encoder(s) and tokenizer of a loaded checkpoint, and the layer prompts are read from.</summary>
 [Socket("CLIP")]
-public sealed class ClipHandle(Checkpoint checkpoint)
+public sealed class ClipHandle(ITextEncoderModel encoder)
 {
-    public Checkpoint Checkpoint { get; } = checkpoint;
+    /// <summary>The text encoder(s) (a checkpoint's or loaded alone).</summary>
+    public ITextEncoderModel Encoder { get; } = encoder;
     /// <summary>CLIP Set Last Layer's choice (-1 the last layer, -2 the penultimate, ...); null = the model family's default.</summary>
     public int? Layer { get; init; }
     /// <summary>The LoRAs merged into the text encoder(s) while this CLIP encodes (Load LoRA adds to a copy).</summary>
@@ -235,4 +232,4 @@ public sealed class ClipHandle(Checkpoint checkpoint)
 
 /// <summary>The VAE of a loaded checkpoint.</summary>
 [Socket("VAE")]
-public sealed class VaeHandle(Checkpoint checkpoint) { public Checkpoint Checkpoint { get; } = checkpoint; }
+public sealed class VaeHandle(IVaeModel vae) { public IVaeModel Vae { get; } = vae; }

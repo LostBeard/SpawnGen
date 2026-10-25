@@ -34,7 +34,7 @@ internal static class SamplingCore
     public static async Task<(LatentBatch Output, LatentBatch Denoised)> RunWithDenoisedAsync(Accelerator acc, GuiderChoice guider, LatentBatch latent,
         float[] sigmas, SamplingSettings settings, NodeContext context)
     {
-        var ckpt = guider.Model.Checkpoint;
+        var ckpt = guider.Model.Model;
         var sampling = guider.Model.Sampling;
         var format = guider.Model.LatentFormat;
         if (latent.Channels != Checkpoint.LatentChannels)
@@ -43,7 +43,7 @@ internal static class SamplingCore
         if (sigmas.Length == 0) return (latent, latent); // nothing to sample; a single sigma only noises the latent, as in ComfyUI
 
         // The model's LoRAs are merged for this run; the embeddings go to the GPU once per run, not once per step.
-        await ckpt.UseLorasAsync(guider.Model.Loras, null, context.CancellationToken);
+        await ckpt.UseLorasAsync(guider.Model.Loras, context.CancellationToken);
         using (var unet = ckpt.BeginRun(acc))
         {
             var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };

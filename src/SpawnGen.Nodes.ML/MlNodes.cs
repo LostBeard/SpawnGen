@@ -48,12 +48,12 @@ public sealed class CLIPTextEncode
     }
 
     /// <summary>
-    /// Encodes a prompt with the checkpoint's CLIP at the handle's layer. <paramref name="textG"/> is SDXL's second tower's prompt (the same text for
+    /// Encodes a prompt with the CLIP at the handle's layer. <paramref name="textG"/> is SDXL's second tower's prompt (the same text for
     /// CLIP Text Encode). Weighted prompts move each weighted token's row away from the empty prompt's by its weight, in each tower's columns.
     /// </summary>
     internal static async Task<TextEncoding> EncodeAsync(ClipHandle clip, string textL, string textG, CancellationToken cancellationToken)
     {
-        var ckpt = clip.Checkpoint;
+        var ckpt = clip.Encoder;
         bool two = ckpt.Family == SpawnDev.ILGPU.ML.StableDiffusion.SdFamily.SDXL;
         var chunksL = PromptWeights.Chunks(textL, piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount);
         var chunksG = two ? PromptWeights.Chunks(textG, piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount) : chunksL;
@@ -62,7 +62,7 @@ public sealed class CLIPTextEncode
         while (chunksL.Count < chunksG.Count) chunksL = [.. chunksL, emptyChunk];
         while (chunksG.Count < chunksL.Count) chunksG = [.. chunksG, emptyChunk];
 
-        await ckpt.UseLorasAsync(null, clip.Loras, cancellationToken);
+        await ckpt.UseLorasAsync(clip.Loras, cancellationToken);
         bool weighted = chunksL.Concat(chunksG).Any(c => c.Weights.Any(w => w != 1f));
         float[]? empty = weighted ? (await ckpt.EmptyPromptAsync(clip.Layer, clip.Loras)).Context : null;
         var contexts = new List<float[]>();
@@ -89,7 +89,7 @@ public sealed class CLIPTextEncode
     }
 
     /// <summary>The tokens of a piece of text without the start and end markers or padding.</summary>
-    internal static int[] PlainTokens(Checkpoint ckpt, string piece)
+    internal static int[] PlainTokens(ITextEncoderModel ckpt, string piece)
     {
         // A UTF-16 character is at most 3 bytes of UTF-8 and CLIP's BPE gives at most one token per byte: room for every token plus start and end.
         var ids = ckpt.Tokenizer.EncodeCLIP(piece, 3 * piece.Length + 3);
@@ -147,7 +147,7 @@ public sealed class VAEDecode
             {
                 context.CancellationToken.ThrowIfCancellationRequested();
                 var latent = samples.Data[(b * perLatent)..((b + 1) * perLatent)]; // the VAE's own values, as a LATENT holds them
-                var chw = await vae.Checkpoint.DecodeAsync(latent, h, w, context.CancellationToken);
+                var chw = await vae.Vae.DecodeAsync(latent, h, w, context.CancellationToken);
 
                 // NCHW in [-1, 1] -> NHWC in [0, 1].
                 int plane = imgH * imgW;
@@ -187,7 +187,7 @@ public sealed class VAEEncode
                     for (int c = 0; c < 3; c++)
                         chw[(c * h + y) * w + x] = pixels.Data[(((b * pixels.Height) + y) * pixels.Width + x) * pixels.Channels + c] * 2f - 1f;
 
-            var z = await vae.Checkpoint.EncodeImageAsync(chw, h, w, context.CancellationToken);
+            var z = await vae.Vae.EncodeImageAsync(chw, h, w, context.CancellationToken);
             Array.Copy(z, 0, latents.Data, b * perLatent, perLatent); // a LATENT holds the VAE's values; the sampler scales them
             context.Progress(b + 1, pixels.Batch);
         }

@@ -77,6 +77,7 @@ public static class CheckpointCatalog
                 var folders = Entries.Where(e => e.Value.Folder != RemoteOnly).GroupBy(e => e.Value.Repo)
                     .ToDictionary(g => g.Key, g => g.First().Value.Folder ?? g.First().Key);
                 folders[LocalLorasRepo] = "loras";
+                foreach (var (repo, folder) in ModelFolders.RepoFolders) folders[repo] = folder;
                 return folders;
             }
         }

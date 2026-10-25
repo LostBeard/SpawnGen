@@ -21,10 +21,10 @@ public sealed class LoraLoader
     }
 
     internal static ModelHandle WithLora(ModelHandle model, string loraName, double strength) => strength == 0 ? model :
-        new ModelHandle(model.Checkpoint, model.Sampling) { Patches = model.Patches, Loras = [.. model.Loras, Use(loraName, strength)] };
+        new ModelHandle(model.Model, model.Sampling) { Patches = model.Patches, Loras = [.. model.Loras, Use(loraName, strength)] };
 
     internal static ClipHandle WithLora(ClipHandle clip, string loraName, double strength) => strength == 0 ? clip :
-        new ClipHandle(clip.Checkpoint) { Layer = clip.Layer, Loras = [.. clip.Loras, Use(loraName, strength)] };
+        new ClipHandle(clip.Encoder) { Layer = clip.Layer, Loras = [.. clip.Loras, Use(loraName, strength)] };
 
     static LoraUse Use(string loraName, double strength) => new(CheckpointCatalog.LocalLorasRepo, loraName, (float)strength);
 }

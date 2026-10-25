@@ -9,7 +9,7 @@ public sealed class CLIPSetLastLayer
     /// Which CLIP layer prompts are read from: -1 the last, -2 the one before it ("CLIP skip 2"), and so on. The CLIP that comes in is not changed, as in ComfyUI.
     /// </summary>
     public ClipHandle Execute(ClipHandle clip, [Input(Min = -24, Max = -1, Step = 1)] int stopAtClipLayer = -1) =>
-        new(clip.Checkpoint) { Layer = stopAtClipLayer, Loras = clip.Loras };
+        new(clip.Encoder) { Layer = stopAtClipLayer, Loras = clip.Loras };
 }
 
 [Node(Category = "model/conditioning/stable diffusion", DisplayName = "CLIP Text Encode (SDXL)")]
@@ -25,8 +25,8 @@ public sealed class CLIPTextEncodeSDXL
         [Input(Min = 0, Max = 16384, Default = 1024)] int targetWidth, [Input(Min = 0, Max = 16384, Default = 1024)] int targetHeight,
         [Input(Multiline = true, Default = "")] string textG, [Input(Multiline = true, Default = "")] string textL, NodeContext context)
     {
-        if (clip.Checkpoint.Family != SpawnDev.ILGPU.ML.StableDiffusion.SdFamily.SDXL)
-            throw new ArgumentException($"CLIP Text Encode (SDXL) needs an SDXL checkpoint's CLIP; '{clip.Checkpoint.Name}' is {clip.Checkpoint.Family}.", nameof(clip));
+        if (clip.Encoder.Family != SpawnDev.ILGPU.ML.StableDiffusion.SdFamily.SDXL)
+            throw new ArgumentException($"CLIP Text Encode (SDXL) needs an SDXL CLIP; '{clip.Encoder.Name}' is {clip.Encoder.Family}.", nameof(clip));
         var e = await CLIPTextEncode.EncodeAsync(clip, textL, textG, context.CancellationToken);
         return new Conditioning([new CondEntry(e.Context, e.Shape)
         {

@@ -55,6 +55,10 @@ internal sealed class OnnxCheckpointModels : ICheckpointModels
 
     public UNetRun BeginRun(Accelerator accelerator) => new Run(Unet, accelerator);
 
+    public Task SetLorasAsync(IReadOnlyList<(string Repo, string File, float Strength, float ClipStrength)> loras, CancellationToken cancellationToken) =>
+        loras.Count == 0 ? Task.CompletedTask
+            : throw new NotSupportedException("LoRAs are merged into single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
+
     sealed class Run(InferenceSession unet, Accelerator acc) : UNetRun
     {
         readonly Dictionary<CondEntry, (MemoryBuffer1D<float, Stride1D.Dense> Buffer, Tensor Tensor)> _uploaded = new(ReferenceEqualityComparer.Instance);

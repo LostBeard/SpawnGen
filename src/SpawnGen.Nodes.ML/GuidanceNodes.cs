@@ -159,6 +159,6 @@ public sealed class ModelSamplingDiscrete
             _ => throw new ArgumentException($"Unknown sampling '{sampling}'. Known: {string.Join(", ", SamplingTypes())}.", nameof(sampling)),
         };
         if (prediction == PredictionType.Lcm) sigmas = sigmas.Distilled();
-        return new ModelHandle(model.Checkpoint!, new ModelSampling(sigmas, prediction)) { Patches = model.Patches };
+        return new ModelHandle(model.Checkpoint!, new ModelSampling(sigmas, prediction)) { Patches = model.Patches, Loras = model.Loras };
     }
 }

@@ -6,6 +6,9 @@ using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Nodes.ML;
 
+/// <summary>One LoRA a model or CLIP carries: its file on the model source and how strongly it is merged.</summary>
+public sealed record LoraUse(string Repo, string File, float Strength);
+
 /// <summary>What a text encoder made of one prompt: the context rows the UNet cross-attends to (<c>[1, rows, width]</c>) and, for SDXL, the pooled embedding.</summary>
 public sealed record TextEncoding(float[] Context, int[] Shape, float[]? Pooled);
 
@@ -21,7 +24,10 @@ public sealed class Checkpoint : IDisposable
 
     readonly ICheckpointModels _models;
     readonly object _gate = new();
-    readonly Dictionary<int, Task<TextEncoding>> _emptyPrompt = new();
+    readonly Dictionary<string, Task<TextEncoding>> _emptyPrompt = new();
+    readonly SemaphoreSlim _loraGate = new(1, 1);
+    IReadOnlyList<LoraUse> _unetLoras = [], _clipLoras = [];
+    string _appliedLoras = "";
 
     internal Checkpoint(string name, ICheckpointModels models, BPETokenizer tokenizer)
     {
@@ -57,17 +63,68 @@ public sealed class Checkpoint : IDisposable
     public Task<TextEncoding> EncodeAsync(int[] ids, int[]? ids2 = null, int? layer = null, CancellationToken cancellationToken = default) =>
         _models.EncodeAsync(ids, ids2, layer, cancellationToken);
 
-    /// <summary>The empty prompt's encoding at a layer, computed once: the baseline weighted prompts are measured against.</summary>
-    public Task<TextEncoding> EmptyPromptAsync(int? layer = null)
+    /// <summary>
+    /// The empty prompt's encoding at a layer, computed once per layer and CLIP LoRA set: the baseline weighted prompts are measured against. Call it while the
+    /// CLIP's LoRAs are merged (<see cref="UseLorasAsync"/>).
+    /// </summary>
+    public Task<TextEncoding> EmptyPromptAsync(int? layer = null, IReadOnlyList<LoraUse>? clipLoras = null)
     {
-        int key = layer ?? DefaultClipLayer;
+        int l = layer ?? DefaultClipLayer;
+        string key = l + "|" + LoraKey(clipLoras ?? [], []);
         lock (_gate)
         {
             if (!_emptyPrompt.TryGetValue(key, out var task) || task.IsFaulted || task.IsCanceled)
-                _emptyPrompt[key] = task = EncodeAsync(Tokenizer.EncodeCLIP("", TokenCount), layer: key);
+                _emptyPrompt[key] = task = EncodeAsync(Tokenizer.EncodeCLIP("", TokenCount), layer: l);
             return task;
         }
     }
+
+    /// <summary>
+    /// Merges the LoRAs a model (<paramref name="unet"/>) or a CLIP (<paramref name="clip"/>) carries into the weights, keeping the other part's set (null = keep).
+    /// The merged set is replaced only when it changes; the library restores the original weights first, so the handles that come into a node never change
+    /// (ComfyUI's model.clone()). Nodes run one at a time, so a sampling run or an encode always sees the set it asked for.
+    /// </summary>
+    internal async Task UseLorasAsync(IReadOnlyList<LoraUse>? unet, IReadOnlyList<LoraUse>? clip, CancellationToken cancellationToken = default)
+    {
+        await _loraGate.WaitAsync(cancellationToken);
+        try
+        {
+            var u = unet ?? _unetLoras;
+            var c = clip ?? _clipLoras;
+            string key = LoraKey(u, c);
+            if (key != _appliedLoras)
+            {
+                _appliedLoras = "?"; // unknown until the merge finishes: a failed merge is redone next time
+                await _models.SetLorasAsync(CombineLoras(u, c), cancellationToken);
+                _appliedLoras = key;
+            }
+            _unetLoras = u;
+            _clipLoras = c;
+        }
+        finally
+        {
+            _loraGate.Release();
+        }
+    }
+
+    /// <summary>One entry per LoRA file in order of first use: its UNet strength (the model's uses summed) and its text-encoder strength (the CLIP's uses summed).</summary>
+    internal static List<(string Repo, string File, float Strength, float ClipStrength)> CombineLoras(IReadOnlyList<LoraUse> unet, IReadOnlyList<LoraUse> clip)
+    {
+        var combined = new List<(string Repo, string File, float Strength, float ClipStrength)>();
+        void Add(LoraUse l, bool isClip)
+        {
+            int i = combined.FindIndex(e => e.Repo == l.Repo && e.File == l.File);
+            if (i < 0) { combined.Add((l.Repo, l.File, 0f, 0f)); i = combined.Count - 1; }
+            var e = combined[i];
+            combined[i] = isClip ? e with { ClipStrength = e.ClipStrength + l.Strength } : e with { Strength = e.Strength + l.Strength };
+        }
+        foreach (var l in unet) Add(l, false);
+        foreach (var l in clip) Add(l, true);
+        return combined;
+    }
+
+    static string LoraKey(IReadOnlyList<LoraUse> unet, IReadOnlyList<LoraUse> clip) =>
+        string.Join(";", CombineLoras(unet, clip).Select(e => $"{e.Repo}/{e.File}:{e.Strength:R}:{e.ClipStrength:R}"));
 
     /// <summary>Starts a sampling run on the UNet; dispose it when the run ends (it frees the run's GPU buffers).</summary>
     internal UNetRun BeginRun(Accelerator accelerator) => _models.BeginRun(accelerator);
@@ -113,7 +170,11 @@ public sealed class Checkpoint : IDisposable
         return BPETokenizer.Load(vocabJson, mergesText);
     }
 
-    public void Dispose() => _models.Dispose();
+    public void Dispose()
+    {
+        _models.Dispose();
+        _loraGate.Dispose();
+    }
 }
 
 
@@ -137,6 +198,8 @@ internal interface ICheckpointModels : IDisposable
     UNetRun BeginRun(Accelerator accelerator);
     Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken);
     Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken);
+    /// <summary>Merges exactly these LoRAs (an empty list removes every LoRA), replacing the set merged before.</summary>
+    Task SetLorasAsync(IReadOnlyList<(string Repo, string File, float Strength, float ClipStrength)> loras, CancellationToken cancellationToken);
 }
 
 /// <summary>The denoiser (UNet) of a loaded checkpoint, with the sampling math constants.</summary>
@@ -152,9 +215,11 @@ public sealed class ModelHandle(Checkpoint checkpoint, ModelSampling sampling)
     public LatentFormat LatentFormat => Checkpoint?.LatentFormat ?? LatentFormat.SD15;
     /// <summary>The guidance patches (RescaleCFG, CFGNorm, APG, ...) sampling applies, ComfyUI's model_options.</summary>
     public ModelPatches Patches { get; init; } = ModelPatches.None;
+    /// <summary>The LoRAs merged into the UNet while this model samples (Load LoRA adds to a copy).</summary>
+    public IReadOnlyList<LoraUse> Loras { get; init; } = [];
 
     /// <summary>A copy with other patches: patch nodes never change the model that came in, like ComfyUI's model.clone().</summary>
-    public ModelHandle WithPatches(Func<ModelPatches, ModelPatches> change) => new(Checkpoint, Sampling) { Patches = change(Patches) };
+    public ModelHandle WithPatches(Func<ModelPatches, ModelPatches> change) => new(Checkpoint, Sampling) { Patches = change(Patches), Loras = Loras };
 }
 
 /// <summary>The CLIP text encoder(s) and tokenizer of a loaded checkpoint, and the layer prompts are read from.</summary>
@@ -164,6 +229,8 @@ public sealed class ClipHandle(Checkpoint checkpoint)
     public Checkpoint Checkpoint { get; } = checkpoint;
     /// <summary>CLIP Set Last Layer's choice (-1 the last layer, -2 the penultimate, ...); null = the model family's default.</summary>
     public int? Layer { get; init; }
+    /// <summary>The LoRAs merged into the text encoder(s) while this CLIP encodes (Load LoRA adds to a copy).</summary>
+    public IReadOnlyList<LoraUse> Loras { get; init; } = [];
 }
 
 /// <summary>The VAE of a loaded checkpoint.</summary>

@@ -1,6 +1,6 @@
 """Runs a same-start graph through the ComfyUI server and saves its result latent and picture.
 
-    python run_comfy.py <ckpt> <steps> <cfg> <sampler> <prefix> [start latent name, default start.latent]
+    python run_comfy.py <ckpt> <steps> <cfg> <sampler> <prefix> [start latent name, default start.latent] [lora file] [lora strength]
 
 The start latent (in ComfyUI's input folder) is the noised start; add_noise is disabled so the only randomness is the start itself. The graph matches
 ComfyUIRenderParityTests.RunAsync: prompt "a photo of a red apple on a wooden table", empty negative, KSampler (Advanced), scheduler normal.
@@ -10,8 +10,8 @@ import json, sys, time, urllib.request
 SERVER = "http://127.0.0.1:8199"
 
 
-def graph(ckpt, steps, cfg, sampler, prefix, latent="start.latent"):
-    return {
+def graph(ckpt, steps, cfg, sampler, prefix, latent="start.latent", lora=None, strength=1.0):
+    g = {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt}},
         "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a photo of a red apple on a wooden table", "clip": ["1", 1]}},
         "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["1", 1]}},
@@ -24,12 +24,21 @@ def graph(ckpt, steps, cfg, sampler, prefix, latent="start.latent"):
         "7": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
         "8": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": prefix}},
     }
+    if lora:
+        # Load LoRA (Model and CLIP) between the checkpoint and everything that used it
+        g["9"] = {"class_type": "LoraLoader", "inputs": {"model": ["1", 0], "clip": ["1", 1], "lora_name": lora, "strength_model": strength, "strength_clip": strength}}
+        g["2"]["inputs"]["clip"] = ["9", 1]
+        g["3"]["inputs"]["clip"] = ["9", 1]
+        g["5"]["inputs"]["model"] = ["9", 0]
+    return g
 
 
 if __name__ == "__main__":
     ckpt, steps, cfg, sampler, prefix = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], sys.argv[5]
     latent = sys.argv[6] if len(sys.argv) > 6 else "start.latent"
-    req = urllib.request.Request(SERVER + "/prompt", data=json.dumps({"prompt": graph(ckpt, steps, cfg, sampler, prefix, latent)}).encode(),
+    lora = sys.argv[7] if len(sys.argv) > 7 else None
+    strength = float(sys.argv[8]) if len(sys.argv) > 8 else 1.0
+    req = urllib.request.Request(SERVER + "/prompt", data=json.dumps({"prompt": graph(ckpt, steps, cfg, sampler, prefix, latent, lora, strength)}).encode(),
                                  headers={"Content-Type": "application/json"})
     pid = json.load(urllib.request.urlopen(req))["prompt_id"]
     t0 = time.time()

@@ -89,7 +89,24 @@ public class ComfyUIRenderParityTests
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 
-    static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg)
+    /// <summary>
+    /// SD 1.5 with a LoRA (latent-consistency/lcm-lora-sdv1-5 as &lt;models&gt;/loras/lcm-lora-sdv1-5.safetensors) through Load LoRA (Model and CLIP) at strength 1,
+    /// against ComfyUI's render of the same graph (euler, 4 steps, cfg 1).
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors, loras/lcm-lora-sdv1-5.safetensors) and a GPU.")]
+    public async Task SD15_with_a_LoRA_gives_ComfyUIs_result()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        CheckpointCatalog.ScanLoraFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 4, 1.0, lora: "lcm-lora-sdv1-5.safetensors", result: "euler_lcm_lora");
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg,
+        string? lora = null, string? result = null)
     {
         var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", fixture);
         var outDir = Path.Combine(Path.GetTempPath(), "spawngen-comfy-parity-" + Guid.NewGuid().ToString("N"));
@@ -101,10 +118,17 @@ public class ComfyUIRenderParityTests
                 new Services(runtime, new OutputOptions { Directory = outDir }));
             var g = new PromptGraph();
             g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", checkpoint));
-            g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", PromptInput.Link("1", 1)));
-            g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link("1", 1)));
+            // With a LoRA, Load LoRA (Model and CLIP) sits between the checkpoint and everything that used it (as run_comfy.py builds it).
+            string from = "1";
+            if (lora is not null)
+            {
+                g.Add("9", "LoraLoader", ("model", PromptInput.Link("1")), ("clip", PromptInput.Link("1", 1)), ("lora_name", lora), ("strength_model", 1.0), ("strength_clip", 1.0));
+                from = "9";
+            }
+            g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", PromptInput.Link(from, 1)));
+            g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link(from, 1)));
             g.Add("4", "LoadLatent", ("latent", "start.latent"));
-            g.Add("5", "KSamplerAdvanced", ("model", PromptInput.Link("1")), ("add_noise", "disable"), ("noise_seed", 0), ("steps", steps), ("cfg", cfg),
+            g.Add("5", "KSamplerAdvanced", ("model", PromptInput.Link(from)), ("add_noise", "disable"), ("noise_seed", 0), ("steps", steps), ("cfg", cfg),
                 ("sampler_name", sampler), ("scheduler", "normal"), ("positive", PromptInput.Link("2")), ("negative", PromptInput.Link("3")),
                 ("latent_image", PromptInput.Link("4")), ("start_at_step", 0), ("end_at_step", 10000), ("return_with_leftover_noise", "disable"));
             g.Add("6", "SaveLatent", ("samples", PromptInput.Link("5")), ("filename_prefix", "parity"));
@@ -114,7 +138,7 @@ public class ComfyUIRenderParityTests
 
             var ours = LoadLatent.Decode(File.ReadAllBytes(Directory.GetFiles(outDir, "parity_*.latent", SearchOption.AllDirectories).Single())).Data;
             // ComfyUI saved its LATENT (the VAE's values), which is what SpawnGen's LATENT holds too.
-            var comfy = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, sampler + ".latent"))).Data;
+            var comfy = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, (result ?? sampler) + ".latent"))).Data;
             double diff = Math.Sqrt(ours.Zip(comfy, (a, b) => (double)(a - b) * (a - b)).Average());
             double scale = Math.Sqrt(comfy.Average(v => (double)v * v));
             TestContext.Out.WriteLine($"{checkpoint} {sampler}: rms difference {diff:F4} of rms {scale:F4}; picture {Directory.GetFiles(outDir, "parity_*.png").Single()}");

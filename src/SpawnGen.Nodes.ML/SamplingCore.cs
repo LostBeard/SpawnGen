@@ -42,7 +42,8 @@ internal static class SamplingCore
         int steps = sigmas.Length - 1, h = latent.Height, w = latent.Width, perImage = Checkpoint.LatentChannels * h * w;
         if (sigmas.Length == 0) return (latent, latent); // nothing to sample; a single sigma only noises the latent, as in ComfyUI
 
-        // The embeddings go to the GPU once per run, not once per step.
+        // The model's LoRAs are merged for this run; the embeddings go to the GPU once per run, not once per step.
+        await ckpt.UseLorasAsync(guider.Model.Loras, null, context.CancellationToken);
         using (var unet = ckpt.BeginRun(acc))
         {
             var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };

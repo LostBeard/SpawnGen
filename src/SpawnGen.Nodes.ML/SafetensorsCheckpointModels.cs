@@ -13,11 +13,13 @@ internal sealed class SafetensorsCheckpointModels : ICheckpointModels
 {
     readonly SdCheckpoint _ck;
     readonly Accelerator _acc;
+    readonly SpawnDev.ILGPU.ML.Hub.IModelSource _source;
 
-    SafetensorsCheckpointModels(SdCheckpoint ck, Accelerator acc)
+    SafetensorsCheckpointModels(SdCheckpoint ck, Accelerator acc, SpawnDev.ILGPU.ML.Hub.IModelSource source)
     {
         _ck = ck;
         _acc = acc;
+        _source = source;
         if (ck.UNet is null || ck.TextEncoder is null || ck.Vae is null)
             throw new InvalidDataException("The checkpoint file lacks a UNet, text encoder or VAE; Load Checkpoint needs all three.");
     }
@@ -36,6 +38,14 @@ internal sealed class SafetensorsCheckpointModels : ICheckpointModels
     }
 
     public UNetRun BeginRun(Accelerator accelerator) => new Run(_ck.UNet!, accelerator);
+
+    public async Task SetLorasAsync(IReadOnlyList<(string Repo, string File, float Strength, float ClipStrength)> loras, CancellationToken cancellationToken)
+    {
+        var report = await _ck.ApplyLorasAsync([.. loras.Select(l => SdLoraSpec.From(_source, l.Repo, l.File, l.Strength, l.ClipStrength))], cancellationToken);
+        // ComfyUI warns about LoRA keys that match nothing (a LoRA made for another model family) and goes on; so does SpawnGen.
+        foreach (var (lora, patched, unmatched) in report.Loras)
+            if (unmatched.Count > 0) Console.WriteLine($"LoRA {lora}: {patched} modules merged, {unmatched.Count} keys matched nothing in this {Family} checkpoint (first: {unmatched[0]})");
+    }
 
     sealed class Run(SdUNet unet, Accelerator acc) : UNetRun
     {
@@ -105,7 +115,7 @@ internal sealed class SafetensorsCheckpointModels : ICheckpointModels
             last = pct;
             onProgress?.Invoke(stage, pct);
         });
-        try { return new SafetensorsCheckpointModels(ck, runtime.Accelerator); }
+        try { return new SafetensorsCheckpointModels(ck, runtime.Accelerator, runtime.ModelSource); }
         catch { ck.Dispose(); throw; }
     }
 

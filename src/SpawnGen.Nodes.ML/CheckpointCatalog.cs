@@ -19,6 +19,24 @@ public static class CheckpointCatalog
 
     /// <summary>The repo id the files of <c>&lt;models&gt;/checkpoints</c> are opened under.</summary>
     public const string LocalCheckpointsRepo = "local/checkpoints";
+    /// <summary>The repo id the files of <c>&lt;models&gt;/loras</c> are opened under.</summary>
+    public const string LocalLorasRepo = "local/loras";
+
+    static readonly SortedSet<string> LoraFiles = new(StringComparer.Ordinal);
+
+    /// <summary>The LoRA files Load LoRA offers (paths under <c>&lt;models&gt;/loras</c>, as ComfyUI lists them).</summary>
+    public static IReadOnlyList<string> Loras { get { lock (Gate) return [.. LoraFiles]; } }
+
+    /// <summary>Adds every <c>.safetensors</c> file under <c>&lt;models&gt;/loras</c> (sub-folders too). Returns how many were added.</summary>
+    public static int ScanLoraFiles(string modelsFolder)
+    {
+        var dir = Path.Combine(modelsFolder, "loras");
+        if (!Directory.Exists(dir)) return 0;
+        int added = 0;
+        foreach (var path in Directory.EnumerateFiles(dir, "*.safetensors", SearchOption.AllDirectories))
+            lock (Gate) if (LoraFiles.Add(Path.GetRelativePath(dir, path))) added++;
+        return added;
+    }
 
     static readonly object Gate = new();
     static readonly Dictionary<string, Entry> Entries = new(StringComparer.Ordinal)
@@ -39,7 +57,18 @@ public static class CheckpointCatalog
     public static IReadOnlyDictionary<string, MlRuntime.CheckpointInfo> Details { get { lock (Gate) return Entries.ToDictionary(e => e.Key, e => e.Value.Info); } }
 
     /// <summary>Repo id to checkpoint name: a models folder with a sub-folder of that name is read from disk instead of downloaded.</summary>
-    public static IReadOnlyDictionary<string, string> RepoFolders { get { lock (Gate) return Entries.GroupBy(e => e.Value.Repo).ToDictionary(g => g.Key, g => g.First().Value.Folder ?? g.First().Key); } }
+    public static IReadOnlyDictionary<string, string> RepoFolders
+    {
+        get
+        {
+            lock (Gate)
+            {
+                var folders = Entries.GroupBy(e => e.Value.Repo).ToDictionary(g => g.Key, g => g.First().Value.Folder ?? g.First().Key);
+                folders[LocalLorasRepo] = "loras";
+                return folders;
+            }
+        }
+    }
 
     /// <summary>
     /// Adds every <c>.safetensors</c> file under <c>&lt;models&gt;/checkpoints</c> (sub-folders too), named by its path there with the platform's separator, as

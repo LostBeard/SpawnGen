@@ -9,7 +9,7 @@ public sealed class CLIPSetLastLayer
     /// Which CLIP layer prompts are read from: -1 the last, -2 the one before it ("CLIP skip 2"), and so on. The CLIP that comes in is not changed, as in ComfyUI.
     /// </summary>
     public ClipHandle Execute(ClipHandle clip, [Input(Min = -24, Max = -1, Step = 1)] int stopAtClipLayer = -1) =>
-        new(clip.Checkpoint) { Layer = stopAtClipLayer };
+        new(clip.Checkpoint) { Layer = stopAtClipLayer, Loras = clip.Loras };
 }
 
 [Node(Category = "model/conditioning/stable diffusion", DisplayName = "CLIP Text Encode (SDXL)")]

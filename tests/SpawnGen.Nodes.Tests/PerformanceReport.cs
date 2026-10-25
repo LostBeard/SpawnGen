@@ -102,8 +102,7 @@ public class PerformanceReport
             inputShapes: new Dictionary<string, int[]> { ["latent_sample"] = [1, 4, 64, 64] });
         async Task<double> Decode(float[] latent)
         {
-            var scaled = latent.Select(v => v / Checkpoint.VaeScale).ToArray();
-            using var buf = acc.Allocate1D(scaled);
+            using var buf = acc.Allocate1D(latent); // a LATENT holds the VAE's values
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var outs = await vae.RunAsync(new Dictionary<string, SpawnDev.ILGPU.ML.Tensors.Tensor>
                 { [vae.InputNames[0]] = new SpawnDev.ILGPU.ML.Tensors.Tensor(buf.View, [1, 4, 64, 64]) });

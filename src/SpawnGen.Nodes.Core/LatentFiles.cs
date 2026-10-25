@@ -99,17 +99,18 @@ public sealed class LoadLatent
         if (!tensors.TryGetValue("latent_tensor", out var t)) throw new InvalidDataException("This file has no 'latent_tensor': it is not a latent file.");
         if (t.Shape.Length != 4) throw new InvalidDataException($"The latent has {t.Shape.Length} dimensions; a picture latent has 4 (batch, channels, height, width).");
         var data = Safetensors.ToFloats(t);
-        // ComfyUI's LATENT is the VAE's own values; the model scales them by 0.18215 when it samples. SpawnGen's LATENT is already scaled, so a file is
-        // brought into model space here. The earliest files (no version tag) were scaled already: ComfyUI multiplies them by 1 / 0.18215 on load and the
-        // model by 0.18215 again, both in float32.
-        bool versioned = tensors.ContainsKey("latent_format_version_0");
-        float unscale = (float)(1.0 / SdScale);
-        for (int i = 0; i < data.Length; i++) data[i] = versioned ? data[i] * SdScale : data[i] * unscale * SdScale;
+        // A file holds the VAE's own values, as a LATENT does (the model scales them when it samples). The earliest files (no version tag) were saved
+        // scaled by SD's 0.18215: ComfyUI multiplies them by 1 / 0.18215 (in float32) on load.
+        if (!tensors.ContainsKey("latent_format_version_0"))
+        {
+            float unscale = (float)(1.0 / LegacyScale);
+            for (int i = 0; i < data.Length; i++) data[i] *= unscale;
+        }
         return new LatentBatch(t.Shape[0], t.Shape[1], t.Shape[2], t.Shape[3], data);
     }
 
-    /// <summary>SD's latent scale factor (SD 1.x / 2.x, SD-Turbo: the latents SpawnGen's LATENT carries).</summary>
-    public const float SdScale = 0.18215f;
+    /// <summary>The scale the unversioned latent files of early ComfyUI were saved with (SD 1.x's latent scale factor).</summary>
+    public const float LegacyScale = 0.18215f;
 }
 
 [Node(Category = "model/latent", DisplayName = "Save Latent", IsOutput = true)]
@@ -127,8 +128,8 @@ public sealed class SaveLatent
 
     public static byte[] Encode(LatentBatch samples, IReadOnlyDictionary<string, string>? metadata = null) => Safetensors.Write(
     [
-        // Written as ComfyUI's LATENT holds it: the VAE's values, without the model's scale (see LoadLatent.Decode).
-        ("latent_tensor", [samples.Batch, samples.Channels, samples.Height, samples.Width], samples.Data.Select(v => v / LoadLatent.SdScale).ToArray()),
+        // The VAE's values, as the LATENT holds them (see LoadLatent.Decode).
+        ("latent_tensor", [samples.Batch, samples.Channels, samples.Height, samples.Width], samples.Data),
         ("latent_format_version_0", [0], []),
     ], metadata);
 }

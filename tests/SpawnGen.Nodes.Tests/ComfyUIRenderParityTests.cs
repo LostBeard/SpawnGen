@@ -56,7 +56,7 @@ public class ComfyUIRenderParityTests
             await executor.ExecuteAsync(g);
 
             var ours = LoadLatent.Decode(File.ReadAllBytes(Directory.GetFiles(outDir, "parity_*.latent", SearchOption.AllDirectories).Single())).Data;
-            // ComfyUI saved its LATENT (VAE space); LoadLatent brings it into SpawnGen's model space, as it does for our own file.
+            // ComfyUI saved its LATENT (the VAE's values), which is what SpawnGen's LATENT holds too.
             var comfy = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, sampler + ".latent"))).Data;
             double diff = Math.Sqrt(ours.Zip(comfy, (a, b) => (double)(a - b) * (a - b)).Average());
             double scale = Math.Sqrt(comfy.Average(v => (double)v * v));

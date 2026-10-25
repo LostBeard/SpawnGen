@@ -36,6 +36,7 @@ internal static class SamplingCore
     {
         var ckpt = guider.Model.Checkpoint;
         var sampling = guider.Model.Sampling;
+        var format = guider.Model.LatentFormat;
         if (latent.Channels != Checkpoint.LatentChannels)
             throw new ArgumentException($"Latent has {latent.Channels} channels; this checkpoint expects {Checkpoint.LatentChannels}.", nameof(latent));
         int steps = sigmas.Length - 1, h = latent.Height, w = latent.Width, perImage = Checkpoint.LatentChannels * h * w;
@@ -63,8 +64,8 @@ internal static class SamplingCore
 
             for (int b = 0; b < latent.Batch; b++)
             {
-                var original = new float[perImage];
-                Array.Copy(latent.Data, b * perImage, original, 0, perImage);
+                // A LATENT holds the VAE's values; the sampler works in the model's (ComfyUI's process_latent_in / process_latent_out).
+                var original = format.ProcessIn(latent.Data[(b * perImage)..((b + 1) * perImage)]);
                 var mask = ResizedMask(latent.NoiseMask, b, h, w);
 
                 int noiseIndex = NoiseIndex(latent, b);
@@ -91,11 +92,11 @@ internal static class SamplingCore
                     d =>
                     {
                         lastDenoised = d;
-                        if (item == 0 && context.WantsPreview) context.Preview(LatentPreview.Png(d, h, w));
+                        if (item == 0 && context.WantsPreview) context.Preview(LatentPreview.Png(d, h, w, format));
                     });
                 x = sampling.InverseNoiseScaling(sigmas[^1], x);
-                Array.Copy(x, 0, result.Data, b * perImage, perImage);
-                Array.Copy(lastDenoised ?? x, 0, denoisedResult.Data, b * perImage, perImage);
+                Array.Copy(format.ProcessOut(x), 0, result.Data, b * perImage, perImage);
+                Array.Copy(format.ProcessOut(lastDenoised ?? x), 0, denoisedResult.Data, b * perImage, perImage);
             }
             return (result, denoisedResult);
         }

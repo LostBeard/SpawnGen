@@ -134,8 +134,7 @@ public sealed class VAEDecode
             for (int b = 0; b < samples.Batch; b++)
             {
                 context.CancellationToken.ThrowIfCancellationRequested();
-                var latent = new float[perLatent];
-                for (int i = 0; i < perLatent; i++) latent[i] = samples.Data[b * perLatent + i] / Checkpoint.VaeScale;
+                var latent = samples.Data[(b * perLatent)..((b + 1) * perLatent)]; // the VAE's own values, as a LATENT holds them
 
                 var (buf, tensor) = GpuHelpers.Upload(acc, latent, [1, samples.Channels, h, w]);
                 using (buf)
@@ -190,7 +189,7 @@ public sealed class VAEEncode
             {
                 var outputs = await session.RunAsync(new Dictionary<string, Tensor> { [session.InputNames[0]] = tensor });
                 var z = await GpuHelpers.ReadAsync(acc, outputs[session.OutputNames[0]], perLatent);
-                for (int i = 0; i < perLatent; i++) latents.Data[b * perLatent + i] = z[i] * Checkpoint.VaeScale;
+                Array.Copy(z, 0, latents.Data, b * perLatent, perLatent); // a LATENT holds the VAE's values; the sampler scales them
             }
             context.Progress(b + 1, pixels.Batch);
         }

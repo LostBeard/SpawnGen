@@ -19,8 +19,8 @@ public class LatentFileTests
         var latent = Lat(2, 4, 3, 5, i => i * 0.37f - 8f);
         var back = LoadLatent.Decode(SaveLatent.Encode(latent));
         Assert.That((back.Batch, back.Channels, back.Height, back.Width), Is.EqualTo((2, 4, 3, 5)));
-        // The file holds the VAE's own values (ComfyUI's LATENT); reading it scales them back, so the latent returns to float rounding.
-        Assert.That(back.Data, Is.EqualTo(latent.Data).Within(1e-5f));
+        // The file holds the VAE's own values, as the LATENT does: a round trip is exact.
+        Assert.That(back.Data, Is.EqualTo(latent.Data));
     }
 
     [Test]
@@ -32,7 +32,7 @@ public class LatentFileTests
         var header = Encoding.UTF8.GetString(file, 8, (int)headerLength).TrimEnd();
         Assert.That(header, Is.EqualTo("{\"latent_tensor\":{\"dtype\":\"F32\",\"shape\":[1,4,2,2],\"data_offsets\":[0,64]},\"latent_format_version_0\":{\"dtype\":\"F32\",\"shape\":[0],\"data_offsets\":[64,64]}}"));
         Assert.That(file.Length, Is.EqualTo(8 + (int)headerLength + 64));
-        Assert.That(BinaryPrimitives.ReadSingleLittleEndian(file.AsSpan(8 + (int)headerLength + 4)), Is.EqualTo(1f / LoadLatent.SdScale), "stored without the model's scale, as ComfyUI stores it");
+        Assert.That(BinaryPrimitives.ReadSingleLittleEndian(file.AsSpan(8 + (int)headerLength + 4)), Is.EqualTo(1f), "stored as the LATENT holds it (the VAE's values), as ComfyUI stores it");
     }
 
     [Test]
@@ -52,12 +52,12 @@ public class LatentFileTests
             data.CopyTo(file, 8 + head.Length);
             return file;
         }
-        // A versioned file holds the VAE's values: SpawnGen's LATENT is in model space, scaled by 0.18215 as ComfyUI's model scales on sampling.
-        Assert.That(LoadLatent.Decode(File("F16", [0x3E00, 0xC000], true)).Data, Is.EqualTo(new[] { 1.5f * LoadLatent.SdScale, -2f * LoadLatent.SdScale }));
-        Assert.That(LoadLatent.Decode(File("BF16", [0x3FC0, 0xC000], true)).Data, Is.EqualTo(new[] { 1.5f * LoadLatent.SdScale, -2f * LoadLatent.SdScale }));
-        // An old unversioned file was saved scaled: ComfyUI divides by 0.18215 on load and its model multiplies again, so it reads back as written.
+        // A versioned file holds the VAE's values, exactly what a LATENT holds.
+        Assert.That(LoadLatent.Decode(File("F16", [0x3E00, 0xC000], true)).Data, Is.EqualTo(new[] { 1.5f, -2f }));
+        Assert.That(LoadLatent.Decode(File("BF16", [0x3FC0, 0xC000], true)).Data, Is.EqualTo(new[] { 1.5f, -2f }));
+        // An old unversioned file was saved scaled by 0.18215: ComfyUI multiplies it by 1 / 0.18215 in float32 on load.
         var old = LoadLatent.Decode(File("F16", [0x3E00, 0xC000], false)).Data;
-        Assert.That(old[0], Is.EqualTo(1.5f).Within(1e-6), "files from before latent scaling keep their values, as in ComfyUI");
+        Assert.That(old, Is.EqualTo(new[] { 1.5f * (float)(1.0 / 0.18215), -2f * (float)(1.0 / 0.18215) }), "files from before latent scaling are unscaled, as in ComfyUI");
     }
 
     [Test]

@@ -331,9 +331,10 @@ public sealed class AddNoise
         };
         for (int b = 0; b < latentImage.Batch; b++)
         {
-            var latent = latentImage.Data[(b * perImage)..((b + 1) * perImage)];
+            // In the model's space, as the sampler would add it, then back to the VAE's (the empty latent is not scaled).
+            var latent = model.LatentFormat.ProcessIn(latentImage.Data[(b * perImage)..((b + 1) * perImage)]);
             var fresh = noise.Enabled ? SamplingCore.InitialNoise(noise.Seed, b, latentImage) : new float[perImage];
-            var noisy = model.Sampling.NoiseScaling(scale, fresh, latent);
+            var noisy = model.LatentFormat.ProcessOut(model.Sampling.NoiseScaling(scale, fresh, latent));
             for (int i = 0; i < perImage; i++) result.Data[b * perImage + i] = float.IsFinite(noisy[i]) ? noisy[i] : 0f;
         }
         return result;

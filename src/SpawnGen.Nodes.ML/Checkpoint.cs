@@ -10,8 +10,6 @@ namespace SpawnGen.Nodes.ML;
 /// </summary>
 public sealed class Checkpoint : IDisposable
 {
-    /// <summary>SD 1.x / 2.x / Turbo VAE latent scale: the sampler output times 1/0.18215 is the VAE input.</summary>
-    public const float VaeScale = 0.18215f;
     public const int LatentChannels = 4;
     public const int TokenCount = 77;
 
@@ -37,6 +35,9 @@ public sealed class Checkpoint : IDisposable
     }
 
     public string Name { get; }
+
+    /// <summary>How the model's latents relate to its VAE's (scale, preview colours).</summary>
+    public LatentFormat LatentFormat { get; } = LatentFormat.SD15;
 
     /// <summary>What a prompt is padded with after its end token (ComfyUI: the end token for CLIP-L, 0 for OpenCLIP-H).</summary>
     public int PadToken { get; }
@@ -142,6 +143,8 @@ public sealed class ModelHandle(Checkpoint checkpoint, ModelSampling sampling)
     public Checkpoint Checkpoint { get; } = checkpoint;
     /// <summary>How the denoiser is driven: its noise levels, timesteps and prediction type (ModelSamplingDiscrete swaps it).</summary>
     public ModelSampling Sampling { get; init; } = sampling;
+    /// <summary>The model family's latent format (SD 1.5's when there is no checkpoint, as in tests of the sampling maths).</summary>
+    public LatentFormat LatentFormat => Checkpoint?.LatentFormat ?? LatentFormat.SD15;
     /// <summary>The guidance patches (RescaleCFG, CFGNorm, APG, ...) sampling applies, ComfyUI's model_options.</summary>
     public ModelPatches Patches { get; init; } = ModelPatches.None;
 

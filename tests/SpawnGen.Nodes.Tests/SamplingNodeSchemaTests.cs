@@ -201,10 +201,12 @@ public class SamplingNodeSchemaTests
         var noisy = new AddNoise().Execute(model, noise, new Sigmas([6f, 2f]), latent);
         var expected0 = SamplingCore.InitialNoise(3, 0, latent);
         var expected1 = SamplingCore.InitialNoise(3, 1, latent);
+        // ComfyUI: process_latent_out(noise_scaling(|6 - 2|, noise, process_latent_in(latent))), the noise added in the model's space (x 0.18215).
+        const float k = 0.18215f;
         for (int i = 0; i < 256; i++)
         {
-            Assert.That(noisy.Data[i], Is.EqualTo(0.25f + expected0[i] * 4f).Within(1e-5), "|6 - 2| = 4");
-            Assert.That(noisy.Data[256 + i], Is.EqualTo(0.25f + expected1[i] * 4f).Within(1e-5), "each picture its own noise");
+            Assert.That(noisy.Data[i], Is.EqualTo((0.25f * k + expected0[i] * 4f) / k).Within(1e-4), "|6 - 2| = 4");
+            Assert.That(noisy.Data[256 + i], Is.EqualTo((0.25f * k + expected1[i] * 4f) / k).Within(1e-4), "each picture its own noise");
         }
         Assert.That(new AddNoise().Execute(model, noise, new Sigmas([]), latent), Is.SameAs(latent));
         Assert.That(new AddNoise().Execute(model, new DisableNoise().Execute(), new Sigmas([3f]), latent).Data, Is.EqualTo(latent.Data), "no noise: unchanged");

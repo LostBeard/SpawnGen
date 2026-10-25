@@ -28,6 +28,8 @@ fs.mkdirSync(OUT, { recursive: true });
     else if (/\[SpawnGen\]|GenLoad|\[perop\]|device|lost|Unhandled/i.test(m.text())) console.log(t(), 'console:', m.text().slice(0, 400));
   });
   page.on('response', r => { if (r.status() === 404) console.log(t(), '404:', r.url().slice(0, 200)); });
+  // LOG_REQUESTS=1: every model-host request with its status and size (to see whether a cached model is fetched again).
+  if (process.env.LOG_REQUESTS) page.on('response', r => { if (/huggingface|spawndev|hf\.co|xethub/.test(r.url())) console.log(t(), 'request', r.status(), r.headers()['content-length'] || '?', r.url().slice(0, 160)); });
   page.on('pageerror', e => { problems.push('PAGEERROR ' + e.message); console.log(t(), 'PAGEERROR', e.message.slice(0, 300)); });
 
   // The stock workflow, patched: our checkpoint name, 1 step, cfg 1, a small picture.

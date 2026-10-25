@@ -75,8 +75,7 @@ internal sealed class SafetensorsCheckpointModels : ICheckpointModels
                 // ComfyUI's SDXL.encode_adm: the size numbers default to the latent's size in pixels, the crop to 0 and the target to the size.
                 var size = entry.Size ?? new SdxlSize(w * 8, h * 8, 0, 0, w * 8, h * 8);
                 var xl = new SdxlConditioning(entry.Pooled, size.Height, size.Width, size.CropH, size.CropW, size.TargetHeight, size.TargetWidth);
-                // SDXL base: 1280 pooled + 6 x 256 = 2816 (the width of label_emb.0.0.weight).
-                label = acc.Allocate1D(SdUNet.SdxlLabel(xl, entry.Pooled.Length + 6 * 256));
+                label = acc.Allocate1D(SdUNet.SdxlLabel(xl, unet.LabelWidth));
             }
             var uploaded = new Uploaded(acc.Allocate1D(entry.Embeddings), rows, label);
             _uploaded[entry] = uploaded;

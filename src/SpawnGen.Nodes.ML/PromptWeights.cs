@@ -72,22 +72,51 @@ public static class PromptWeights
     }
 
     /// <summary>
-    /// The token ids of a whole prompt in CLIP's layout (start, tokens, end, padding with end) and a weight per position (1 for the special tokens).
-    /// <paramref name="tokenize"/> gives the plain tokens of a piece of text (no start/end).
+    /// A whole prompt as CLIP chunks of <paramref name="length"/> tokens (start, tokens, end, padding with the end token), each with a weight per position (1 for the
+    /// special tokens), ComfyUI's <c>tokenize_with_weights</c>: each weighted piece is tokenised whole; a piece that does not fit the current chunk moves to the next one,
+    /// unless it is <paramref name="maxWordLength"/> tokens or longer, then it is split at the chunk's end. <paramref name="tokenize"/> gives the plain tokens of a piece
+    /// (no start/end). A prompt longer than one chunk gives several; the text encoder encodes each and the UNet reads their rows one after another.
     /// </summary>
-    public static (int[] Ids, float[] Weights) Tokens(string prompt, Func<string, int[]> tokenize, int length, int start = 49406, int end = 49407)
+    public static List<(int[] Ids, float[] Weights)> Chunks(string prompt, Func<string, int[]> tokenize, int length = 77, int start = 49406, int end = 49407,
+        int maxWordLength = 8)
     {
-        var ids = new List<int> { start };
-        var weights = new List<float> { 1f };
-        foreach (var (text, weight) in Parse(prompt.Replace('\n', ' ')))
-            foreach (int token in tokenize(text))
+        var chunks = new List<(List<int> Ids, List<float> Weights)>();
+        (List<int> Ids, List<float> Weights) batch = ([start], [1f]);
+        chunks.Add(batch);
+        void Close(int pad)
+        {
+            batch.Ids.Add(end); batch.Weights.Add(1f);
+            for (int i = 0; i < pad; i++) { batch.Ids.Add(end); batch.Weights.Add(1f); }
+        }
+        foreach (var (text, weight) in Parse(prompt))
+        {
+            var group = tokenize(text);
+            bool large = group.Length >= maxWordLength;
+            int at = 0;
+            while (at < group.Length)
             {
-                if (ids.Count >= length - 1) break; // room for the end token
-                ids.Add(token);
-                weights.Add(weight);
+                int left = group.Length - at;
+                if (left + batch.Ids.Count > length - 1)
+                {
+                    int room = length - batch.Ids.Count - 1;
+                    if (large)
+                    {
+                        for (int i = 0; i < room; i++) { batch.Ids.Add(group[at + i]); batch.Weights.Add(weight); }
+                        at += room;
+                        Close(0);
+                    }
+                    else Close(room);
+                    batch = ([start], [1f]);
+                    chunks.Add(batch);
+                }
+                else
+                {
+                    for (; at < group.Length; at++) { batch.Ids.Add(group[at]); batch.Weights.Add(weight); }
+                }
             }
-        while (ids.Count < length) { ids.Add(end); weights.Add(1f); }
-        return ([.. ids.Take(length)], [.. weights.Take(length)]);
+        }
+        Close(Math.Max(0, length - batch.Ids.Count - 1));
+        return [.. chunks.Select(c => (c.Ids.ToArray(), c.Weights.ToArray()))];
     }
 
     /// <summary>

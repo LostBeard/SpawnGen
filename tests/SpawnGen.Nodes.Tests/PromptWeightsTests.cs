@@ -43,19 +43,38 @@ public class PromptWeightsTests
         Assert.That(Show("(x:abc)"), Is.EqualTo("x:abc@1.1"), "a colon that is not followed by a number is part of the text");
     }
 
+    // Pretend every word is one token whose id is its length.
+    static int[] Tokenize(string text) => text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => w.Length).ToArray();
+
     [Test]
     public void Tokens_are_laid_out_like_CLIP_with_weights_per_position()
     {
-        // Pretend every word is one token whose id is its length.
-        int[] Tokenize(string text) => text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => w.Length).ToArray();
-        var (ids, weights) = PromptWeights.Tokens("ab (cde:1.5) f", Tokenize, 8);
-        Assert.That(ids, Is.EqualTo(new[] { 49406, 2, 3, 1, 49407, 49407, 49407, 49407 }));
-        Assert.That(weights, Is.EqualTo(new[] { 1f, 1f, 1.5f, 1f, 1f, 1f, 1f, 1f }));
+        var chunks = PromptWeights.Chunks("ab (cde:1.5) f", Tokenize, 8);
+        Assert.That(chunks, Has.Count.EqualTo(1));
+        Assert.That(chunks[0].Ids, Is.EqualTo(new[] { 49406, 2, 3, 1, 49407, 49407, 49407, 49407 }));
+        Assert.That(chunks[0].Weights, Is.EqualTo(new[] { 1f, 1f, 1.5f, 1f, 1f, 1f, 1f, 1f }));
+        Assert.That(PromptWeights.Chunks("", Tokenize, 5).Single().Ids, Is.EqualTo(new[] { 49406, 49407, 49407, 49407, 49407 }), "the empty prompt");
+    }
 
-        // Too long: cut so that the last position is the end token.
-        var (cut, cutWeights) = PromptWeights.Tokens("a b c d e f g h", Tokenize, 5);
-        Assert.That(cut, Is.EqualTo(new[] { 49406, 1, 1, 1, 49407 }));
-        Assert.That(cutWeights, Has.Length.EqualTo(5));
+    [Test]
+    public void A_long_piece_is_split_at_the_chunk_end_and_a_short_one_moves_to_the_next_chunk_as_in_ComfyUI()
+    {
+        // 8 tokens or more (max_word_length): split exactly where the chunk is full (room for 3 tokens in a chunk of 5).
+        var large = PromptWeights.Chunks("a b c d e f g h", Tokenize, 5);
+        Assert.That(large.Select(c => c.Ids), Is.EqualTo(new[]
+        {
+            new[] { 49406, 1, 1, 1, 49407 },
+            new[] { 49406, 1, 1, 1, 49407 },
+            new[] { 49406, 1, 1, 49407, 49407 },
+        }));
+        // A short weighted piece that does not fit is not split: the chunk is closed and padded, the piece starts the next one.
+        var small = PromptWeights.Chunks("aa bb (c d:1.2)", Tokenize, 5);
+        Assert.That(small.Select(c => c.Ids), Is.EqualTo(new[]
+        {
+            new[] { 49406, 2, 2, 49407, 49407 },
+            new[] { 49406, 1, 1, 49407, 49407 },
+        }));
+        Assert.That(small[1].Weights, Is.EqualTo(new[] { 1f, 1.2f, 1.2f, 1f, 1f }));
     }
 
     [Test]

@@ -55,36 +55,43 @@ public sealed class CLIPTextEncode
     {
         var ckpt = clip.Checkpoint;
         bool two = ckpt.Family == SpawnDev.ILGPU.ML.StableDiffusion.SdFamily.SDXL;
-        var (idsL, weightsL) = Tokens(ckpt, textL);
-        var (idsG, weightsG) = two ? Tokens(ckpt, textG) : (idsL, weightsL);
-        var z = await ckpt.EncodeAsync(idsL, two ? idsG : null, clip.Layer, cancellationToken);
-        bool weighted = weightsL.Any(w => w != 1f) || weightsG.Any(w => w != 1f);
-        if (!weighted) return z;
-        var empty = (await ckpt.EmptyPromptAsync(clip.Layer)).Context;
-        var context = (float[])z.Context.Clone();
-        int width = z.Shape[^1], first = ckpt.FirstTowerWidth;
-        PromptWeights.Apply(context, empty, weightsL, width, 0, first);
-        if (width > first) PromptWeights.Apply(context, empty, weightsG, width, first, width - first);
-        return z with { Context = context };
-    }
+        var chunksL = PromptWeights.Chunks(textL, piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount);
+        var chunksG = two ? PromptWeights.Chunks(textG, piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount) : chunksL;
+        // SDXL's two prompts may need different numbers of chunks: the shorter one is filled up with empty chunks, as ComfyUI does.
+        var emptyChunk = PromptWeights.Chunks("", piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount)[0];
+        while (chunksL.Count < chunksG.Count) chunksL = [.. chunksL, emptyChunk];
+        while (chunksG.Count < chunksL.Count) chunksG = [.. chunksG, emptyChunk];
 
-    /// <summary>A prompt's token ids in CLIP's layout and a weight per position (all 1 for a prompt without emphasis).</summary>
-    static (int[] Ids, float[] Weights) Tokens(Checkpoint ckpt, string text)
-    {
-        if (!PromptWeights.HasEmphasis(text))
+        bool weighted = chunksL.Concat(chunksG).Any(c => c.Weights.Any(w => w != 1f));
+        float[]? empty = weighted ? (await ckpt.EmptyPromptAsync(clip.Layer)).Context : null;
+        var contexts = new List<float[]>();
+        float[]? pooled = null;
+        int width = 0;
+        for (int i = 0; i < chunksL.Count; i++)
         {
-            var ids = ckpt.Tokenizer.EncodeCLIP(text, Checkpoint.TokenCount);
-            var ones = new float[ids.Length];
-            Array.Fill(ones, 1f);
-            return (ids, ones);
+            var z = await ckpt.EncodeAsync(chunksL[i].Ids, two ? chunksG[i].Ids : null, clip.Layer, cancellationToken);
+            width = z.Shape[^1];
+            pooled ??= z.Pooled; // SDXL's pooled embedding is the first chunk's, as in ComfyUI
+            var context = z.Context;
+            if (empty is not null)
+            {
+                // Each weighted token's row moves away from the empty prompt's row by its weight, in each tower's columns.
+                context = (float[])context.Clone();
+                int first = ckpt.FirstTowerWidth;
+                PromptWeights.Apply(context, empty, chunksL[i].Weights, width, 0, first);
+                if (width > first) PromptWeights.Apply(context, empty, chunksG[i].Weights, width, first, width - first);
+            }
+            contexts.Add(context);
         }
-        return PromptWeights.Tokens(text, piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount);
+        var all = contexts.Count == 1 ? contexts[0] : [.. contexts.SelectMany(c => c)];
+        return new TextEncoding(all, [1, all.Length / width, width], pooled);
     }
 
     /// <summary>The tokens of a piece of text without the start and end markers or padding.</summary>
-    static int[] PlainTokens(Checkpoint ckpt, string piece)
+    internal static int[] PlainTokens(Checkpoint ckpt, string piece)
     {
-        var ids = ckpt.Tokenizer.EncodeCLIP(piece, Math.Max(8, piece.Length + 3));
+        // A UTF-16 character is at most 3 bytes of UTF-8 and CLIP's BPE gives at most one token per byte: room for every token plus start and end.
+        var ids = ckpt.Tokenizer.EncodeCLIP(piece, 3 * piece.Length + 3);
         var tokens = new List<int>();
         for (int i = 1; i < ids.Length && ids[i] != 49407; i++) tokens.Add(ids[i]);
         return [.. tokens];

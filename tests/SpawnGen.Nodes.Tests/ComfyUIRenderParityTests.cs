@@ -62,14 +62,16 @@ public class ComfyUIRenderParityTests
     /// (Fixtures/sampling/comfyui_sd15, run_comfy.py: euler, 10 steps, cfg 7.5, normal, ComfyUI on the CPU in float32). Real classifier-free guidance, so the
     /// empty prompt's encoding and the CFG blend are checked too.
     /// </summary>
-    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (a models folder with checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
-    public async Task SD15_from_the_safetensors_checkpoint_gives_ComfyUIs_result()
+    [TestCase("v1-5-pruned-emaonly.safetensors")]
+    [TestCase("v1-5-pruned-emaonly-fp16.safetensors")] // ComfyUI's fp16 archive: downloaded from Hugging Face on first use unless it is in checkpoints/
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (a models folder with checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
+    public async Task SD15_from_the_safetensors_checkpoint_gives_ComfyUIs_result(string checkpoint)
     {
         var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
         if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
         CheckpointCatalog.ScanCheckpointFiles(root!);
         using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
-        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5);
+        var (diff, scale) = await RunAsync(runtime, checkpoint, "euler", "comfyui_sd15", 10, 7.5);
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 

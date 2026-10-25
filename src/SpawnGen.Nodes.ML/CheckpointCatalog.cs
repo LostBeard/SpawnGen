@@ -43,7 +43,18 @@ public static class CheckpointCatalog
     {
         ["sd_turbo"] = new("schmuell/sd-turbo-ort-web", new(1024)),
         ["sd_v1-5"] = new("a420/stable-diffusion-v1-5_onnx", new(768, "unet/model.onnx_data")),
+        // Single-file checkpoints from Hugging Face, downloaded on first use (desktop: <models>/hub; browser: OPFS). A file of the same name in
+        // <models>/checkpoints is used instead (ScanCheckpointFiles).
+        ["v1-5-pruned-emaonly-fp16.safetensors"] = Remote("Comfy-Org/stable-diffusion-v1-5-archive", "v1-5-pruned-emaonly-fp16.safetensors"),
+        ["v1-5-pruned-emaonly.safetensors"] = Remote("stable-diffusion-v1-5/stable-diffusion-v1-5", "v1-5-pruned-emaonly.safetensors"),
+        ["sd_turbo.safetensors"] = Remote("stabilityai/sd-turbo", "sd_turbo.safetensors"),
+        ["sd_xl_base_1.0.safetensors"] = Remote("stabilityai/stable-diffusion-xl-base-1.0", "sd_xl_base_1.0.safetensors"),
     };
+
+    static Entry Remote(string repo, string file) => new(repo, new MlRuntime.CheckpointInfo(0, File: file), RemoteOnly);
+
+    /// <summary>The <see cref="Entry.Folder"/> of a checkpoint that is never read from a sub-folder of the models folder.</summary>
+    const string RemoteOnly = "";
 
     /// <summary>Adds a checkpoint (or replaces one of the same name). Returns false for a name or repo that is empty.</summary>
     public static bool Register(string name, string repo, int textWidth = 1024, string? unetExternalData = null)
@@ -63,7 +74,8 @@ public static class CheckpointCatalog
         {
             lock (Gate)
             {
-                var folders = Entries.GroupBy(e => e.Value.Repo).ToDictionary(g => g.Key, g => g.First().Value.Folder ?? g.First().Key);
+                var folders = Entries.Where(e => e.Value.Folder != RemoteOnly).GroupBy(e => e.Value.Repo)
+                    .ToDictionary(g => g.Key, g => g.First().Value.Folder ?? g.First().Key);
                 folders[LocalLorasRepo] = "loras";
                 return folders;
             }
@@ -72,7 +84,7 @@ public static class CheckpointCatalog
 
     /// <summary>
     /// Adds every <c>.safetensors</c> file under <c>&lt;models&gt;/checkpoints</c> (sub-folders too), named by its path there with the platform's separator, as
-    /// ComfyUI names them. Returns how many were added.
+    /// ComfyUI names them. A local file replaces a built-in download of the same name. Returns how many were added or replaced.
     /// </summary>
     public static int ScanCheckpointFiles(string modelsFolder)
     {
@@ -82,8 +94,11 @@ public static class CheckpointCatalog
         foreach (var path in Directory.EnumerateFiles(dir, "*.safetensors", SearchOption.AllDirectories))
         {
             var name = Path.GetRelativePath(dir, path);
-            if (Repos.ContainsKey(name)) continue;
-            lock (Gate) Entries[name] = new Entry(LocalCheckpointsRepo, new MlRuntime.CheckpointInfo(0, File: name), "checkpoints");
+            lock (Gate)
+            {
+                if (Entries.TryGetValue(name, out var known) && known.Folder != RemoteOnly) continue; // already listed (a local file, or an ONNX checkpoint)
+                Entries[name] = new Entry(LocalCheckpointsRepo, new MlRuntime.CheckpointInfo(0, File: name), "checkpoints");
+            }
             added++;
         }
         return added;

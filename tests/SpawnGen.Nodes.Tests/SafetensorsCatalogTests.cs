@@ -39,6 +39,31 @@ public class SafetensorsCatalogTests
     }
 
     [Test]
+    public void The_built_in_single_files_download_and_a_local_file_of_the_same_name_replaces_the_download()
+    {
+        Assert.That(CheckpointCatalog.Repos["sd_xl_base_1.0.safetensors"], Is.EqualTo("stabilityai/stable-diffusion-xl-base-1.0"));
+        Assert.That(CheckpointCatalog.Details["sd_turbo.safetensors"].File, Is.EqualTo("sd_turbo.safetensors"));
+        Assert.That(MlRuntime.RepoFolders.ContainsKey("stabilityai/stable-diffusion-xl-base-1.0"), Is.False, "a download is never looked up in a sub-folder");
+        const string name = "v1-5-pruned-emaonly-fp16.safetensors";
+        if (CheckpointCatalog.Repos[name] == CheckpointCatalog.LocalCheckpointsRepo) Assert.Inconclusive("another test already put a local file of this name in the catalog");
+        Assert.That(CheckpointCatalog.Repos[name], Is.EqualTo("Comfy-Org/stable-diffusion-v1-5-archive"));
+
+        var root = Path.Combine(Path.GetTempPath(), "spawngen-ckpts-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "checkpoints"));
+            File.WriteAllText(Path.Combine(root, "checkpoints", name), "x");
+            Assert.That(CheckpointCatalog.ScanCheckpointFiles(root), Is.EqualTo(1));
+            Assert.That(CheckpointCatalog.Repos[name], Is.EqualTo(CheckpointCatalog.LocalCheckpointsRepo), "the local file is used, not downloaded again");
+            Assert.That(CheckpointCatalog.Details[name].File, Is.EqualTo(name));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Test]
     public void A_missing_checkpoints_folder_adds_nothing() =>
         Assert.That(CheckpointCatalog.ScanCheckpointFiles(Path.Combine(Path.GetTempPath(), "spawngen-none-" + Guid.NewGuid().ToString("N"))), Is.EqualTo(0));
 

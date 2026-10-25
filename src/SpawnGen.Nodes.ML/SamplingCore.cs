@@ -42,21 +42,9 @@ internal static class SamplingCore
         int steps = sigmas.Length - 1, h = latent.Height, w = latent.Width, perImage = Checkpoint.LatentChannels * h * w;
         if (sigmas.Length == 0) return (latent, latent); // nothing to sample; a single sigma only noises the latent, as in ComfyUI
 
-        var shape = new[] { 1, Checkpoint.LatentChannels, h, w };
-        var uploaded = new Dictionary<CondEntry, (MemoryBuffer1D<float, Stride1D.Dense> Buffer, Tensor Tensor)>(ReferenceEqualityComparer.Instance);
-        try
+        // The embeddings go to the GPU once per run, not once per step.
+        using (var unet = ckpt.BeginRun(acc))
         {
-            // The embeddings go to the GPU once per run, not once per step.
-            Tensor Upload(CondEntry e)
-            {
-                if (uploaded.TryGetValue(e, out var known)) return known.Tensor;
-                var pair = GpuHelpers.Upload(acc, e.Embeddings, e.Shape);
-                uploaded[e] = pair;
-                return pair.Tensor;
-            }
-            foreach (var c in guider.Conditionings)
-                foreach (var e in c.Entries) Upload(e);
-
             var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };
             var denoisedResult = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };
             bool maxDenoise = sampling.IsMaxDenoise(sigmas[0]);
@@ -82,7 +70,7 @@ internal static class SamplingCore
                 Task<float[]> Denoise(float[] sample, float sigma) =>
                     InpaintedCall(sample, sigma, mask, guider.Model.Patches.DenoiseMask, runSigmas, sampling, original, inpaintNoise, h * w,
                         input => guidance.PredictAsync(input, sigma,
-                            (cond, scheduled) => GuidedAsync(cond.Entries, input, shape, sigma, sampling, ckpt, Upload, acc, h, w, scheduled)));
+                            (cond, scheduled) => GuidedAsync(cond.Entries, input, sigma, sampling, unet, h, w, scheduled, context.CancellationToken)));
 
                 int item = b;
                 x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise,
@@ -99,10 +87,6 @@ internal static class SamplingCore
                 Array.Copy(format.ProcessOut(lastDenoised ?? x), 0, denoisedResult.Data, b * perImage, perImage);
             }
             return (result, denoisedResult);
-        }
-        finally
-        {
-            foreach (var (buf, _) in uploaded.Values) buf.Dispose();
         }
     }
 
@@ -135,8 +119,8 @@ internal static class SamplingCore
     /// ComfyUI's calc_cond_batch for one conditioning: each active entry's denoised estimate, blended by its weight (strength x area x mask) over a count that starts at
     /// 1e-37, so pixels no entry covers come out 0. <paramref name="scheduled"/> false ignores the entries' timestep ranges.
     /// </summary>
-    static async Task<float[]> GuidedAsync(IReadOnlyList<CondEntry> entries, float[] x, int[] shape, double sigma, ModelSampling sampling, Checkpoint ckpt,
-        Func<CondEntry, Tensor> upload, Accelerator acc, int h, int w, bool scheduled)
+    static async Task<float[]> GuidedAsync(IReadOnlyList<CondEntry> entries, float[] x, double sigma, ModelSampling sampling, UNetRun unet,
+        int h, int w, bool scheduled, CancellationToken cancellationToken)
     {
         int plane = h * w, perImage = Checkpoint.LatentChannels * plane;
         var active = entries.Where(e => !scheduled || IsActive(e, sigma, sampling)).ToList();
@@ -145,7 +129,7 @@ internal static class SamplingCore
         var input = sampling.CalculateInput(sigma, x);
         float timestep = sampling.Timestep(sigma);
         async Task<float[]> Predict(CondEntry e) =>
-            sampling.CalculateDenoised(sigma, await PredictAsync(acc, ckpt.Unet, input, shape, timestep, upload(e)), x);
+            sampling.CalculateDenoised(sigma, await unet.PredictAsync(input, h, w, timestep, e, cancellationToken), x);
 
         if (active.Count == 1 && active[0].Area is null && active[0].Mask is null && active[0].Strength != 0f)
             return await Predict(active[0]); // the common case: one plain prompt (strength cancels in the blend)
@@ -201,20 +185,4 @@ internal static class SamplingCore
         return mask.Width == w && mask.Height == h ? one : Resample.Resize(one, mask.Width, mask.Height, 1, w, h, ResampleMethod.Bilinear);
     }
 
-    static async Task<float[]> PredictAsync(Accelerator acc, InferenceSession unet, float[] sample, int[] shape, float timestep, Tensor conditioning)
-    {
-        var (sampleBuf, sampleTensor) = GpuHelpers.Upload(acc, sample, shape);
-        var (tBuf, tTensor) = GpuHelpers.Upload(acc, [timestep], [1]);
-        using (sampleBuf)
-        using (tBuf)
-        {
-            var outputs = await unet.RunAsync(new Dictionary<string, Tensor>
-            {
-                [unet.InputNames[0]] = sampleTensor,
-                [unet.InputNames[1]] = tTensor,
-                [unet.InputNames[2]] = conditioning,
-            });
-            return await GpuHelpers.ReadAsync(acc, outputs[unet.OutputNames[0]], sample.Length);
-        }
-    }
 }

@@ -16,8 +16,11 @@ public readonly record struct CondArea(double X, double Y, double Width, double 
     }
 }
 
+/// <summary>SDXL's size conditioning (ComfyUI's width, height, crop_w, crop_h, target_width, target_height), in pixels.</summary>
+public readonly record struct SdxlSize(int Width, int Height, int CropW, int CropH, int TargetWidth, int TargetHeight);
+
 /// <summary>
-/// One piece of conditioning: text embeddings <c>[1, tokens, 1024]</c> plus where and when they apply. A plain prompt is one entry that applies
+/// One piece of conditioning: text embeddings <c>[1, tokens, width]</c> plus where and when they apply. A plain prompt is one entry that applies
 /// everywhere, always; <see cref="Area"/>, <see cref="Mask"/> and the percent range narrow it.
 /// </summary>
 public sealed record CondEntry(float[] Embeddings, int[] Shape)
@@ -30,6 +33,10 @@ public sealed record CondEntry(float[] Embeddings, int[] Shape)
     /// <summary>How much of the sampling the entry is active for, as fractions from the start (0) to the end (1) of the run.</summary>
     public float StartPercent { get; init; }
     public float EndPercent { get; init; } = 1f;
+    /// <summary>SDXL's pooled text embedding (ComfyUI's pooled_output); null for SD 1.x / 2.x.</summary>
+    public float[]? Pooled { get; init; }
+    /// <summary>SDXL's size numbers; null = the latent's size, no crop (ComfyUI's defaults).</summary>
+    public SdxlSize? Size { get; init; }
 }
 
 /// <summary>What the model is asked about: one or more <see cref="CondEntry"/>. Several entries are blended by their area weights, like ComfyUI's Combine.</summary>

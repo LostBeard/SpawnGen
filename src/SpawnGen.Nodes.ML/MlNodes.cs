@@ -41,23 +41,44 @@ public sealed class CLIPTextEncode
     /// Encodes the prompt. Emphasis works as in ComfyUI: <c>(text:1.3)</c>, <c>(text)</c> = 1.1, nested brackets multiply, <c>(</c> and <c>)</c> are literal brackets.
     /// </summary>
     public async Task<Conditioning> ExecuteAsync(
-        [Input(Multiline = true)] string text, ClipHandle clip, IServiceProvider services)
+        [Input(Multiline = true)] string text, ClipHandle clip, NodeContext context)
     {
-        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
+        var e = await EncodeAsync(clip, text, text, context.CancellationToken);
+        return new Conditioning([new CondEntry(e.Context, e.Shape) { Pooled = e.Pooled }]);
+    }
+
+    /// <summary>
+    /// Encodes a prompt with the checkpoint's CLIP at the handle's layer. <paramref name="textG"/> is SDXL's second tower's prompt (the same text for
+    /// CLIP Text Encode). Weighted prompts move each weighted token's row away from the empty prompt's by its weight, in each tower's columns.
+    /// </summary>
+    internal static async Task<TextEncoding> EncodeAsync(ClipHandle clip, string textL, string textG, CancellationToken cancellationToken)
+    {
         var ckpt = clip.Checkpoint;
+        bool two = ckpt.Family == SpawnDev.ILGPU.ML.StableDiffusion.SdFamily.SDXL;
+        var (idsL, weightsL) = Tokens(ckpt, textL);
+        var (idsG, weightsG) = two ? Tokens(ckpt, textG) : (idsL, weightsL);
+        var z = await ckpt.EncodeAsync(idsL, two ? idsG : null, clip.Layer, cancellationToken);
+        bool weighted = weightsL.Any(w => w != 1f) || weightsG.Any(w => w != 1f);
+        if (!weighted) return z;
+        var empty = (await ckpt.EmptyPromptAsync(clip.Layer)).Context;
+        var context = (float[])z.Context.Clone();
+        int width = z.Shape[^1], first = ckpt.FirstTowerWidth;
+        PromptWeights.Apply(context, empty, weightsL, width, 0, first);
+        if (width > first) PromptWeights.Apply(context, empty, weightsG, width, first, width - first);
+        return z with { Context = context };
+    }
+
+    /// <summary>A prompt's token ids in CLIP's layout and a weight per position (all 1 for a prompt without emphasis).</summary>
+    static (int[] Ids, float[] Weights) Tokens(Checkpoint ckpt, string text)
+    {
         if (!PromptWeights.HasEmphasis(text))
         {
             var ids = ckpt.Tokenizer.EncodeCLIP(text, Checkpoint.TokenCount);
-            var (plain, shape) = await EncodeAsync(acc, ckpt, ids);
-            return new Conditioning(plain, shape);
+            var ones = new float[ids.Length];
+            Array.Fill(ones, 1f);
+            return (ids, ones);
         }
-
-        // Weighted prompt: tokenise each piece, encode the lot, then move each weighted token's row away from the empty prompt's by its weight.
-        var (weightedIds, weights) = PromptWeights.Tokens(text, piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount);
-        var (z, zShape) = await EncodeAsync(acc, ckpt, weightedIds);
-        var empty = await ckpt.EmptyPromptEmbeddingsAsync(async () => (await EncodeAsync(acc, ckpt, ckpt.Tokenizer.EncodeCLIP("", Checkpoint.TokenCount))).Embeddings);
-        PromptWeights.Apply(z, empty, weights, zShape[^1]);
-        return new Conditioning(z, zShape);
+        return PromptWeights.Tokens(text, piece => PlainTokens(ckpt, piece), Checkpoint.TokenCount);
     }
 
     /// <summary>The tokens of a piece of text without the start and end markers or padding.</summary>
@@ -67,22 +88,6 @@ public sealed class CLIPTextEncode
         var tokens = new List<int>();
         for (int i = 1; i < ids.Length && ids[i] != 49407; i++) tokens.Add(ids[i]);
         return [.. tokens];
-    }
-
-    static async Task<(float[] Embeddings, int[] Shape)> EncodeAsync(Accelerator acc, Checkpoint ckpt, int[] ids)
-    {
-        ids = ClipPadding.Pad(ids, ckpt.PadToken);
-        var (buf, tokens) = GpuHelpers.Upload(acc, ids.Select(t => (float)t).ToArray(), [1, Checkpoint.TokenCount]);
-        using (buf)
-        {
-            var outputs = await ckpt.TextEncoder.RunAsync(new Dictionary<string, Tensor>
-            {
-                [ckpt.TextEncoder.InputNames[0]] = tokens,
-            });
-            var embeddings = outputs[ckpt.TextEncoder.OutputNames[0]];
-            int count = embeddings.Shape.Aggregate(1, (x, y) => x * y);
-            return (await GpuHelpers.ReadAsync(acc, embeddings, count), embeddings.Shape.ToArray());
-        }
     }
 }
 
@@ -114,7 +119,6 @@ public sealed class VAEDecode
     public async Task<ImageBatch> ExecuteAsync(LatentBatch samples, VaeHandle vae, NodeContext context, IServiceProvider services)
     {
         var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
-        var session = vae.Checkpoint.Vae;
         int h = samples.Height, w = samples.Width, perLatent = samples.Channels * h * w;
         int imgH = h * 8, imgW = w * 8, perImage = 3 * imgH * imgW;
         var images = new ImageBatch(samples.Batch, imgH, imgW, 3);
@@ -135,19 +139,13 @@ public sealed class VAEDecode
             {
                 context.CancellationToken.ThrowIfCancellationRequested();
                 var latent = samples.Data[(b * perLatent)..((b + 1) * perLatent)]; // the VAE's own values, as a LATENT holds them
+                var chw = await vae.Checkpoint.DecodeAsync(latent, h, w, context.CancellationToken);
 
-                var (buf, tensor) = GpuHelpers.Upload(acc, latent, [1, samples.Channels, h, w]);
-                using (buf)
-                {
-                    var outputs = await session.RunAsync(new Dictionary<string, Tensor> { [session.InputNames[0]] = tensor });
-                    var chw = await GpuHelpers.ReadAsync(acc, outputs[session.OutputNames[0]], perImage);
-
-                    // NCHW in [-1, 1] -> NHWC in [0, 1].
-                    int plane = imgH * imgW;
-                    for (int p = 0; p < plane; p++)
-                        for (int c = 0; c < 3; c++)
-                            images.Data[(b * plane + p) * 3 + c] = Math.Clamp((chw[c * plane + p] + 1f) * 0.5f, 0f, 1f);
-                }
+                // NCHW in [-1, 1] -> NHWC in [0, 1].
+                int plane = imgH * imgW;
+                for (int p = 0; p < plane; p++)
+                    for (int c = 0; c < 3; c++)
+                        images.Data[(b * plane + p) * 3 + c] = Math.Clamp((chw[c * plane + p] + 1f) * 0.5f, 0f, 1f);
                 context.Progress(b + 1, samples.Batch);
             }
         }
@@ -165,9 +163,6 @@ public sealed class VAEEncode
 {
     public async Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, NodeContext context, IServiceProvider services)
     {
-        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
-        var session = await vae.Checkpoint.GetVaeEncoderAsync();
-
         // The VAE downsamples by 8: crop to a multiple of 8 like ComfyUI does.
         int h = pixels.Height / 8 * 8, w = pixels.Width / 8 * 8;
         if (h == 0 || w == 0) throw new ArgumentException($"Image {pixels.Width}x{pixels.Height} is smaller than 8 pixels.", nameof(pixels));
@@ -184,13 +179,8 @@ public sealed class VAEEncode
                     for (int c = 0; c < 3; c++)
                         chw[(c * h + y) * w + x] = pixels.Data[(((b * pixels.Height) + y) * pixels.Width + x) * pixels.Channels + c] * 2f - 1f;
 
-            var (buf, tensor) = GpuHelpers.Upload(acc, chw, [1, 3, h, w]);
-            using (buf)
-            {
-                var outputs = await session.RunAsync(new Dictionary<string, Tensor> { [session.InputNames[0]] = tensor });
-                var z = await GpuHelpers.ReadAsync(acc, outputs[session.OutputNames[0]], perLatent);
-                Array.Copy(z, 0, latents.Data, b * perLatent, perLatent); // a LATENT holds the VAE's values; the sampler scales them
-            }
+            var z = await vae.Checkpoint.EncodeImageAsync(chw, h, w, context.CancellationToken);
+            Array.Copy(z, 0, latents.Data, b * perLatent, perLatent); // a LATENT holds the VAE's values; the sampler scales them
             context.Progress(b + 1, pixels.Batch);
         }
         return latents;

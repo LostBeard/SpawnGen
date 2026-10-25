@@ -173,7 +173,8 @@ public class StageDiagnostics
 
         using var runtime = new MlRuntime(new FolderModelSource(models!));
         var ckpt = await runtime.GetCheckpointAsync("sd_turbo");
-        var gpu = await new CLIPTextEncode().ExecuteAsync(prompt, new ClipHandle(ckpt), new Services(runtime));
+        var gpuEnc = await CLIPTextEncode.EncodeAsync(new ClipHandle(ckpt), prompt, prompt, CancellationToken.None);
+        var gpu = new Conditioning(gpuEnc.Context, gpuEnc.Shape);
         TestContext.Out.WriteLine($"GPU ({runtime.Accelerator.AcceleratorType}) embeddings shape [{string.Join(",", gpu.Shape)}]");
 
         using var cpuCtx = MLContext.Create().ToContext();

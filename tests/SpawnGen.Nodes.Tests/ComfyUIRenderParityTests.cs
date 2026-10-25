@@ -33,21 +33,78 @@ public class ComfyUIRenderParityTests
     {
         var models = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
         if (string.IsNullOrEmpty(models)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
-        var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", "comfyui_sd_turbo");
+        using var runtime = new MlRuntime(new FolderModelSource(models!));
+        var (diff, scale) = await RunAsync(runtime, "sd_turbo", sampler, "comfyui_sd_turbo", 4, 1.0);
+        // ONNX fp32 on the GPU against torch fp32 on the CPU: about 0.002 to 0.008. The old SD-2 padding gave 0.39 to 0.80.
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// The same comparison with the very file ComfyUI loaded (sd_turbo.safetensors in &lt;models&gt;/checkpoints), through the library's single-file loader
+    /// (SdCheckpoint: SD 2.x's OpenCLIP-H text encoder, UNet and VAE from the checkpoint, weights held as fp16 on the GPU).
+    /// </summary>
+    [TestCase("euler")]
+    [TestCase("res_multistep_cfg_pp")]
+    [TestCase("dpm_fast")]
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (a models folder with checkpoints/sd_turbo.safetensors) and a GPU.")]
+    public async Task Same_start_latent_from_the_safetensors_checkpoint_gives_ComfyUIs_result(string sampler)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "sd_turbo.safetensors", sampler, "comfyui_sd_turbo", 4, 1.0);
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// SD 1.5 from the original single file (v1-5-pruned-emaonly.safetensors in &lt;models&gt;/checkpoints) against ComfyUI's render of the same start latent
+    /// (Fixtures/sampling/comfyui_sd15, run_comfy.py: euler, 10 steps, cfg 7.5, normal, ComfyUI on the CPU in float32). Real classifier-free guidance, so the
+    /// empty prompt's encoding and the CFG blend are checked too.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (a models folder with checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
+    public async Task SD15_from_the_safetensors_checkpoint_gives_ComfyUIs_result()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5);
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// SDXL base from the original single file at 1024x1024 against ComfyUI's render of the same start latent (Fixtures/sampling/comfyui_sdxl: euler, 6 steps,
+    /// cfg 7, normal). Checks both text towers and their padding, the pooled embedding, the size label ComfyUI builds from the latent's size, and SDXL's
+    /// latent scale 0.13025.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (a models folder with checkpoints/sd_xl_base_1.0.safetensors) and a GPU with 8 GB.")]
+    public async Task SDXL_from_the_safetensors_checkpoint_gives_ComfyUIs_result()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "sd_xl_base_1.0.safetensors", "euler", "comfyui_sdxl", 6, 7.0);
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg)
+    {
+        var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", fixture);
         var outDir = Path.Combine(Path.GetTempPath(), "spawngen-comfy-parity-" + Guid.NewGuid().ToString("N"));
         var previousInput = InputFiles.Directory;
         InputFiles.Directory = dir;
         try
         {
-            using var runtime = new MlRuntime(new FolderModelSource(models!));
             var executor = new PromptExecutor(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly),
                 new Services(runtime, new OutputOptions { Directory = outDir }));
             var g = new PromptGraph();
-            g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "sd_turbo"));
+            g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", checkpoint));
             g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", PromptInput.Link("1", 1)));
             g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link("1", 1)));
             g.Add("4", "LoadLatent", ("latent", "start.latent"));
-            g.Add("5", "KSamplerAdvanced", ("model", PromptInput.Link("1")), ("add_noise", "disable"), ("noise_seed", 0), ("steps", 4), ("cfg", 1.0),
+            g.Add("5", "KSamplerAdvanced", ("model", PromptInput.Link("1")), ("add_noise", "disable"), ("noise_seed", 0), ("steps", steps), ("cfg", cfg),
                 ("sampler_name", sampler), ("scheduler", "normal"), ("positive", PromptInput.Link("2")), ("negative", PromptInput.Link("3")),
                 ("latent_image", PromptInput.Link("4")), ("start_at_step", 0), ("end_at_step", 10000), ("return_with_leftover_noise", "disable"));
             g.Add("6", "SaveLatent", ("samples", PromptInput.Link("5")), ("filename_prefix", "parity"));
@@ -60,9 +117,8 @@ public class ComfyUIRenderParityTests
             var comfy = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, sampler + ".latent"))).Data;
             double diff = Math.Sqrt(ours.Zip(comfy, (a, b) => (double)(a - b) * (a - b)).Average());
             double scale = Math.Sqrt(comfy.Average(v => (double)v * v));
-            TestContext.Out.WriteLine($"{sampler}: rms difference {diff:F4} of rms {scale:F4}; picture {Directory.GetFiles(outDir, "parity_*.png").Single()}");
-            // ONNX fp32 on the GPU against torch fp32 on the CPU: about 0.002 to 0.008. The old SD-2 padding gave 0.39 to 0.80.
-            Assert.That(diff, Is.LessThan(0.03 * scale));
+            TestContext.Out.WriteLine($"{checkpoint} {sampler}: rms difference {diff:F4} of rms {scale:F4}; picture {Directory.GetFiles(outDir, "parity_*.png").Single()}");
+            return (diff, scale);
         }
         finally
         {

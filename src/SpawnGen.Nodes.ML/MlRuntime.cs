@@ -17,8 +17,11 @@ public sealed class MlRuntime : IDisposable
     /// <summary>Checkpoint names the loader offers, mapped to the repo id on the model source.</summary>
     public static IReadOnlyDictionary<string, string> KnownCheckpoints => CheckpointCatalog.Repos;
 
-    /// <summary>What differs between the checkpoints that share the SD layout: the width of the text encoder's output (the UNet's cross-attention input) and whether the UNet's weights live in a separate file.</summary>
-    public sealed record CheckpointInfo(int TextWidth, string? UnetExternalData = null);
+    /// <summary>
+    /// What differs between checkpoints. An ONNX export: the width of the text encoder's output (the UNet's cross-attention input) and whether the UNet's
+    /// weights live in a separate file. A single-file checkpoint: <see cref="File"/>, the <c>.safetensors</c> file in the repo (its layout is read from the tensors).
+    /// </summary>
+    public sealed record CheckpointInfo(int TextWidth, string? UnetExternalData = null, string? File = null);
 
     public static IReadOnlyDictionary<string, CheckpointInfo> CheckpointDetails => CheckpointCatalog.Details;
 
@@ -58,8 +61,9 @@ public sealed class MlRuntime : IDisposable
             throw new ArgumentException($"Unknown checkpoint '{name}'. Known: {string.Join(", ", KnownCheckpoints.Keys)}.", nameof(name));
         lock (_gate)
         {
-            if (!_checkpoints.TryGetValue(name, out var task))
-                _checkpoints[name] = task = Checkpoint.LoadAsync(this, name, repoId, onProgress);
+            // A failed load (a missing file, the GPU out of memory) is not kept: the next run tries again.
+            if (!_checkpoints.TryGetValue(name, out var task) || task.IsFaulted || task.IsCanceled)
+                _checkpoints[name] = task = Checkpoint.LoadAsync(this, name, repoId, CheckpointDetails[name], onProgress);
             return task;
         }
     }

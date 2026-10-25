@@ -94,13 +94,16 @@ public static class PromptWeights
     /// Applies the weights to the encoder's output rows <paramref name="z"/> (tokens x width): each weighted row is moved away from the same row of the
     /// empty prompt's encoding by its weight, <c>(z - empty) * w + empty</c> (ComfyUI's rule), so weight 1 leaves it alone and weight 0 gives the empty prompt's row.
     /// </summary>
-    public static void Apply(float[] z, float[] empty, float[] weights, int width)
+    public static void Apply(float[] z, float[] empty, float[] weights, int width) => Apply(z, empty, weights, width, 0, width);
+
+    /// <summary>Like <see cref="Apply(float[], float[], float[], int)"/> on columns <paramref name="start"/> .. start + count of each row (one tower of SDXL's two).</summary>
+    public static void Apply(float[] z, float[] empty, float[] weights, int width, int start, int count)
     {
         for (int t = 0; t < weights.Length; t++)
         {
             float w = weights[t];
             if (w == 1f) continue;
-            for (int c = 0; c < width; c++)
+            for (int c = start; c < start + count; c++)
             {
                 int i = t * width + c;
                 z[i] = (z[i] - empty[i]) * w + empty[i];

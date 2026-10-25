@@ -5,6 +5,8 @@ namespace SpawnGen.Nodes.ML;
 /// <summary>
 /// The checkpoints Load Checkpoint offers: the built-in ones, plus whatever the user adds on the machine that runs the model:
 /// <list type="bullet">
+/// <item>single-file checkpoints (<c>.safetensors</c>: SD 1.x, SD 2.x, SDXL and their fine-tunes) in <c>&lt;models&gt;/checkpoints</c>, sub-folders included,
+/// listed by their path there as ComfyUI lists its models/checkpoints;</item>
 /// <item>a <c>checkpoints.json</c> in the models folder: <c>{ "my_sd15": { "repo": "owner/name", "textWidth": 768, "unetData": "unet/model.onnx_data" } }</c>
 /// (any Optimum-style ONNX export of Stable Diffusion on Hugging Face: <c>text_encoder</c>, <c>unet</c>, <c>vae_decoder</c>, <c>tokenizer</c> folders; it downloads on first use);</item>
 /// <item>a folder in the models folder with that layout (and an optional <c>checkpoint.json</c> with the same two settings).</item>
@@ -12,7 +14,11 @@ namespace SpawnGen.Nodes.ML;
 /// </summary>
 public static class CheckpointCatalog
 {
-    sealed record Entry(string Repo, MlRuntime.CheckpointInfo Info);
+    /// <summary><paramref name="Folder"/>: the models folder's sub-folder that holds the repo's files when they are local (null = the checkpoint's name).</summary>
+    sealed record Entry(string Repo, MlRuntime.CheckpointInfo Info, string? Folder = null);
+
+    /// <summary>The repo id the files of <c>&lt;models&gt;/checkpoints</c> are opened under.</summary>
+    public const string LocalCheckpointsRepo = "local/checkpoints";
 
     static readonly object Gate = new();
     static readonly Dictionary<string, Entry> Entries = new(StringComparer.Ordinal)
@@ -33,7 +39,26 @@ public static class CheckpointCatalog
     public static IReadOnlyDictionary<string, MlRuntime.CheckpointInfo> Details { get { lock (Gate) return Entries.ToDictionary(e => e.Key, e => e.Value.Info); } }
 
     /// <summary>Repo id to checkpoint name: a models folder with a sub-folder of that name is read from disk instead of downloaded.</summary>
-    public static IReadOnlyDictionary<string, string> RepoFolders { get { lock (Gate) return Entries.GroupBy(e => e.Value.Repo).ToDictionary(g => g.Key, g => g.First().Key); } }
+    public static IReadOnlyDictionary<string, string> RepoFolders { get { lock (Gate) return Entries.GroupBy(e => e.Value.Repo).ToDictionary(g => g.Key, g => g.First().Value.Folder ?? g.First().Key); } }
+
+    /// <summary>
+    /// Adds every <c>.safetensors</c> file under <c>&lt;models&gt;/checkpoints</c> (sub-folders too), named by its path there with the platform's separator, as
+    /// ComfyUI names them. Returns how many were added.
+    /// </summary>
+    public static int ScanCheckpointFiles(string modelsFolder)
+    {
+        var dir = Path.Combine(modelsFolder, "checkpoints");
+        if (!Directory.Exists(dir)) return 0;
+        int added = 0;
+        foreach (var path in Directory.EnumerateFiles(dir, "*.safetensors", SearchOption.AllDirectories))
+        {
+            var name = Path.GetRelativePath(dir, path);
+            if (Repos.ContainsKey(name)) continue;
+            lock (Gate) Entries[name] = new Entry(LocalCheckpointsRepo, new MlRuntime.CheckpointInfo(0, File: name), "checkpoints");
+            added++;
+        }
+        return added;
+    }
 
     /// <summary>Reads a <c>checkpoints.json</c>; entries that are not understood are skipped. Returns how many were added.</summary>
     public static int LoadJson(string path)

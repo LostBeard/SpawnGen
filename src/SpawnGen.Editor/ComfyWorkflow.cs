@@ -236,6 +236,7 @@ public static class ComfyWorkflow
                 WidgetKind.Int => value is JsonValue iv && iv.TryGetValue<double>(out var d) ? (object)(long)Math.Round(d) : throw new FormatException(),
                 WidgetKind.Float => (double)value,
                 WidgetKind.Boolean => (bool)value,
+                WidgetKind.Json => SpawnGen.Engine.Types.JsonLiteral.FromJson(value),
                 _ => (string?)value ?? "",
             };
         }
@@ -384,6 +385,7 @@ public static class ComfyWorkflow
                 double d => JsonValue.Create(d),
                 float f => JsonValue.Create((double)f),
                 bool b => JsonValue.Create(b),
+                SpawnGen.Engine.Types.DictValue or SpawnGen.Engine.Types.ArrayValue => SpawnGen.Engine.Types.JsonLiteral.ToNode(v),
                 _ => JsonValue.Create(v.ToString()),
             });
             if (w.Widget!.Kind == WidgetKind.Int && SeedWidgets.Contains(w.Name)) list.Add(ControlAfterGenerate.ModeOf(n));

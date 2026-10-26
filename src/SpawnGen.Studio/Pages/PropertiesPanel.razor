@@ -211,7 +211,7 @@
     RenderFragment Widget(EditorNode node, string name, WidgetSpec spec, bool linked, string? tooltip) => __builder =>
     {
         var value = node.Widgets.GetValueOrDefault(name) ?? spec.Default;
-        var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
+        var text = spec.Kind == WidgetKind.Json ? SpawnGen.Engine.Types.JsonLiteral.ToJson(value) : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
         <label class="@(spec.Multiline ? "multi" : spec.Kind == WidgetKind.Boolean ? "row" : "")" title="@tooltip">
             @if (spec.Kind == WidgetKind.Boolean)
             {
@@ -253,6 +253,10 @@
                            min="@spec.Min?.ToString(CultureInfo.InvariantCulture)" max="@spec.Max?.ToString(CultureInfo.InvariantCulture)"
                            @onchange="e => SetNumber(node.Id, name, spec, e.Value?.ToString())" />
                 }
+                else if (spec.Kind == WidgetKind.Json)
+                {
+                    <input type="text" value="@text" @onchange="e => SetJson(node.Id, name, e.Value?.ToString())" />
+                }
                 else
                 {
                     <input type="text" value="@text" @onchange="e => SetText(node.Id, name, e.Value)" />
@@ -262,6 +266,17 @@
     };
 
     void SetText(int nodeId, string name, object? value) => Commit(() => Doc.SetWidget(nodeId, name, value?.ToString() ?? ""));
+
+    /// <summary>An object-valued widget (a bounding box, ...) edited as its JSON text.</summary>
+    void SetJson(int nodeId, string name, string? text)
+    {
+        if (!SpawnGen.Engine.Types.JsonLiteral.TryParse(text ?? "", out var value) || value is null)
+        {
+            Message?.Invoke($"'{text}' is not valid JSON.");
+            return;
+        }
+        Commit(() => Doc.SetWidget(nodeId, name, value));
+    }
 
     void SetNumber(int nodeId, string name, WidgetSpec spec, string? text)
     {

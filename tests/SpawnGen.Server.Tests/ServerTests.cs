@@ -156,6 +156,22 @@ public class ServerTests
     }
 
     [Test]
+    public async Task Object_info_states_object_valued_widgets_as_ComfyUI_does()
+    {
+        var info = JsonNode.Parse(await _http.GetStringAsync("/object_info"))!.AsObject();
+        var crop = info["ImageCropV2"]!["input"]!["required"]!["crop_region"]!;
+        Assert.That(crop.ToJsonString(), Is.EqualTo("""["BOUNDING_BOX",{"default":{"x":0,"y":0,"width":512,"height":512},"socketless":true}]"""));
+        var boxes = info["CreateBoundingBoxes"]!["input"]!;
+        Assert.That(boxes["required"]!["editor_state"]!.ToJsonString(), Does.StartWith("""["BOUNDING_BOXES",{"""));
+        Assert.That(boxes["required"]!["editor_state"]![1]!["default"]!.ToJsonString(), Is.EqualTo("[]"));
+        Assert.That((bool?)boxes["required"]!["editor_state"]![1]!["socketless"], Is.False);
+        Assert.That((bool?)boxes["optional"]!["last_incoming"]![1]!["socketless"], Is.True);
+        var draw = info["DrawBBoxes"]!["input"]!["required"]!["bboxes"]![1]!;
+        Assert.That((bool?)draw["forceInput"], Is.True);
+        Assert.That(draw["default"]!.ToJsonString(), Is.EqualTo("""{"x":0,"y":0,"width":512,"height":512}"""), "a socket-only box still states its default");
+    }
+
+    [Test]
     public async Task A_prompt_runs_and_reports_every_step_then_serves_the_result()
     {
         await ConnectAsync();

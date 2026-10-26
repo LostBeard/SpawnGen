@@ -185,6 +185,15 @@ internal sealed class StandaloneTextEncoder(string name, SdTextEncoder encoder, 
     }
 }
 
+/// <summary>A tiny VAE (TAESD / TAESDXL from vae_approx): the same values in and out as the full VAE, much faster and rougher.</summary>
+internal sealed class StandaloneTaesd(string name, SdTaesd tae) : IVaeModel, IDisposable
+{
+    public string Name { get; } = name;
+    public Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default) => tae.DecodeAsync(latent, h, w, cancellationToken);
+    public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default) => tae.EncodeAsync(image, H, W, cancellationToken);
+    public void Dispose() => tae.Dispose();
+}
+
 /// <summary>A VAE loaded alone (Load VAE): LDM names with or without <c>first_stage_model.</c>, or diffusers names.</summary>
 internal sealed class StandaloneVae(string name, SdVae vae) : IVaeModel, IDisposable
 {

@@ -9,7 +9,7 @@ namespace SpawnGen.Nodes.ML;
 /// </summary>
 public static class ModelFolders
 {
-    public const string DiffusionModels = "diffusion_models", Vae = "vae", TextEncoders = "text_encoders", ControlNet = "controlnet";
+    public const string DiffusionModels = "diffusion_models", Vae = "vae", TextEncoders = "text_encoders", ControlNet = "controlnet", VaeApprox = "vae_approx";
 
     /// <summary>ComfyUI's folder names per kind: the current one first, then the older one it still reads.</summary>
     static readonly Dictionary<string, string[]> Folders = new()
@@ -18,6 +18,7 @@ public static class ModelFolders
         [Vae] = ["vae"],
         [TextEncoders] = ["text_encoders", "clip"],
         [ControlNet] = ["controlnet", "t2i_adapter"],
+        [VaeApprox] = ["vae_approx"],
     };
 
     static readonly object Gate = new();
@@ -86,13 +87,41 @@ public sealed class UNETLoader
 [Node(Category = "model/loaders", DisplayName = "Load VAE")]
 public sealed class VAELoader
 {
-    public static string[] VaeNames() => [.. ModelFolders.Names(ModelFolders.Vae), "pixel_space"];
+    /// <summary>The tiny VAEs SpawnGen runs (ComfyUI's image TAEs for SD 1.x / 2.x and SDXL) with their families' latent scales.</summary>
+    static readonly Dictionary<string, float> Taes = new() { ["taesd"] = 0.18215f, ["taesdxl"] = 0.13025f };
 
-    /// <summary>A VAE alone from <c>&lt;models&gt;/vae</c> (e.g. vae-ft-mse-840000-ema-pruned, sdxl_vae): LDM names with or without <c>first_stage_model.</c>, or diffusers names.</summary>
+    /// <summary>The VAE files, then each tiny VAE whose encoder and decoder are both in <c>&lt;models&gt;/vae_approx</c>, then pixel_space, as ComfyUI lists them.</summary>
+    public static string[] VaeNames()
+    {
+        var approx = ModelFolders.Names(ModelFolders.VaeApprox);
+        var taes = Taes.Keys.Where(t => TaeFile(approx, t, "decoder") is not null && TaeFile(approx, t, "encoder") is not null);
+        return [.. ModelFolders.Names(ModelFolders.Vae), .. taes, "pixel_space"];
+    }
+
+    static string? TaeFile(IEnumerable<string> approx, string tae, string part) => approx.FirstOrDefault(n => n.StartsWith($"{tae}_{part}.", StringComparison.Ordinal));
+
+    /// <summary>
+    /// A VAE alone from <c>&lt;models&gt;/vae</c> (e.g. vae-ft-mse-840000-ema-pruned, sdxl_vae): LDM names with or without <c>first_stage_model.</c>, or diffusers names;
+    /// or a tiny VAE (taesd, taesdxl) from <c>&lt;models&gt;/vae_approx</c>, fast and rougher.
+    /// </summary>
     public async Task<VaeHandle> ExecuteAsync([Input(OptionsProvider = nameof(VaeNames))] string vaeName, NodeContext context, IServiceProvider services)
     {
         if (vaeName == "pixel_space") throw new NotSupportedException("pixel_space is for pixel-space models, which SpawnGen does not run yet.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
+        if (Taes.TryGetValue(vaeName, out var scale))
+        {
+            var approx = ModelFolders.Names(ModelFolders.VaeApprox);
+            var decoder = ModelFolders.Locate(ModelFolders.VaeApprox, TaeFile(approx, vaeName, "decoder") ?? throw new ArgumentException($"No {vaeName}_decoder in vae_approx."));
+            var encoder = ModelFolders.Locate(ModelFolders.VaeApprox, TaeFile(approx, vaeName, "encoder") ?? throw new ArgumentException($"No {vaeName}_encoder in vae_approx."));
+            context.Status($"Loading {vaeName}");
+            var tae = await runtime.GetOrLoadAsync($"tae:{vaeName}:{decoder.Repo}/{decoder.File}", async () =>
+            {
+                await using var dec = await runtime.ModelSource.OpenAsync(decoder.Repo, decoder.File);
+                await using var enc = await runtime.ModelSource.OpenAsync(encoder.Repo, encoder.File);
+                return new StandaloneTaesd(vaeName, await SdTaesd.LoadAsync(runtime.Accelerator, dec, decoder.File, enc, encoder.File, scale));
+            });
+            return new VaeHandle(tae);
+        }
         var (repo, file) = ModelFolders.Locate(ModelFolders.Vae, vaeName);
         context.Status($"Loading {vaeName}");
         var vae = await runtime.GetOrLoadAsync("vae:" + repo + "/" + file, async () =>

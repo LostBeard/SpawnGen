@@ -236,6 +236,30 @@ public class ComfyUIRenderParityTests
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 
+    /// <summary>
+    /// The tiny VAEs: Load VAE "taesd" / "taesdxl" (madebyollin's taesd*_encoder / _decoder.safetensors in &lt;models&gt;/vae_approx) decoding SD 1.5's and SDXL's
+    /// samples, against ComfyUI's pictures decoded with the same files from its own result latents.
+    /// </summary>
+    [TestCase("v1-5-pruned-emaonly.safetensors", "taesd", "comfyui_sd15", 10, 7.5)]
+    [TestCase("sd_xl_base_1.0.safetensors", "taesdxl", "comfyui_sdxl", 6, 7.0)]
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (the checkpoint, vae_approx/taesd* files) and a GPU.")]
+    public async Task A_tiny_VAE_gives_ComfyUIs_picture(string checkpoint, string tae, string fixture, int steps, double cfg)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        ModelFolders.Scan(root!);
+        Assert.That(VAELoader.VaeNames(), Does.Contain(tae));
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "", "euler", fixture, steps, cfg, picture: "euler_" + tae, load: g =>
+        {
+            g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", checkpoint));
+            g.Add("13", "VAELoader", ("vae_name", tae));
+            return (PromptInput.Link("1"), PromptInput.Link("1", 1), PromptInput.Link("13"));
+        });
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
     static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg,
         string? lora = null, string? result = null, Func<PromptGraph, (PromptInput Model, PromptInput Clip, PromptInput Vae)>? load = null, string? picture = null,
         (string Name, string Hint, double Strength, double EndPercent)? controlNet = null)

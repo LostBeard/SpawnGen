@@ -24,6 +24,20 @@ internal static class Results
         return text;
     }
 
+    /// <summary>
+    /// The first <paramref name="count"/> pictures stored as temporary previews (ComfyUI's <c>UI.PreviewImage</c>), for nodes that show their result. An empty
+    /// picture cannot be written, as Pillow refuses it.
+    /// </summary>
+    public static async Task<List<object>> PreviewAsync(ImageBatch images, NodeContext context, IServiceProvider services, int count = int.MaxValue)
+    {
+        if (images.Height == 0 || images.Width == 0) throw new ArgumentException("cannot write empty image", nameof(images));
+        var store = For(services);
+        var saved = new List<object>();
+        for (int i = 0; i < Math.Min(count, images.Batch); i++)
+            saved.Add(await store.SaveAsync("temp", "preview", PngWriter.Encode(images, i, Metadata(context))));
+        return saved;
+    }
+
     /// <summary>The result store a host registered, or a disk store over the output options (so the nodes also work with no host setup).</summary>
     public static IResultStore For(IServiceProvider services) =>
         services.GetService(typeof(IResultStore)) as IResultStore

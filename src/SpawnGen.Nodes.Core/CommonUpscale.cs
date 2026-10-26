@@ -196,22 +196,30 @@ public static class PilLanczos
         if (c is not (1 or 2 or 3 or 4)) throw new ArgumentException($"Lanczos (Pillow) works on 1 to 4 channels, got {c}.", nameof(c));
         var px = new byte[src.Length];
         for (int i = 0; i < src.Length; i++) px[i] = (byte)Math.Clamp(255f * src[i], 0f, 255f);
-
-        if (newW != w || newH != h) // Pillow returns a copy for the same size
-        {
-            bool alpha = c is 2 or 4; // LA and RGBA are resized as La / RGBa
-            if (alpha) Premultiply(px, c);
-            // Pillow (Resample.c) runs the vertical pass first when the height shrinks by more than twice what the width shrinks; each pass rounds to 8 bits.
-            bool verticalFirst = h - newH > 0 && h - newH > (w - newW) * 2;
-            if (verticalFirst && newH != h) { px = Pass(px, w, h, c, newH, horizontal: false); h = newH; }
-            if (newW != w) { px = Pass(px, w, h, c, newW, horizontal: true); w = newW; }
-            if (newH != h) { px = Pass(px, w, h, c, newH, horizontal: false); h = newH; }
-            if (alpha) Unpremultiply(px, c);
-        }
-
+        px = Resize(px, w, h, c, newW, newH);
         var dst = new float[px.Length];
         for (int i = 0; i < px.Length; i++) dst[i] = px[i] / 255f;
         return dst;
+    }
+
+    /// <summary>
+    /// Pillow's <c>Image.resize((newW, newH), LANCZOS)</c> of 8-bit pixels (1 to 4 interleaved channels: L, LA, RGB, RGBA; LA and RGBA are resized
+    /// premultiplied); the same size gives the pixels back as they are.
+    /// </summary>
+    public static byte[] Resize(byte[] px, int w, int h, int c, int newW, int newH)
+    {
+        if (c is not (1 or 2 or 3 or 4)) throw new ArgumentException($"Lanczos (Pillow) works on 1 to 4 channels, got {c}.", nameof(c));
+        if (newW == w && newH == h) return px; // Pillow returns a copy for the same size
+        px = (byte[])px.Clone();
+        bool alpha = c is 2 or 4; // LA and RGBA are resized as La / RGBa
+        if (alpha) Premultiply(px, c);
+        // Pillow (Resample.c) runs the vertical pass first when the height shrinks by more than twice what the width shrinks; each pass rounds to 8 bits.
+        bool verticalFirst = h - newH > 0 && h - newH > (w - newW) * 2;
+        if (verticalFirst && newH != h) { px = Pass(px, w, h, c, newH, horizontal: false); h = newH; }
+        if (newW != w) { px = Pass(px, w, h, c, newW, horizontal: true); w = newW; }
+        if (newH != h) { px = Pass(px, w, h, c, newH, horizontal: false); h = newH; }
+        if (alpha) Unpremultiply(px, c);
+        return px;
     }
 
     // Pillow's MULDIV255 (RGBA -> RGBa) and its inverse (RGBa -> RGBA: integer division, clipped; alpha 0 or 255 left alone).

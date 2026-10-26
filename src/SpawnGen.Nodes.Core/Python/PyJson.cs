@@ -12,7 +12,22 @@ namespace SpawnGen.Nodes.Core;
 /// </summary>
 public static class PyJson
 {
-    sealed class JsonDecodeError(string message) : Exception(message);
+    /// <summary>Python's JSONDecodeError: the message and where in the text (a UTF-16 index; the message gives it in code points, as Python counts).</summary>
+    sealed class JsonDecodeError(string message, int pos) : Exception(message)
+    {
+        public int Pos { get; } = pos;
+
+        /// <summary><c>str(JSONDecodeError)</c>: "msg: line L column C (char P)".</summary>
+        public string Describe(string doc)
+        {
+            var before = doc[..Math.Min(Pos, doc.Length)];
+            int pos = PyText.Length(before);
+            int line = before.Count(ch => ch == '\n') + 1;
+            int lastNewline = before.LastIndexOf('\n');
+            int column = lastNewline < 0 ? pos + 1 : pos - PyText.Length(before[..lastNewline]);
+            return $"{Message}: line {line} column {column} (char {pos})";
+        }
+    }
 
     /// <summary><c>json.JSONDecoder().raw_decode(text, start)</c>: the value that starts exactly at <paramref name="start"/> and where it ends; false when it is not valid JSON.</summary>
     public static bool TryRawDecode(string text, int start, out object? value, out int end)
@@ -40,10 +55,10 @@ public static class PyJson
         {
             var v = ParseValue(text, ref i, 0);
             i = SkipWs(text, i);
-            if (i != text.Length) throw new JsonDecodeError("Extra data");
+            if (i != text.Length) throw new JsonDecodeError("Extra data", i);
             return v;
         }
-        catch (JsonDecodeError e) { throw new PyException("JSONDecodeError", e.Message); }
+        catch (JsonDecodeError e) { throw new PyException("JSONDecodeError", e.Describe(text)); }
     }
 
     static int SkipWs(string s, int i)
@@ -54,8 +69,8 @@ public static class PyJson
 
     static object? ParseValue(string s, ref int i, int depth)
     {
-        if (depth > 900) throw new JsonDecodeError("too deeply nested"); // Python stops at its recursion limit
-        if (i >= s.Length) throw new JsonDecodeError("Expecting value");
+        if (depth > 900) throw new JsonDecodeError("too deeply nested", i); // Python stops at its recursion limit
+        if (i >= s.Length) throw new JsonDecodeError("Expecting value", i);
         char c = s[i];
         switch (c)
         {
@@ -70,7 +85,7 @@ public static class PyJson
             case '-' when Match(s, i, "-Infinity"): i += 9; return double.NegativeInfinity;
         }
         if (c == '-' || char.IsAsciiDigit(c)) return ParseNumber(s, ref i);
-        throw new JsonDecodeError("Expecting value");
+        throw new JsonDecodeError("Expecting value", i);
     }
 
     static bool Match(string s, int i, string word) => string.CompareOrdinal(s, i, word, 0, word.Length) == 0 && i + word.Length <= s.Length;
@@ -80,7 +95,7 @@ public static class PyJson
     {
         int start = i;
         if (s[i] == '-') i++;
-        if (i >= s.Length || !char.IsAsciiDigit(s[i])) throw new JsonDecodeError("Expecting value");
+        if (i >= s.Length || !char.IsAsciiDigit(s[i])) throw new JsonDecodeError("Expecting value", start);
         if (s[i] == '0') i++;
         else while (i < s.Length && char.IsAsciiDigit(s[i])) i++;
         int intEnd = i;
@@ -109,15 +124,16 @@ public static class PyJson
 
     static string ParseString(string s, ref int i)
     {
+        int begin = i - 1; // the opening quote
         var sb = new StringBuilder();
         while (true)
         {
-            if (i >= s.Length) throw new JsonDecodeError("Unterminated string starting at");
+            if (i >= s.Length) throw new JsonDecodeError("Unterminated string starting at", begin);
             char c = s[i++];
             if (c == '"') return sb.ToString();
-            if (c < 0x20) throw new JsonDecodeError("Invalid control character at"); // strict mode
+            if (c < 0x20) throw new JsonDecodeError("Invalid control character at", i - 1); // strict mode
             if (c != '\\') { sb.Append(c); continue; }
-            if (i >= s.Length) throw new JsonDecodeError("Unterminated string starting at");
+            if (i >= s.Length) throw new JsonDecodeError("Unterminated string starting at", begin);
             char e = s[i++];
             switch (e)
             {
@@ -130,12 +146,13 @@ public static class PyJson
                 case 'r': sb.Append('\r'); break;
                 case 't': sb.Append('\t'); break;
                 case 'u':
-                    if (i + 4 > s.Length || !int.TryParse(s.AsSpan(i, 4), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var code))
-                        throw new JsonDecodeError("Invalid \\uXXXX escape");
+                    // CPython's scanner wants a character after the four digits (the closing quote at least), else it reports the escape.
+                    if (i + 4 >= s.Length || !int.TryParse(s.AsSpan(i, 4), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var code))
+                        throw new JsonDecodeError("Invalid \\uXXXX escape", i - 1);
                     sb.Append((char)code); // a pair of escaped surrogates makes one character, as in Python
                     i += 4;
                     break;
-                default: throw new JsonDecodeError("Invalid \\escape");
+                default: throw new JsonDecodeError("Invalid \\escape", i - 2);
             }
         }
     }
@@ -147,16 +164,16 @@ public static class PyJson
         if (i < s.Length && s[i] == '}') { i++; return d; }
         while (true)
         {
-            if (i >= s.Length || s[i] != '"') throw new JsonDecodeError("Expecting property name enclosed in double quotes");
+            if (i >= s.Length || s[i] != '"') throw new JsonDecodeError("Expecting property name enclosed in double quotes", i);
             i++;
             var key = ParseString(s, ref i);
             i = SkipWs(s, i);
-            if (i >= s.Length || s[i] != ':') throw new JsonDecodeError("Expecting ':' delimiter");
+            if (i >= s.Length || s[i] != ':') throw new JsonDecodeError("Expecting ':' delimiter", i);
             i = SkipWs(s, i + 1);
             d[key] = ParseValue(s, ref i, depth + 1);
             i = SkipWs(s, i);
             if (i < s.Length && s[i] == '}') { i++; return d; }
-            if (i >= s.Length || s[i] != ',') throw new JsonDecodeError("Expecting ',' delimiter");
+            if (i >= s.Length || s[i] != ',') throw new JsonDecodeError("Expecting ',' delimiter", i);
             i = SkipWs(s, i + 1);
         }
     }
@@ -171,7 +188,7 @@ public static class PyJson
             a.Add(ParseValue(s, ref i, depth + 1));
             i = SkipWs(s, i);
             if (i < s.Length && s[i] == ']') { i++; return a; }
-            if (i >= s.Length || s[i] != ',') throw new JsonDecodeError("Expecting ',' delimiter");
+            if (i >= s.Length || s[i] != ',') throw new JsonDecodeError("Expecting ',' delimiter", i);
             i = SkipWs(s, i + 1);
         }
     }

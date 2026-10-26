@@ -78,13 +78,15 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**229 shared nodes, 226 identical** (branch `sd-checkpoint`); the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
+**238 shared nodes, 235 identical** (branch `bbox-nodes`); the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
 RecordAudio's recorder widget, Resolution Selector's preview-only widget. `tools/parity/apply_names.py` keeps names and categories in step.
 
 Behaviour is checked against ComfyUI's own code: fixtures made by running ComfyUI's node code on real torch / kornia / Pillow / numpy (image ops,
 compositing, Canny, colour spaces, Pad Image, Color Transfer, SDR to HDR, Image Quantize byte for byte with Pillow's median cut and dithers,
-common_upscale incl. Pillow's 8-bit Lanczos), Python-exact string, regex, `str.format` and simpleeval ports (about 3,500 CPython vectors),
-torch's interpolate and bislerp for latents, and the sampling replay above.
+common_upscale incl. Pillow's 8-bit Lanczos; bounding boxes, Crop Image (ImageCropV2), Draw BBoxes, Crop By Bounding Boxes, the tile list split and
+merge, and the compositor: Pillow's rectangle drawing, bicubic rotate and premultiplied Lanczos, all 26 blend modes in numpy's float32, layer fingerprints
+and saved compositions), Python-exact string, regex, `str.format` and simpleeval ports (about 3,500 CPython vectors), torch's interpolate and bislerp
+for latents, and the sampling replay above.
 
 Still missing, by kind:
 1. **Need the library**: CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use
@@ -98,7 +100,11 @@ Still missing, by kind:
    weight_dtype, TAESD sampling previews.
 2. **Need a codec**: video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), WebP, MP3 / Opus / FLAC audio saving.
 3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop), Custom Combo (frontend-defined options),
-   ImageCropV2 (an object-valued bounding-box widget and a crop editor), Text Overlay (a font engine).
+   Text Overlay (a font engine; the same engine would draw the number tags and descriptions in Create Bounding Boxes' preview and the labels of Draw
+   BBoxes, which are left out until then). Done on branch `bbox-nodes`: object-valued widgets (BOUNDING_BOX, BOUNDING_BOXES, COMPOSITOR) in prompts,
+   workflows and object_info, with Crop Image (ImageCropV2), Create Bounding Boxes, Draw BBoxes, Crop By Bounding Boxes, Split Image into List of Tiles,
+   Merge List of Tiles to Image, Add Layer, Layers From Bounding Boxes and Create Layered Image; the Studio edits those widgets as JSON text until it has
+   ComfyUI's crop editor, bounding-box canvas and compositor editor (todo).
 
 ## 5. Platform
 

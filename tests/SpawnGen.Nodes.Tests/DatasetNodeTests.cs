@@ -377,7 +377,9 @@ public class DatasetNodeTests
             var bytes = File.ReadAllBytes(Path.Combine(dst, name));
             if (entry["bytes"] is { } text)
             {
-                Assert.That(bytes, Is.EqualTo(Convert.FromBase64String((string)text!)), name);
+                // Python's text mode writes "\n" as the platform's line end: ComfyUI on this platform writes the same with Environment.NewLine.
+                var caption = Encoding.UTF8.GetString(Convert.FromBase64String((string)text!)).Replace((string)Graphs.Value["linesep"]!, "\n").Replace("\n", Environment.NewLine);
+                Assert.That(bytes, Is.EqualTo(Encoding.UTF8.GetBytes(caption)), name);
                 continue;
             }
             Assert.That(PngReader.ReadText(bytes), Is.Empty, $"{name}: ComfyUI's dataset PNGs carry no text chunks");
@@ -454,8 +456,9 @@ public class DatasetNodeTests
     [Test]
     public void Captions_are_written_with_the_platforms_line_end_as_Pythons_text_mode_does()
     {
-        // The reference ran on Windows: its caption files have "\r\n" where the text has "\n".
-        Assert.That((string)Graphs.Value["linesep"]!, Is.EqualTo(Environment.NewLine), "these fixtures are for the platform they were made on");
+        // The reference ran on Windows, so its caption files have "\r\n" where the text has "\n": the file comparisons check the translation.
+        Assert.That((string)Graphs.Value["linesep"]!, Is.EqualTo("\r\n"));
+        Assert.That(Graphs.Value["files"]!.AsObject().Where(f => f.Key.EndsWith(".txt")).Any(f => Encoding.UTF8.GetString(Convert.FromBase64String((string)f.Value!["bytes"]!)).Contains("\r\n")));
     }
 
     // ---- stores and schemas ----------------------------------------------------------------------------------------------------------------------

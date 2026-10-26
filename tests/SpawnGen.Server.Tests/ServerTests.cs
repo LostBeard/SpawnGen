@@ -172,6 +172,33 @@ public class ServerTests
     }
 
     [Test]
+    public async Task A_prompt_with_object_valued_widgets_runs_and_reports_their_editor_data()
+    {
+        await ConnectAsync();
+        // As ComfyUI's frontend posts it: an object for a box, a list wrapped as {"__value__": [...]}.
+        var prompt = JsonNode.Parse("""
+        {
+          "1": { "class_type": "CreateBoundingBoxes", "inputs": { "width": 64, "height": 96,
+                 "bboxes": "[{\"type\": \"text\", \"bbox\": [100, 200, 600, 900], \"text\": \"Hi\", \"color_palette\": [\"#ff0000\"]}]",
+                 "editor_state": {"__value__": []}, "last_incoming": {"__value__": []} } },
+          "2": { "class_type": "EmptyImage", "inputs": { "width": 40, "height": 30, "batch_size": 1, "color": 0 } },
+          "3": { "class_type": "ImageCropV2", "inputs": { "image": ["2", 0], "crop_region": {"x": 4, "y": 2, "width": 10, "height": 8} } },
+          "4": { "class_type": "PreviewImage", "inputs": { "images": ["3", 0] } }
+        }
+        """)!.AsObject();
+        var response = await PostPrompt(prompt);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), await response.Content.ReadAsStringAsync());
+        var executed = await WaitForAsync(m => (string?)m["type"] == "executed" && (string?)m["data"]!["node"] == "1");
+        var output = executed["data"]!["output"]!;
+        Assert.That(output["dims"]!.ToJsonString(), Is.EqualTo("[64,96]"));
+        Assert.That(output["input_bboxes"]!.ToJsonString(), Is.EqualTo(
+            """[{"x":13,"y":10,"width":45,"height":48,"metadata":{"type":"text","text":"Hi","desc":"","palette":["#ff0000"]}}]"""));
+        var crop = await WaitForAsync(m => (string?)m["type"] == "executed" && (string?)m["data"]!["node"] == "4");
+        Assert.That(crop["data"]!["output"]!["images"]!.AsArray(), Has.Count.EqualTo(1));
+        await WaitForAsync(Type("execution_success"));
+    }
+
+    [Test]
     public async Task A_prompt_runs_and_reports_every_step_then_serves_the_result()
     {
         await ConnectAsync();

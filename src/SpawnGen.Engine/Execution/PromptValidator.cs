@@ -123,6 +123,15 @@ public static class PromptValidator
             if (parts.All(p => p is "INT" or "FLOAT" or "BOOLEAN" or "STRING"))
                 return parts.Any(p => ValueCoercion.TryCoerce(literal, MemberClr(new SocketType(p)), out _)) ? null : $"'{literal}' is not a valid {spec.Type}.";
         }
+        if (w is null && spec.Type.Name.Contains(','))
+        {
+            // A MultiType socket (ComfyUI's "BOUNDING_BOX,ARRAY,STRING") takes a value in a prompt as ComfyUI does: one that fits a primitive part, or a
+            // JSON value (an object, or a list wrapped as {"__value__": ...}) for its other parts.
+            var parts = spec.Type.Name.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Any(p => p is "INT" or "FLOAT" or "BOOLEAN" or "STRING" && ValueCoercion.TryCoerce(literal, MemberClr(new SocketType(p)), out _))) return null;
+            if (literal is Types.DictValue or Types.ArrayValue && parts.Any(p => p is not ("INT" or "FLOAT" or "BOOLEAN" or "STRING"))) return null;
+            return $"'{literal}' is not a valid {spec.Type}.";
+        }
         if (w is null) return $"expects a {spec.Type} link, not a value.";
 
         switch (w.Kind)

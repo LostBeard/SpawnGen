@@ -19,6 +19,13 @@ public sealed class BoxWidgets
     }
 }
 
+/// <summary>A MultiType socket, as ComfyUI's bboxes input of Create Bounding Boxes: no widget, but a prompt may give it a value.</summary>
+[Node(Category = "test")]
+public sealed class MultiTypeSocket
+{
+    public string Execute([Input(Type = "BOUNDING_BOX,ARRAY,STRING")] object bboxes) => bboxes is string s ? "text:" + s : JsonLiteral.ToJson(bboxes);
+}
+
 public class JsonWidgetTests
 {
     NodeRegistry _registry = null!;
@@ -120,6 +127,23 @@ public class JsonWidgetTests
         Assert.That(boxes.Widget, Is.Null);
         Assert.That(boxes.ForceInput, Is.True);
         Assert.That(boxes.StatedDefault, Is.InstanceOf<DictValue>());
+    }
+
+    [Test]
+    public async Task A_multitype_socket_takes_a_value_in_a_prompt_as_ComfyUI_does()
+    {
+        static PromptGraph With(string value) => PromptJson.Parse($$"""
+            { "1": { "class_type": "MultiTypeSocket", "inputs": { "bboxes": {{value}} } }, "2": { "class_type": "StringSink", "inputs": { "text": ["1", 0] } } }
+            """);
+        var executor = new PromptExecutor(_registry);
+        var text = await executor.ExecuteAsync(With("\"[{\\\"x\\\": 1}]\""));
+        Assert.That(text.Outputs["2"].Ui!["text"], Is.EqualTo("text:[{\"x\": 1}]"), "a STRING part takes text");
+        var dict = await executor.ExecuteAsync(With("""{"x": 1, "y": 2, "width": 3, "height": 4}"""));
+        Assert.That(dict.Outputs["2"].Ui!["text"], Is.EqualTo("""{"x":1,"y":2,"width":3,"height":4}"""), "a BOUNDING_BOX part takes an object");
+        var list = await executor.ExecuteAsync(With("""{"__value__": [[{"x": 1}]]}"""));
+        Assert.That(list.Outputs["2"].Ui!["text"], Is.EqualTo("""[[{"x":1}]]"""));
+        var errors = PromptValidator.Validate(_registry, With("5")).Errors;
+        Assert.That(errors.Select(e => e.Code), Is.EqualTo(new[] { "bad_value" }), "a number fits no part");
     }
 
     [Test]

@@ -77,17 +77,7 @@ public sealed class UNETLoader
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var (repo, file) = ModelFolders.Locate(ModelFolders.DiffusionModels, unetName);
         context.Status($"Loading {unetName}");
-        var model = await runtime.GetOrLoadAsync("unet:" + repo + "/" + file, async () =>
-        {
-            var unet = await SdUNet.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file);
-            if (SdFamilies.FromUNet(unet) == SdFamily.SD2)
-            {
-                unet.Dispose();
-                // ComfyUI tells SD 2.x eps from v models by their weights; a UNet loaded alone does not say which it is yet (asked of SpawnDev.ILGPU.ML).
-                throw new NotSupportedException($"'{unetName}' is an SD 2.x diffusion model; loaded alone its prediction type (eps or v) is not known yet. Load it as a checkpoint.");
-            }
-            return new StandaloneDiffusionModel(unetName, unet, PredictionType.Eps);
-        });
+        var model = await runtime.GetOrLoadAsync("unet:" + repo + "/" + file, () => StandaloneDiffusionModel.LoadAsync(runtime, unetName, repo, file));
         return new ModelHandle(model);
     }
 }
@@ -133,7 +123,7 @@ public sealed class CLIPLoader
         var encoder = await runtime.GetOrLoadAsync("clip:" + repo + "/" + file, async () =>
         {
             var tokenizer = await Checkpoint.LoadClipTokenizerAsync(runtime.ModelSource, Checkpoint.ClipTokenizerRepo, "", null);
-            return new StandaloneTextEncoder(clipName, await SdTextEncoder.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file), tokenizer);
+            return new StandaloneTextEncoder(clipName, await SdTextEncoder.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file), tokenizer, runtime.ModelSource);
         });
         return new ClipHandle(encoder);
     }
@@ -168,7 +158,7 @@ public sealed class DualCLIPLoader
             await using var ls = await runtime.ModelSource.OpenAsync(l.Repo, l.File);
             await using var gs = await runtime.ModelSource.OpenAsync(g.Repo, g.File);
             var te = await SdTextEncoder.LoadSdxlAsync(runtime.Accelerator, ls, $"{l.Repo}/{l.File}", gs, $"{g.Repo}/{g.File}");
-            return new StandaloneTextEncoder($"{clipName1} + {clipName2}", te, tokenizer);
+            return new StandaloneTextEncoder($"{clipName1} + {clipName2}", te, tokenizer, runtime.ModelSource);
         });
         return new ClipHandle(encoder);
     }

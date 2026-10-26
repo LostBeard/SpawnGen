@@ -88,27 +88,82 @@ internal sealed class EmptyPromptCache
     }
 }
 
-/// <summary>A UNet loaded alone (Load Diffusion Model): LDM names with or without <c>model.diffusion_model.</c>, or diffusers names.</summary>
-internal sealed class StandaloneDiffusionModel(string name, SdUNet unet, PredictionType prediction) : IDiffusionModel, IDisposable
+/// <summary>
+/// The LoRA set merged into one component loaded alone: merged again only when it changes (the library restores the original weights first). Nodes run one at a
+/// time, so a sampling run or an encode always sees the set it asked for.
+/// </summary>
+internal sealed class ComponentLoras(SpawnDev.ILGPU.ML.Hub.IModelSource source, Func<IReadOnlyList<SdLoraSpec>, CancellationToken, Task<SdLoraReport>> apply, bool clip)
+    : IDisposable
 {
+    readonly SemaphoreSlim _gate = new(1, 1);
+    string _applied = "";
+
+    public async Task UseAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            string key = string.Join(";", loras.Select(l => $"{l.Repo}/{l.File}:{l.Strength:R}"));
+            if (key == _applied) return;
+            _applied = "?"; // unknown until the merge finishes: a failed merge is redone next time
+            // One entry per file, its uses summed; this component reads Strength (a UNet) or ClipStrength (a text encoder).
+            var specs = loras.GroupBy(l => (l.Repo, l.File)).Select(g =>
+            {
+                float s = g.Sum(l => l.Strength);
+                return SdLoraSpec.From(source, g.Key.Repo, g.Key.File, clip ? 0f : s, clip ? s : 0f);
+            }).ToList();
+            await apply(specs, cancellationToken);
+            _applied = key;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public void Dispose() => _gate.Dispose();
+}
+
+/// <summary>A UNet loaded alone (Load Diffusion Model): LDM names with or without <c>model.diffusion_model.</c>, or diffusers names.</summary>
+internal sealed class StandaloneDiffusionModel(string name, SdUNet unet, PredictionType prediction, SpawnDev.ILGPU.ML.Hub.IModelSource source)
+    : IDiffusionModel, IDisposable
+{
+    readonly ComponentLoras _loras = new(source, unet.ApplyLorasAsync, clip: false);
+
     public string Name { get; } = name;
     public SdFamily Family { get; } = SdFamilies.FromUNet(unet);
     public LatentFormat LatentFormat => SdFamilies.LatentFormat(Family);
     public ModelSampling Sampling { get; } = new(ModelSigmas.LinearSchedule(), prediction);
 
-    public Task UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) =>
-        loras.Count == 0 ? Task.CompletedTask
-            : throw new NotSupportedException("LoRAs are merged into models loaded from a checkpoint; a diffusion model loaded alone cannot take one yet.");
+    public Task UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) => _loras.UseAsync(loras, cancellationToken);
 
     public UNetRun BeginRun(Accelerator accelerator) => new SdUNetRun(unet, accelerator);
 
-    public void Dispose() => unet.Dispose();
+    /// <summary>Loads a UNet-only file; its prediction type (eps or v) is read from the weights by ComfyUI's rules.</summary>
+    public static async Task<StandaloneDiffusionModel> LoadAsync(MlRuntime runtime, string name, string repo, string file)
+    {
+        var unet = await SdUNet.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file);
+        try
+        {
+            var prediction = await unet.InferPredictionAsync() == SdPrediction.V ? PredictionType.VPrediction : PredictionType.Eps;
+            return new StandaloneDiffusionModel(name, unet, prediction, runtime.ModelSource);
+        }
+        catch { unet.Dispose(); throw; }
+    }
+
+    public void Dispose()
+    {
+        _loras.Dispose();
+        unet.Dispose();
+    }
 }
 
 /// <summary>Text encoder(s) loaded alone (Load CLIP: one tower; DualCLIPLoader: SDXL's two), with the CLIP tokenizer.</summary>
-internal sealed class StandaloneTextEncoder(string name, SdTextEncoder encoder, BPETokenizer tokenizer) : ITextEncoderModel, IDisposable
+internal sealed class StandaloneTextEncoder(string name, SdTextEncoder encoder, BPETokenizer tokenizer, SpawnDev.ILGPU.ML.Hub.IModelSource source)
+    : ITextEncoderModel, IDisposable
 {
     readonly EmptyPromptCache _empty = new();
+    readonly ComponentLoras _loras = new(source, encoder.ApplyLorasAsync, clip: true);
 
     public string Name { get; } = name;
     public SdFamily Family { get; } = SdFamilies.FromTextWidth(encoder.Width, encoder.IsXL);
@@ -121,11 +176,13 @@ internal sealed class StandaloneTextEncoder(string name, SdTextEncoder encoder, 
     public Task<TextEncoding> EmptyPromptAsync(int? layer, IReadOnlyList<LoraUse> loras) =>
         _empty.GetAsync(this, layer ?? SdFamilies.DefaultClipLayer(Family), loras);
 
-    public Task UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) =>
-        loras.Count == 0 ? Task.CompletedTask
-            : throw new NotSupportedException("LoRAs are merged into text encoders loaded from a checkpoint; a CLIP loaded alone cannot take one yet.");
+    public Task UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) => _loras.UseAsync(loras, cancellationToken);
 
-    public void Dispose() => encoder.Dispose();
+    public void Dispose()
+    {
+        _loras.Dispose();
+        encoder.Dispose();
+    }
 }
 
 /// <summary>A VAE loaded alone (Load VAE): LDM names with or without <c>first_stage_model.</c>, or diffusers names.</summary>

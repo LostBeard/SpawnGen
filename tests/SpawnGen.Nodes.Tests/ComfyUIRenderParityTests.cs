@@ -171,6 +171,51 @@ public class ComfyUIRenderParityTests
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 
+    /// <summary>
+    /// LoRA on components loaded alone: SD 1.5's split files (see <see cref="SD15_from_split_files_gives_ComfyUIs_single_file_result"/>) plus the LCM-LoRA through
+    /// Load LoRA (Model and CLIP), against ComfyUI's checkpoint + LoRA render (the same weights, merged into the standalone UNet and text encoder).
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (the SD 1.5 split files, loras/lcm-lora-sdv1-5.safetensors) and a GPU.")]
+    public async Task SD15_split_files_with_a_LoRA_give_ComfyUIs_result()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ModelFolders.Scan(root!);
+        CheckpointCatalog.ScanLoraFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "", "euler", "comfyui_sd15", 4, 1.0, lora: "lcm-lora-sdv1-5.safetensors", result: "euler_lcm_lora", load: g =>
+        {
+            g.Add("11", "UNETLoader", ("unet_name", "sd15_unet.safetensors"), ("weight_dtype", "default"));
+            g.Add("12", "CLIPLoader", ("clip_name", "sd15_clip_l.safetensors"), ("type", "stable_diffusion"));
+            g.Add("13", "VAELoader", ("vae_name", "sd15_vae.safetensors"));
+            return (PromptInput.Link("11"), PromptInput.Link("12"), PromptInput.Link("13"));
+        });
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// SD 2.x from component files: ComfyUI's ModelSave / CLIPSave / VAESave of sd_turbo.safetensors (an OpenCLIP-H text encoder, a UNet-only file whose
+    /// prediction type is read from its weights) against ComfyUI's single-file render of the same start latent.
+    /// </summary>
+    [TestCase("euler")]
+    [TestCase("dpm_fast")]
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (diffusion_models/sdturbo_unet, text_encoders/sdturbo_clip_h, vae/sdturbo_vae .safetensors) and a GPU.")]
+    public async Task SD_Turbo_from_split_files_gives_ComfyUIs_result(string sampler)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "", sampler, "comfyui_sd_turbo", 4, 1.0, load: g =>
+        {
+            g.Add("11", "UNETLoader", ("unet_name", "sdturbo_unet.safetensors"), ("weight_dtype", "default"));
+            g.Add("12", "CLIPLoader", ("clip_name", "sdturbo_clip_h.safetensors"), ("type", "stable_diffusion"));
+            g.Add("13", "VAELoader", ("vae_name", "sdturbo_vae.safetensors"));
+            return (PromptInput.Link("11"), PromptInput.Link("12"), PromptInput.Link("13"));
+        });
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
     static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg,
         string? lora = null, string? result = null, Func<PromptGraph, (PromptInput Model, PromptInput Clip, PromptInput Vae)>? load = null, string? picture = null)
     {

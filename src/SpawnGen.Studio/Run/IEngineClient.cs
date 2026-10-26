@@ -17,7 +17,7 @@ public interface IEngineClient
     event Action<JsonObject>? EventReceived;
 
     /// <param name="workflowJson">The editor workflow (ComfyUI format); Save Image embeds it in each picture so the picture can be dropped back on the canvas.</param>
-    Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false);
+    Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null);
     Task InterruptAsync();
 
     /// <summary>Removes a run that is still waiting in the queue (not the one that is running: that is <see cref="InterruptAsync"/>).</summary>

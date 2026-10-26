@@ -125,7 +125,9 @@ public static class ServerApp
                 Dictionary<string, string>? extra = null;
                 if (body["extra_data"]?["extra_pnginfo"] is JsonObject pnginfo)
                     extra = pnginfo.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value is JsonValue v && v.TryGetValue<string>(out var s) ? s : kv.Value!.ToJsonString());
-                var item = queue.Enqueue(graph, (string?)body["client_id"], extra, front: (bool?)body["front"] == true);
+                // ComfyUI's frontend sends its preview setting as extra_data.preview_method (auto, latent2rgb, taesd, none, default).
+                var item = queue.Enqueue(graph, (string?)body["client_id"], extra, front: (bool?)body["front"] == true,
+                    previewMethod: body["extra_data"]?["preview_method"] is JsonValue pm && pm.TryGetValue<string>(out var method) ? method : null);
                 return Results.Json(new JsonObject { ["prompt_id"] = item.Id, ["number"] = item.Number, ["node_errors"] = new JsonObject() });
             }
             catch (PromptValidationException ex)

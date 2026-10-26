@@ -217,6 +217,14 @@
                 </label>
                 <label class="row"><input type="checkbox" checked="@_settings.ShowNodeIds" @onchange="e => { _settings.ShowNodeIds = (bool)(e.Value ?? false); ApplySettings(); }" /> Show node ids (#12) in the title bars</label>
                 <label class="row"><input type="checkbox" checked="@_settings.ShowMinimap" @onchange="e => { _settings.ShowMinimap = (bool)(e.Value ?? false); ApplySettings(); }" /> Show the minimap</label>
+                <label title="How samplers preview while they work: latent2rgb is a quick colour guess; taesd runs the tiny VAE (taesd_decoder / taesdxl_decoder in models/vae_approx) and looks close to the final picture">Sampler preview
+                    <select @onchange="OnPreviewMethodChosen">
+                        @foreach (var method in StudioSettings.PreviewMethods)
+                        {
+                            <option value="@method" selected="@(method == _settings.PreviewMethod)">@method</option>
+                        }
+                    </select>
+                </label>
             </div>
         }
 
@@ -1187,6 +1195,12 @@
     bool _settingsOpen;
 
     /// <summary>Puts the settings to work (view, renderer) and remembers them in the browser.</summary>
+    void OnPreviewMethodChosen(ChangeEventArgs e)
+    {
+        _settings.PreviewMethod = e.Value as string ?? "auto";
+        ApplySettings();
+    }
+
     void ApplySettings()
     {
         LinkGeometry.Style = _settings.LinkStyle;
@@ -1426,7 +1440,7 @@
 
         // The workflow travels with the prompt so Save Image can embed it: the picture can then be dropped back on the canvas.
         var workflow = ComfyWorkflow.Save(runDoc, _renderer.MeasureText);
-        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow, front);
+        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow, front, _settings.PreviewMethod);
         if (!result.Queued)
         {
             foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;

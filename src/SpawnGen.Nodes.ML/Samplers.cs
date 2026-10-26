@@ -107,7 +107,7 @@ public static partial class Samplers
     /// </summary>
     public static Task<float[]> RunAsync(string sampler, float[] x, float[] sigmas, DenoiseFn model, NoiseSource noise,
         Action<int>? onStep = null, CancellationToken ct = default, Func<GuidanceOutput?>? uncond = null, SamplerOptions? options = null,
-        ModelSampling? sampling = null, Action<float[]>? onDenoised = null)
+        ModelSampling? sampling = null, Func<float[], Task>? onDenoised = null)
     {
         if (!Names.Contains(sampler) && sampler != EulerPP) throw new ArgumentException($"Unknown sampler '{sampler}'. Known: {string.Join(", ", Names)}.", nameof(sampler));
         var run = new Run
@@ -175,7 +175,7 @@ public static partial class Samplers
         public required SamplerOptions Options { get; init; }
         public required ModelSampling Sampling { get; init; }
         public Action<int>? OnStep { get; init; }
-        public Action<float[]>? OnDenoised { get; init; }
+        public Func<float[], Task>? OnDenoised { get; init; }
         public Func<GuidanceOutput?>? Uncond { get; init; }
         public CancellationToken Ct { get; init; }
 
@@ -186,9 +186,9 @@ public static partial class Samplers
         }
 
         /// <summary>ComfyUI's per-step callback: the preview / denoised_output estimate, and progress.</summary>
-        public void Callback(int i, float[] denoised)
+        public async Task CallbackAsync(int i, float[] denoised)
         {
-            OnDenoised?.Invoke(denoised);
+            if (OnDenoised is { } onDenoised) await onDenoised(denoised);
             OnStep?.Invoke(i + 1);
         }
 
@@ -279,7 +279,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var d = ToD(x, s[i], denoised);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             AddScaled(x, d, s[i + 1] - s[i]);
         }
         return x;
@@ -292,7 +292,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var (down, up) = AncestralStep(s[i], s[i + 1], eta);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (down == 0) x = denoised;
             else
             {
@@ -311,7 +311,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) x = denoised;
             else
             {
@@ -333,7 +333,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) { x = denoised; continue; }
             var uncond = run.UncondDenoised(denoised);
             double alphaS = s[i] * Math.Exp(run.Lambda(s[i])), alphaT = s[i + 1] * Math.Exp(run.Lambda(s[i + 1]));
@@ -356,7 +356,7 @@ public static partial class Samplers
             var uncond = run.UncondDenoised(denoised);
             var d = new float[x.Length];
             for (int k = 0; k < d.Length; k++) d[k] = (float)((x[k] - denoised[k] + uncond[k] - denoised[k]) / s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             AddScaled(x, d, s[i + 1] - s[i]);
         }
         return x;
@@ -368,7 +368,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var d = ToD(x, s[i], denoised);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             double dt = s[i + 1] - s[i];
             if (s[i + 1] == 0) AddScaled(x, d, dt);
             else
@@ -390,7 +390,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var d = ToD(x, s[i], denoised);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             double dt = s[i + 1] - s[i];
             if (s[i + 1] == sEnd) AddScaled(x, d, dt);
             else if (s[i + 2] == sEnd)
@@ -420,7 +420,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var d = ToD(x, s[i], denoised);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) AddScaled(x, d, s[i + 1] - s[i]);
             else
             {
@@ -448,7 +448,7 @@ public static partial class Samplers
                 renoise = Math.Sqrt(s[i + 1] * s[i + 1] - down * down * alphaIp1 * alphaIp1 / (alphaDown * alphaDown));
             }
             else (down, up) = AncestralStep(s[i], s[i + 1], eta);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             var d = ToD(x, s[i], denoised);
             if (down == 0) AddScaled(x, d, down - s[i]);
             else
@@ -523,7 +523,7 @@ public static partial class Samplers
             var denoised = await run.Call(x, s[i]);
             ds.Add(ToD(x, s[i], denoised));
             if (ds.Count > order) ds.RemoveAt(0);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) x = denoised;
             else
             {
@@ -543,7 +543,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var (down, up) = AncestralStep(s[i], s[i + 1], eta);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (down == 0) AddScaled(x, ToD(x, s[i], denoised), down - s[i]);
             else
             {
@@ -569,7 +569,7 @@ public static partial class Samplers
             double down = s[i + 1] * (1 + (s[i + 1] / s[i] - 1) * eta);
             double alphaIp1 = 1 - s[i + 1], alphaDown = 1 - down;
             double renoise = Math.Sqrt(s[i + 1] * s[i + 1] - down * down * alphaIp1 * alphaIp1 / (alphaDown * alphaDown));
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) AddScaled(x, ToD(x, s[i], denoised), down - s[i]);
             else
             {
@@ -598,7 +598,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var (down, up) = AncestralStep(s[i], s[i + 1], eta);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (down == 0)
             {
                 var d = ToD(x, s[i], run.UncondDenoised(denoised));
@@ -635,7 +635,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) { x = denoised; continue; }
             double lambdaS = run.Lambda(s[i]), lambdaT = run.Lambda(s[i + 1]), h = lambdaT - lambdaS;
             double lambdaS1 = lambdaS + r * h, fac = 1 / (2 * r);
@@ -665,7 +665,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             double t = -Math.Log(s[i]), tNext = -Math.Log(s[i + 1]), h = tNext - t;
             double scale = Math.Exp(-tNext) / Math.Exp(-t), coeff = -Expm1(-h);
             if (oldDenoised is null || s[i + 1] == 0) x = Lin(x, scale, denoised, coeff);
@@ -687,7 +687,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var uncond = run.UncondDenoised(denoised);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             double t = -Math.Log(s[i]), tNext = -Math.Log(s[i + 1]), h = tNext - t, keep = Math.Exp(-h);
             var next = new float[x.Length];
             if (oldUncond is null || s[i + 1] == 0)
@@ -715,7 +715,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) x = denoised;
             else
             {
@@ -749,7 +749,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) x = denoised;
             else
             {
@@ -789,7 +789,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             double sigma = s[i], prev = s[i + 1];
             double ac = 1 / (sigma * sigma + 1), acPrev = 1 / (prev * prev + 1), alpha = ac / acPrev;
             double inScale = 1 / Math.Sqrt(1.0 + sigma * sigma), muScale = Math.Sqrt(1.0 / alpha), noiseCoeff = (1 - alpha) / Math.Sqrt(1 - ac);
@@ -815,7 +815,7 @@ public static partial class Samplers
         for (int i = 0; i < nSteps; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             x = denoised;
             if (s[i + 1] > 0)
             {
@@ -845,7 +845,7 @@ public static partial class Samplers
         {
             double tCur = s[i], tNext = s[i + 1];
             var denoised = await run.Call(x, tCur);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             var d = ToD(x, tCur, denoised);
             int order = Math.Min(maxOrder, i + 1);
             double dt = tNext - tCur;
@@ -887,7 +887,7 @@ public static partial class Samplers
         {
             double tCur = s[i], tNext = s[i + 1];
             var denoised = await run.Call(x, tCur);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             var d = ToD(x, tCur, denoised);
             int order = Math.Min(maxOrder, i + 1);
             if (tNext == 0) x = denoised;
@@ -946,7 +946,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var (down, up) = AncestralStep(s[i], s[i + 1], eta);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             float[]? uncond = cfgPP ? run.UncondDenoised(denoised) : null;
             if (down == 0 || oldDenoised is null)
             {
@@ -987,7 +987,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var d = ToD(x, s[i], cfgPP ? run.UncondDenoised(denoised) : denoised);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             double dt = s[i + 1] - s[i];
             if (s[i + 1] == 0) x = denoised;
             else

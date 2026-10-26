@@ -7,26 +7,29 @@ public class SettingsTests
     [Test]
     public void Settings_survive_a_round_trip_and_defaults_fill_the_gaps()
     {
-        var s = new StudioSettings { LinkStyle = LinkStyle.Straight, SnapToGrid = true, GridSize = 25, ShowMinimap = false, ShowNodeIds = true, Palette = "light" };
+        var s = new StudioSettings { LinkStyle = LinkStyle.Straight, SnapToGrid = true, GridSize = 25, ShowMinimap = false, ShowNodeIds = true, Palette = "light", PreviewMethod = "taesd" };
         var back = StudioSettings.FromJson(s.ToJson());
         Assert.That((back.LinkStyle, back.SnapToGrid, back.GridSize, back.ShowMinimap), Is.EqualTo((LinkStyle.Straight, true, 25, false)));
         Assert.That(back.ShowNodeIds, Is.True);
         Assert.That(back.Palette, Is.EqualTo("light"));
+        Assert.That(back.PreviewMethod, Is.EqualTo("taesd"));
 
         var empty = StudioSettings.FromJson(null);
         Assert.That((empty.LinkStyle, empty.SnapToGrid, empty.GridSize, empty.ShowMinimap), Is.EqualTo((LinkStyle.Spline, false, 10, true)));
         Assert.That(empty.ShowNodeIds, Is.False);
         Assert.That(empty.Palette, Is.EqualTo("dark"));
+        Assert.That(empty.PreviewMethod, Is.EqualTo("auto"));
     }
 
     [TestCase("not json")]
     [TestCase("[1,2]")]
     [TestCase("{\"LinkStyle\": 99, \"GridSize\": 100000, \"SnapToGrid\": \"yes\", \"Palette\": 7}")]
     [TestCase("{\"Palette\": \"\"}")]
+    [TestCase("{\"PreviewMethod\": \"fancy\"}")]
     public void Damaged_or_out_of_range_values_fall_back_to_the_defaults(string json)
     {
         var s = StudioSettings.FromJson(json);
-        Assert.That((s.LinkStyle, s.SnapToGrid, s.GridSize, s.Palette), Is.EqualTo((LinkStyle.Spline, false, 10, "dark")));
+        Assert.That((s.LinkStyle, s.SnapToGrid, s.GridSize, s.Palette, s.PreviewMethod), Is.EqualTo((LinkStyle.Spline, false, 10, "dark", "auto")));
     }
 
     [Test, NonParallelizable]

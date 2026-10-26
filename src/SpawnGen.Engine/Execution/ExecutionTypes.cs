@@ -46,6 +46,8 @@ public sealed class ExecutionOptions
     public string? PromptId { get; init; }
     /// <summary>Text the Save Image node embeds in its PNGs next to the prompt (ComfyUI's <c>extra_pnginfo</c>: the editor's workflow JSON), by chunk name.</summary>
     public IReadOnlyDictionary<string, string>? ExtraPngInfo { get; init; }
+    /// <summary>How samplers preview (ComfyUI's <c>extra_data.preview_method</c>): "auto" / "latent2rgb", "taesd", "none"; null or "default" for the default.</summary>
+    public string? PreviewMethod { get; init; }
 }
 
 public sealed class ExecutionResult

@@ -33,6 +33,8 @@ public sealed class LatentFormat
     }, [0.1084f, -0.0175f, -0.0011f]);
 
     public string Name { get; }
+    /// <summary>The start of the tiny VAE decoder's file name in vae_approx used for previews (ComfyUI's taesd_decoder_name).</summary>
+    public string TaesdDecoderName => Name == "SDXL" ? "taesdxl_decoder" : "taesd_decoder";
     public float ScaleFactor { get; }
     public int Channels => RgbFactors.GetLength(0);
     /// <summary>The latent-to-RGB preview mix: rows are latent channels, columns R, G, B.</summary>

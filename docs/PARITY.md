@@ -46,12 +46,12 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 |---|---|
 | API-format prompts, validation with per-node errors | **done** |
 | Cached re-runs (only what changed) | **done** |
-| Queue, interrupt, progress, per-node status, history | **done** |
+| Queue, interrupt, progress, per-node status, history; ComfyUI's websocket protocol: JSON events (ending each prompt with `executing` for no node), previews as binary frames (PREVIEW_IMAGE, or PREVIEW_IMAGE_WITH_METADATA after a client's `feature_flags`) | **done** |
 | Run result images inside nodes | **done** |
 | "Control after generate" per seed widget: fixed / increment / decrement / randomize, applied after each queue, saved in the workflow | **done** |
 | Batch count (queue N times) | **done**; cancel queued items done (Cancel in the History panel); queue front done (Front button while a run is going, Ctrl+Shift+Enter, `front: true` on POST /prompt); reorder todo |
 | ComfyUI execution semantics: list inputs/outputs (runs per item, `INPUT_IS_LIST`, `OUTPUT_IS_LIST`), lazy inputs (`check_lazy_status`), execution blockers, Autogrow inputs (`images.image0` ...), dynamic combos (`resize_type.width` ...), on-demand evaluation with cache signatures from the graph | **done**; node expansion (nodes that add nodes to the graph while it runs, with display ids and loop scopes), MatchType inputs and outputs, and the loop nodes (Start Loop / End Loop in simple, For and List modes, nested, carried values, accumulate, termination inputs) with ComfyUI's loop validation: seven graphs run through ComfyUI give the same previews and the same loop errors (LoopTests) |
-| Latent preview during sampling (latent2rgb of the denoised estimate, shown in the sampler node each step; verified by eye: an apple emerging at step 2 of 8) | **done**; TAESD-quality previews todo |
+| Latent preview during sampling (latent2rgb of the denoised estimate, shown in the sampler node each step; verified by eye: an apple emerging at step 2 of 8) | **done**; preview method per prompt as ComfyUI (`extra_data.preview_method`: auto / latent2rgb, taesd, none; Settings > Sampler preview): taesd decodes each step with taesd_decoder / taesdxl_decoder from models/vae_approx (verified on the RX 590: SD 1.5, 12 steps, a preview per step that ends close to the picture) |
 | Samplers and guidance: all 45 ComfyUI sampler names and 9 schedulers in ComfyUI's order, ComfyUI's guidance pipeline (pre-cfg / cfg / post-cfg patches, denoise mask, cfg overrides), guiders (CFG, Basic, Dual CFG, Perp-Neg), CFG patches (RescaleCFG, CFGNorm, CFGZeroStar, APG, Mahiro, TCFG, FreSca, Epsilon Scaling, RenormCFG, Differential Diffusion, Video Linear / Triangle CFG Guidance), ModelSamplingDiscrete; 159 cases replayed against ComfyUI's own sampling code | **done**; every sampler draws on the RX 590 (SD-Turbo); compared with ComfyUI itself (CPU, same SD-Turbo weights, same start latent): euler, res_multistep_cfg_pp and dpm_fast land within 0.2-0.7 % rms of ComfyUI's result (ComfyUIRenderParityTests); this found and fixed SD 2.x CLIP padding (token 0, not the end token) and latent file scaling. Seeds give different pictures than ComfyUI (the noise generator is not torch's) |
 | History panel (H): every run of the session with its saved pictures, full-size view, load a run's workflow into a new tab, clear; queue shows running / queued | **done** (session only; queued runs listed with Cancel; gallery of past server runs and reorder todo) |
 
@@ -97,7 +97,7 @@ Still missing, by kind:
    ComfyUI's pictures (0.10/255, 0.04/255). Detect Edges (Canny) gives ComfyUI's edge maps pixel for pixel. InpaintModelConditioning, VAE Encode and VAE Encode
    (for Inpainting) prepare the pictures and masks exactly as ComfyUI's nodes do (crop, greying, mask growth; InpaintParityTests); with an ordinary model the
    run is an img2img confined to the mask (verified on the RX 590); inpainting models (9-channel UNets) need the library. Open: fp8
-   weight_dtype, TAESD sampling previews.
+   weight_dtype.
 2. **Need a codec**: video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), WebP, MP3 / Opus / FLAC audio saving.
 3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop), Custom Combo (frontend-defined options),
    ImageCropV2 (an object-valued bounding-box widget and a crop editor), Text Overlay (a font engine).

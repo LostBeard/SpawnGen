@@ -59,6 +59,9 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
                 var uri = new UriBuilder(new Uri(http.BaseAddress!, "ws")) { Query = "clientId=" + ClientId };
                 uri.Scheme = uri.Scheme == "https" ? "wss" : "ws";
                 await _socket.ConnectAsync(uri.Uri, _stop.Token);
+                // As ComfyUI's frontend does: previews then come with the node they belong to.
+                await _socket.SendAsync(Encoding.UTF8.GetBytes("""{"type":"feature_flags","data":{"supports_preview_metadata":true}}"""),
+                    WebSocketMessageType.Text, true, _stop.Token);
                 ConnectionChanged?.Invoke();
                 delay = TimeSpan.FromSeconds(1);
                 await ReceiveAsync(_socket);
@@ -81,18 +84,48 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
             if (result.MessageType == WebSocketMessageType.Close) return;
             message.Write(buffer, 0, result.Count);
             if (!result.EndOfMessage) continue;
+            if (result.MessageType == WebSocketMessageType.Binary)
+            {
+                if (PreviewEvent(message.GetBuffer().AsSpan(0, (int)message.Length)) is { } preview) EventReceived?.Invoke(preview);
+                message.SetLength(0);
+                continue;
+            }
             var text = Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
             message.SetLength(0);
             if (JsonNode.Parse(text) is JsonObject json) EventReceived?.Invoke(json);
         }
     }
 
-    public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false)
+    /// <summary>ComfyUI's PREVIEW_IMAGE_WITH_METADATA frame (event 4: header length, JSON header with the node, the image) as the Studio's preview event.</summary>
+    public static JsonObject? PreviewEvent(ReadOnlySpan<byte> frame)
+    {
+        if (frame.Length < 8 || System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(frame) != 4) return null;
+        int length = (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(frame[4..]);
+        if (length < 0 || 8 + length > frame.Length) return null;
+        if (JsonNode.Parse(Encoding.UTF8.GetString(frame.Slice(8, length))) is not JsonObject meta) return null;
+        var image = frame[(8 + length)..];
+        return new JsonObject
+        {
+            ["type"] = "preview",
+            ["data"] = new JsonObject
+            {
+                ["prompt_id"] = (string?)meta["prompt_id"], ["node"] = (string?)meta["display_node_id"] ?? (string?)meta["node_id"],
+                ["image"] = $"data:{(string?)meta["image_type"] ?? "image/png"};base64,{Convert.ToBase64String(image)}",
+            },
+        };
+    }
+
+    public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null)
     {
         var body = new JsonObject { ["prompt"] = JsonNode.Parse(promptJson), ["client_id"] = ClientId };
         if (front) body["front"] = true;
         if (workflowJson is not null)
             body["extra_data"] = new JsonObject { ["extra_pnginfo"] = new JsonObject { ["workflow"] = JsonNode.Parse(workflowJson) } };
+        if (previewMethod is not null)
+        {
+            if (body["extra_data"] is not JsonObject extra) body["extra_data"] = extra = new JsonObject();
+            extra["preview_method"] = previewMethod; // ComfyUI's frontend sends its preview setting here
+        }
         try
         {
             using var response = await http.PostAsJsonAsync("prompt", body, _stop.Token);

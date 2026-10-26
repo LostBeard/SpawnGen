@@ -324,7 +324,7 @@ public sealed class PromptExecutor
             new(id, node.ClassType, owner._services, cancellationToken,
                 (value, max, message) => observer?.OnNodeProgress(Display(id), value, max, message), _promptJson, options?.ExtraPngInfo,
                 observer is null ? null : png => observer.OnNodePreview(Display(id), png),
-                input => node.Inputs.TryGetValue(input, out var given) && (given.IsLink || given.Literal is not null), index) { Execution = this };
+                input => node.Inputs.TryGetValue(input, out var given) && (given.IsLink || given.Literal is not null), index) { Execution = this, PreviewMethod = options?.PreviewMethod };
 
         /// <summary>The inputs of call <paramref name="index"/>: item index of each list, or its last item when it is shorter (ComfyUI's slice_dict).</summary>
         static Dictionary<string, object?> Slice(NodeSchema schema, Dictionary<string, IReadOnlyList<object?>> lists, int index)

@@ -6,7 +6,7 @@ using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Runtime;
 
-public sealed record QueuedPrompt(int Number, string Id, PromptGraph Graph, string? ClientId, IReadOnlyDictionary<string, string>? ExtraPngInfo = null);
+public sealed record QueuedPrompt(int Number, string Id, PromptGraph Graph, string? ClientId, IReadOnlyDictionary<string, string>? ExtraPngInfo = null, string? PreviewMethod = null);
 
 /// <summary>One finished (or failed) run, as <c>/history</c> reports it.</summary>
 public sealed class HistoryEntry
@@ -55,7 +55,7 @@ public sealed class PromptQueue : IDisposable
     public NodeRegistry Registry { get; }
 
     /// <summary>Validates and queues the prompt (at the front when <paramref name="front"/>, so it runs next). Throws <see cref="PromptValidationException"/> (nothing is queued) when it cannot run.</summary>
-    public QueuedPrompt Enqueue(PromptGraph graph, string? clientId, IReadOnlyDictionary<string, string>? extraPngInfo = null, bool front = false)
+    public QueuedPrompt Enqueue(PromptGraph graph, string? clientId, IReadOnlyDictionary<string, string>? extraPngInfo = null, bool front = false, string? previewMethod = null)
     {
         var validation = _executor.Validate(graph);
         if (!validation.IsValid) throw new PromptValidationException(validation);
@@ -63,7 +63,7 @@ public sealed class PromptQueue : IDisposable
         QueuedPrompt item;
         lock (_gate)
         {
-            item = new QueuedPrompt(++_number, Guid.NewGuid().ToString("D"), graph, clientId, extraPngInfo);
+            item = new QueuedPrompt(++_number, Guid.NewGuid().ToString("D"), graph, clientId, extraPngInfo, previewMethod);
             if (front) _pending.Insert(0, item); else _pending.Add(item);
         }
         _signal.Release();
@@ -168,7 +168,7 @@ public sealed class PromptQueue : IDisposable
         ExecutionResult? result = null;
         try
         {
-            result = await _executor.ExecuteAsync(item.Graph, new ExecutionOptions { PromptId = item.Id, ExtraPngInfo = item.ExtraPngInfo }, observer, ct);
+            result = await _executor.ExecuteAsync(item.Graph, new ExecutionOptions { PromptId = item.Id, ExtraPngInfo = item.ExtraPngInfo, PreviewMethod = item.PreviewMethod }, observer, ct);
         }
         catch (OperationCanceledException)
         {
@@ -195,6 +195,8 @@ public sealed class PromptQueue : IDisposable
         }
         if (status == "success")
             _events.Publish(new RunEvent("execution_success", new JsonObject { ["prompt_id"] = item.Id }));
+        // ComfyUI ends every prompt, however it went, with "executing" for no node once the history holds it; API clients wait for it.
+        _events.Publish(new RunEvent("executing", new JsonObject { ["node"] = null, ["prompt_id"] = item.Id }));
     }
 
     /// <summary>Turns the engine's run events into the websocket events a ComfyUI client expects, and keeps the UI outputs for the history.</summary>
@@ -233,7 +235,7 @@ public sealed class PromptQueue : IDisposable
         {
             var d = Data(nodeId);
             d["image"] = "data:image/png;base64," + Convert.ToBase64String(png);
-            events.Publish(new("preview", d));
+            events.Publish(new("preview", d) { Image = png });
         }
 
         public void OnNodeExecuted(string nodeId, NodeOutputs outputs)

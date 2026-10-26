@@ -49,6 +49,7 @@ internal static class SamplingCore
         var filled = guider.Conditionings.Skip(1).Distinct(ReferenceEqualityComparer.Instance).Cast<Conditioning>()
             .ToDictionary(c => c, c => ControlFill.Fill(positive, c), ReferenceEqualityComparer.Instance);
         Conditioning Filled(Conditioning c) => filled.TryGetValue(c, out var f) ? f : c;
+        var previewer = context.WantsPreview ? await LatentPreviewer.CreateAsync(context.PreviewMethod, format, context.Services) : null;
         using (var unet = ckpt.BeginRun(acc))
         {
             var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };
@@ -83,10 +84,10 @@ internal static class SamplingCore
                     new Samplers.NoiseSource(itemSeed ^ 0x5EED, Checkpoint.LatentChannels, h, w),
                     done => context.Progress(item * steps + Math.Min(done, steps), Math.Max(1, latent.Batch * steps)),
                     context.CancellationToken, () => guidance.Last, settings.Options, sampling,
-                    d =>
+                    async d =>
                     {
                         lastDenoised = d;
-                        if (item == 0 && context.WantsPreview) context.Preview(LatentPreview.Png(d, h, w, format));
+                        if (item == 0 && previewer is not null) context.Preview(await previewer.PngAsync(d, h, w, context.CancellationToken));
                     });
                 x = sampling.InverseNoiseScaling(sigmas[^1], x);
                 Array.Copy(format.ProcessOut(x), 0, result.Data, b * perImage, perImage);

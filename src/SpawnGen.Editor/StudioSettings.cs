@@ -16,6 +16,12 @@ public sealed class StudioSettings
     public bool ShowNodeIds { get; set; }
     /// <summary>The colour palette id ("dark" or "light"); the Studio keeps the list and falls back to dark for an id it does not know.</summary>
     public string Palette { get; set; } = "dark";
+    /// <summary>How samplers preview while they work, sent with each prompt (ComfyUI's preview method): auto / latent2rgb (a quick colour guess), taesd (the
+    /// tiny VAE from vae_approx, close to the final picture), none.</summary>
+    public string PreviewMethod { get; set; } = "auto";
+
+    /// <summary>The preview methods, as ComfyUI names them.</summary>
+    public static readonly string[] PreviewMethods = ["auto", "latent2rgb", "taesd", "none"];
 
     public string ToJson() => JsonSerializer.Serialize(this);
 
@@ -35,6 +41,7 @@ public sealed class StudioSettings
             if (root.TryGetProperty(nameof(ShowNodeIds), out var sn) && sn.ValueKind is JsonValueKind.True or JsonValueKind.False) s.ShowNodeIds = sn.GetBoolean();
             if (root.TryGetProperty(nameof(Palette), out var pa) && pa.ValueKind == JsonValueKind.String && pa.GetString() is { Length: > 0 and <= 40 } pid) s.Palette = pid;
             if (root.TryGetProperty(nameof(ShowMinimap), out var sm) && sm.ValueKind is JsonValueKind.True or JsonValueKind.False) s.ShowMinimap = sm.GetBoolean();
+            if (root.TryGetProperty(nameof(PreviewMethod), out var pm) && pm.ValueKind == JsonValueKind.String && PreviewMethods.Contains(pm.GetString())) s.PreviewMethod = pm.GetString()!;
         }
         catch (JsonException) { }
         return s;

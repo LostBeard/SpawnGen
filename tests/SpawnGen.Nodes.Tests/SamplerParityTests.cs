@@ -125,7 +125,7 @@ public class SamplerParityTests
         Samplers.DenoiseFn model = (x, sigma) => { calls++; return run.PredictAsync(x, sigma, (cond, scheduled) => standIn.Evaluate(cond, scheduled, x, sigma)); };
         var draws = c.GetProperty("draws").EnumerateArray().Select(Floats).ToArray();
         var result = await Samplers.RunAsync(sampler, Floats(c.GetProperty("x")), Floats(c.GetProperty("sigmas")), model, new RecordedNoise(draws),
-            uncond: () => run.Last, options: options, sampling: sampling, onDenoised: d => lastDenoised = d);
+            uncond: () => run.Last, options: options, sampling: sampling, onDenoised: d => { lastDenoised = d; return Task.CompletedTask; });
 
         Assert.That(calls, Is.EqualTo(c.GetProperty("calls").GetInt32()), "model calls");
         AssertClose(result, Floats(c.GetProperty("expected")), "sample");
@@ -203,7 +203,7 @@ public class SamplerParityTests
             };
             var x0 = sampling.NoiseScaling(sigmas[0], noise, latent, sampling.IsMaxDenoise(sigmas[0]));
             var draws = c.GetProperty("draws").EnumerateArray().Select(Floats).ToArray();
-            var result = await Samplers.RunAsync(sampler, x0, sigmas, model, new RecordedNoise(draws), sampling: sampling, onDenoised: d => lastDenoised = d);
+            var result = await Samplers.RunAsync(sampler, x0, sigmas, model, new RecordedNoise(draws), sampling: sampling, onDenoised: d => { lastDenoised = d; return Task.CompletedTask; });
             result = sampling.InverseNoiseScaling(sigmas[^1], result);
             Assert.That(calls, Is.EqualTo(c.GetProperty("calls").GetInt32()), name + " model calls");
             AssertClose(result, Floats(c.GetProperty("expected")), name);

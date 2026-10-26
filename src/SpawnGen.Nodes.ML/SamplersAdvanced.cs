@@ -149,7 +149,7 @@ public static partial class Samplers
             var cache = new Dictionary<string, float[]>();
             double t = ts[i], tNext = ts[i + 1];
             var eps = await solver.Eps(cache, "eps", x, t);
-            run.Callback(i, Lin(x, 1, eps, -DpmSolver.Sigma(t)));
+            await run.CallbackAsync(i, Lin(x, 1, eps, -DpmSolver.Sigma(t)));
             x = orders[i] switch
             {
                 1 => await solver.Step1(x, t, tNext, cache),
@@ -222,7 +222,7 @@ public static partial class Samplers
                 sCur = t;
             }
             steps++;
-            run.OnDenoised?.Invoke(denoised);
+            if (run.OnDenoised is { } onDenoised) await onDenoised(denoised);
             run.OnStep?.Invoke(Math.Min(steps, s.Length - 1));
             run.Ct.ThrowIfCancellationRequested();
         }
@@ -262,7 +262,7 @@ public static partial class Samplers
         {
             double tCur = s[i], tNext = s[i + 1];
             var denoised = await run.Call(x, tCur);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             var d = ToD(x, tCur, denoised);
             int order = Math.Min(maxOrder, i + 1);
             if (tNext <= 0) order = 1;
@@ -335,7 +335,7 @@ public static partial class Samplers
         {
             var denoised = await run.Call(x, s[i]);
             var uncond = run.UncondOrCond(denoised);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             double alphaS = s[i] * Math.Exp(run.Lambda(s[i])), alphaT = s[i + 1] != 0 ? s[i + 1] * Math.Exp(run.Lambda(s[i + 1])) : 1.0;
             var currentUncondD = new float[x.Length];
             for (int k = 0; k < x.Length; k++) currentUncondD[k] = (float)((x[k] - alphaS * uncond[k]) / s[i]);
@@ -401,7 +401,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             int stage = Math.Min(maxStage, i + 1);
             if (s[i + 1] == 0) x = denoised;
             else
@@ -461,7 +461,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) { x = denoised; continue; }
             double lambdaS = run.Lambda(s[i]), lambdaT = run.Lambda(s[i + 1]), h = lambdaT - lambdaS, hEta = h * (eta + 1);
             double lambdaS1 = lambdaS + r * (lambdaT - lambdaS), sigmaS1 = run.SigmaOfLambda(lambdaS1);
@@ -511,7 +511,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(x, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             if (s[i + 1] == 0) { x = denoised; continue; }
             double lambdaS = run.Lambda(s[i]), lambdaT = run.Lambda(s[i + 1]), h = lambdaT - lambdaS, hEta = h * (eta + 1);
             double lambdaS1 = lambdaS + r1 * (lambdaT - lambdaS), lambdaS2 = lambdaS + r2 * (lambdaT - lambdaS);
@@ -586,7 +586,7 @@ public static partial class Samplers
         for (int i = 0; i < s.Length - 1; i++)
         {
             var denoised = await run.Call(xPred, s[i]);
-            run.Callback(i, denoised);
+            await run.CallbackAsync(i, denoised);
             predList.Add(denoised);
             if (predList.Count > maxUsedOrder) predList.RemoveRange(0, predList.Count - maxUsedOrder);
 
@@ -876,7 +876,7 @@ public static partial class Samplers
                     if (step < steps) modelPrevList[^1] = mx ?? await ModelFn(xs, ts[step]);
                 }
             }
-            run.Callback(stepIndex, modelPrevList[^1]);
+            await run.CallbackAsync(stepIndex, modelPrevList[^1]);
         }
         double last = Alpha(ts[^1]);
         return xs.Select(v => (float)(v / last)).ToArray();

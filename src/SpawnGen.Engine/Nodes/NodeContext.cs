@@ -48,6 +48,9 @@ public sealed class NodeContext
     /// <summary>True when something shows previews, so a node can skip making them when nobody looks.</summary>
     public bool WantsPreview => _preview is not null;
 
+    /// <summary>How a sampler should preview, as the prompt asked (ComfyUI's preview_method: "auto", "latent2rgb", "taesd", "none"); null for the default.</summary>
+    public string? PreviewMethod { get; internal set; }
+
     /// <summary>Shows a picture (PNG bytes) in the node while it works, e.g. a sampler's current guess; each call replaces the last.</summary>
     public void Preview(byte[] png) => _preview?.Invoke(png);
 

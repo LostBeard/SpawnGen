@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
@@ -26,6 +27,18 @@ public sealed class WaitNode
     }
 }
 
+/// <summary>Shows one preview while it runs (as a sampler does each step).</summary>
+[Node(Category = "test")]
+public sealed class PreviewNode
+{
+    public static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+    public ImageBatch Execute(ImageBatch images, NodeContext context)
+    {
+        context.Preview(Png);
+        return images;
+    }
+}
+
 [Node(Category = "test")]
 public sealed class FailNode
 {
@@ -40,12 +53,13 @@ public class ServerTests
     string _dir = null!;
     ClientWebSocket? _ws;
     readonly List<JsonObject> _messages = [];
+    readonly List<byte[]> _frames = [];
     readonly object _lock = new();
 
     [SetUp]
     public async Task SetUp()
     {
-        lock (_lock) _messages.Clear(); // NUnit shares one fixture instance across tests
+        lock (_lock) { _messages.Clear(); _frames.Clear(); } // NUnit shares one fixture instance across tests
         _ws = null;
         _dir = Path.Combine(Path.GetTempPath(), "spawngen-server-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(_dir, "input"));
@@ -72,10 +86,12 @@ public class ServerTests
 
     // ---- helpers ----
 
-    async Task ConnectAsync()
+    async Task ConnectAsync(bool previewMetadata = false)
     {
         _ws = new ClientWebSocket();
         await _ws.ConnectAsync(new Uri(_http.BaseAddress!.ToString().Replace("http", "ws") + "ws?clientId=test"), CancellationToken.None);
+        if (previewMetadata) // ComfyUI's frontend announces this as its first message
+            await _ws.SendAsync(Encoding.UTF8.GetBytes("""{"type":"feature_flags","data":{"supports_preview_metadata":true}}"""), WebSocketMessageType.Text, true, CancellationToken.None);
         _ = Task.Run(async () =>
         {
             var buffer = new byte[64 * 1024];
@@ -85,6 +101,7 @@ public class ServerTests
                 {
                     var r = await _ws.ReceiveAsync(buffer, CancellationToken.None);
                     if (r.MessageType == WebSocketMessageType.Close) break;
+                    if (r.MessageType == WebSocketMessageType.Binary) { lock (_lock) _frames.Add(buffer[..r.Count]); continue; }
                     var json = JsonNode.Parse(Encoding.UTF8.GetString(buffer, 0, r.Count)) as JsonObject;
                     if (json is not null) lock (_lock) _messages.Add(json);
                 }
@@ -168,6 +185,9 @@ public class ServerTests
 
         var executed = await WaitForAsync(m => (string?)m["type"] == "executed" && (string?)m["data"]!["node"] == "9");
         await WaitForAsync(Type("execution_success"));
+        // The last message is ComfyUI's end of prompt: executing with no node, after the history has the run.
+        var end = await WaitForAsync(m => (string?)m["type"] == "executing" && m["data"]!.AsObject().ContainsKey("node") && m["data"]!["node"] is null);
+        Assert.That((string?)end["data"]!["prompt_id"], Is.EqualTo(id));
         var types = Messages().Select(m => (string?)m["type"]).ToList();
         Assert.That(types, Is.SupersetOf(new[] { "execution_start", "executing", "executed", "execution_success" }));
         Assert.That(types.IndexOf("execution_start"), Is.LessThan(types.IndexOf("executed")));
@@ -235,6 +255,44 @@ public class ServerTests
             Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
+    [TestCase(true)]
+    [TestCase(false)]
+    public async Task Previews_go_out_as_ComfyUIs_binary_frames(bool previewMetadata)
+    {
+        await ConnectAsync(previewMetadata);
+        if (previewMetadata)
+        {
+            var flags = await WaitForAsync(Type("feature_flags"));
+            Assert.That((bool?)flags["data"]!["supports_preview_metadata"], Is.True);
+        }
+        var image = WriteInputPng("in.png");
+        var id = (string)(await (await PostPrompt(Prompt(image, middle: "PreviewNode"))).Content.ReadFromJsonAsync<JsonObject>())!["prompt_id"]!;
+        await WaitForAsync(Type("execution_success"));
+        byte[] frame;
+        lock (_lock) frame = _frames.Single();
+        Assert.That(Messages().Select(m => (string?)m["type"]), Does.Not.Contain("preview"), "no JSON preview event on the websocket");
+        if (previewMetadata)
+        {
+            // PREVIEW_IMAGE_WITH_METADATA: event 4, the header's length, the header, the image.
+            Assert.That(BinaryPrimitives.ReadUInt32BigEndian(frame), Is.EqualTo(4u));
+            int length = (int)BinaryPrimitives.ReadUInt32BigEndian(frame.AsSpan(4));
+            var meta = JsonNode.Parse(Encoding.UTF8.GetString(frame, 8, length))!.AsObject();
+            Assert.That(((string?)meta["node_id"], (string?)meta["display_node_id"], (string?)meta["prompt_id"], (string?)meta["image_type"]),
+                Is.EqualTo(("2", "2", id, "image/png")));
+            Assert.That(frame[(8 + length)..], Is.EqualTo(PreviewNode.Png));
+            // The Studio reads it back as its preview event for node 2.
+            var preview = SpawnGen.Studio.Run.ServerClient.PreviewEvent(frame)!;
+            Assert.That(((string?)preview["type"], (string?)preview["data"]!["node"], (string?)preview["data"]!["image"]),
+                Is.EqualTo(("preview", "2", "data:image/png;base64," + Convert.ToBase64String(PreviewNode.Png))));
+        }
+        else
+        {
+            // PREVIEW_IMAGE: event 1, image type 2 (PNG), the image.
+            Assert.That((BinaryPrimitives.ReadUInt32BigEndian(frame), BinaryPrimitives.ReadUInt32BigEndian(frame.AsSpan(4))), Is.EqualTo((1u, 2u)));
+            Assert.That(frame[8..], Is.EqualTo(PreviewNode.Png));
+        }
+    }
+
     [Test]
     public async Task Running_the_same_prompt_again_is_served_from_the_cache()
     {
@@ -248,7 +306,8 @@ public class ServerTests
         await WaitForAsync(Type("execution_success"));
         var types = Messages().Select(m => (string?)m["type"]).ToList();
         Assert.That(types, Does.Contain("execution_cached"));
-        Assert.That(types, Does.Not.Contain("executing"), "Nothing needs to run: every node is cached.");
+        // Only ComfyUI's end of prompt (executing with no node) may appear: no node runs.
+        Assert.That(Messages().Where(m => (string?)m["type"] == "executing").Select(m => m["data"]!["node"]), Is.All.Null, "Nothing needs to run: every node is cached.");
     }
 
     [Test]

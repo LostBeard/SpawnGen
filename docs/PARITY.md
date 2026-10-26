@@ -78,7 +78,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**229 shared nodes, 226 identical** (branch `sd-checkpoint`); the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
+**230 shared nodes, 227 identical** (branch `sd-checkpoint`); the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
 RecordAudio's recorder widget, Resolution Selector's preview-only widget. `tools/parity/apply_names.py` keeps names and categories in step.
 
 Behaviour is checked against ComfyUI's own code: fixtures made by running ComfyUI's node code on real torch / kornia / Pillow / numpy (image ops,
@@ -94,7 +94,9 @@ Still missing, by kind:
    LoRA on components loaded alone also verified (SD-Turbo split = single file, SD 1.5 split + LCM-LoRA = ComfyUI). ControlNet for SD 1.x and SDXL (diffusers-format ControlNets too; Load ControlNet Model,
    Apply ControlNet, Apply ControlNet (DEPRECATED), chained ControlNets, percent range) verified against ComfyUI with a canny ControlNet (0.18% / 0.17%,
    pictures 0.04/255). Load VAE's tiny VAEs (taesd, taesdxl from <models>/vae_approx) match
-   ComfyUI's pictures (0.10/255, 0.04/255). Detect Edges (Canny) gives ComfyUI's edge maps pixel for pixel. Open: fp8
+   ComfyUI's pictures (0.10/255, 0.04/255). Detect Edges (Canny) gives ComfyUI's edge maps pixel for pixel. InpaintModelConditioning, VAE Encode and VAE Encode
+   (for Inpainting) prepare the pictures and masks exactly as ComfyUI's nodes do (crop, greying, mask growth; InpaintParityTests); with an ordinary model the
+   run is an img2img confined to the mask (verified on the RX 590); inpainting models (9-channel UNets) need the library. Open: fp8
    weight_dtype, TAESD sampling previews.
 2. **Need a codec**: video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), WebP, MP3 / Opus / FLAC audio saving.
 3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop), Custom Combo (frontend-defined options),

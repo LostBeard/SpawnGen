@@ -171,9 +171,8 @@ public sealed class VAEEncode
 {
     public async Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, NodeContext context, IServiceProvider services)
     {
-        // The VAE downsamples by 8: crop to a multiple of 8 like ComfyUI does.
-        int h = pixels.Height / 8 * 8, w = pixels.Width / 8 * 8;
-        if (h == 0 || w == 0) throw new ArgumentException($"Image {pixels.Width}x{pixels.Height} is smaller than 8 pixels.", nameof(pixels));
+        pixels = CropForVae(pixels);
+        int h = pixels.Height, w = pixels.Width;
         int lh = h / 8, lw = w / 8, perLatent = Checkpoint.LatentChannels * lh * lw;
         var latents = new LatentBatch(pixels.Batch, Checkpoint.LatentChannels, lh, lw);
 
@@ -192,6 +191,21 @@ public sealed class VAEEncode
             context.Progress(b + 1, pixels.Batch);
         }
         return latents;
+    }
+
+    /// <summary>ComfyUI's vae_encode_crop_pixels: the VAE downsamples by 8, so each side is cut to a multiple of 8, the cut split between both ends (the odd
+    /// pixel at the end).</summary>
+    internal static ImageBatch CropForVae(ImageBatch pixels)
+    {
+        int h = pixels.Height / 8 * 8, w = pixels.Width / 8 * 8;
+        if (h == 0 || w == 0) throw new ArgumentException($"Image {pixels.Width}x{pixels.Height} is smaller than 8 pixels.", nameof(pixels));
+        if (h == pixels.Height && w == pixels.Width) return pixels;
+        int top = pixels.Height % 8 / 2, left = pixels.Width % 8 / 2, c = pixels.Channels;
+        var cropped = new ImageBatch(pixels.Batch, h, w, c);
+        for (int b = 0; b < pixels.Batch; b++)
+            for (int y = 0; y < h; y++)
+                Array.Copy(pixels.Data, ((b * pixels.Height + top + y) * pixels.Width + left) * c, cropped.Data, (b * h + y) * w * c, w * c);
+        return cropped;
     }
 }
 
@@ -222,64 +236,105 @@ public sealed class VAEEncodeTiled
 public sealed class VAEEncodeForInpaint
 {
     /// <summary>
-    /// Encodes a picture for inpainting: the area to repaint (<c>mask</c> = 1, grown by <c>grow_mask_by</c> pixels so the seam is repainted too) is blanked to
-    /// grey before encoding, and the latent carries that area as its noise mask so the sampler only changes it. Use denoise 1.0 on the sampler.
+    /// Encodes a picture for inpainting: the area to repaint (<c>mask</c> rounded to 0 / 1) is blanked to grey before encoding, and the latent carries that
+    /// area, grown by <c>grow_mask_by</c> pixels so the seam is repainted too, as its noise mask so the sampler only changes it. Use denoise 1.0 on the sampler.
     /// </summary>
     public async Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, MaskBatch mask, NodeContext context, IServiceProvider services,
         [Input(Min = 0, Max = 64)] int growMaskBy = 6)
     {
-        int h = pixels.Height / 8 * 8, w = pixels.Width / 8 * 8;
-        if (h == 0 || w == 0) throw new ArgumentException($"Image {pixels.Width}x{pixels.Height} is smaller than 8 pixels.", nameof(pixels));
-        var grown = GrowAndCrop(mask, pixels.Batch, pixels.Height, pixels.Width, h, w, growMaskBy);
-
-        var blanked = new ImageBatch(pixels.Batch, h, w, pixels.Channels);
-        for (int b = 0; b < pixels.Batch; b++)
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    float keep = 1f - grown.Data[(b * h + y) * w + x];
-                    for (int c = 0; c < pixels.Channels; c++)
-                    {
-                        // Where the mask is set the picture becomes grey (0.5); in between it fades, like ComfyUI.
-                        float v = pixels.Data[((b * pixels.Height + y) * pixels.Width + x) * pixels.Channels + c];
-                        blanked.Data[((b * h + y) * w + x) * pixels.Channels + c] = (v - 0.5f) * keep + 0.5f;
-                    }
-                }
-
-        var latent = await new VAEEncode().ExecuteAsync(blanked, vae, context, services);
-        for (int i = 0; i < grown.Data.Length; i++) grown.Data[i] = MathF.Round(grown.Data[i]);
-        return new LatentBatch(latent.Batch, latent.Channels, latent.Height, latent.Width, latent.Data) { NoiseMask = grown };
+        var (greyed, noiseMask) = Prepare(pixels, mask, growMaskBy);
+        var latent = await new VAEEncode().ExecuteAsync(greyed, vae, context, services);
+        return new LatentBatch(latent.Batch, latent.Channels, latent.Height, latent.Width, latent.Data) { NoiseMask = noiseMask };
     }
 
-    /// <summary>The mask resized to the picture, grown by a square window of <paramref name="grow"/> pixels (sum clamped to 1, ComfyUI's convolution), cropped to the encoded size.</summary>
-    internal static MaskBatch GrowAndCrop(MaskBatch mask, int batch, int imageH, int imageW, int h, int w, int grow)
+    /// <summary>ComfyUI's steps before the VAE: the greyed picture to encode and the noise mask (the rounded mask grown by a square window of
+    /// <paramref name="grow"/> pixels inside the cropped picture, clamped to 1, then rounded; with no growth the mask is only rounded).</summary>
+    internal static (ImageBatch Greyed, MaskBatch NoiseMask) Prepare(ImageBatch pixels, MaskBatch mask, int grow)
     {
-        var result = new MaskBatch(batch, h, w);
-        for (int b = 0; b < batch; b++)
+        var (_, cropped, greyed) = InpaintPixels.Prepare(pixels, mask);
+        int h = cropped.Height, w = cropped.Width, plane = h * w;
+        var noise = new MaskBatch(cropped.Batch, h, w);
+        int pad = (grow - 1 + 1) / 2; // ceil((grow - 1) / 2), the convolution's padding
+        for (int b = 0; b < cropped.Batch; b++)
         {
-            var one = new float[mask.Height * mask.Width];
-            Array.Copy(mask.Data, (b % mask.Batch) * one.Length, one, 0, one.Length);
-            if (mask.Width != imageW || mask.Height != imageH) one = Resample.Resize(one, mask.Width, mask.Height, 1, imageW, imageH, ResampleMethod.Bilinear);
-            int pad = grow <= 1 ? 0 : (grow - 1 + 1) / 2;   // ceil((grow - 1) / 2)
+            var one = cropped.Data.AsSpan(b * plane, plane);
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
                 {
                     float sum = 0;
-                    if (grow <= 1) sum = one[y * imageW + x];
+                    if (grow == 0) sum = one[y * w + x];
                     else
                         for (int dy = 0; dy < grow; dy++)
                         {
                             int yy = y - pad + dy;
-                            if (yy < 0 || yy >= imageH) continue;
+                            if (yy < 0 || yy >= h) continue;
                             for (int dx = 0; dx < grow; dx++)
                             {
                                 int xx = x - pad + dx;
-                                if (xx >= 0 && xx < imageW) sum += one[yy * imageW + xx];
+                                if (xx >= 0 && xx < w) sum += MathF.Round(one[yy * w + xx]);
                             }
                         }
-                    result.Data[(b * h + y) * w + x] = Math.Clamp(sum, 0f, 1f);
+                    noise.Data[b * plane + y * w + x] = MathF.Round(Math.Clamp(sum, 0f, 1f));
                 }
         }
-        return result;
+        return (greyed, noise);
+    }
+}
+
+/// <summary>
+/// The steps ComfyUI's inpainting encoders share: the mask resized to the picture (bilinear), picture and mask cropped as the VAE crops (to a multiple of 8,
+/// the cut split between both ends), and the picture greyed (0.5) where the rounded mask is set.
+/// </summary>
+internal static class InpaintPixels
+{
+    public static (ImageBatch Pixels, MaskBatch Mask, ImageBatch Greyed) Prepare(ImageBatch pixels, MaskBatch mask)
+    {
+        var picture = VAEEncode.CropForVae(pixels);
+        int h = picture.Height, w = picture.Width, top = pixels.Height % 8 / 2, left = pixels.Width % 8 / 2, plane = pixels.Height * pixels.Width;
+        var cropped = new MaskBatch(mask.Batch, h, w);
+        for (int b = 0; b < mask.Batch; b++)
+        {
+            var one = mask.Data.AsSpan(b * mask.Height * mask.Width, mask.Height * mask.Width).ToArray();
+            if (mask.Width != pixels.Width || mask.Height != pixels.Height)
+                one = Resample.Resize(one, mask.Width, mask.Height, 1, pixels.Width, pixels.Height, ResampleMethod.Bilinear);
+            for (int y = 0; y < h; y++) Array.Copy(one, (top + y) * pixels.Width + left, cropped.Data, (b * h + y) * w, w);
+        }
+
+        var greyed = new ImageBatch(picture.Batch, h, w, picture.Channels);
+        int c = picture.Channels;
+        for (int b = 0; b < picture.Batch; b++)
+            for (int i = 0; i < h * w; i++)
+            {
+                float keep = 1f - MathF.Round(cropped.Data[(b % mask.Batch) * h * w + i]);
+                for (int k = 0; k < c; k++)
+                {
+                    float v = picture.Data[(b * h * w + i) * c + k];
+                    // ComfyUI greys the three colour channels: (v - 0.5) * keep + 0.5 in float32; an alpha channel is left as it is.
+                    greyed.Data[(b * h * w + i) * c + k] = k < 3 ? (v - 0.5f) * keep + 0.5f : v;
+                }
+            }
+        return (picture, cropped, greyed);
+    }
+}
+
+[Node(Category = "model/conditioning", DisplayName = "InpaintModelConditioning", OutputNames = ["positive", "negative", "latent"])]
+public sealed class InpaintModelConditioning
+{
+    /// <summary>
+    /// Prepares an inpainting run: the latent is the whole picture encoded, with the mask as its noise mask (when <c>noise_mask</c> is on), and both
+    /// conditionings carry the picture with the masked area greyed (encoded) plus the mask, which inpainting models take as extra input channels. Other
+    /// models ignore those two, as in ComfyUI, and the run is then an img2img confined to the mask.
+    /// </summary>
+    public async Task<(Conditioning Positive, Conditioning Negative, LatentBatch Latent)> ExecuteAsync(Conditioning positive, Conditioning negative, VaeHandle vae,
+        ImageBatch pixels, MaskBatch mask, NodeContext context, IServiceProvider services,
+        [Input(Default = true, Tooltip = "Add a noise mask to the latent so sampling will only happen within the mask. Might improve results or completely break things depending on the model.")]
+        bool noiseMask)
+    {
+        var (_, cropped, greyed) = InpaintPixels.Prepare(pixels, mask);
+        var concat = await new VAEEncode().ExecuteAsync(greyed, vae, context, services);
+        var latent = await new VAEEncode().ExecuteAsync(pixels, vae, context, services);
+        if (noiseMask) latent = new LatentBatch(latent.Batch, latent.Channels, latent.Height, latent.Width, latent.Data) { NoiseMask = cropped };
+        Conditioning Set(Conditioning c) => c.Map(e => e with { ConcatLatent = concat, ConcatMask = cropped });
+        return (Set(positive), Set(negative), latent);
     }
 }

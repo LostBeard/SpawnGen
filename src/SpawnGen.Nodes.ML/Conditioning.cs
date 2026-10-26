@@ -41,6 +41,11 @@ public sealed record CondEntry(float[] Embeddings, int[] Shape)
     public ControlUse? Control { get; init; }
     /// <summary>Set by the old Apply ControlNet: the negative gets this entry's control at sampling time (ComfyUI's control_apply_to_uncond).</summary>
     public bool ControlApplyToUncond { get; init; }
+    /// <summary>InpaintModelConditioning's picture with the masked area greyed, encoded (ComfyUI's concat_latent_image): extra input channels for
+    /// inpainting models; other models ignore it.</summary>
+    public LatentBatch? ConcatLatent { get; init; }
+    /// <summary>The mask that goes with <see cref="ConcatLatent"/> (ComfyUI's concat_mask), at the picture's size.</summary>
+    public MaskBatch? ConcatMask { get; init; }
 }
 
 /// <summary>What the model is asked about: one or more <see cref="CondEntry"/>. Several entries are blended by their area weights, like ComfyUI's Combine.</summary>

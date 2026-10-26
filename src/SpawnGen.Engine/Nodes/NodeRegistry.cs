@@ -399,6 +399,7 @@ public sealed class NodeRegistry
                 Widget: ia?.MatchType is not null || ia?.ForceInput == true ? null : BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip)
             {
                 Aliases = ia?.Aliases ?? [], Lazy = ia?.Lazy ?? false, Optional = ia?.Optional ?? false, MatchTemplate = ia?.MatchType, ForceInput = ia?.ForceInput ?? false,
+                StatedDefault = ia is { ForceInput: true, Json: { } stated } ? Types.JsonLiteral.Parse(stated) : null,
             });
             bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { ElementType = element });
         }
@@ -520,6 +521,9 @@ public sealed class NodeRegistry
         var t = Nullable.GetUnderlyingType(valueType) ?? valueType;
         var def = p.HasDefaultValue && p.DefaultValue is not DBNull ? p.DefaultValue : ia?.Default;
         double? Opt(double? v) => v is null || double.IsNaN(v.Value) ? null : v;
+
+        if (ia?.Json is { } json)
+            return new WidgetSpec(WidgetKind.Json) { Default = Types.JsonLiteral.Parse(json), Socketless = !ia.JsonSocket };
 
         if (t.IsEnum)
             return new WidgetSpec(WidgetKind.Combo)

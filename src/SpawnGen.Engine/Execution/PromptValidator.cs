@@ -143,6 +143,9 @@ public static class PromptValidator
                 return literal is string ? null : "expects a colour code (#rrggbb).";
             case WidgetKind.String:
                 return literal is string ? null : "expects text.";
+            case WidgetKind.Json:
+                // ComfyUI hands an object-valued widget's value to the node as it is; the node reads what it needs.
+                return null;
             case WidgetKind.Combo:
                 if (literal is not string str) return "expects one of the listed options.";
                 var options = w.ResolveOptions();

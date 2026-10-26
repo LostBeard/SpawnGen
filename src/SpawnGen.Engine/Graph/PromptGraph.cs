@@ -10,7 +10,10 @@ public readonly record struct PromptInput
         OutputIndex = outputIndex;
     }
 
-    /// <summary>Literal value: <see cref="long"/>, <see cref="double"/>, <see cref="bool"/>, <see cref="string"/> or null. Unused for links.</summary>
+    /// <summary>
+    /// Literal value: <see cref="long"/>, <see cref="double"/>, <see cref="bool"/>, <see cref="string"/>, a JSON-like <see cref="Types.DictValue"/> or
+    /// <see cref="Types.ArrayValue"/> (object-valued widgets), or null. Unused for links.
+    /// </summary>
     public object? Literal { get; }
     public string? NodeId { get; }
     public int OutputIndex { get; }

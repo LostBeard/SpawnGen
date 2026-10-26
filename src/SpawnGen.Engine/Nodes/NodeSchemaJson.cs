@@ -83,8 +83,15 @@ public static class NodeSchemaJson
                 MatchTemplate = (string?)config["template"]?["template_id"],
             };
         if (config["forceInput"] is JsonValue force && force.TryGetValue<bool>(out var forced) && forced)
-            return new InputSpec(name, new SocketType(type), required) { ForceInput = true };
+            return new InputSpec(name, new SocketType(type), required) { ForceInput = true, StatedDefault = config["default"] is JsonObject or JsonArray ? Types.JsonLiteral.FromJson(config["default"]) : null };
         var kind = type switch { "INT" => WidgetKind.Int, "FLOAT" => WidgetKind.Float, "BOOLEAN" => WidgetKind.Boolean, "STRING" => WidgetKind.String, "COLOR" => WidgetKind.Color, _ => (WidgetKind?)null };
+        // Any other type with an object or list default is an object-valued widget (BOUNDING_BOX, COMPOSITOR, ...).
+        if (kind is null && config["default"] is JsonObject or JsonArray)
+            return new InputSpec(name, new SocketType(type), required, new WidgetSpec(WidgetKind.Json)
+            {
+                Default = Types.JsonLiteral.FromJson(config["default"]),
+                Socketless = config["socketless"] is JsonValue sl && sl.TryGetValue<bool>(out var socketless) ? socketless : null,
+            });
         if (kind is null) return new InputSpec(name, new SocketType(type), required);
         return new InputSpec(name, new SocketType(type), required, new WidgetSpec(kind.Value)
         {

@@ -1,7 +1,11 @@
 namespace SpawnGen.Engine.Nodes;
 
-/// <summary>The widget an input shows. <see cref="Color"/> is ComfyUI's COLOR: a "#rrggbb" text picked with a colour picker, never a socket.</summary>
-public enum WidgetKind { Int, Float, String, Boolean, Combo, Color }
+/// <summary>
+/// The widget an input shows. <see cref="Color"/> is ComfyUI's COLOR: a "#rrggbb" text picked with a colour picker, never a socket. <see cref="Json"/> holds a
+/// JSON-like value (<see cref="Types.DictValue"/>, <see cref="Types.ArrayValue"/>): ComfyUI's object-valued widgets such as BOUNDING_BOX, BOUNDING_BOXES and
+/// COMPOSITOR; prompts carry it as a JSON object, or wrapped as <c>{"__value__": [...]}</c> when it is a list.
+/// </summary>
+public enum WidgetKind { Int, Float, String, Boolean, Combo, Color, Json }
 
 /// <summary>Editor/validation metadata for an input that can be set from a literal value.</summary>
 public sealed record WidgetSpec(WidgetKind Kind)
@@ -14,6 +18,8 @@ public sealed record WidgetSpec(WidgetKind Kind)
     public IReadOnlyList<string>? Options { get; init; }
     /// <summary>Evaluated on demand (e.g. the models folder listing) so the list is never stale.</summary>
     public Func<IReadOnlyList<string>>? OptionsProvider { get; init; }
+    /// <summary>ComfyUI's <c>socketless</c> for a <see cref="WidgetKind.Json"/> widget: true when it cannot be turned into a socket (null = not stated).</summary>
+    public bool? Socketless { get; init; }
 
     public IReadOnlyList<string> ResolveOptions() => OptionsProvider?.Invoke() ?? Options ?? [];
 }
@@ -38,6 +44,8 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
     public string? MatchTemplate { get; init; }
     /// <summary>ComfyUI's forceInput: a primitive that is only a socket.</summary>
     public bool ForceInput { get; init; }
+    /// <summary>The default ComfyUI states for a socket-only input that would otherwise be a widget (a forceInput BOUNDING_BOX); the schema shows it, nothing uses it.</summary>
+    public object? StatedDefault { get; init; }
 
     /// <summary>Where ComfyUI's object_info lists the input: "required" for sockets that must be linked, for widgets and for Autogrow group members
     /// not declared optional (ComfyUI lists the whole group in its declared section).</summary>

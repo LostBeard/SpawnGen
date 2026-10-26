@@ -57,7 +57,7 @@ public class PromptJsonTests
     public void Malformed_input_is_a_format_error()
     {
         Assert.Throws<FormatException>(() => PromptJson.Parse("""{ "1": { "inputs": {} } }"""));
-        Assert.Throws<FormatException>(() => PromptJson.Parse("""{ "1": { "class_type": "A", "inputs": { "x": {"a":1} } } }"""));
+        Assert.Throws<FormatException>(() => PromptJson.Parse("""{ "1": { "class_type": "A", "inputs": { "x": [1, 2, 3] } } }"""));
         Assert.Throws<FormatException>(() => PromptJson.Parse("[]"));
     }
 }

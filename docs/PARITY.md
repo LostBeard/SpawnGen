@@ -91,8 +91,10 @@ The dataset nodes (comfy_extras/nodes_dataset.py: Load Image / Image-Text (from 
 normalize, brightness, contrast, shuffle, deduplicate, grid and merge nodes, and the text steps) are checked against ComfyUI's node classes and a
 ComfyUI server (Fixtures/dataset): pictures pixel for pixel (Pillow's 8-bit steps, numpy's legacy generator for Random Crop and the shuffles, the
 average hash bit for bit), the tensor maths bit for bit, captions, Preview as Text output, file names (overwrite and increment numbering) and caption
-bytes exactly. As in ComfyUI, a text step puts out a list holding its text (Preview as Text shows it as JSON). WebP files in a folder fail to load
-(no WebP decoder yet, see below); JPEGs go through SpawnGen's decoder, which is close to but not bit-exact with Pillow's libjpeg.
+bytes exactly. WebP files in a folder fail to load (no WebP decoder yet, see below); JPEGs go through SpawnGen's decoder, which is close to but
+not bit-exact with Pillow's libjpeg.
+Deliberate difference (a ComfyUI bug not copied): ComfyUI's TextProcessingNode.execute wraps a text step's result in a list on its non-list output,
+so its text steps put out ["text"] (previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
 
 Still missing, by kind:
 1. **Need the library**: CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use

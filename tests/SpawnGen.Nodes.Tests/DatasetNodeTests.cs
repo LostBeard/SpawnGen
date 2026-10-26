@@ -317,19 +317,20 @@ public class DatasetNodeTests
     // ---- text steps -------------------------------------------------------------------------------------------------------------------------------
 
     [Test]
-    public void Text_steps_put_out_a_list_of_one_text_with_Pythons_string_rules()
+    public void Text_steps_put_out_plain_text_with_Pythons_string_rules()
     {
-        Assert.That(new TextToUppercase().Execute("stra\u00dfe"), Is.EqualTo(new object[] { "STRASSE" }));
-        Assert.That(new TextToLowercase().Execute("\u0130"), Is.EqualTo(new object[] { "i\u0307" }));
-        Assert.That(new TruncateText().Execute("a\U0001F600bc", 2), Is.EqualTo(new object[] { "a\U0001F600" }), "code points, not UTF-16 units");
-        Assert.That(new StripWhitespace().Execute("\u2003 x \u001f"), Is.EqualTo(new object[] { "x" }));
-        Assert.That(new ReplaceText().Execute("ab", "", "-"), Is.EqualTo(new object[] { "-a-b-" }));
-        // An extra input that brings a text node's output (a list of one text) is that text; anything else fails as Python's + does.
-        Assert.That(new AddTextPrefix().Execute("x", new object?[] { "p:" }), Is.EqualTo(new object[] { "p:x" }));
+        Assert.That(new TextToUppercase().Execute("stra\u00dfe"), Is.EqualTo("STRASSE"));
+        Assert.That(new TextToLowercase().Execute("\u0130"), Is.EqualTo("i\u0307"));
+        Assert.That(new TruncateText().Execute("a\U0001F600bc", 2), Is.EqualTo("a\U0001F600"), "code points, not UTF-16 units");
+        Assert.That(new StripWhitespace().Execute("\u2003 x \u001f"), Is.EqualTo("x"));
+        Assert.That(new ReplaceText().Execute("ab", "", "-"), Is.EqualTo("-a-b-"));
+        // An extra input that brings a list of one text is that text (ComfyUI's scalar extraction); anything else fails as Python's + does.
+        Assert.That(new AddTextPrefix().Execute("x", new object?[] { "p:" }), Is.EqualTo("p:x"));
         Assert.That(() => new AddTextSuffix().Execute("x", new object?[] { "a", "b" }), Throws.ArgumentException.With.Message.Contains("can only concatenate str (not \"list\") to str"));
-        // Truncate Text slices a list as Python does.
-        var sliced = new TruncateText().Execute(new object?[] { "ONE" }, 2);
-        Assert.That(sliced.Single(), Is.EqualTo(new object[] { "ONE" }));
+        // Merge Text Lists puts out the list as one value, and Truncate Text slices a list as Python does.
+        var merged = new MergeTextLists().Execute(["one", "two", "three"]);
+        Assert.That(merged, Is.EqualTo(new object[] { "one", "two", "three" }));
+        Assert.That(new TruncateText().Execute(merged, 2), Is.EqualTo(new object[] { "one", "two" }));
     }
 
     // ---- prompts on the engine, compared with what the ComfyUI server did --------------------------------------------------------------------
@@ -413,10 +414,30 @@ public class DatasetNodeTests
             var ui = answer["ui"]!.AsObject();
             Assert.That(ui.Count, Is.EqualTo(13));
             foreach (var (node, texts) in ui)
-                Assert.That(UiTexts(result, node), Is.EqualTo(texts!.AsArray().Select(t => (string?)t)), $"Preview as Text node {node}");
+            {
+                var comfy = texts!.AsArray().Select(t => (string)t!).ToList();
+                Assert.That(UiTexts(result, node), Is.EqualTo(TextStepPreviews.Contains(node) ? Intended(node, comfy, ui) : comfy), $"Preview as Text node {node}");
+            }
             AssertFilesLikeComfy(output, f => !f.StartsWith("inc/", StringComparison.Ordinal) && !f.StartsWith("bad/", StringComparison.Ordinal));
         }
         finally { Directory.Delete(Path.GetDirectoryName(input)!, true); }
+    }
+
+    // Preview as Text nodes fed by a text step (graph_main.json): 11 ... 27 by each step, 41 Truncate Text of the uppercase step, 43 and 45 with
+    // the lowercase step as prefix / find.
+    static readonly HashSet<string> TextStepPreviews = ["11", "13", "15", "17", "19", "21", "23", "25", "27", "41", "43", "45"];
+
+    /// <summary>
+    /// What ComfyUI meant a text step's preview to show. ComfyUI's TextProcessingNode.execute has a bug: its "Single output - wrap in list for
+    /// NodeOutput" branch passes [result] as the one output value, so the text arrives as a list of one and the preview reads ["text"] (Merge Text
+    /// Lists: [[...]]). SpawnGen puts out the result itself: the fixture's one item. Truncate Text (node 41) then gets the uppercase text, not a
+    /// list, and cuts it to 2 characters.
+    /// </summary>
+    static List<string> Intended(string node, List<string> comfy, JsonObject ui)
+    {
+        if (node == "41")
+            return [.. Intended("11", ui["11"]!.AsArray().Select(t => (string)t!).ToList(), ui).Select(t => PyText.Slice(t, null, 2))];
+        return [.. comfy.Select(c => PreviewAny.Format(((System.Collections.IList)PyJson.Loads(c)!)[0]))];
     }
 
     [Test]
@@ -436,19 +457,25 @@ public class DatasetNodeTests
     }
 
     [Test]
-    public async Task Captions_that_are_not_text_fail_where_ComfyUI_fails()
+    public async Task Captions_from_a_text_step_are_written_where_ComfyUIs_list_bug_fails()
     {
         var (input, output) = Work();
         try
         {
             InputFiles.Directory = input;
+            // ComfyUI fails this prompt: its text step puts out a list of one text (TextProcessingNode.execute's wrapping bug), and Save Image-Text
+            // writes the pictures, creates the first caption file empty and stops on "write() argument must be str, not list".
             var answer = Graphs.Value["answers"]!["failing"]!;
-            Assert.That((string)answer["status"]!, Is.EqualTo("error"));
-            var ex = Assert.ThrowsAsync<NodeExecutionException>(() => new PromptExecutor(Registry(), new Services(new OutputOptions { Directory = output })).ExecuteAsync(Prompt("failing")));
-            Assert.That(ex!.NodeId, Is.EqualTo("3"));
-            Assert.That(ex.InnerException!.Message, Is.EqualTo(((string)answer["error"]!["message"]!).TrimEnd('\n')));
-            // The pictures were written, then the first caption file was created empty before the write failed.
-            AssertFilesLikeComfy(output, f => f.StartsWith("bad/", StringComparison.Ordinal));
+            Assert.That(((string)answer["status"]!, (string)answer["error"]!["message"]!), Is.EqualTo(("error", "write() argument must be str, not list\n")));
+            // SpawnGen's text step puts out the text, so every caption is written: the uppercase captions ComfyUI's own uppercase step made.
+            await new PromptExecutor(Registry(), new Services(new OutputOptions { Directory = output })).ExecuteAsync(Prompt("failing"));
+            AssertFilesLikeComfy(output, f => f.StartsWith("bad/", StringComparison.Ordinal) && f.EndsWith(".png", StringComparison.Ordinal));
+            var ui = Graphs.Value["answers"]!["main"]!["ui"]!.AsObject();
+            var upper = Intended("11", ui["11"]!.AsArray().Select(t => (string)t!).ToList(), ui);
+            var dst = Path.Combine(output, (string)Graphs.Value["output_folder"]!, "bad");
+            for (int i = 0; i < upper.Count; i++)
+                Assert.That(File.ReadAllBytes(Path.Combine(dst, $"b_{i:D5}.txt")), Is.EqualTo(Encoding.UTF8.GetBytes(upper[i].Replace("\n", Environment.NewLine))), $"caption {i}");
+            Assert.That(upper[3], Does.StartWith("A PHOTO OF A STRASSE"));
         }
         finally { Directory.Delete(Path.GetDirectoryName(input)!, true); }
     }

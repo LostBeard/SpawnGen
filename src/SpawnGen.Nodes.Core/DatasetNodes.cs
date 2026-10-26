@@ -12,9 +12,11 @@ namespace SpawnGen.Nodes.Core;
 //   the tensor maths (Normalize, Brightness, Contrast), which take the batch whole.
 // - The list nodes (Shuffle Images List, Deduplicate Images, Make Image Grid, Merge Image Lists) first split every batch into single frames.
 // - Seeds go through numpy's legacy generator: np.random.seed(seed % (2**32 - 1)).
-// - A text node puts out a list holding its one text (ComfyUI's TextProcessingNode wraps the result in a list on an output that is not a list
-//   output), so what flows on is that list: Preview as Text shows it as JSON, another text node's text input refuses it (Truncate Text slices it,
-//   as Python slices a list), and an extra input (prefix, suffix, find, replace) unwraps a list of one.
+// - A text node puts out its text. ComfyUI's TextProcessingNode.execute has a bug here: on an output that is not a list output it passes
+//   [result] as the one output value, so the text arrives wrapped in a list (Preview as Text shows ["text"], another text node refuses it, Save
+//   Image-Text fails on it). SpawnGen does not copy that: the text steps put out the plain text, Merge Text Lists the list of texts as one value.
+//   The rest is ComfyUI's: an extra input (prefix, suffix, find, replace) that brings a list of one is that one item, and Truncate Text slices a
+//   list as Python does.
 
 /// <summary>Helpers the dataset nodes share.</summary>
 internal static class Dataset
@@ -365,85 +367,85 @@ public sealed class MergeImageLists
 // ---- text steps --------------------------------------------------------------------------------------------------------------------------------------
 
 [Node("TextToLowercase", Category = "text", DisplayName = "Convert Text to Lowercase (DEPRECATED)", Description = "Convert text to lowercase.",
-    OutputNames = ["texts"], OutputTypes = ["STRING"])]
+    OutputNames = ["texts"])]
 public sealed class TextToLowercase
 {
-    /// <summary>Python's <c>str.lower</c> (full Unicode mappings), as a list of one text (see the notes at the top of this file).</summary>
-    public IReadOnlyList<object?> Execute([Input(Tooltip = "Text to process.")] string texts) => [PyText.Lower(texts)];
+    /// <summary>Python's <c>str.lower</c> (full Unicode mappings).</summary>
+    public string Execute([Input(Tooltip = "Text to process.")] string texts) => PyText.Lower(texts);
 }
 
 [Node("TextToUppercase", Category = "text", DisplayName = "Convert Text to Uppercase (DEPRECATED)", Description = "Convert text to uppercase.",
-    OutputNames = ["texts"], OutputTypes = ["STRING"])]
+    OutputNames = ["texts"])]
 public sealed class TextToUppercase
 {
-    /// <summary>Python's <c>str.upper</c> ("ß" becomes "SS"), as a list of one text.</summary>
-    public IReadOnlyList<object?> Execute([Input(Tooltip = "Text to process.")] string texts) => [PyText.Upper(texts)];
+    /// <summary>Python's <c>str.upper</c> (the German sharp s becomes "SS").</summary>
+    public string Execute([Input(Tooltip = "Text to process.")] string texts) => PyText.Upper(texts);
 }
 
 [Node("TruncateText", Category = "text", DisplayName = "Truncate Text", Description = "Truncate text to a maximum length.", OutputNames = ["texts"], OutputTypes = ["STRING"])]
 public sealed class TruncateText
 {
     /// <summary>
-    /// <c>texts[:max_length]</c>, in code points, as a list of one text. Python slices a list the same way, so a text node's output (a list of one
-    /// text) comes through as that list, inside another list.
+    /// <c>texts[:max_length]</c>, in code points. Python slices a list the same way, so a list that reaches it (Merge Text Lists' output) comes
+    /// out as its first items.
     /// </summary>
-    public IReadOnlyList<object?> Execute([Input(Type = "STRING", Tooltip = "Text to process.")] object texts,
+    public object Execute([Input(Type = "STRING", Tooltip = "Text to process.")] object texts,
         [Input(Min = 1, Max = 10000, Tooltip = "Maximum text length.")] long maxLength = 77) => texts switch
     {
-        string s => [PyText.Slice(s, null, maxLength)],
-        IReadOnlyList<object?> list => [PyText.SliceItems(list, null, maxLength, null).ToArray()],
+        string s => PyText.Slice(s, null, maxLength),
+        IReadOnlyList<object?> list => PyText.SliceItems(list, null, maxLength, null).ToArray(),
         _ => throw new ArgumentException($"'{Dataset.PyTypeName(texts)}' object is not subscriptable", nameof(texts)),
     };
 }
 
-[Node("AddTextPrefix", Category = "text", DisplayName = "Add Text Prefix (DEPRECATED)", Description = "Add a prefix to all texts.", OutputNames = ["texts"], OutputTypes = ["STRING"])]
+[Node("AddTextPrefix", Category = "text", DisplayName = "Add Text Prefix (DEPRECATED)", Description = "Add a prefix to all texts.", OutputNames = ["texts"])]
 public sealed class AddTextPrefix
 {
-    /// <summary><c>prefix + texts</c>, as a list of one text; a prefix that comes as a list of one text is that text.</summary>
-    public IReadOnlyList<object?> Execute([Input(Tooltip = "Text to process.")] string texts,
+    /// <summary><c>prefix + texts</c>; a prefix that comes as a list of one text is that text.</summary>
+    public string Execute([Input(Tooltip = "Text to process.")] string texts,
         [Input(Type = "STRING", Default = "", Tooltip = "Prefix to add.")] object prefix) =>
-        Dataset.Unwrap(prefix) is string p ? [p + texts]
+        Dataset.Unwrap(prefix) is string p ? p + texts
             : throw new ArgumentException($"can only concatenate {Dataset.PyTypeName(Dataset.Unwrap(prefix))} (not \"str\") to {Dataset.PyTypeName(Dataset.Unwrap(prefix))}", nameof(prefix));
 }
 
-[Node("AddTextSuffix", Category = "text", DisplayName = "Add Text Suffix (DEPRECATED)", Description = "Add a suffix to all texts.", OutputNames = ["texts"], OutputTypes = ["STRING"])]
+[Node("AddTextSuffix", Category = "text", DisplayName = "Add Text Suffix (DEPRECATED)", Description = "Add a suffix to all texts.", OutputNames = ["texts"])]
 public sealed class AddTextSuffix
 {
-    /// <summary><c>texts + suffix</c>, as a list of one text; a suffix that comes as a list of one text is that text.</summary>
-    public IReadOnlyList<object?> Execute([Input(Tooltip = "Text to process.")] string texts,
+    /// <summary><c>texts + suffix</c>; a suffix that comes as a list of one text is that text.</summary>
+    public string Execute([Input(Tooltip = "Text to process.")] string texts,
         [Input(Type = "STRING", Default = "", Tooltip = "Suffix to add.")] object suffix) =>
-        Dataset.Unwrap(suffix) is string s ? [texts + s]
+        Dataset.Unwrap(suffix) is string s ? texts + s
             : throw new ArgumentException($"can only concatenate str (not \"{Dataset.PyTypeName(Dataset.Unwrap(suffix))}\") to str", nameof(suffix));
 }
 
-[Node("ReplaceText", Category = "text", DisplayName = "Replace Text (DEPRECATED)", Description = "Replace text in all texts.", OutputNames = ["texts"], OutputTypes = ["STRING"])]
+[Node("ReplaceText", Category = "text", DisplayName = "Replace Text (DEPRECATED)", Description = "Replace text in all texts.", OutputNames = ["texts"])]
 public sealed class ReplaceText
 {
-    /// <summary>Python's <c>str.replace</c> (an empty find puts the replacement around every character), as a list of one text.</summary>
-    public IReadOnlyList<object?> Execute([Input(Tooltip = "Text to process.")] string texts,
+    /// <summary>Python's <c>str.replace</c> (an empty find puts the replacement around every character).</summary>
+    public string Execute([Input(Tooltip = "Text to process.")] string texts,
         [Input(Type = "STRING", Default = "", Tooltip = "Text to find.")] object find,
         [Input(Type = "STRING", Default = "", Tooltip = "Text to replace with.")] object replace)
     {
         if (Dataset.Unwrap(find) is not string f) throw new ArgumentException($"replace() argument 1 must be str, not {Dataset.PyTypeName(Dataset.Unwrap(find))}", nameof(find));
         if (Dataset.Unwrap(replace) is not string r) throw new ArgumentException($"replace() argument 2 must be str, not {Dataset.PyTypeName(Dataset.Unwrap(replace))}", nameof(replace));
-        return [PyText.Replace(texts, f, r)];
+        return PyText.Replace(texts, f, r);
     }
 }
 
 [Node("StripWhitespace", Category = "text", DisplayName = "Strip Whitespace (DEPRECATED)", Description = "Strip leading and trailing whitespace from all texts.",
-    OutputNames = ["texts"], OutputTypes = ["STRING"])]
+    OutputNames = ["texts"])]
 public sealed class StripWhitespace
 {
-    /// <summary>Python's <c>str.strip()</c> (Python's whitespace, not .NET's), as a list of one text.</summary>
-    public IReadOnlyList<object?> Execute([Input(Tooltip = "Text to process.")] string texts) => [PyText.Strip(texts)];
+    /// <summary>Python's <c>str.strip()</c> (Python's whitespace, not .NET's).</summary>
+    public string Execute([Input(Tooltip = "Text to process.")] string texts) => PyText.Strip(texts);
 }
 
 [Node("MergeTextLists", Category = "text", DisplayName = "Merge Text Lists (DEPRECATED)", Description = "Concatenate multiple text lists into one.",
     InputIsList = true, OutputNames = ["texts"], OutputTypes = ["STRING"])]
 public sealed class MergeTextLists
 {
-    /// <summary>The whole list it is given, as one value: a list holding that list (ComfyUI wraps it once more, the output not being a list output).</summary>
-    public IReadOnlyList<object?> Execute([Input(Type = "STRING", Default = "", Tooltip = "List of texts to process.")] IReadOnlyList<object?> texts) => [texts.ToArray()];
+    /// <summary>The whole list it is given, as one value (the output is not a list output; ComfyUI wraps it in one more list, see the top of this file).</summary>
+    public IReadOnlyList<object?> Execute([Input(Type = "STRING", Default = "", Tooltip = "List of texts to process.")] IReadOnlyList<object?> texts) => texts.ToArray();
 }
 
 // ---- folders -------------------------------------------------------------------------------------------------------------------------------------------

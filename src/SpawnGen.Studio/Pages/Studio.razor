@@ -815,7 +815,7 @@
         {
             NodeId = nodeId, Name = name, Spec = spec,
             Bounds = new Rect(topLeft.X, topLeft.Y, row.Width * scale, Math.Max(row.Height * scale, 28)),
-            Text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            Text = spec.Kind == WidgetKind.Json ? SpawnGen.Engine.Types.JsonLiteral.ToJson(value) : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "",
         };
         _focusEdit = true;
         StateHasChanged();
@@ -871,9 +871,10 @@
             {
                 WidgetKind.Int => long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var l) ? Clamp(spec, l) : null,
                 WidgetKind.Float => double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d) ? Clamp(spec, d) : null,
+                WidgetKind.Json => SpawnGen.Engine.Types.JsonLiteral.TryParse(text, out var json) ? json : null,
                 _ => text,
             };
-            if (value is null) ShowMessage($"'{text}' is not a valid number.");
+            if (value is null) ShowMessage(spec.Kind == WidgetKind.Json ? $"'{text}' is not valid JSON." : $"'{text}' is not a valid number.");
             else _doc.SetWidget(e.NodeId, e.Name, value);
         }
         _doc.EndGesture();

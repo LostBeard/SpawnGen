@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Engine.Graph;
 
@@ -52,6 +53,10 @@ public static class PromptJson
             case JsonValueKind.True: return PromptInput.Value(true);
             case JsonValueKind.False: return PromptInput.Value(false);
             case JsonValueKind.Null: return PromptInput.Value(null);
+            case JsonValueKind.Object:
+                // An object-valued widget (BOUNDING_BOX, COMPOSITOR, ...). A list value comes wrapped as {"__value__": [...]}, since a bare list is a link;
+                // ComfyUI unwraps it whatever the input's type.
+                return PromptInput.Value(v.TryGetProperty("__value__", out var wrapped) ? JsonLiteral.FromJson(wrapped) : JsonLiteral.FromJson(v));
             case JsonValueKind.Array when v.GetArrayLength() == 2:
                 var id = v[0];
                 var idx = v[1];
@@ -109,6 +114,14 @@ public static class PromptJson
             case double d: w.WriteNumberValue(d); break;
             case bool b: w.WriteBooleanValue(b); break;
             case string s: w.WriteStringValue(s); break;
+            case ArrayValue list:
+                // A bare list would read back as a link.
+                w.WriteStartObject();
+                w.WritePropertyName("__value__");
+                JsonLiteral.Write(w, list);
+                w.WriteEndObject();
+                break;
+            case DictValue dict: JsonLiteral.Write(w, dict); break;
             default: throw new NotSupportedException($"Cannot serialize literal of type {v.GetType().Name}.");
         }
     }

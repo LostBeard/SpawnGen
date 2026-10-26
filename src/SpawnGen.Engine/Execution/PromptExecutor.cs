@@ -413,6 +413,7 @@ public sealed class PromptExecutor
         float f => "d" + ((double)f).ToString("R", CultureInfo.InvariantCulture),
         Enum e => "e" + e,
         IFormattable f => "n" + f.ToString(null, CultureInfo.InvariantCulture),
+        Types.DictValue or Types.ArrayValue => "j" + Types.JsonLiteral.ToJson(v), // an object-valued widget: equal values share a cache entry
         _ => "o" + Identities.GetValue(v, _ => v.GetType().Name + "#" + Interlocked.Increment(ref _identityCounter)),
     };
 }

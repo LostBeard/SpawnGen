@@ -399,6 +399,7 @@ public sealed class NodeRegistry
                 Widget: ia?.MatchType is not null || ia?.ForceInput == true ? null : BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip)
             {
                 Aliases = ia?.Aliases ?? [], Lazy = ia?.Lazy ?? false, Optional = ia?.Optional ?? false, MatchTemplate = ia?.MatchType, ForceInput = ia?.ForceInput ?? false,
+                StatedDefault = ia is { ForceInput: true, Json: { } stated } ? Types.JsonLiteral.Parse(stated) : null,
             });
             bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { ElementType = element });
         }
@@ -521,6 +522,8 @@ public sealed class NodeRegistry
         var def = p.HasDefaultValue && p.DefaultValue is not DBNull ? p.DefaultValue : ia?.Default;
         double? Opt(double? v) => v is null || double.IsNaN(v.Value) ? null : v;
 
+        if (ia?.Json is { } json)
+            return new WidgetSpec(WidgetKind.Json) { Default = Types.JsonLiteral.Parse(json), Socketless = !ia.JsonSocket };
         // A STRING input that takes any value (a node whose Python takes a list as well as text): a text widget, the value is passed on as it comes.
         if (t == typeof(object) && ia?.Type == "STRING") return new WidgetSpec(WidgetKind.String) { Multiline = ia.Multiline, Default = def ?? "" };
 

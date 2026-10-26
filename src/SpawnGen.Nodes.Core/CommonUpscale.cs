@@ -203,6 +203,7 @@ public static class PilLanczos
     /// </summary>
     public static byte[] Resize(byte[] px, int w, int h, int c, int newW, int newH)
     {
+        if (c is not (1 or 2 or 3 or 4)) throw new ArgumentException($"Lanczos (Pillow) works on 1 to 4 channels, got {c}.", nameof(c));
         if (newW == w && newH == h) return (byte[])px.Clone(); // Pillow returns a copy for the same size
         bool alpha = c is 2 or 4; // LA and RGBA are resized as La / RGBa
         if (alpha) { px = (byte[])px.Clone(); Premultiply(px, c); }
@@ -232,7 +233,7 @@ public static class PilLanczos
     }
 
     // Pillow's MULDIV255 (RGBA -> RGBa) and its inverse (RGBa -> RGBA: integer division, clipped; alpha 0 or 255 left alone).
-    static void Premultiply(byte[] px, int c)
+    internal static void Premultiply(byte[] px, int c)
     {
         for (int p = 0; p < px.Length; p += c)
         {
@@ -241,7 +242,7 @@ public static class PilLanczos
         }
     }
 
-    static void Unpremultiply(byte[] px, int c)
+    internal static void Unpremultiply(byte[] px, int c)
     {
         for (int p = 0; p < px.Length; p += c)
         {

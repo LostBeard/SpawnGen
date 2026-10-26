@@ -532,6 +532,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         {
             WidgetKind.Float => Convert.ToDouble(value ?? 0.0).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
             WidgetKind.Boolean => (value as bool? ?? false) ? "on" : "off",
+            WidgetKind.Json => SpawnGen.Engine.Types.JsonLiteral.ToJson(value),
             _ => value?.ToString() ?? "",
         };
         // The value keeps its room (up to two thirds of the row); a long name gives way to it, as in ComfyUI.

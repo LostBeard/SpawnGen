@@ -91,6 +91,14 @@ public sealed class InputAttribute : Attribute
     /// parameter gets a text widget.
     /// </summary>
     public bool ForceInput { get; init; }
+    /// <summary>
+    /// The JSON default of an object-valued widget (ComfyUI's BOUNDING_BOX, BOUNDING_BOXES, COMPOSITOR: a <see cref="WidgetKind.Json"/> widget) on an
+    /// <c>object</c> parameter, e.g. <c>{"x": 0, "y": 0, "width": 512, "height": 512}</c>. With <see cref="ForceInput"/> the input stays a socket and
+    /// the default is only stated in the schema, as ComfyUI states it.
+    /// </summary>
+    public string? Json { get; init; }
+    /// <summary>For a <see cref="Json"/> widget: it can also be turned into a socket (ComfyUI's <c>socketless=False</c>); by default it cannot.</summary>
+    public bool JsonSocket { get; init; }
 }
 
 /// <summary>

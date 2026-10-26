@@ -4,6 +4,7 @@ using SpawnGen.Engine.Execution;
 using SpawnGen.Runtime;
 using SpawnGen.Engine.Graph;
 using SpawnGen.Engine.Nodes;
+using SpawnGen.Engine.Types;
 using SpawnGen.Nodes.Core;
 using SpawnGen.Nodes.ML;
 
@@ -311,8 +312,10 @@ public static class ServerApp
             config["template"] = new JsonObject { ["template_id"] = template, ["allowed_types"] = i.Type.Name };
             return new JsonArray(MatchTypeName, config);
         }
+        if (i.StatedDefault is { } stated) config["default"] = JsonLiteral.ToNode(stated);
         if (i.Widget is not { } w) return config.Count > 0 ? new JsonArray(i.Type.Name, config) : new JsonArray(i.Type.Name);
-        if (w.Default is { } d) config["default"] = JsonSerializer.SerializeToNode(d);
+        if (w.Default is { } d) config["default"] = w.Kind == WidgetKind.Json ? JsonLiteral.ToNode(d) : JsonSerializer.SerializeToNode(d);
+        if (w.Socketless is { } socketless) config["socketless"] = socketless;
         if (w.Min is { } min) config["min"] = min;
         if (w.Max is { } max) config["max"] = max;
         if (w.Step is { } step) config["step"] = step;

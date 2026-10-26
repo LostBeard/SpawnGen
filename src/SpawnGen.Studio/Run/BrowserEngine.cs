@@ -169,4 +169,6 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     public async Task<string?> UploadImageAsync(string name, byte[] png) => await _inputs.SaveAsync(Path.GetFileName(name), png);
 
     public Task<IReadOnlyList<string>> ListInputImagesAsync() => Task.FromResult(_inputs.List());
+
+    public Task<IReadOnlyList<string>> ListInputFoldersAsync() => Task.FromResult(_inputs.Folders());
 }

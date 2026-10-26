@@ -36,4 +36,7 @@ public interface IEngineClient
 
     /// <summary>The picture names a Load Image node can pick from on this engine.</summary>
     Task<IReadOnlyList<string>> ListInputImagesAsync();
+
+    /// <summary>The input folders a Load Image (from Folder) node can pick from on this engine.</summary>
+    Task<IReadOnlyList<string>> ListInputFoldersAsync();
 }

@@ -90,3 +90,53 @@ public sealed class TorchRandom
         }
     }
 }
+
+/// <summary>
+/// numpy's legacy generator as ComfyUI's dataset nodes use it (<c>np.random.seed(seed)</c>, then <c>randint</c> or <c>permutation</c>): the same
+/// mt19937 as <see cref="TorchRandom"/>, seeded the same way (init_genrand with the 32-bit seed), with numpy's bounded draws.
+/// </summary>
+public sealed class NumpyRandom
+{
+    readonly TorchRandom _mt;
+
+    /// <summary><c>np.random.seed(seed)</c>; numpy takes 0 to 2^32 - 1.</summary>
+    public NumpyRandom(long seed)
+    {
+        if (seed is < 0 or > uint.MaxValue) throw new ArgumentOutOfRangeException(nameof(seed), "Seed must be between 0 and 2**32 - 1");
+        _mt = new TorchRandom(seed);
+    }
+
+    /// <summary><c>randint(low, high)</c>, high excluded (ranges below 2^32: 32-bit draws, masked and redrawn until in range; an empty range draws nothing).</summary>
+    public long RandInt(long low, long high)
+    {
+        if (high <= low) throw new ArgumentException("low >= high");
+        ulong range = (ulong)(high - 1 - low);
+        if (range == 0) return low;
+        if (range > uint.MaxValue) throw new NotSupportedException("Ranges of 2^32 and more draw 64-bit numbers; the dataset nodes never need them.");
+        return low + Interval((uint)range);
+    }
+
+    /// <summary><c>permutation(n)</c>: <c>arange(n)</c> shuffled by Fisher-Yates from the end, each swap partner drawn from 0..i.</summary>
+    public int[] Permutation(int n)
+    {
+        var order = new int[n];
+        for (int i = 0; i < n; i++) order[i] = i;
+        for (int i = n - 1; i > 0; i--)
+        {
+            int j = (int)Interval((uint)i);
+            (order[i], order[j]) = (order[j], order[i]);
+        }
+        return order;
+    }
+
+    /// <summary>numpy's random_interval / bounded masked draw: 0..max, drawing 32 bits masked to max's bit length until the value fits.</summary>
+    uint Interval(uint max)
+    {
+        if (max == 0) return 0;
+        uint mask = max;
+        mask |= mask >> 1; mask |= mask >> 2; mask |= mask >> 4; mask |= mask >> 8; mask |= mask >> 16;
+        uint value;
+        while ((value = _mt.NextUInt32() & mask) > max) { }
+        return value;
+    }
+}

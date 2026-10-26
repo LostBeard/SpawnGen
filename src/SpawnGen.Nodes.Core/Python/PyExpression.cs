@@ -1534,7 +1534,7 @@ public static class PyExpression
         return i < 0 ? -1 : PyText.Length(s[..i]);
     }
 
-    static bool StrPredicate(string s, string what)
+    internal static bool StrPredicate(string s, string what)
     {
         var cps = PyText.CodePoints(s);
         if (cps.Length == 0) return false;

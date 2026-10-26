@@ -20,4 +20,15 @@ public static class ImageDecoder
     }
 
     public static ImageBatch Decode(byte[] data) => Decode(data, out _);
+
+    /// <summary>
+    /// A picture as Pillow's <c>Image.open(path).convert("RGB")</c> gives it (ComfyUI's dataset loaders, which do not use Load Image's path): the EXIF
+    /// orientation is not applied, alpha is dropped, and a 16-bit grey PNG is clipped at 255 instead of scaled.
+    /// </summary>
+    public static ImageBatch DecodePillowRgb(byte[] data)
+    {
+        if (JpegReader.IsJpeg(data)) return JpegReader.Decode(data, applyOrientation: false);
+        if (data.Length >= 8 && data[0] == 0x89 && data[1] == 0x50) return PngReader.Decode(data, out _, pillowGray16: true);
+        return Decode(data, out _); // the same refusal as Load Image for anything else
+    }
 }

@@ -43,6 +43,25 @@ public static class PyText
         return false;
     }
 
+    /// <summary>Python's string order (<c>sorted</c>, <c>&lt;</c>): by code point, so text beyond U+FFFF sorts after U+E000..U+FFFF (UTF-16 order would not).</summary>
+    public static int Compare(string? a, string? b)
+    {
+        if (a is null || b is null) return a is null ? (b is null ? 0 : -1) : 1;
+        int n = Math.Min(a.Length, b.Length);
+        for (int i = 0; i < n; i++)
+        {
+            char x = a[i], y = b[i];
+            if (x == y) continue;
+            // A surrogate stands for a code point above U+FFFF: it sorts after every character from U+E000 up.
+            if (char.IsSurrogate(x) != char.IsSurrogate(y) && Math.Max(x, y) >= 0xE000) return char.IsSurrogate(x) ? 1 : -1;
+            return x < y ? -1 : 1;
+        }
+        return a.Length.CompareTo(b.Length);
+    }
+
+    /// <summary><see cref="Compare"/> as a comparer.</summary>
+    public static readonly IComparer<string> Order = Comparer<string>.Create(Compare);
+
     /// <summary><c>len(s)</c>: code points.</summary>
     public static int Length(string s) => HasSurrogates(s) ? CodePoints(s).Length : s.Length;
 

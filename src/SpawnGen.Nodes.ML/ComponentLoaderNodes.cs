@@ -9,7 +9,7 @@ namespace SpawnGen.Nodes.ML;
 /// </summary>
 public static class ModelFolders
 {
-    public const string DiffusionModels = "diffusion_models", Vae = "vae", TextEncoders = "text_encoders";
+    public const string DiffusionModels = "diffusion_models", Vae = "vae", TextEncoders = "text_encoders", ControlNet = "controlnet";
 
     /// <summary>ComfyUI's folder names per kind: the current one first, then the older one it still reads.</summary>
     static readonly Dictionary<string, string[]> Folders = new()
@@ -17,6 +17,7 @@ public static class ModelFolders
         [DiffusionModels] = ["diffusion_models", "unet"],
         [Vae] = ["vae"],
         [TextEncoders] = ["text_encoders", "clip"],
+        [ControlNet] = ["controlnet", "t2i_adapter"],
     };
 
     static readonly object Gate = new();

@@ -178,8 +178,12 @@ public sealed class Checkpoint : IDiffusionModel, ITextEncoderModel, IVaeModel, 
 /// <summary>One sampling run's UNet: each conditioning entry goes to the GPU once, every step uploads only the latent.</summary>
 public abstract class UNetRun : IDisposable
 {
-    /// <summary>One prediction (eps or v, as the model was trained) for <paramref name="input"/> [4, h, w] in the model's space at <paramref name="timestep"/>.</summary>
-    public abstract Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, CancellationToken cancellationToken);
+    /// <summary>
+    /// One prediction (eps or v, as the model was trained) for <paramref name="input"/> [4, h, w] in the model's space at <paramref name="timestep"/>, with the
+    /// ControlNets active for this call (null or empty = none).
+    /// </summary>
+    public abstract Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
+        CancellationToken cancellationToken);
     public abstract void Dispose();
 }
 

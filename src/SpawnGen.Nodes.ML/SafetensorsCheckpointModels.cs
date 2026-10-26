@@ -70,7 +70,8 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
 
     sealed record Uploaded(MemoryBuffer1D<float, Stride1D.Dense> Context, int Rows, MemoryBuffer1D<float, Stride1D.Dense>? Label);
 
-    public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, CancellationToken cancellationToken)
+    public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
+        CancellationToken cancellationToken)
     {
         var cond = Upload(entry, h, w);
         int n = input.Length;
@@ -80,9 +81,41 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
         var inView = _in.View.SubView(0, n);
         var outView = _out.View.SubView(0, outLength);
         inView.CopyFromCPU(input);
-        await unet.ForwardAsync(inView, h, w, timestep, cond.Context.View, cond.Rows, cond.Label?.View, outView, cancellationToken);
+        List<SdControlResiduals>? residuals = null;
+        if (controls is { Count: > 0 })
+        {
+            // Each ControlNet sees what the UNet sees (the scaled input, the timestep, the entry's text) plus its hint; its residuals live in its own buffers until
+            // it runs again, so one net may appear only once per call.
+            residuals = [];
+            var seen = new HashSet<SdControlNet>(ReferenceEqualityComparer.Instance);
+            foreach (var c in controls)
+            {
+                if (!seen.Add(c.Net))
+                    throw new NotSupportedException("The same ControlNet is applied twice to one conditioning; load it a second time for the second Apply ControlNet.");
+                if (c.Net.ContextDim != unet.ContextDim)
+                    throw new ArgumentException($"The ControlNet takes {c.Net.ContextDim}-wide text but this model's UNet takes {unet.ContextDim}: it was made for another model family.");
+                var res = await c.Net.RunAsync(inView, h, w, timestep, cond.Context.View, cond.Rows, Hint(c, 8 * h, 8 * w).View, null, cancellationToken);
+                res.Strength = c.Strength;
+                residuals.Add(res);
+            }
+        }
+        await unet.ForwardAsync(inView, h, w, timestep, cond.Context.View, cond.Rows, cond.Label?.View, outView, residuals, cancellationToken);
         await acc.SynchronizeAsync();
         return await _out.CopyToHostAsync(0, outLength);
+    }
+
+    readonly Dictionary<object, MemoryBuffer1D<float, Stride1D.Dense>> _hints = new();
+
+    /// <summary>A control picture on the GPU, once per run and picture.</summary>
+    MemoryBuffer1D<float, Stride1D.Dense> Hint(ControlCall c, int height, int width)
+    {
+        if (!_hints.TryGetValue(c.HintKey, out var buf))
+        {
+            var hint = c.Hint();
+            if (hint.Length != 3L * height * width) throw new InvalidOperationException($"The control picture is {hint.Length} values, the run needs 3 x {height} x {width}.");
+            _hints[c.HintKey] = buf = acc.Allocate1D(hint);
+        }
+        return buf;
     }
 
     /// <summary>The entry's context (and SDXL's label: pooled text plus the size numbers) on the GPU, once per run.</summary>
@@ -112,6 +145,8 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
     {
         foreach (var u in _uploaded.Values) { u.Context.Dispose(); u.Label?.Dispose(); }
         _uploaded.Clear();
+        foreach (var b in _hints.Values) b.Dispose();
+        _hints.Clear();
         _in?.Dispose();
         _out?.Dispose();
     }

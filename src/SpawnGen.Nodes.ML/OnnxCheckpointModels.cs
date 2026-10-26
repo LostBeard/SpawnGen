@@ -63,8 +63,11 @@ internal sealed class OnnxCheckpointModels : ICheckpointModels
     {
         readonly Dictionary<CondEntry, (MemoryBuffer1D<float, Stride1D.Dense> Buffer, Tensor Tensor)> _uploaded = new(ReferenceEqualityComparer.Instance);
 
-        public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, CancellationToken cancellationToken)
+        public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
+            CancellationToken cancellationToken)
         {
+            if (controls is { Count: > 0 })
+                throw new NotSupportedException("ControlNets steer single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
             if (!_uploaded.TryGetValue(entry, out var cond))
                 _uploaded[entry] = cond = GpuHelpers.Upload(acc, entry.Embeddings, entry.Shape);
             var (sampleBuf, sampleTensor) = GpuHelpers.Upload(acc, input, [1, Checkpoint.LatentChannels, h, w]);

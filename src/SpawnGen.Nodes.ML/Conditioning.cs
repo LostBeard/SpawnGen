@@ -37,6 +37,10 @@ public sealed record CondEntry(float[] Embeddings, int[] Shape)
     public float[]? Pooled { get; init; }
     /// <summary>SDXL's size numbers; null = the latent's size, no crop (ComfyUI's defaults).</summary>
     public SdxlSize? Size { get; init; }
+    /// <summary>The ControlNet(s) steering this entry (Apply ControlNet), chained; null = none.</summary>
+    public ControlUse? Control { get; init; }
+    /// <summary>Set by the old Apply ControlNet: the negative gets this entry's control at sampling time (ComfyUI's control_apply_to_uncond).</summary>
+    public bool ControlApplyToUncond { get; init; }
 }
 
 /// <summary>What the model is asked about: one or more <see cref="CondEntry"/>. Several entries are blended by their area weights, like ComfyUI's Combine.</summary>

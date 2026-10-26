@@ -216,8 +216,29 @@ public class ComfyUIRenderParityTests
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 
+    /// <summary>
+    /// ControlNet: SD 1.5 + control_v11p_sd15_canny_fp16 (&lt;models&gt;/controlnet) through Load ControlNet Model and Apply ControlNet, with ComfyUI's own canny edge
+    /// map of its SD 1.5 apple (Fixtures/sampling/comfyui_sd15/canny_hint.png, from its Detect Edges node), against ComfyUI's render of the same graph: strength 1
+    /// over the whole run, and strength 0.8 over the first half only (the percent range).
+    /// </summary>
+    [TestCase(1.0, 1.0, "euler_cn_full")]
+    [TestCase(0.8, 0.5, "euler_cn_half")]
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors, controlnet/control_v11p_sd15_canny_fp16.safetensors) and a GPU.")]
+    public async Task SD15_with_a_ControlNet_gives_ComfyUIs_result(double strength, double endPercent, string result)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: result,
+            controlNet: ("control_v11p_sd15_canny_fp16.safetensors", "canny_hint.png", strength, endPercent));
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
     static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg,
-        string? lora = null, string? result = null, Func<PromptGraph, (PromptInput Model, PromptInput Clip, PromptInput Vae)>? load = null, string? picture = null)
+        string? lora = null, string? result = null, Func<PromptGraph, (PromptInput Model, PromptInput Clip, PromptInput Vae)>? load = null, string? picture = null,
+        (string Name, string Hint, double Strength, double EndPercent)? controlNet = null)
     {
         var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", fixture);
         var outDir = Path.Combine(Path.GetTempPath(), "spawngen-comfy-parity-" + Guid.NewGuid().ToString("N"));
@@ -245,8 +266,18 @@ public class ComfyUIRenderParityTests
             g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", clip));
             g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", clip));
             g.Add("4", "LoadLatent", ("latent", "start.latent"));
+            // With a ControlNet, Apply ControlNet sits between the prompts and the sampler (as the ComfyUI reference graph has it).
+            PromptInput positive = PromptInput.Link("2"), negative = PromptInput.Link("3");
+            if (controlNet is { } cn)
+            {
+                g.Add("20", "ControlNetLoader", ("control_net_name", cn.Name));
+                g.Add("21", "LoadImage", ("image", cn.Hint));
+                g.Add("22", "ControlNetApplyAdvanced", ("positive", positive), ("negative", negative), ("control_net", PromptInput.Link("20")),
+                    ("image", PromptInput.Link("21")), ("strength", cn.Strength), ("start_percent", 0.0), ("end_percent", cn.EndPercent));
+                (positive, negative) = (PromptInput.Link("22"), PromptInput.Link("22", 1));
+            }
             g.Add("5", "KSamplerAdvanced", ("model", model), ("add_noise", "disable"), ("noise_seed", 0), ("steps", steps), ("cfg", cfg),
-                ("sampler_name", sampler), ("scheduler", "normal"), ("positive", PromptInput.Link("2")), ("negative", PromptInput.Link("3")),
+                ("sampler_name", sampler), ("scheduler", "normal"), ("positive", positive), ("negative", negative),
                 ("latent_image", PromptInput.Link("4")), ("start_at_step", 0), ("end_at_step", 10000), ("return_with_leftover_noise", "disable"));
             g.Add("6", "SaveLatent", ("samples", PromptInput.Link("5")), ("filename_prefix", "parity"));
             g.Add("7", "VAEDecode", ("samples", PromptInput.Link("5")), ("vae", vae));

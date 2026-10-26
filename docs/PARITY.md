@@ -87,11 +87,13 @@ common_upscale incl. Pillow's 8-bit Lanczos), Python-exact string, regex, `str.f
 torch's interpolate and bislerp for latents, and the sampling replay above.
 
 Still missing, by kind:
-1. **Need the library**: ControlNet, CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use
+1. **Need the library**: ControlNet for SDXL, CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use
    these. Done on branch `sd-checkpoint`: single-file checkpoints, LoRA, and the split loaders (Load Diffusion Model, Load VAE, Load CLIP, Load CLIP (Dual)) for
    SD 1.x / SDXL from `<models>/diffusion_models|unet`, `vae`, `text_encoders|clip`, verified against ComfyUI with its own saved component files (SD 1.5 0.19%,
    SDXL 0.002% and picture 0.00/255) and a real VAE (vae-ft-mse-840000, picture 0.08/255). SD 2.x diffusion models loaded alone (eps / v read from the weights) and
-   LoRA on components loaded alone also verified (SD-Turbo split = single file, SD 1.5 split + LCM-LoRA = ComfyUI). Open: fp8 weight_dtype.
+   LoRA on components loaded alone also verified (SD-Turbo split = single file, SD 1.5 split + LCM-LoRA = ComfyUI). ControlNet for SD 1.x (Load ControlNet Model,
+   Apply ControlNet, Apply ControlNet (DEPRECATED), chained ControlNets, percent range) verified against ComfyUI with a canny ControlNet (0.18% / 0.17%,
+   pictures 0.04/255). Open: fp8 weight_dtype, the Detect Edges (Canny) node (ComfyUI's kornia port).
 2. **Need a codec**: video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), WebP, MP3 / Opus / FLAC audio saving.
 3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop), Custom Combo (frontend-defined options),
    ImageCropV2 (an object-valued bounding-box widget and a crop editor), the loop nodes (node expansion), Text Overlay (a font engine).

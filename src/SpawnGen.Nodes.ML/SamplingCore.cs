@@ -44,6 +44,11 @@ internal static class SamplingCore
 
         // The model's LoRAs are merged for this run; the embeddings go to the GPU once per run, not once per step.
         await ckpt.UseLorasAsync(guider.Model.Loras, context.CancellationToken);
+        // The old Apply ControlNet's controls reach the other conditionings at sampling time (ComfyUI's apply_empty_x_to_equal_area on 'control').
+        var positive = guider.Conditionings.First();
+        var filled = guider.Conditionings.Skip(1).Distinct(ReferenceEqualityComparer.Instance).Cast<Conditioning>()
+            .ToDictionary(c => c, c => ControlFill.Fill(positive, c), ReferenceEqualityComparer.Instance);
+        Conditioning Filled(Conditioning c) => filled.TryGetValue(c, out var f) ? f : c;
         using (var unet = ckpt.BeginRun(acc))
         {
             var result = new LatentBatch(latent.Batch, latent.Channels, h, w) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex };
@@ -67,13 +72,13 @@ internal static class SamplingCore
                 float[]? lastDenoised = null; // ComfyUI's x0_output: the last callback's estimate, else the output itself
 
                 var guidance = new GuidanceRun(guider, Checkpoint.LatentChannels, h, w, Samplers.DisablesCfg1Optimization(settings.Sampler)) { BatchIndex = b };
+                int item = b;
 
                 Task<float[]> Denoise(float[] sample, float sigma) =>
                     InpaintedCall(sample, sigma, mask, guider.Model.Patches.DenoiseMask, runSigmas, sampling, original, inpaintNoise, h * w,
                         input => guidance.PredictAsync(input, sigma,
-                            (cond, scheduled) => GuidedAsync(cond.Entries, input, sigma, sampling, unet, h, w, scheduled, context.CancellationToken)));
+                            (cond, scheduled) => GuidedAsync(Filled(cond).Entries, input, sigma, sampling, unet, h, w, scheduled, item, context.CancellationToken)));
 
-                int item = b;
                 x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise,
                     new Samplers.NoiseSource(itemSeed ^ 0x5EED, Checkpoint.LatentChannels, h, w),
                     done => context.Progress(item * steps + Math.Min(done, steps), Math.Max(1, latent.Batch * steps)),
@@ -121,7 +126,7 @@ internal static class SamplingCore
     /// 1e-37, so pixels no entry covers come out 0. <paramref name="scheduled"/> false ignores the entries' timestep ranges.
     /// </summary>
     static async Task<float[]> GuidedAsync(IReadOnlyList<CondEntry> entries, float[] x, double sigma, ModelSampling sampling, UNetRun unet,
-        int h, int w, bool scheduled, CancellationToken cancellationToken)
+        int h, int w, bool scheduled, int batchIndex, CancellationToken cancellationToken)
     {
         int plane = h * w, perImage = Checkpoint.LatentChannels * plane;
         var active = entries.Where(e => !scheduled || IsActive(e, sigma, sampling)).ToList();
@@ -130,7 +135,7 @@ internal static class SamplingCore
         var input = sampling.CalculateInput(sigma, x);
         float timestep = sampling.Timestep(sigma);
         async Task<float[]> Predict(CondEntry e) =>
-            sampling.CalculateDenoised(sigma, await unet.PredictAsync(input, h, w, timestep, e, cancellationToken), x);
+            sampling.CalculateDenoised(sigma, await unet.PredictAsync(input, h, w, timestep, e, Controls(e, sigma, sampling, batchIndex, h, w), cancellationToken), x);
 
         if (active.Count == 1 && active[0].Area is null && active[0].Mask is null && active[0].Strength != 0f)
             return await Predict(active[0]); // the common case: one plain prompt (strength cancels in the blend)
@@ -152,6 +157,19 @@ internal static class SamplingCore
         for (int i = 0; i < plane; i++)
             for (int c = 0; c < Checkpoint.LatentChannels; c++) sum[c * plane + i] /= weightSum[i];
         return sum;
+    }
+
+    /// <summary>The ControlNets of an entry's chain active at this sigma, with their hints for this picture.</summary>
+    static List<ControlCall>? Controls(CondEntry e, double sigma, ModelSampling sampling, int batchIndex, int h, int w)
+    {
+        if (e.Control is null) return null;
+        var calls = new List<ControlCall>();
+        foreach (var c in e.Control.Active(sigma, sampling))
+        {
+            var use = c;
+            calls.Add(new ControlCall(use.ControlNet.Net, () => use.Hint(batchIndex, 8 * h, 8 * w), (use, batchIndex % use.Image.Batch), use.Strength));
+        }
+        return calls;
     }
 
     /// <summary>An entry is active while the run's sigma is inside its percent range: end sigma &lt;= sigma &lt;= start sigma (ComfyUI's timestep_start / timestep_end).</summary>

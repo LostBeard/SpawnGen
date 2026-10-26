@@ -1,0 +1,2 @@
+# The input folder is kept byte for byte: a.txt has a CRLF the loader must read as Python's universal newlines do.
+set/** -text

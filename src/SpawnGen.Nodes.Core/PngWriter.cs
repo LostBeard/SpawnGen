@@ -4,7 +4,7 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>Minimal 8-bit RGB PNG encoder, so saving an image needs no imaging dependency.</summary>
+/// <summary>Minimal 8-bit PNG encoder (grey + alpha, RGB, RGBA), so saving an image needs no imaging dependency.</summary>
 public static partial class PngWriter
 {
     static readonly uint[] CrcTable = BuildCrcTable();
@@ -13,7 +13,7 @@ public static partial class PngWriter
     public static byte[] Encode(ImageBatch images, int index = 0, IReadOnlyDictionary<string, string>? text = null)
     {
         int w = images.Width, h = images.Height, ch = images.Channels;
-        if (ch is not (3 or 4)) throw new ArgumentException($"PNG output needs 3 or 4 channels, got {ch}.", nameof(images));
+        if (ch is not (2 or 3 or 4)) throw new ArgumentException($"PNG output needs 2, 3 or 4 channels, got {ch}.", nameof(images));
         var raw = new byte[h * (1 + w * ch)];
         int o = 0, src = index * h * w * ch;
         for (int y = 0; y < h; y++)
@@ -33,7 +33,7 @@ public static partial class PngWriter
         BinaryPrimitives.WriteUInt32BigEndian(ihdr.AsSpan(0), (uint)w);
         BinaryPrimitives.WriteUInt32BigEndian(ihdr.AsSpan(4), (uint)h);
         ihdr[8] = 8;                      // bit depth
-        ihdr[9] = (byte)(ch == 3 ? 2 : 6); // color type: RGB / RGBA
+        ihdr[9] = (byte)(ch switch { 2 => 4, 3 => 2, _ => 6 }); // color type: grey + alpha (Pillow's LA) / RGB / RGBA
         WriteChunk(png, "IHDR", ihdr);
         if (text is not null)
             foreach (var (key, value) in text) WriteText(png, key, value);

@@ -85,7 +85,11 @@ public sealed class InputAttribute : Attribute
     public object? Default { get; init; }
     /// <summary>ComfyUI's MatchType input: the template id it shares with other inputs and outputs (any type until a link decides it).</summary>
     public string? MatchType { get; init; }
-    /// <summary>ComfyUI's forceInput: a primitive input (INT, FLOAT, ...) that is a socket only, with no widget.</summary>
+    /// <summary>
+    /// ComfyUI's forceInput: a primitive input (INT, FLOAT, ...) that is a socket only, with no widget. With <see cref="Type"/> "STRING" on an
+    /// <c>object</c> parameter (a STRING socket that takes whatever value comes, as Python does) it is what keeps it a socket: without it that
+    /// parameter gets a text widget.
+    /// </summary>
     public bool ForceInput { get; init; }
 }
 

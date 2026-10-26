@@ -78,13 +78,22 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**232 shared nodes, 229 identical** (branch `sd-checkpoint`); the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
+**256 shared nodes, 253 identical** (branch `sd-checkpoint`); the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
 RecordAudio's recorder widget, Resolution Selector's preview-only widget. `tools/parity/apply_names.py` keeps names and categories in step.
 
 Behaviour is checked against ComfyUI's own code: fixtures made by running ComfyUI's node code on real torch / kornia / Pillow / numpy (image ops,
 compositing, Canny, colour spaces, Pad Image, Color Transfer, SDR to HDR, Image Quantize byte for byte with Pillow's median cut and dithers,
 common_upscale incl. Pillow's 8-bit Lanczos), Python-exact string, regex, `str.format` and simpleeval ports (about 3,500 CPython vectors),
 torch's interpolate and bislerp for latents, and the sampling replay above.
+
+The dataset nodes (comfy_extras/nodes_dataset.py: Load Image / Image-Text (from Folder), Save Image / Image-Text (to Folder), the resize, crop,
+normalize, brightness, contrast, shuffle, deduplicate, grid and merge nodes, and the text steps) are checked against ComfyUI's node classes and a
+ComfyUI server (Fixtures/dataset): pictures pixel for pixel (Pillow's 8-bit steps, numpy's legacy generator for Random Crop and the shuffles, the
+average hash bit for bit), the tensor maths bit for bit, captions, Preview as Text output, file names (overwrite and increment numbering) and caption
+bytes exactly. WebP files in a folder fail to load (no WebP decoder yet, see below); JPEGs go through SpawnGen's decoder, which is close to but
+not bit-exact with Pillow's libjpeg.
+Deliberate difference (a ComfyUI bug not copied): ComfyUI's TextProcessingNode.execute wraps a text step's result in a list on its non-list output,
+so its text steps put out ["text"] (previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
 
 Still missing, by kind:
 1. **Need the library**: CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use

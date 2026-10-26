@@ -194,21 +194,38 @@ public static class PilLanczos
     public static float[] Resize(float[] src, int w, int h, int c, int newW, int newH)
     {
         if (c is not (1 or 2 or 3 or 4)) throw new ArgumentException($"Lanczos (Pillow) works on 1 to 4 channels, got {c}.", nameof(c));
+        return FromBytes(Resize(ToBytes(src), w, h, c, newW, newH));
+    }
+
+    /// <summary>
+    /// Pillow's <c>Image.resize(LANCZOS)</c> on 8-bit pixels of <paramref name="c"/> interleaved channels (1 L, 2 LA, 3 RGB, 4 RGBA; LA and RGBA are
+    /// resized premultiplied). The same size gives a copy, as in Pillow.
+    /// </summary>
+    public static byte[] Resize(byte[] px, int w, int h, int c, int newW, int newH)
+    {
+        if (newW == w && newH == h) return (byte[])px.Clone(); // Pillow returns a copy for the same size
+        bool alpha = c is 2 or 4; // LA and RGBA are resized as La / RGBa
+        if (alpha) { px = (byte[])px.Clone(); Premultiply(px, c); }
+        // Pillow (Resample.c) runs the vertical pass first when the height shrinks by more than twice what the width shrinks; each pass rounds to 8 bits.
+        bool verticalFirst = h - newH > 0 && h - newH > (w - newW) * 2;
+        if (verticalFirst && newH != h) { px = Pass(px, w, h, c, newH, horizontal: false); h = newH; }
+        if (newW != w) { px = Pass(px, w, h, c, newW, horizontal: true); w = newW; }
+        if (newH != h) { px = Pass(px, w, h, c, newH, horizontal: false); h = newH; }
+        if (alpha) Unpremultiply(px, c);
+        return px;
+    }
+
+    /// <summary>ComfyUI's tensor-to-Pillow step: <c>np.clip(255 * x, 0, 255).astype(uint8)</c>, truncated, not rounded.</summary>
+    public static byte[] ToBytes(float[] src)
+    {
         var px = new byte[src.Length];
         for (int i = 0; i < src.Length; i++) px[i] = (byte)Math.Clamp(255f * src[i], 0f, 255f);
+        return px;
+    }
 
-        if (newW != w || newH != h) // Pillow returns a copy for the same size
-        {
-            bool alpha = c is 2 or 4; // LA and RGBA are resized as La / RGBa
-            if (alpha) Premultiply(px, c);
-            // Pillow (Resample.c) runs the vertical pass first when the height shrinks by more than twice what the width shrinks; each pass rounds to 8 bits.
-            bool verticalFirst = h - newH > 0 && h - newH > (w - newW) * 2;
-            if (verticalFirst && newH != h) { px = Pass(px, w, h, c, newH, horizontal: false); h = newH; }
-            if (newW != w) { px = Pass(px, w, h, c, newW, horizontal: true); w = newW; }
-            if (newH != h) { px = Pass(px, w, h, c, newH, horizontal: false); h = newH; }
-            if (alpha) Unpremultiply(px, c);
-        }
-
+    /// <summary>And back: <c>np.array(img).astype(np.float32) / 255.0</c>.</summary>
+    public static float[] FromBytes(byte[] px)
+    {
         var dst = new float[px.Length];
         for (int i = 0; i < px.Length; i++) dst[i] = px[i] / 255f;
         return dst;

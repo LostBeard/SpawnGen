@@ -80,7 +80,14 @@ public static class PngReader
     public static ImageBatch Decode(byte[] png) => Decode(png, out _);
 
     /// <summary>Decodes the picture and its alpha (0 transparent .. 1 opaque, one value per pixel); <paramref name="alpha"/> is null when the file has none.</summary>
-    public static ImageBatch Decode(byte[] png, out float[]? alpha)
+    public static ImageBatch Decode(byte[] png, out float[]? alpha) => Decode(png, out alpha, pillowGray16: false);
+
+    /// <summary>
+    /// As <see cref="Decode(byte[], out float[])"/>; with <paramref name="pillowGray16"/> a 16-bit grey picture comes out as Pillow's
+    /// <c>Image.open(...).convert("RGB")</c> makes it: Pillow opens it as mode I;16 and the conversion clips each 16-bit value at 255 (it does not
+    /// scale it), so every value from 255 up is white. Other 16-bit pictures keep their high byte either way, as Pillow does.
+    /// </summary>
+    public static ImageBatch Decode(byte[] png, out float[]? alpha, bool pillowGray16)
     {
         if (png.Length < 8 || !png.AsSpan(0, 8).SequenceEqual(Signature))
             throw new InvalidDataException("Not a PNG file (JPEG and other formats are not supported yet).");
@@ -154,6 +161,7 @@ public static class PngReader
             float r, g, bl;
             switch (colorType)
             {
+                case 0 when pillowGray16 && depth == 16: r = g = bl = Math.Min((px[o] << 8) | px[o + 1], 255) / 255f; break;
                 case 0: case 4: r = g = bl = Sample(0); break;
                 case 3: { int p = px[o] * 3; r = palette![p] / 255f; g = palette[p + 1] / 255f; bl = palette[p + 2] / 255f; break; }
                 default: r = Sample(0); g = Sample(1); bl = Sample(2); break;

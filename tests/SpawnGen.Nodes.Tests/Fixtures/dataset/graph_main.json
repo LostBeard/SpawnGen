@@ -1,0 +1,586 @@
+{
+ "1": {
+  "class_type": "LoadImageTextDataSetFromFolder",
+  "inputs": {
+   "folder": "spawngen_dataset_0f2e2861"
+  }
+ },
+ "2": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "1",
+    1
+   ]
+  }
+ },
+ "10": {
+  "class_type": "TextToUppercase",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ]
+  }
+ },
+ "11": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "10",
+    0
+   ]
+  }
+ },
+ "12": {
+  "class_type": "TextToLowercase",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ]
+  }
+ },
+ "13": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "12",
+    0
+   ]
+  }
+ },
+ "14": {
+  "class_type": "StripWhitespace",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ]
+  }
+ },
+ "15": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "14",
+    0
+   ]
+  }
+ },
+ "16": {
+  "class_type": "TruncateText",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ],
+   "max_length": 6
+  }
+ },
+ "17": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "16",
+    0
+   ]
+  }
+ },
+ "18": {
+  "class_type": "AddTextPrefix",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ],
+   "prefix": "p: "
+  }
+ },
+ "19": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "18",
+    0
+   ]
+  }
+ },
+ "20": {
+  "class_type": "AddTextSuffix",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ],
+   "suffix": " #s"
+  }
+ },
+ "21": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "20",
+    0
+   ]
+  }
+ },
+ "22": {
+  "class_type": "ReplaceText",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ],
+   "find": "a",
+   "replace": "4"
+  }
+ },
+ "23": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "22",
+    0
+   ]
+  }
+ },
+ "24": {
+  "class_type": "ReplaceText",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ],
+   "find": "",
+   "replace": "|"
+  }
+ },
+ "25": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "24",
+    0
+   ]
+  }
+ },
+ "26": {
+  "class_type": "MergeTextLists",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ]
+  }
+ },
+ "27": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "26",
+    0
+   ]
+  }
+ },
+ "40": {
+  "class_type": "TruncateText",
+  "inputs": {
+   "texts": [
+    "10",
+    0
+   ],
+   "max_length": 2
+  }
+ },
+ "41": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "40",
+    0
+   ]
+  }
+ },
+ "42": {
+  "class_type": "AddTextPrefix",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ],
+   "prefix": [
+    "12",
+    0
+   ]
+  }
+ },
+ "43": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "42",
+    0
+   ]
+  }
+ },
+ "44": {
+  "class_type": "ReplaceText",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ],
+   "find": [
+    "12",
+    0
+   ],
+   "replace": "<>"
+  }
+ },
+ "45": {
+  "class_type": "PreviewAny",
+  "inputs": {
+   "source": [
+    "44",
+    0
+   ]
+  }
+ },
+ "60": {
+  "class_type": "ResizeImagesByShorterEdge",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "shorter_edge": 17
+  }
+ },
+ "61": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "60",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/ResizeImagesByShorterEdge",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "62": {
+  "class_type": "ResizeImagesByLongerEdge",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "longer_edge": 25
+  }
+ },
+ "63": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "62",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/ResizeImagesByLongerEdge",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "64": {
+  "class_type": "CenterCropImages",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "width": 15,
+   "height": 8
+  }
+ },
+ "65": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "64",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/CenterCropImages",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "66": {
+  "class_type": "RandomCropImages",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "width": 9,
+   "height": 11,
+   "seed": 99
+  }
+ },
+ "67": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "66",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/RandomCropImages",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "68": {
+  "class_type": "NormalizeImages",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "mean": 0.3,
+   "std": 0.45
+  }
+ },
+ "69": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "68",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/NormalizeImages",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "70": {
+  "class_type": "AdjustBrightness",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "factor": 1.37
+  }
+ },
+ "71": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "70",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/AdjustBrightness",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "72": {
+  "class_type": "AdjustContrast",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "factor": 1.6
+  }
+ },
+ "73": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "72",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/AdjustContrast",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "74": {
+  "class_type": "ShuffleDataset",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "seed": 7
+  }
+ },
+ "75": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "74",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/ShuffleDataset",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "76": {
+  "class_type": "ImageDeduplication",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "similarity_threshold": 0.95
+  }
+ },
+ "77": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "76",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/ImageDeduplication",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "78": {
+  "class_type": "ImageGrid",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "columns": 4,
+   "cell_width": 40,
+   "cell_height": 34,
+   "padding": 3
+  }
+ },
+ "79": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "78",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/ImageGrid",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "80": {
+  "class_type": "MergeImageLists",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ]
+  }
+ },
+ "81": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "80",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/MergeImageLists",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "90": {
+  "class_type": "LoadImageDataSetFromFolder",
+  "inputs": {
+   "folder": "spawngen_dataset_0f2e2861"
+  }
+ },
+ "91": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "90",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/load",
+   "filename_prefix": "img",
+   "mode": "overwrite"
+  }
+ },
+ "92": {
+  "class_type": "ShuffleImageTextDataset",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "texts": [
+    "1",
+    1
+   ],
+   "seed": 12345
+  }
+ },
+ "93": {
+  "class_type": "SaveImageTextDataSetToFolder",
+  "inputs": {
+   "images": [
+    "92",
+    0
+   ],
+   "texts": [
+    "92",
+    1
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/pairs",
+   "filename_prefix": "pair",
+   "mode": "overwrite"
+  }
+ },
+ "94": {
+  "class_type": "SaveImageTextDataSetToFolder",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "texts": [
+    "1",
+    1
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/inc",
+   "filename_prefix": "image",
+   "mode": "overwrite"
+  }
+ },
+ "95": {
+  "class_type": "SaveImageDataSetToFolder",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/fresh",
+   "filename_prefix": "x.png",
+   "mode": "increment"
+  }
+ },
+ "96": {
+  "class_type": "SaveImageTextDataSetToFolder",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/notexts",
+   "filename_prefix": "n",
+   "mode": "overwrite"
+  }
+ }
+}

@@ -11,7 +11,10 @@ public static class JpegReader
 {
     public static bool IsJpeg(ReadOnlySpan<byte> data) => data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8;
 
-    public static ImageBatch Decode(byte[] data) => new Decoder(data).Decode();
+    public static ImageBatch Decode(byte[] data) => new Decoder(data, applyOrientation: true).Decode();
+
+    /// <summary>Decodes with or without the EXIF orientation (Pillow's <c>Image.open</c> leaves it alone; ComfyUI's Load Image applies it).</summary>
+    public static ImageBatch Decode(byte[] data, bool applyOrientation) => new Decoder(data, applyOrientation).Decode();
 
     static readonly byte[] ZigZag =
     [
@@ -51,7 +54,7 @@ public static class JpegReader
         public int Pred;
     }
 
-    sealed class Decoder(byte[] d)
+    sealed class Decoder(byte[] d, bool applyOrientation)
     {
         int _pos;
         int _width, _height, _hMax, _vMax;
@@ -469,7 +472,7 @@ public static class JpegReader
                     img.Data[o + 1] = Math.Clamp(MathF.Round(g), 0f, 255f) / 255f;
                     img.Data[o + 2] = Math.Clamp(MathF.Round(b), 0f, 255f) / 255f;
                 }
-            return Orient(img, _orientation);
+            return applyOrientation ? Orient(img, _orientation) : img;
         }
 
         /// <summary>Applies the EXIF orientation (1 = as stored; 2 mirror; 3 rotate 180; 4 flip; 5 transpose; 6 rotate 90 cw; 7 transverse; 8 rotate 270 cw).</summary>

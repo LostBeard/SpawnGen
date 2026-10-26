@@ -1378,7 +1378,8 @@
     {
         if (_engine is null) return;
         var names = await _engine.ListInputImagesAsync();
-        if (_engine is not BrowserEngine) InputFiles.Store = new ListedInputStore(names); // the server's pictures stay on the server; this is only the choice list
+        // The server's pictures and folders stay on the server; this is only the choice list.
+        if (_engine is not BrowserEngine) InputFiles.Store = new ListedInputStore(names, await _engine.ListInputFoldersAsync());
         _view.Invalidate();
     }
 
@@ -1397,13 +1398,17 @@
         catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
     }
 
-    /// <summary>The picture names of a remote engine, shown in Load Image's combo (the pictures themselves are read on that engine).</summary>
-    sealed class ListedInputStore(IReadOnlyList<string> names) : IInputStore
+    /// <summary>The picture names and input folders of a remote engine, shown in Load Image's and Load Image (from Folder)'s combos (the files are read on that engine).</summary>
+    sealed class ListedInputStore(IReadOnlyList<string> names, IReadOnlyList<string> folders) : IInputStore
     {
         public IReadOnlyList<string> List() => names;
         public IReadOnlyList<string> List(Func<string, bool> filter) => names.Where(filter).ToList();
+        public IReadOnlyList<string> Folders() => folders;
         public Task<byte[]> ReadAsync(string name) => throw new InvalidOperationException("Pictures are read by the engine that runs the graph.");
         public Task<string> SaveAsync(string name, byte[] bytes) => throw new InvalidOperationException("Upload goes through the engine.");
+        public IReadOnlyList<(string Name, bool IsFolder)> Entries(string folder) => throw new InvalidOperationException("Folders are read by the engine that runs the graph.");
+        public bool Exists(string path) => throw new InvalidOperationException("Files are read by the engine that runs the graph.");
+        public Task<byte[]> ReadFileAsync(string path) => throw new InvalidOperationException("Files are read by the engine that runs the graph.");
     }
 
     string RunStatus()

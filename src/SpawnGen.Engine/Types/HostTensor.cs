@@ -18,6 +18,9 @@ public class HostTensor
 
     public int[] Shape { get; }
     public float[] Data { get; }
+
+    /// <summary>The kind and shape ("ImageBatch [1, 512, 512, 3]"): how Preview as Text shows a tensor, also inside a list.</summary>
+    public override string ToString() => $"{GetType().Name} [{string.Join(", ", Shape)}]";
 }
 
 /// <summary>A batch of images, NHWC, RGB(A), values in 0..1 (same layout as ComfyUI's IMAGE).</summary>

@@ -12,7 +12,11 @@ public sealed class PreviewAny
         return (text, new UiOutput("text", new[] { text }));
     }
 
-    /// <summary>Text the way ComfyUI's node builds it: strings as they are; numbers and booleans as Python prints them (1.0, 1e-05, True); anything else by its description.</summary>
+    /// <summary>
+    /// Text the way ComfyUI's node builds it: strings as they are; numbers and booleans as Python prints them (1.0, 1e-05, True); lists and dicts as
+    /// <c>json.dumps(value, indent=4, ensure_ascii=False)</c> (the text nodes of the dataset family put out a list of one text), or their Python
+    /// <c>str</c> when they hold something JSON cannot write; anything else by its description.
+    /// </summary>
     public static string Format(object? value) => value switch
     {
         null => "None",
@@ -21,9 +25,16 @@ public sealed class PreviewAny
         double d => PythonFloat(d),
         float f => PythonFloat(f),
         IFormattable n => n.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
-        Engine.Types.HostTensor t => $"{t.GetType().Name} [{string.Join(", ", t.Shape)}]",
+        Engine.Types.HostTensor t => t.ToString(),
+        System.Collections.IList or IEnumerable<KeyValuePair<string, object?>> or PyTuple => Json(value),
         _ => value.ToString() ?? "None",
     };
+
+    static string Json(object value)
+    {
+        try { return PyJson.Dumps(value, 4); }
+        catch (PyException e) when (e.PyType == "TypeError") { return PyText.Str(value); }
+    }
 
     /// <summary>Python's repr of a float: the shortest text that reads back the same, with ".0" on whole numbers and Python's exponent form.</summary>
     static string PythonFloat(double d)

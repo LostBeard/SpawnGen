@@ -169,12 +169,17 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
     public Task ClearModelCacheAsync() => http.PostAsync("models/cache/clear", null, _stop.Token);
 
     /// <summary>The Load Image choices the server offers, read from its node catalogue (<c>/object_info</c>).</summary>
-    public async Task<IReadOnlyList<string>> ListInputImagesAsync()
+    public Task<IReadOnlyList<string>> ListInputImagesAsync() => ComboOptionsAsync("LoadImage", "image");
+
+    public Task<IReadOnlyList<string>> ListInputFoldersAsync() => ComboOptionsAsync("LoadImageDataSetFromFolder", "folder");
+
+    /// <summary>The options the server lists for a combo input of one of its nodes (its files and folders).</summary>
+    async Task<IReadOnlyList<string>> ComboOptionsAsync(string node, string input)
     {
         try
         {
-            var info = await http.GetFromJsonAsync<JsonObject>("object_info", _stop.Token);
-            return info?["LoadImage"]?["input"]?["required"]?["image"]?[0] is JsonArray options
+            var info = await http.GetFromJsonAsync<JsonObject>($"object_info/{node}", _stop.Token);
+            return info?[node]?["input"]?["required"]?[input]?[0] is JsonArray options
                 ? options.Select(o => (string?)o ?? "").Where(o => o.Length > 0).ToList()
                 : [];
         }

@@ -114,6 +114,22 @@ public sealed class DifferentialDiffusion
         model.WithPatches(p => p with { DenoiseMask = (sigma, mask, sigmas, sampling) => GuidancePatches.DifferentialDiffusionMask(sigma, mask, sigmas, sampling, strength) });
 }
 
+[Node(Category = "model/sampling/guiders", DisplayName = "Video Linear CFG Guidance")]
+public sealed class VideoLinearCFGGuidance
+{
+    /// <summary>For a video's frames (the latent batch): cfg rises from <c>min_cfg</c> on the first frame to the sampler's cfg on the last.</summary>
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 100, Step = 0.5)] double minCfg = 1.0) =>
+        model.WithPatches(p => p.WithCfgFunction(ModelPatches.Stateless<Func<CfgFunctionArgs, Task<float[]>>>(a => Task.FromResult(GuidancePatches.VideoLinearCfg(a, minCfg)))));
+}
+
+[Node(Category = "model/sampling/guiders", DisplayName = "Video Triangle CFG Guidance")]
+public sealed class VideoTriangleCFGGuidance
+{
+    /// <summary>For a video's frames (the latent batch): cfg is <c>min_cfg</c> at both ends and the sampler's cfg in the middle.</summary>
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 100, Step = 0.5)] double minCfg = 1.0) =>
+        model.WithPatches(p => p.WithCfgFunction(ModelPatches.Stateless<Func<CfgFunctionArgs, Task<float[]>>>(a => Task.FromResult(GuidancePatches.VideoTriangleCfg(a, minCfg)))));
+}
+
 [Node(Category = "model/sampling/guiders", DisplayName = "CFG Override",
     Description = "Override cfg to a fixed value over a [start, end] percent (sigma) range. With multiple overrides, the one nearest the sampler wins on overlap.")]
 public sealed class CFGOverride

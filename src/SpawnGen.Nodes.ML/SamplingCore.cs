@@ -71,7 +71,7 @@ internal static class SamplingCore
                 var x = sampling.NoiseScaling(sigmas[0], noise, original, maxDenoise);
                 float[]? lastDenoised = null; // ComfyUI's x0_output: the last callback's estimate, else the output itself
 
-                var guidance = new GuidanceRun(guider, Checkpoint.LatentChannels, h, w, Samplers.DisablesCfg1Optimization(settings.Sampler)) { BatchIndex = b };
+                var guidance = new GuidanceRun(guider, Checkpoint.LatentChannels, h, w, Samplers.DisablesCfg1Optimization(settings.Sampler)) { BatchIndex = b, BatchSize = latent.Batch };
                 int item = b;
 
                 Task<float[]> Denoise(float[] sample, float sigma) =>

@@ -395,4 +395,41 @@ public static class GuidancePatches
         }
         return r;
     }
+
+    /// <summary>
+    /// VideoLinearCFGGuidance's cfg function: the batch (a video's frames) gets cfg rising from <paramref name="minCfg"/> on the first frame to the sampler's cfg on the
+    /// last, <c>uncond + scale * (cond - uncond)</c>, all in float32 like torch.
+    /// </summary>
+    public static float[] VideoLinearCfg(CfgFunctionArgs a, double minCfg) =>
+        ScaledCfg(a, Linspace((float)minCfg, (float)a.CondScale, a.Context.BatchSize)[a.Context.BatchIndex]);
+
+    /// <summary>
+    /// VideoTriangleCFGGuidance's cfg function: cfg goes from <paramref name="minCfg"/> at both ends of the batch up to the sampler's cfg in its middle
+    /// (a triangle wave over linspace(0, 1) with period 1).
+    /// </summary>
+    public static float[] VideoTriangleCfg(CfgFunctionArgs a, double minCfg)
+    {
+        float v = Linspace(0f, 1f, a.Context.BatchSize)[a.Context.BatchIndex];
+        v = 2f * MathF.Abs(v / 1f - MathF.Floor(v / 1f + 0.5f));
+        float scale = v * (float)(a.CondScale - minCfg) + (float)minCfg;
+        return ScaledCfg(a, scale);
+    }
+
+    static float[] ScaledCfg(CfgFunctionArgs a, float scale)
+    {
+        var r = new float[a.Cond.Length];
+        for (int i = 0; i < r.Length; i++) r[i] = a.Uncond[i] + scale * (a.Cond[i] - a.Uncond[i]);
+        return r;
+    }
+
+    /// <summary>torch.linspace in float32 (its CPU kernel: the first half counts up from the start, the second half down from the end).</summary>
+    internal static float[] Linspace(float start, float end, int steps)
+    {
+        var r = new float[steps];
+        if (steps == 1) { r[0] = start; return r; }
+        float step = (end - start) / (steps - 1);
+        int halfway = steps / 2;
+        for (int i = 0; i < steps; i++) r[i] = i < halfway ? start + step * i : end - step * (steps - i - 1);
+        return r;
+    }
 }

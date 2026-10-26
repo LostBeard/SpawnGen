@@ -11,6 +11,8 @@ public sealed class PatchContext
     public required ModelSampling Sampling { get; init; }
     /// <summary>Where this picture sits in the latent batch (the sampler goes picture by picture; a latent operation blending with another batch needs it).</summary>
     public int BatchIndex { get; init; }
+    /// <summary>How many pictures the latent batch holds (ComfyUI's patches see the whole batch at once; the video cfg patches spread cfg across it).</summary>
+    public int BatchSize { get; init; } = 1;
     /// <summary>The model's denoised estimate for a conditioning at the current sample and sigma, ignoring its timestep range (PerpNeg's empty prompt).</summary>
     public required Func<Conditioning, Task<float[]>> EvaluateUnscheduled { get; init; }
 }
@@ -168,6 +170,8 @@ public sealed class GuidanceRun
 
     /// <summary>The picture of the batch this run samples.</summary>
     public int BatchIndex { get; init; }
+    /// <summary>How many pictures the batch holds.</summary>
+    public int BatchSize { get; init; } = 1;
 
     /// <summary>The conditional / unconditional estimates of the last cfg combination (ComfyUI's post-cfg capture of the CFG++ samplers).</summary>
     public GuidanceOutput? Last { get; internal set; }
@@ -180,7 +184,7 @@ public sealed class GuidanceRun
             if (o.SigmaLow <= sigma && sigma <= o.SigmaHigh) cfg = o.Cfg; // the override nearest the sampler (added last) wins
         var step = new GuidanceStep(this, x, sigma, evaluate, new PatchContext
         {
-            Channels = _channels, Height = _height, Width = _width, Sampling = Guider.Model.Sampling, BatchIndex = BatchIndex,
+            Channels = _channels, Height = _height, Width = _width, Sampling = Guider.Model.Sampling, BatchIndex = BatchIndex, BatchSize = BatchSize,
             EvaluateUnscheduled = c => evaluate(c, false),
         });
         return Guider.PredictAsync(step, cfg);

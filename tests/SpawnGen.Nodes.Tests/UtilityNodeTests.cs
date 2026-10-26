@@ -172,7 +172,11 @@ public class UtilityNodeTests
             Assert.That(bytes.Take(3), Is.Not.EqualTo(new byte[] { 0xEF, 0xBB, 0xBF }), "no byte order mark");
             Assert.That(passed, Is.EqualTo(text), "the output is the text as given");
         }
-        Assert.That(() => new SaveText().ExecuteAsync(5L, new TestServices(store)).GetAwaiter().GetResult(), Throws.ArgumentException, "only text");
+        // Only text: a number linked in is refused before anything runs, as ComfyUI's STRING socket refuses it.
+        var g = new PromptGraph();
+        g.Add("1", "PrimitiveInt", ("value", 5));
+        g.Add("2", "SaveText", ("text", PromptInput.Link("1")));
+        Assert.That(new PromptExecutor(Registry).Validate(g).Errors.Select(e => (e.NodeId, e.Input, e.Code)), Does.Contain(((string?)"2", (string?)"text", "type_mismatch")));
     }
 
     [Test]

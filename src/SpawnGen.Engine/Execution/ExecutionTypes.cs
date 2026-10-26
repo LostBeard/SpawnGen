@@ -6,12 +6,17 @@ public sealed record ValidationError(string? NodeId, string? Input, string Code,
 
 public sealed class ValidationResult
 {
-    public ValidationResult(IReadOnlyList<ValidationError> errors, IReadOnlyList<string> outputNodeIds, IReadOnlyList<string> plan)
+    public ValidationResult(IReadOnlyList<ValidationError> errors, IReadOnlyList<string> outputNodeIds, IReadOnlyList<string> plan,
+        IReadOnlyDictionary<string, LoopScope>? loops = null)
     {
         Errors = errors;
         OutputNodeIds = outputNodeIds;
         Plan = plan;
+        Loops = loops ?? new Dictionary<string, LoopScope>();
     }
+
+    /// <summary>The prompt's loops by Start Loop id: body and End Loop, as validation paired them.</summary>
+    public IReadOnlyDictionary<string, LoopScope> Loops { get; }
 
     public IReadOnlyList<ValidationError> Errors { get; }
     /// <summary>The output nodes the run is driven from.</summary>

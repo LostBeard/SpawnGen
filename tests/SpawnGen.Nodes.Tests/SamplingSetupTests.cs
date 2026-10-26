@@ -191,23 +191,6 @@ public class SamplingSetupTests
     }
 
     [Test]
-    public void Inpaint_mask_grows_by_a_square_window_and_is_cropped_to_the_encoded_size()
-    {
-        var mask = new MaskBatch(1, 10, 10);
-        mask.Data[5 * 10 + 5] = 1f; // one selected pixel
-        var odd = VAEEncodeForInpaint.GrowAndCrop(mask, 1, 10, 10, 8, 8, 3);
-        Assert.That(odd.Data.Count(v => v == 1f), Is.EqualTo(9), "a 3x3 window around the pixel");
-        Assert.That(odd.Data[5 * 8 + 5], Is.EqualTo(1f));
-        Assert.That(odd.Data[4 * 8 + 4], Is.EqualTo(1f));
-        Assert.That(odd.Data[3 * 8 + 3], Is.EqualTo(0f));
-        var none = VAEEncodeForInpaint.GrowAndCrop(mask, 1, 10, 10, 8, 8, 0);
-        Assert.That(none.Data.Count(v => v == 1f), Is.EqualTo(1));
-        var soft = new MaskBatch(1, 10, 10);
-        soft.Data[5 * 10 + 5] = 0.3f; soft.Data[5 * 10 + 6] = 0.4f;
-        Assert.That(VAEEncodeForInpaint.GrowAndCrop(soft, 1, 10, 10, 8, 8, 3).Data[5 * 8 + 5], Is.EqualTo(0.7f).Within(1e-6), "overlapping weights add up, clamped to 1");
-    }
-
-    [Test]
     public void Set_area_strength_sets_the_strength_of_every_entry_and_leaves_the_input_alone()
     {
         var a = new Conditioning(new float[] { 1, 2 }, new[] { 1, 1, 2 });

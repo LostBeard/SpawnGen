@@ -37,7 +37,9 @@ public static class PromptValidator
         var state = new Dictionary<string, Visit>(StringComparer.Ordinal);
         foreach (var id in outputs) Walk(registry, graph, id, state, plan, errors);
 
-        return new ValidationResult(errors, outputs, errors.Count == 0 ? plan : []);
+        // Loops are paired and checked once the graph has no dependency cycle, as ComfyUI does.
+        var loops = errors.Any(e => e.Code == "cycle") ? [] : LoopValidation.Validate(registry, graph, outputs, state.Keys, errors);
+        return new ValidationResult(errors, outputs, errors.Count == 0 ? plan : [], loops);
     }
 
     static void Walk(NodeRegistry reg, PromptGraph graph, string id, Dictionary<string, Visit> state,

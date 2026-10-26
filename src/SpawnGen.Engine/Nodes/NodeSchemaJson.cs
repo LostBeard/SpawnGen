@@ -27,14 +27,23 @@ public static class NodeSchemaJson
             var order = n["input_order"]?[section] as JsonArray;
             var names = order is null ? group.Select(kv => kv.Key) : order.Select(o => (string)o!).Where(group.ContainsKey);
             foreach (var name in names)
-                if (group[name] is JsonArray entry && entry.Count > 0) inputs.Add(Input(name, entry, section == "required"));
+                if (group[name] is JsonArray entry && entry.Count > 0)
+                {
+                    var input = Input(name, entry, section == "required");
+                    // A group is listed where it was declared; only its first GroupMin members must be linked.
+                    if (input.Group is { } g && inputs.Count(i => i.Group == g) >= input.GroupMin) input = input with { Required = false };
+                    inputs.Add(input);
+                }
         }
         var types = n["output"] as JsonArray ?? [];
         var names2 = n["output_name"] as JsonArray;
         var lists = n["output_is_list"] as JsonArray;
-        var outputs = types.Select((t, i) => new OutputSpec(names2 is not null && i < names2.Count && (string?)names2[i] is { Length: > 0 } name ? name : (string)t!, new SocketType((string)t!))
+        var matches = n["output_matchtypes"] as JsonArray;
+        var outputs = types.Select((t, i) => new OutputSpec(names2 is not null && i < names2.Count && (string?)names2[i] is { Length: > 0 } name ? name : (string)t!,
+            (string)t! == MatchTypeName ? SocketType.Any : new SocketType((string)t!))
         {
             IsList = lists is not null && i < lists.Count && lists[i] is JsonValue v && v.TryGetValue<bool>(out var isList) && isList,
+            MatchTemplate = matches is not null && i < matches.Count ? (string?)matches[i] : null,
         }).ToList();
         return new NodeSchema
         {
@@ -46,8 +55,12 @@ public static class NodeSchemaJson
             Outputs = outputs,
             IsOutputNode = (bool?)n["output_node"] ?? false,
             InputIsList = n["input_is_list"] is JsonValue l && l.TryGetValue<bool>(out var inputIsList) && inputIsList,
+            DevOnly = n["dev_only"] is JsonValue d && d.TryGetValue<bool>(out var devOnly) && devOnly,
         };
     }
+
+    /// <summary>ComfyUI's type name for a MatchType socket: an any-type socket whose config names its template.</summary>
+    const string MatchTypeName = "COMFY_MATCHTYPE_V3";
 
     static InputSpec Input(string name, JsonArray entry, bool required)
     {
@@ -63,7 +76,14 @@ public static class NodeSchemaJson
         if (entry[0] is JsonArray options)
             return new InputSpec(name, SocketType.String, required, new WidgetSpec(WidgetKind.Combo) { Options = options.Select(o => (string)o!).ToList(), Default = options.Count > 0 ? (string?)options[0] : null });
         var type = (string)entry[0]!;
-        if (config is null || config["forceInput"] is JsonValue force && force.TryGetValue<bool>(out var forced) && forced) return new InputSpec(name, new SocketType(type), required);
+        if (config is null) return new InputSpec(name, new SocketType(type), required);
+        if (type == MatchTypeName)
+            return new InputSpec(name, (string?)config["template"]?["allowed_types"] is { } allowed and not "*" ? new SocketType(allowed) : SocketType.Any, required)
+            {
+                MatchTemplate = (string?)config["template"]?["template_id"],
+            };
+        if (config["forceInput"] is JsonValue force && force.TryGetValue<bool>(out var forced) && forced)
+            return new InputSpec(name, new SocketType(type), required) { ForceInput = true };
         var kind = type switch { "INT" => WidgetKind.Int, "FLOAT" => WidgetKind.Float, "BOOLEAN" => WidgetKind.Boolean, "STRING" => WidgetKind.String, "COLOR" => WidgetKind.Color, _ => (WidgetKind?)null };
         if (kind is null) return new InputSpec(name, new SocketType(type), required);
         return new InputSpec(name, new SocketType(type), required, new WidgetSpec(kind.Value)

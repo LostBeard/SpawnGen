@@ -53,6 +53,9 @@ public sealed class NodeContext
 
     /// <summary>Reports a status message with no fraction (e.g. "Downloading model").</summary>
     public void Status(string message) => _progress?.Invoke(0, 0, message);
+
+    /// <summary>The running prompt as a node that drives execution itself (a loop) sees it; null outside a run.</summary>
+    public IExecutionScope? Execution { get; internal set; }
 }
 
 /// <summary>

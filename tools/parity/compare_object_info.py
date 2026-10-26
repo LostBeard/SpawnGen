@@ -25,7 +25,7 @@ def inputs(info):
             cfg = entry[1] if len(entry) > 1 and isinstance(entry[1], dict) else {}
             if cfg.get("autogrow_group"):
                 g = cfg["autogrow_group"]
-                if g not in out: out[g] = (section if cfg.get("autogrow_min", 0) == 0 or section == "required" else "required", ["COMFY_AUTOGROW_V3", {}])
+                if g not in out: out[g] = (section, ["COMFY_AUTOGROW_V3", {}])
                 continue
             if cfg.get("dynamic_parent"): continue
             if entry and entry[0] == "COMFY_AUTOGROW_V3": entry = ["COMFY_AUTOGROW_V3", {}]

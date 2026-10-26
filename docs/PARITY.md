@@ -50,7 +50,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 | Run result images inside nodes | **done** |
 | "Control after generate" per seed widget: fixed / increment / decrement / randomize, applied after each queue, saved in the workflow | **done** |
 | Batch count (queue N times) | **done**; cancel queued items done (Cancel in the History panel); queue front done (Front button while a run is going, Ctrl+Shift+Enter, `front: true` on POST /prompt); reorder todo |
-| ComfyUI execution semantics: list inputs/outputs (runs per item, `INPUT_IS_LIST`, `OUTPUT_IS_LIST`), lazy inputs (`check_lazy_status`), execution blockers, Autogrow inputs (`images.image0` ...), dynamic combos (`resize_type.width` ...), on-demand evaluation with cache signatures from the graph | **done**; node expansion and the loop nodes (StartLoop / EndLoop) todo |
+| ComfyUI execution semantics: list inputs/outputs (runs per item, `INPUT_IS_LIST`, `OUTPUT_IS_LIST`), lazy inputs (`check_lazy_status`), execution blockers, Autogrow inputs (`images.image0` ...), dynamic combos (`resize_type.width` ...), on-demand evaluation with cache signatures from the graph | **done**; node expansion (nodes that add nodes to the graph while it runs, with display ids and loop scopes), MatchType inputs and outputs, and the loop nodes (Start Loop / End Loop in simple, For and List modes, nested, carried values, accumulate, termination inputs) with ComfyUI's loop validation: seven graphs run through ComfyUI give the same previews and the same loop errors (LoopTests) |
 | Latent preview during sampling (latent2rgb of the denoised estimate, shown in the sampler node each step; verified by eye: an apple emerging at step 2 of 8) | **done**; TAESD-quality previews todo |
 | Samplers and guidance: all 45 ComfyUI sampler names and 9 schedulers in ComfyUI's order, ComfyUI's guidance pipeline (pre-cfg / cfg / post-cfg patches, denoise mask, cfg overrides), guiders (CFG, Basic, Dual CFG, Perp-Neg), CFG patches (RescaleCFG, CFGNorm, CFGZeroStar, APG, Mahiro, TCFG, FreSca, Epsilon Scaling, RenormCFG, Differential Diffusion), ModelSamplingDiscrete; 159 cases replayed against ComfyUI's own sampling code | **done**; every sampler draws on the RX 590 (SD-Turbo); compared with ComfyUI itself (CPU, same SD-Turbo weights, same start latent): euler, res_multistep_cfg_pp and dpm_fast land within 0.2-0.7 % rms of ComfyUI's result (ComfyUIRenderParityTests); this found and fixed SD 2.x CLIP padding (token 0, not the end token) and latent file scaling. Seeds give different pictures than ComfyUI (the noise generator is not torch's) |
 | History panel (H): every run of the session with its saved pictures, full-size view, load a run's workflow into a new tab, clear; queue shows running / queued | **done** (session only; queued runs listed with Cancel; gallery of past server runs and reorder todo) |
@@ -78,9 +78,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**248 shared nodes, 243 identical** (branch `dataset-nodes`, 2026-10-25); 4 of the 5 that differ do so by design (the background-removal model
-list, RecordAudio's recorder widget, the MatchType display type, Resolution Selector's preview-only widget); StringFormat's `values` group is
-required in ComfyUI and optional here (open). `tools/parity/apply_names.py` keeps names and categories in step.
+**254 shared nodes, 251 identical** (branch `dataset-nodes` with `sd-checkpoint` 7212ab4 merged); the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
+RecordAudio's recorder widget, Resolution Selector's preview-only widget. `tools/parity/apply_names.py` keeps names and categories in step.
 
 Behaviour is checked against ComfyUI's own code: fixtures made by running ComfyUI's node code on real torch / kornia / Pillow / numpy (image ops,
 compositing, Canny, colour spaces, Pad Image, Color Transfer, SDR to HDR, Image Quantize byte for byte with Pillow's median cut and dithers,
@@ -104,11 +103,13 @@ Still missing, by kind:
    LoRA on components loaded alone also verified (SD-Turbo split = single file, SD 1.5 split + LCM-LoRA = ComfyUI). ControlNet for SD 1.x and SDXL (diffusers-format ControlNets too; Load ControlNet Model,
    Apply ControlNet, Apply ControlNet (DEPRECATED), chained ControlNets, percent range) verified against ComfyUI with a canny ControlNet (0.18% / 0.17%,
    pictures 0.04/255). Load VAE's tiny VAEs (taesd, taesdxl from <models>/vae_approx) match
-   ComfyUI's pictures (0.10/255, 0.04/255). Detect Edges (Canny) gives ComfyUI's edge maps pixel for pixel. Open: fp8
+   ComfyUI's pictures (0.10/255, 0.04/255). Detect Edges (Canny) gives ComfyUI's edge maps pixel for pixel. InpaintModelConditioning, VAE Encode and VAE Encode
+   (for Inpainting) prepare the pictures and masks exactly as ComfyUI's nodes do (crop, greying, mask growth; InpaintParityTests); with an ordinary model the
+   run is an img2img confined to the mask (verified on the RX 590); inpainting models (9-channel UNets) need the library. Open: fp8
    weight_dtype, TAESD sampling previews.
 2. **Need a codec**: video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), WebP, MP3 / Opus / FLAC audio saving.
 3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop), Custom Combo (frontend-defined options),
-   ImageCropV2 (an object-valued bounding-box widget and a crop editor), the loop nodes (node expansion), Text Overlay (a font engine).
+   ImageCropV2 (an object-valued bounding-box widget and a crop editor), Text Overlay (a font engine).
 
 ## 5. Platform
 

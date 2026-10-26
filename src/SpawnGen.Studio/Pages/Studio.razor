@@ -897,7 +897,7 @@
     IEnumerable<NodeSchema> SearchResults()
     {
         var q = _search?.Query.Trim() ?? "";
-        var all = Registry.Schemas.OrderBy(s => s.Category).ThenBy(s => s.DisplayName);
+        var all = Registry.Schemas.Where(s => !s.DevOnly).OrderBy(s => s.Category).ThenBy(s => s.DisplayName);
         if (q.Length == 0) return all.Take(14);
         var words = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         // Best matches first: the name is the query, starts with it, has a word starting with it, or just contains it.
@@ -1242,6 +1242,7 @@
     {
         var words = _libraryFilter.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return Registry.Schemas
+            .Where(s => !s.DevOnly)
             .Where(s => words.All(w => s.DisplayName.Contains(w, StringComparison.OrdinalIgnoreCase) || s.Id.Contains(w, StringComparison.OrdinalIgnoreCase) || s.Category.Contains(w, StringComparison.OrdinalIgnoreCase)))
             .OrderBy(s => s.DisplayName)
             .GroupBy(s => s.Category)

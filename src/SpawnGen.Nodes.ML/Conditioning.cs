@@ -82,6 +82,21 @@ public sealed class ConditioningConcat
     }
 }
 
+[Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Multiply)")]
+public sealed class ConditioningMultiply
+{
+    /// <summary>Scales every entry's text embeddings (and SDXL's pooled output) by <c>multiplier</c>, as ComfyUI's Conditioning (Multiply).</summary>
+    public Conditioning Execute(Conditioning conditioning, [Input(Min = -100, Max = 100, Step = 0.01, Default = 1.0)] double multiplier)
+    {
+        float m = (float)multiplier; // torch multiplies a float32 tensor by the Python float as float32
+        return conditioning.Map(e => e with
+        {
+            Embeddings = [.. e.Embeddings.Select(v => v * m)],
+            Pooled = e.Pooled is null ? null : [.. e.Pooled.Select(v => v * m)],
+        });
+    }
+}
+
 [Node(Category = "model/conditioning/transform", DisplayName = "Conditioning (Average)")]
 public sealed class ConditioningAverage
 {

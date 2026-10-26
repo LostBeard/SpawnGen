@@ -87,11 +87,11 @@ common_upscale incl. Pillow's 8-bit Lanczos), Python-exact string, regex, `str.f
 torch's interpolate and bislerp for latents, and the sampling replay above.
 
 Still missing, by kind:
-1. **Need the library**: ControlNet for SDXL, CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use
+1. **Need the library**: CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use
    these. Done on branch `sd-checkpoint`: single-file checkpoints, LoRA, and the split loaders (Load Diffusion Model, Load VAE, Load CLIP, Load CLIP (Dual)) for
    SD 1.x / SDXL from `<models>/diffusion_models|unet`, `vae`, `text_encoders|clip`, verified against ComfyUI with its own saved component files (SD 1.5 0.19%,
    SDXL 0.002% and picture 0.00/255) and a real VAE (vae-ft-mse-840000, picture 0.08/255). SD 2.x diffusion models loaded alone (eps / v read from the weights) and
-   LoRA on components loaded alone also verified (SD-Turbo split = single file, SD 1.5 split + LCM-LoRA = ComfyUI). ControlNet for SD 1.x (Load ControlNet Model,
+   LoRA on components loaded alone also verified (SD-Turbo split = single file, SD 1.5 split + LCM-LoRA = ComfyUI). ControlNet for SD 1.x and SDXL (diffusers-format ControlNets too; Load ControlNet Model,
    Apply ControlNet, Apply ControlNet (DEPRECATED), chained ControlNets, percent range) verified against ComfyUI with a canny ControlNet (0.18% / 0.17%,
    pictures 0.04/255). Load VAE's tiny VAEs (taesd, taesdxl from <models>/vae_approx) match
    ComfyUI's pictures (0.10/255, 0.04/255). Detect Edges (Canny) gives ComfyUI's edge maps pixel for pixel. Open: fp8

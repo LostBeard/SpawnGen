@@ -84,17 +84,15 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
         List<SdControlResiduals>? residuals = null;
         if (controls is { Count: > 0 })
         {
-            // Each ControlNet sees what the UNet sees (the scaled input, the timestep, the entry's text) plus its hint; its residuals live in its own buffers until
-            // it runs again, so one net may appear only once per call.
+            // Each ControlNet sees what the UNet sees (the scaled input, the timestep, the entry's text and SDXL's label) plus its hint, into a residual set of its
+            // own for the run, so the same loaded net can steer twice in one chain.
             residuals = [];
-            var seen = new HashSet<SdControlNet>(ReferenceEqualityComparer.Instance);
             foreach (var c in controls)
             {
-                if (!seen.Add(c.Net))
-                    throw new NotSupportedException("The same ControlNet is applied twice to one conditioning; load it a second time for the second Apply ControlNet.");
                 if (c.Net.ContextDim != unet.ContextDim)
                     throw new ArgumentException($"The ControlNet takes {c.Net.ContextDim}-wide text but this model's UNet takes {unet.ContextDim}: it was made for another model family.");
-                var res = await c.Net.RunAsync(inView, h, w, timestep, cond.Context.View, cond.Rows, Hint(c, 8 * h, 8 * w).View, null, cancellationToken);
+                if (!_residuals.TryGetValue(c.HintKey, out var set)) _residuals[c.HintKey] = set = c.Net.CreateResiduals();
+                var res = await c.Net.RunAsync(inView, h, w, timestep, cond.Context.View, cond.Rows, Hint(c, 8 * h, 8 * w).View, cond.Label?.View, set, cancellationToken);
                 res.Strength = c.Strength;
                 residuals.Add(res);
             }
@@ -105,6 +103,7 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
     }
 
     readonly Dictionary<object, MemoryBuffer1D<float, Stride1D.Dense>> _hints = new();
+    readonly Dictionary<object, SdControlResiduals> _residuals = new();
 
     /// <summary>A control picture on the GPU, once per run and picture.</summary>
     MemoryBuffer1D<float, Stride1D.Dense> Hint(ControlCall c, int height, int width)
@@ -147,6 +146,8 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
         _uploaded.Clear();
         foreach (var b in _hints.Values) b.Dispose();
         _hints.Clear();
+        foreach (var r in _residuals.Values) r.Dispose();
+        _residuals.Clear();
         _in?.Dispose();
         _out?.Dispose();
     }

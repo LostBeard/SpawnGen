@@ -232,7 +232,7 @@ public class ComfyUIRenderParityTests
         ModelFolders.Scan(root!);
         using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
         var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: result,
-            controlNet: ("control_v11p_sd15_canny_fp16.safetensors", "canny_hint.png", strength, endPercent));
+            controlNets: [("control_v11p_sd15_canny_fp16.safetensors", "canny_hint.png", strength, 0.0, endPercent)]);
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 
@@ -260,9 +260,31 @@ public class ComfyUIRenderParityTests
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 
+    /// <summary>
+    /// The same loaded ControlNet twice in one chain (strength 0.6 over the first half, 0.4 over the second; each control has a residual set of its own), and
+    /// SDXL with the diffusers SDXL canny ControlNet (controlnet-canny-sdxl-1.0, fp16, in &lt;models&gt;/controlnet) on ComfyUI's canny map of its SDXL apple at 0.8.
+    /// </summary>
+    [TestCase("sd15")]
+    [TestCase("sdxl")]
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (the checkpoints and ControlNets) and a GPU (8 GB for SDXL).")]
+    public async Task ControlNet_chains_and_SDXL_give_ComfyUIs_result(string which)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = which == "sd15"
+            ? await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: "euler_cn_twice", controlNets:
+                [("control_v11p_sd15_canny_fp16.safetensors", "canny_hint.png", 0.6, 0.0, 0.5), ("control_v11p_sd15_canny_fp16.safetensors", "canny_hint.png", 0.4, 0.5, 1.0)])
+            : await RunAsync(runtime, "sd_xl_base_1.0.safetensors", "euler", "comfyui_sdxl", 6, 7.0, result: "euler_cn", controlNets:
+                [("controlnet-canny-sdxl-1.0.fp16.safetensors", "canny_hint.png", 0.8, 0.0, 1.0)]);
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
     static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg,
         string? lora = null, string? result = null, Func<PromptGraph, (PromptInput Model, PromptInput Clip, PromptInput Vae)>? load = null, string? picture = null,
-        (string Name, string Hint, double Strength, double EndPercent)? controlNet = null)
+        IReadOnlyList<(string Name, string Hint, double Strength, double Start, double End)>? controlNets = null)
     {
         var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", fixture);
         var outDir = Path.Combine(Path.GetTempPath(), "spawngen-comfy-parity-" + Guid.NewGuid().ToString("N"));
@@ -290,15 +312,20 @@ public class ComfyUIRenderParityTests
             g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", clip));
             g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", clip));
             g.Add("4", "LoadLatent", ("latent", "start.latent"));
-            // With a ControlNet, Apply ControlNet sits between the prompts and the sampler (as the ComfyUI reference graph has it).
+            // With ControlNets, Apply ControlNet nodes sit between the prompts and the sampler, chained in order, one loader per file and one Load Image per
+            // picture (as the ComfyUI reference graphs have them).
             PromptInput positive = PromptInput.Link("2"), negative = PromptInput.Link("3");
-            if (controlNet is { } cn)
+            var loaders = new Dictionary<string, string>();
+            var hints = new Dictionary<string, string>();
+            int next = 20;
+            foreach (var cn in controlNets ?? [])
             {
-                g.Add("20", "ControlNetLoader", ("control_net_name", cn.Name));
-                g.Add("21", "LoadImage", ("image", cn.Hint));
-                g.Add("22", "ControlNetApplyAdvanced", ("positive", positive), ("negative", negative), ("control_net", PromptInput.Link("20")),
-                    ("image", PromptInput.Link("21")), ("strength", cn.Strength), ("start_percent", 0.0), ("end_percent", cn.EndPercent));
-                (positive, negative) = (PromptInput.Link("22"), PromptInput.Link("22", 1));
+                if (!loaders.TryGetValue(cn.Name, out var loader)) g.Add(loaders[cn.Name] = loader = (next++).ToString(), "ControlNetLoader", ("control_net_name", cn.Name));
+                if (!hints.TryGetValue(cn.Hint, out var hint)) g.Add(hints[cn.Hint] = hint = (next++).ToString(), "LoadImage", ("image", cn.Hint));
+                string apply = (next++).ToString();
+                g.Add(apply, "ControlNetApplyAdvanced", ("positive", positive), ("negative", negative), ("control_net", PromptInput.Link(loader)),
+                    ("image", PromptInput.Link(hint)), ("strength", cn.Strength), ("start_percent", cn.Start), ("end_percent", cn.End));
+                (positive, negative) = (PromptInput.Link(apply), PromptInput.Link(apply, 1));
             }
             g.Add("5", "KSamplerAdvanced", ("model", model), ("add_noise", "disable"), ("noise_seed", 0), ("steps", steps), ("cfg", cfg),
                 ("sampler_name", sampler), ("scheduler", "normal"), ("positive", positive), ("negative", negative),

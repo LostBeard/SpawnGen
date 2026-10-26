@@ -122,9 +122,28 @@ public class CustomNodesTests
         Assert.That((parent.ForceInput, parent.Widget), Is.EqualTo((true, (WidgetSpec?)null)));
         Assert.That(start.Outputs.Select(o => o.MatchTemplate), Is.EqualTo(new string?[] { null, null, null, "list_item", "carried_value" }));
         Assert.That(start.Outputs[4].Type, Is.EqualTo(SocketType.Any));
+        // A MatchType input limited to some types (ComfyUI's allowed_types) and the output that follows it.
+        var resize = NodeSchemaJson.FromObjectInfo(info).Single(s => s.Id == "ResizeImageMaskNode");
+        Assert.That((resize.FindInput("input")!.MatchTemplate, resize.FindInput("input")!.Type.Name), Is.EqualTo(("input_type", "IMAGE,MASK")));
+        Assert.That(resize.Outputs[0].MatchTemplate, Is.EqualTo("input_type"));
         var iteration = NodeSchemaJson.FromObjectInfo(info).Single(s => s.Id == "LoopIteration");
         Assert.That(iteration.DevOnly, Is.True);
         Assert.That(NodeSchemaJson.FromObjectInfo(info).Single(s => s.Id == "EndLoop").DevOnly, Is.False);
+    }
+
+    [Test]
+    public async Task An_Autogrow_group_is_listed_where_it_was_declared_and_only_its_minimum_must_be_linked()
+    {
+        var info = JsonNode.Parse(await _http.GetStringAsync("/object_info"))!.AsObject();
+        // ComfyUI lists String Format's values group (minimum 0) under required, Batch Images' (minimum 1) too, End Loop's terminations under optional.
+        Assert.That(info["StringFormat"]!["input"]!["required"]!.AsObject().ContainsKey("values.a"), Is.True);
+        Assert.That(info["BatchImagesNode"]!["input"]!["required"]!.AsObject().ContainsKey("images.image1"), Is.True);
+        Assert.That(info["EndLoop"]!["input"]!["optional"]!.AsObject().ContainsKey("terminations.termination0"), Is.True);
+        var schemas = NodeSchemaJson.FromObjectInfo(info).ToDictionary(s => s.Id);
+        Assert.That(schemas["StringFormat"].FindInput("values.a")!.Required, Is.False);
+        Assert.That(schemas["BatchImagesNode"].FindInput("images.image0")!.Required, Is.True);
+        Assert.That(schemas["BatchImagesNode"].FindInput("images.image1")!.Required, Is.False);
+        Assert.That(schemas["EndLoop"].FindInput("terminations.termination0")!.Required, Is.False);
     }
 
     [Test]

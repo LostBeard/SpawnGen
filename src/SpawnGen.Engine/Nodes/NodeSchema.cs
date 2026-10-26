@@ -39,8 +39,9 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
     /// <summary>ComfyUI's forceInput: a primitive that is only a socket.</summary>
     public bool ForceInput { get; init; }
 
-    /// <summary>Where ComfyUI's object_info lists the input: "required" for sockets that must be linked and for widgets not declared optional.</summary>
-    public bool ListedAsRequired => !Optional && (Required || Widget is not null);
+    /// <summary>Where ComfyUI's object_info lists the input: "required" for sockets that must be linked, for widgets and for Autogrow group members
+    /// not declared optional (ComfyUI lists the whole group in its declared section).</summary>
+    public bool ListedAsRequired => !Optional && (Required || Widget is not null || Group is not null);
 }
 
 public sealed record OutputSpec(string Name, SocketType Type, string? Tooltip = null)

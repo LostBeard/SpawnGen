@@ -306,7 +306,7 @@ public static class ServerApp
         if (i.DynamicParent is { } parent) { config["dynamic_parent"] = parent; config["dynamic_options"] = new JsonArray(i.DynamicOptions.Select(o => (JsonNode)o).ToArray()); }
         if (i.MatchTemplate is { } template)
         {
-            config["template"] = new JsonObject { ["template_id"] = template, ["allowed_types"] = "*" };
+            config["template"] = new JsonObject { ["template_id"] = template, ["allowed_types"] = i.Type.Name };
             return new JsonArray(MatchTypeName, config);
         }
         if (i.Widget is not { } w) return config.Count > 0 ? new JsonArray(i.Type.Name, config) : new JsonArray(i.Type.Name);

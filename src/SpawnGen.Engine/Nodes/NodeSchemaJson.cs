@@ -27,7 +27,13 @@ public static class NodeSchemaJson
             var order = n["input_order"]?[section] as JsonArray;
             var names = order is null ? group.Select(kv => kv.Key) : order.Select(o => (string)o!).Where(group.ContainsKey);
             foreach (var name in names)
-                if (group[name] is JsonArray entry && entry.Count > 0) inputs.Add(Input(name, entry, section == "required"));
+                if (group[name] is JsonArray entry && entry.Count > 0)
+                {
+                    var input = Input(name, entry, section == "required");
+                    // A group is listed where it was declared; only its first GroupMin members must be linked.
+                    if (input.Group is { } g && inputs.Count(i => i.Group == g) >= input.GroupMin) input = input with { Required = false };
+                    inputs.Add(input);
+                }
         }
         var types = n["output"] as JsonArray ?? [];
         var names2 = n["output_name"] as JsonArray;
@@ -72,7 +78,10 @@ public static class NodeSchemaJson
         var type = (string)entry[0]!;
         if (config is null) return new InputSpec(name, new SocketType(type), required);
         if (type == MatchTypeName)
-            return new InputSpec(name, SocketType.Any, required) { MatchTemplate = (string?)config["template"]?["template_id"] };
+            return new InputSpec(name, (string?)config["template"]?["allowed_types"] is { } allowed and not "*" ? new SocketType(allowed) : SocketType.Any, required)
+            {
+                MatchTemplate = (string?)config["template"]?["template_id"],
+            };
         if (config["forceInput"] is JsonValue force && force.TryGetValue<bool>(out var forced) && forced)
             return new InputSpec(name, new SocketType(type), required) { ForceInput = true };
         var kind = type switch { "INT" => WidgetKind.Int, "FLOAT" => WidgetKind.Float, "BOOLEAN" => WidgetKind.Boolean, "STRING" => WidgetKind.String, "COLOR" => WidgetKind.Color, _ => (WidgetKind?)null };

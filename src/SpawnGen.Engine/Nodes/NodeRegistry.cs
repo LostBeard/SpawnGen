@@ -385,7 +385,7 @@ public sealed class NodeRegistry
                 for (int m = 0; m < members.Length; m++)
                     inputs.Add(new InputSpec(members[m].Input, ia?.Type is { } declaredMember ? new SocketType(declaredMember) : SocketTypes.FromClr(socketType), Required: m < grow.Min && !(ia?.Optional ?? false), Tooltip: ia?.Tooltip)
                     {
-                        Group = name, GroupMin = grow.Min, Optional = m >= grow.Min || (ia?.Optional ?? false), Lazy = ia?.Lazy ?? false,
+                        Group = name, GroupMin = grow.Min, Optional = ia?.Optional ?? false, Lazy = ia?.Lazy ?? false,
                     });
                 bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { Members = members, MemberType = memberType });
                 continue;
@@ -394,7 +394,7 @@ public sealed class NodeRegistry
             var element = inputIsList ? ListElementType(p.ParameterType)
                 ?? throw new InvalidOperationException($"Node '{id}' takes whole lists (InputIsList): parameter '{p.Name}' must be a list such as IReadOnlyList<T>.") : null;
             var valueType = element ?? p.ParameterType;
-            var socket = ia?.MatchType is not null ? SocketType.Any : ia?.Type is { } declared ? new SocketType(declared) : ia?.Color == true ? new SocketType("COLOR") : SocketTypes.FromClr(valueType);
+            var socket = ia?.Type is { } declared ? new SocketType(declared) : ia?.MatchType is not null ? SocketType.Any : ia?.Color == true ? new SocketType("COLOR") : SocketTypes.FromClr(valueType);
             inputs.Add(new InputSpec(name, socket, Required: !p.HasDefaultValue,
                 Widget: ia?.MatchType is not null || ia?.ForceInput == true ? null : BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip)
             {

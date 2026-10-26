@@ -8,7 +8,7 @@ namespace SpawnGen.Nodes.Core;
 /// (the output is the same kind as the input). Every size rule is ComfyUI's, rounding included (Python's round is half to even).
 /// </summary>
 [Node("ResizeImageMaskNode", Category = "image/transform", DisplayName = "Resize Image/Mask",
-    Description = "Resize an image or mask using various scaling methods.", OutputNames = ["resized"])]
+    Description = "Resize an image or mask using various scaling methods.", OutputNames = ["resized"], OutputMatchTypes = ["input_type"])]
 public sealed class ResizeImageMaskNode
 {
     const int MaxResolution = 16384;
@@ -36,7 +36,7 @@ public sealed class ResizeImageMaskNode
         ];
     }
 
-    public object Execute([Input(Type = "IMAGE,MASK")] object input,
+    public object Execute([Input(Type = "IMAGE,MASK", MatchType = "input_type")] object input,
         [DynamicCombo(nameof(ResizeTypes)), Input(Tooltip = "Select how to resize: by exact dimensions, scale factor, matching another image, etc.")] DynamicChoice resizeType,
         [Input(OptionsProvider = nameof(ScaleMethods), Tooltip = "Interpolation algorithm. 'area' is best for downscaling, 'lanczos' for upscaling, 'nearest-exact' for pixel art.")] string scaleMethod = "area")
     {

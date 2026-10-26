@@ -95,11 +95,10 @@ public sealed class SaveText
 {
     public static string[] Formats() => ["txt", "csv", "md", "json"];
 
-    // ComfyUI's text input is socket-only (force_input); "*" is how a socket without a widget is declared here, and anything but text is refused.
-    public async Task<(string Text, UiOutput Ui)> ExecuteAsync(object text, IServiceProvider services, string filenamePrefix = "ComfyUI",
+    public async Task<(string Text, UiOutput Ui)> ExecuteAsync([Input(ForceInput = true)] string text, IServiceProvider services, string filenamePrefix = "ComfyUI",
         [Input(OptionsProvider = nameof(Formats))] string format = "txt")
     {
-        if (text is not string content) throw new ArgumentException($"Save Text needs text, not {text.GetType().Name}.", nameof(text));
+        var content = text;
         if (!Formats().Contains(format)) throw new ArgumentException($"Unsupported text format: '{format}'", nameof(format));
         var body = content;
         if (format == "json")

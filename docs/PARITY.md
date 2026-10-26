@@ -78,9 +78,8 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**229 shared nodes, 223 identical** (branch `sd-checkpoint`); the 6 that differ: the background-removal model list (SpawnGen ships one), RecordAudio's
-recorder widget, Resolution Selector's preview-only widget, and three still to align (Resize Image/Mask's MatchType input, Save Text's default, String Format's
-values group). `tools/parity/apply_names.py` keeps names and categories in step.
+**229 shared nodes, 226 identical** (branch `sd-checkpoint`); the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
+RecordAudio's recorder widget, Resolution Selector's preview-only widget. `tools/parity/apply_names.py` keeps names and categories in step.
 
 Behaviour is checked against ComfyUI's own code: fixtures made by running ComfyUI's node code on real torch / kornia / Pillow / numpy (image ops,
 compositing, Canny, colour spaces, Pad Image, Color Transfer, SDR to HDR, Image Quantize byte for byte with Pillow's median cut and dithers,

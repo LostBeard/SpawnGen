@@ -7,6 +7,8 @@ public enum PredictionType
     Eps,
     /// <summary>The velocity v = alpha * noise - sigma * x0 (SD 2.x 768).</summary>
     VPrediction,
+    /// <summary>EDM's preconditioned output (Karras et al.): denoised = c_skip input + c_out output, with sigma_data (0.5 for "edm").</summary>
+    Edm,
     /// <summary>Latent consistency: an eps model whose output is blended with the input by the LCM boundary condition, on 50 distilled timesteps.</summary>
     Lcm,
     /// <summary>The clean latent itself.</summary>
@@ -24,14 +26,17 @@ public enum PredictionType
 /// </summary>
 public sealed class ModelSampling
 {
-    public ModelSampling(ModelSigmas sigmas, PredictionType prediction = PredictionType.Eps)
+    public ModelSampling(ModelSigmas sigmas, PredictionType prediction = PredictionType.Eps, double sigmaData = 1.0)
     {
         Sigmas = sigmas;
         Prediction = prediction;
+        SigmaData = sigmaData;
     }
 
     public ModelSigmas Sigmas { get; }
     public PredictionType Prediction { get; }
+    /// <summary>The data's standard deviation the model was trained with (ComfyUI's sigma_data): 1, or 0.5 for EDM models.</summary>
+    public double SigmaData { get; }
 
     /// <summary>A CONST (rectified-flow) sampling: x = (1 - sigma) x0 + sigma noise. The samplers switch to their flow forms for it.</summary>
     public bool IsConst => Prediction == PredictionType.ImgToImgFlow;
@@ -48,11 +53,11 @@ public sealed class ModelSampling
     /// <summary>The timestep the model is told for a noise level.</summary>
     public float Timestep(double sigma) => Sigmas.Timestep(sigma);
 
-    /// <summary>The model's input for the sample <paramref name="x"/> at <paramref name="sigma"/> (ComfyUI's <c>calculate_input</c>, sigma_data 1).</summary>
+    /// <summary>The model's input for the sample <paramref name="x"/> at <paramref name="sigma"/> (ComfyUI's <c>calculate_input</c>: x / sqrt(sigma^2 + sigma_data^2)).</summary>
     public float[] CalculateInput(double sigma, float[] x)
     {
         if (Prediction is PredictionType.ImgToImg or PredictionType.ImgToImgFlow) return x;
-        double scale = 1.0 / Math.Sqrt(sigma * sigma + 1.0);
+        double scale = 1.0 / Math.Sqrt(sigma * sigma + SigmaData * SigmaData);
         var r = new float[x.Length];
         for (int i = 0; i < r.Length; i++) r[i] = (float)(x[i] * scale);
         return r;
@@ -68,8 +73,11 @@ public sealed class ModelSampling
                 for (int i = 0; i < r.Length; i++) r[i] = (float)(input[i] - output[i] * sigma);
                 break;
             case PredictionType.VPrediction:
+            case PredictionType.Edm:
             {
-                double a = 1.0 / (sigma * sigma + 1.0), b = sigma / Math.Sqrt(sigma * sigma + 1.0);
+                // V: input sd^2 / (sigma^2 + sd^2) - output sigma sd / sqrt(sigma^2 + sd^2); EDM adds the output term instead of subtracting it.
+                double sd = SigmaData, a = sd * sd / (sigma * sigma + sd * sd), b = sigma * sd / Math.Sqrt(sigma * sigma + sd * sd);
+                if (Prediction == PredictionType.Edm) b = -b;
                 for (int i = 0; i < r.Length; i++) r[i] = (float)(input[i] * a - output[i] * b);
                 break;
             }

@@ -135,6 +135,48 @@ public sealed class DualCFGGuider
         new DualCfgGuiderChoice(model, cond1, cond2, negative, cfgConds, cfgCond2Negative, style == "nested");
 }
 
+[Node(Category = "model/patch", DisplayName = "ModelSamplingContinuousEDM")]
+public sealed class ModelSamplingContinuousEDM
+{
+    public static string[] SamplingTypes() => ["v_prediction", "edm", "edm_playground_v2.5", "eps", "cosmos_rflow"];
+
+    /// <summary>
+    /// Drives the model on a continuous sigma (log-spaced from <c>sigma_min</c> to <c>sigma_max</c>, told to the model as 0.25 ln sigma), for EDM-trained models
+    /// such as CosXL (v_prediction) or EDM checkpoints (edm: sigma_data 0.5), as ComfyUI's ModelSamplingContinuousEDM.
+    /// </summary>
+    public ModelHandle Execute(ModelHandle model, [Input(OptionsProvider = nameof(SamplingTypes))] string sampling,
+        [Input(Min = 0, Max = 1000, Step = 0.001, Default = 120.0)] double sigmaMax,
+        [Input(Min = 0, Max = 1000, Step = 0.001, Default = 0.002)] double sigmaMin)
+    {
+        var (prediction, sigmaData) = sampling switch
+        {
+            "eps" => (PredictionType.Eps, 1.0),
+            "v_prediction" => (PredictionType.VPrediction, 1.0),
+            "edm" => (PredictionType.Edm, 0.5),
+            _ => throw new NotSupportedException($"ModelSamplingContinuousEDM {sampling}: it needs a model family SpawnGen does not run (Playground v2.5's latent format, Cosmos' flow)."),
+        };
+        return new ModelHandle(model.Model!, new ModelSampling(ModelSigmas.Continuous(sigmaMin, sigmaMax, v: false), prediction, sigmaData))
+        {
+            Patches = model.Patches, Loras = model.Loras,
+        };
+    }
+}
+
+[Node(Category = "model/patch", DisplayName = "ModelSamplingContinuousV")]
+public sealed class ModelSamplingContinuousV
+{
+    public static string[] SamplingTypes() => ["v_prediction"];
+
+    /// <summary>A continuous-sigma v-prediction model told its noise level as atan(sigma) 2 / pi, as ComfyUI's ModelSamplingContinuousV.</summary>
+    public ModelHandle Execute(ModelHandle model, [Input(OptionsProvider = nameof(SamplingTypes))] string sampling,
+        [Input(Min = 0, Max = 1000, Step = 0.001, Default = 500.0)] double sigmaMax,
+        [Input(Min = 0, Max = 1000, Step = 0.001, Default = 0.03)] double sigmaMin) =>
+        new(model.Model!, new ModelSampling(ModelSigmas.Continuous(sigmaMin, sigmaMax, v: true), PredictionType.VPrediction))
+        {
+            Patches = model.Patches, Loras = model.Loras,
+        };
+}
+
 [Node(Category = "model/patch", DisplayName = "ModelSamplingDiscrete")]
 public sealed class ModelSamplingDiscrete
 {

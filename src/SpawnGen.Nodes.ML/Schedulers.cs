@@ -12,6 +12,31 @@ public sealed class ModelSigmas
     readonly double[] _sigmas;     // ascending, one per (distilled) training timestep
     readonly double[] _logSigmas;
     readonly int _skip;            // timesteps per entry: 1, or 20 for an LCM-distilled table of 50
+    readonly Continuity _continuity;
+
+    /// <summary>Discrete training timesteps (SD), or a continuous sigma (ComfyUI's ModelSamplingContinuousEDM, ModelSamplingContinuousV).</summary>
+    public enum Continuity { Discrete, ContinuousEdm, ContinuousV }
+
+    /// <summary>Discrete, or how a continuous model is told its noise level (0.25 ln sigma for EDM, atan(sigma) 2 / pi for continuous V).</summary>
+    public Continuity Kind => _continuity;
+
+    /// <summary>
+    /// A continuous-sigma model's table as ComfyUI builds it (set_parameters): 1000 sigmas from <paramref name="sigmaMin"/> to <paramref name="sigmaMax"/>, evenly
+    /// spaced in log-sigma (torch.linspace of the logs, then exp, in float32); the table is used by the schedulers that pick from it.
+    /// </summary>
+    public static ModelSigmas Continuous(double sigmaMin, double sigmaMax, bool v)
+    {
+        const int n = 1000;
+        float a = (float)Math.Log(sigmaMin), b = (float)Math.Log(sigmaMax);
+        double step = ((double)b - a) / (n - 1);
+        var sigmas = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            double log = i < n / 2 ? a + step * i : b - step * (n - 1 - i); // torch.linspace's two halves
+            sigmas[i] = MathF.Exp((float)log);
+        }
+        return new ModelSigmas(sigmas, 1, v ? Continuity.ContinuousV : Continuity.ContinuousEdm);
+    }
 
     public ModelSigmas(IReadOnlyList<float> alphasCumprod)
         : this(alphasCumprod.Select((float a) => Math.Sqrt((1 - (double)a) / a)).ToArray(), 1) { }
@@ -33,12 +58,13 @@ public sealed class ModelSigmas
         return new ModelSigmas(sigmas, 1);
     }
 
-    ModelSigmas(double[] sigmas, int skip)
+    ModelSigmas(double[] sigmas, int skip, Continuity continuity = Continuity.Discrete)
     {
         // ComfyUI keeps the table in float32.
         _sigmas = sigmas.Select(v => (double)(float)v).ToArray();
         _logSigmas = _sigmas.Select(v => (double)(float)Math.Log(v)).ToArray();
         _skip = skip;
+        _continuity = continuity;
     }
 
     /// <summary>The table's length (1000, or 50 for an LCM-distilled one).</summary>
@@ -55,6 +81,7 @@ public sealed class ModelSigmas
     /// </summary>
     public ModelSigmas ZeroTerminalSnr()
     {
+        if (_continuity != Continuity.Discrete) throw new NotSupportedException("Zero terminal SNR applies to discrete-timestep models.");
         int n = _sigmas.Length;
         var sqrtBar = _sigmas.Select(s => Math.Sqrt(1 / (s * s + 1))).ToArray();
         double first = sqrtBar[0], last = sqrtBar[^1];
@@ -70,6 +97,7 @@ public sealed class ModelSigmas
     /// </summary>
     public ModelSigmas Distilled(int originalTimesteps = 50)
     {
+        if (_continuity != Continuity.Discrete) throw new NotSupportedException("A distilled timestep table applies to discrete-timestep models.");
         int n = _sigmas.Length, skip = n / originalTimesteps;
         var valid = new double[originalTimesteps];
         for (int x = 0; x < originalTimesteps; x++) valid[originalTimesteps - 1 - x] = _sigmas[n - 1 - x * skip];
@@ -79,6 +107,9 @@ public sealed class ModelSigmas
     /// <summary>The sigma at a (possibly fractional) timestep: linear in log-sigma between the neighbouring table entries.</summary>
     public float Sigma(double timestep)
     {
+        // Continuous models: exp(t / 0.25) (EDM), tan(t pi / 2) (V), in float32.
+        if (_continuity == Continuity.ContinuousEdm) return MathF.Exp((float)timestep / 0.25f);
+        if (_continuity == Continuity.ContinuousV) return MathF.Tan((float)timestep * MathF.PI / 2f);
         double t = Math.Clamp((timestep - (_skip - 1)) / _skip, 0, _sigmas.Length - 1);
         int low = (int)Math.Floor(t), high = (int)Math.Ceiling(t);
         double frac = t - low;
@@ -91,6 +122,9 @@ public sealed class ModelSigmas
     /// </summary>
     public float Timestep(double sigma)
     {
+        // Continuous models: 0.25 ln(sigma) (EDM), atan(sigma) / pi * 2 (V), in float32.
+        if (_continuity == Continuity.ContinuousEdm) return 0.25f * MathF.Log((float)sigma);
+        if (_continuity == Continuity.ContinuousV) return MathF.Atan((float)sigma) / MathF.PI * 2f;
         double log = Math.Log(sigma);
         int best = 0;
         double bestDist = double.PositiveInfinity;
@@ -107,6 +141,12 @@ public sealed class ModelSigmas
     {
         if (percent <= 0.0) return 999999999.9;
         if (percent >= 1.0) return 0.0;
+        if (_continuity != Continuity.Discrete)
+        {
+            // Linear in log-sigma between the table's ends, in float64 as ComfyUI's math.log / math.exp.
+            double logMin = Math.Log(SigmaMin);
+            return Math.Exp((Math.Log(SigmaMax) - logMin) * (1.0 - percent) + logMin);
+        }
         return Sigma((float)((1.0 - percent) * 999.0));
     }
 

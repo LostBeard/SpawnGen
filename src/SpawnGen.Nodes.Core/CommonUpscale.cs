@@ -223,7 +223,7 @@ public static class PilLanczos
     }
 
     // Pillow's MULDIV255 (RGBA -> RGBa) and its inverse (RGBa -> RGBA: integer division, clipped; alpha 0 or 255 left alone).
-    static void Premultiply(byte[] px, int c)
+    internal static void Premultiply(byte[] px, int c)
     {
         for (int p = 0; p < px.Length; p += c)
         {
@@ -232,7 +232,7 @@ public static class PilLanczos
         }
     }
 
-    static void Unpremultiply(byte[] px, int c)
+    internal static void Unpremultiply(byte[] px, int c)
     {
         for (int p = 0; p < px.Length; p += c)
         {

@@ -16,6 +16,12 @@ public sealed record DynamicOption(string Key, params DynamicInput[] Inputs);
 /// <summary>An input inside a dynamic combo option: a widget, or a socket when it has no widget.</summary>
 public sealed record DynamicInput(string Name, SocketType Type, WidgetSpec? Widget = null, bool Required = true, string? Tooltip = null)
 {
+    /// <summary>ComfyUI's MatchType socket: the template id it shares with the node's other matching inputs and outputs.</summary>
+    public string? MatchTemplate { get; init; }
+
+    public static DynamicInput MatchType(string name, string template, bool required = true, string? tooltip = null) =>
+        new(name, SocketType.Any, null, required, tooltip) { MatchTemplate = template };
+
     public static DynamicInput Int(string name, long @default = 0, double? min = null, double? max = null, double step = 1, string? tooltip = null) =>
         new(name, SocketType.Int, new WidgetSpec(WidgetKind.Int) { Default = @default, Min = min, Max = max, Step = step }, Tooltip: tooltip);
 

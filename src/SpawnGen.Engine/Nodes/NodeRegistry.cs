@@ -13,6 +13,9 @@ public sealed record NodeOutputs(object?[] Values, UiOutput? Ui)
 {
     public IReadOnlyList<object?>[]? Lists { get; init; }
 
+    /// <summary>Nodes this node added to the running prompt (ComfyUI's expand); its outputs may be links into them.</summary>
+    public NodeExpansion? Expansion { get; init; }
+
     /// <summary>Every value of output <paramref name="index"/>.</summary>
     public IReadOnlyList<object?> List(int index) => Lists is not null ? Lists[index] : [Values[index]];
 }
@@ -29,7 +32,7 @@ public sealed class ExecutionBlocker(string? message = null)
 /// <summary>A node type: its schema plus how to invoke it.</summary>
 public sealed class RegisteredNode
 {
-    internal enum ParamKind { Input, Context, CancellationToken, Services }
+    internal enum ParamKind { Input, Context, CancellationToken, Services, Extra }
 
     internal sealed record ParamBinding(ParameterInfo Info, ParamKind Kind, string? InputName)
     {
@@ -43,6 +46,8 @@ public sealed class RegisteredNode
         public Dictionary<string, (string Input, string Key)[]>? DynamicOptions { get; init; }
         /// <summary>For a dynamic combo parameter: the option chosen when the prompt names none.</summary>
         public string? DynamicDefault { get; init; }
+        /// <summary>For the <see cref="ExtraInputsAttribute"/> parameter: the inputs the schema lists (the others are extra).</summary>
+        public HashSet<string>? Known { get; init; }
     }
 
     internal Type Type { get; init; } = default!;
@@ -51,6 +56,7 @@ public sealed class RegisteredNode
     internal Type[] OutputTypes { get; init; } = default!;
     internal bool ReturnsTuple { get; init; } = default!;
     internal int UiIndex { get; init; } = default!;
+    internal int ExpansionIndex { get; init; } = -1;
     internal Type ResultType { get; init; } = default!;
     internal MethodInfo? LazyCheck { get; init; }
     internal ParamBinding[] LazyParams { get; init; } = [];
@@ -106,6 +112,9 @@ public sealed class RegisteredNode
                 case ParamKind.Context: args[i] = context; break;
                 case ParamKind.CancellationToken: args[i] = context.CancellationToken; break;
                 case ParamKind.Services: args[i] = context.Services; break;
+                case ParamKind.Extra:
+                    args[i] = inputs.Where(kv => !p.Known!.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+                    break;
                 default:
                     if (p.Members is { } members)
                     {
@@ -114,7 +123,9 @@ public sealed class RegisteredNode
                     }
                     if (p.DynamicOptions is { } options)
                     {
-                        var key = inputs.TryGetValue(p.InputName!, out var chosen) && chosen is string s ? s : p.DynamicDefault!;
+                        // A list node receives the choice as a list of one.
+                        inputs.TryGetValue(p.InputName!, out var chosen);
+                        var key = chosen as string ?? (chosen as IReadOnlyList<object?> is { Count: > 0 } chosenList ? chosenList[0] as string : null) ?? p.DynamicDefault!;
                         var values = new Dictionary<string, object?>(StringComparer.Ordinal);
                         if (options.TryGetValue(key, out var optionInputs))
                             foreach (var (input, name) in optionInputs)
@@ -201,12 +212,14 @@ public sealed class RegisteredNode
             : new List<object?> { ret };
         var values = new List<object?>(elements.Count);
         UiOutput? ui = null;
+        NodeExpansion? expansion = null;
         for (var i = 0; i < elements.Count; i++)
         {
             if (i == UiIndex) ui = elements[i] as UiOutput;
+            else if (i == ExpansionIndex) expansion = elements[i] as NodeExpansion;
             else values.Add(elements[i]);
         }
-        return new NodeOutputs([.. values], ui);
+        return new NodeOutputs([.. values], ui) { Expansion = expansion };
     }
 
     static List<object?> Enumerate(ITuple tuple)
@@ -281,13 +294,14 @@ public sealed class NodeRegistry
             Id = node.Schema.Id, DisplayName = node.Schema.DisplayName, Category = node.Schema.Category, Description = node.Schema.Description,
             Inputs = node.Schema.Inputs.Select(i => i.Name == input ? i with { Widget = widget } : i).ToList(),
             Outputs = node.Schema.Outputs, IsOutputNode = node.Schema.IsOutputNode, AlwaysExecute = node.Schema.AlwaysExecute, FrontendOnly = node.Schema.FrontendOnly,
-            InputIsList = node.Schema.InputIsList, DynamicCombos = node.Schema.DynamicCombos,
+            InputIsList = node.Schema.InputIsList, DynamicCombos = node.Schema.DynamicCombos, LoopBoundary = node.Schema.LoopBoundary,
+            AcceptAllInputs = node.Schema.AcceptAllInputs, CacheWhen = node.Schema.CacheWhen, DevOnly = node.Schema.DevOnly,
         };
         _nodes[nodeId] = new RegisteredNode
         {
             LazyCheck = node.LazyCheck, LazyParams = node.LazyParams,
             Schema = schema, IsRemote = node.IsRemote, Type = node.Type, Method = node.Method, Params = node.Params, OutputTypes = node.OutputTypes,
-            ReturnsTuple = node.ReturnsTuple, UiIndex = node.UiIndex, ResultType = node.ResultType,
+            ReturnsTuple = node.ReturnsTuple, UiIndex = node.UiIndex, ExpansionIndex = node.ExpansionIndex, ResultType = node.ResultType,
         };
         return old.Widget;
     }
@@ -331,6 +345,7 @@ public sealed class NodeRegistry
             if (p.ParameterType == typeof(NodeContext)) { bindings.Add(new(p, RegisteredNode.ParamKind.Context, null)); continue; }
             if (p.ParameterType == typeof(CancellationToken)) { bindings.Add(new(p, RegisteredNode.ParamKind.CancellationToken, null)); continue; }
             if (p.ParameterType == typeof(IServiceProvider)) { bindings.Add(new(p, RegisteredNode.ParamKind.Services, null)); continue; }
+            if (p.GetCustomAttribute<ExtraInputsAttribute>() is not null) { bindings.Add(new(p, RegisteredNode.ParamKind.Extra, null)); continue; }
 
             var ia = p.GetCustomAttribute<InputAttribute>();
             var name = ia?.Name ?? ToSnakeCase(p.Name!);
@@ -354,7 +369,7 @@ public sealed class NodeRegistry
                 foreach (var n in order)
                     inputs.Add(new InputSpec($"{name}.{n}", nested[n].Spec.Type, Required: false, nested[n].Spec.Widget, nested[n].Spec.Tooltip)
                     {
-                        DynamicParent = name, DynamicOptions = nested[n].Options, Optional = !nested[n].Spec.Required,
+                        DynamicParent = name, DynamicOptions = nested[n].Options, Optional = !nested[n].Spec.Required, MatchTemplate = nested[n].Spec.MatchTemplate,
                     });
                 dynamicCombos[name] = options.ToDictionary(o => o.Key, o => (IReadOnlyList<string>)o.Inputs.Select(i => $"{name}.{i.Name}").ToList(), StringComparer.Ordinal);
                 bindings.Add(new(p, RegisteredNode.ParamKind.Input, name)
@@ -379,12 +394,19 @@ public sealed class NodeRegistry
             var element = inputIsList ? ListElementType(p.ParameterType)
                 ?? throw new InvalidOperationException($"Node '{id}' takes whole lists (InputIsList): parameter '{p.Name}' must be a list such as IReadOnlyList<T>.") : null;
             var valueType = element ?? p.ParameterType;
-            inputs.Add(new InputSpec(name, ia?.Type is { } declared ? new SocketType(declared) : ia?.Color == true ? new SocketType("COLOR") : SocketTypes.FromClr(valueType), Required: !p.HasDefaultValue,
-                Widget: BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip) { Aliases = ia?.Aliases ?? [], Lazy = ia?.Lazy ?? false, Optional = ia?.Optional ?? false });
+            var socket = ia?.MatchType is not null ? SocketType.Any : ia?.Type is { } declared ? new SocketType(declared) : ia?.Color == true ? new SocketType("COLOR") : SocketTypes.FromClr(valueType);
+            inputs.Add(new InputSpec(name, socket, Required: !p.HasDefaultValue,
+                Widget: ia?.MatchType is not null || ia?.ForceInput == true ? null : BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip)
+            {
+                Aliases = ia?.Aliases ?? [], Lazy = ia?.Lazy ?? false, Optional = ia?.Optional ?? false, MatchTemplate = ia?.MatchType, ForceInput = ia?.ForceInput ?? false,
+            });
             bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { ElementType = element });
         }
         var dup = inputs.GroupBy(i => i.Name).FirstOrDefault(g => g.Count() > 1);
         if (dup is not null) throw new InvalidOperationException($"Node '{id}' declares input '{dup.Key}' twice.");
+        var known = inputs.Select(i => i.Name).ToHashSet(StringComparer.Ordinal);
+        for (int b = 0; b < bindings.Count; b++)
+            if (bindings[b].Kind == RegisteredNode.ParamKind.Extra) bindings[b] = bindings[b] with { Known = known };
 
         // Return type -> outputs. Unwrap Task/ValueTask, then flatten a value-tuple; a UiOutput element is not a socket.
         var returnType = method.ReturnType;
@@ -403,16 +425,20 @@ public sealed class NodeRegistry
 
         var outputs = new List<OutputSpec>();
         var uiIndex = -1;
+        var expansionIndex = -1;
         for (var i = 0; i < elementTypes.Length; i++)
         {
             if (elementTypes[i] == typeof(UiOutput)) { uiIndex = i; continue; }
+            if (elementTypes[i] == typeof(NodeExpansion)) { expansionIndex = i; continue; }
             var isList = attr?.OutputIsList is { } flags && outputs.Count < flags.Length && flags[outputs.Count];
             var clr = isList ? ListElementType(elementTypes[i])
                 ?? throw new InvalidOperationException($"Node '{id}': output {outputs.Count} is a list output (OutputIsList) and must return a list such as IReadOnlyList<T>.") : elementTypes[i];
-            var socket = attr?.OutputTypes is { } types && outputs.Count < types.Length && types[outputs.Count] is { } declaredType ? new SocketType(declaredType) : SocketTypes.FromClr(clr);
+            var match = attr?.OutputMatchTypes is { } matches && outputs.Count < matches.Length ? matches[outputs.Count] : null;
+            var socket = match is not null ? SocketType.Any
+                : attr?.OutputTypes is { } types && outputs.Count < types.Length && types[outputs.Count] is { } declaredType ? new SocketType(declaredType) : SocketTypes.FromClr(clr);
             var given = tupleNames is not null && i < tupleNames.Count ? tupleNames[i] : null;
             var named = attr?.OutputNames is { } outputNames && outputs.Count < outputNames.Length ? outputNames[outputs.Count] : null;
-            outputs.Add(new OutputSpec(named ?? (given is null ? socket.Name : ToSnakeCase(given)), socket) { IsList = isList });
+            outputs.Add(new OutputSpec(named ?? (given is null ? socket.Name : ToSnakeCase(given)), socket) { IsList = isList, MatchTemplate = match });
         }
 
         // An optional CheckLazyStatus method (same parameter names as Execute) says which lazy inputs the node needs.
@@ -440,6 +466,10 @@ public sealed class NodeRegistry
             FrontendOnly = attr?.FrontendOnly ?? false,
             InputIsList = inputIsList,
             DynamicCombos = dynamicCombos,
+            LoopBoundary = attr?.LoopBoundary,
+            AcceptAllInputs = attr?.AcceptAllInputs ?? false,
+            CacheWhen = attr?.CacheWhen,
+            DevOnly = attr?.DevOnly ?? false,
         };
 
         return new RegisteredNode
@@ -453,6 +483,7 @@ public sealed class NodeRegistry
             OutputTypes = elementTypes,
             ReturnsTuple = returnsTuple,
             UiIndex = uiIndex,
+            ExpansionIndex = expansionIndex,
             ResultType = returnType,
         };
     }

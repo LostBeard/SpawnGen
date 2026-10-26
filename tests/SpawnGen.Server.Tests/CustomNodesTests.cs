@@ -109,6 +109,25 @@ public class CustomNodesTests
     }
 
     [Test]
+    public async Task Match_type_force_input_and_dev_only_read_back_from_the_catalogue()
+    {
+        var info = JsonNode.Parse(await _http.GetStringAsync("/object_info"))!.AsObject();
+        var start = NodeSchemaJson.FromObjectInfo(info).Single(s => s.Id == "StartLoop");
+        // The List mode's socket is a MatchType input that still belongs to its dynamic combo option.
+        var list = start.FindInput("mode.list")!;
+        Assert.That((list.MatchTemplate, list.DynamicParent, list.Widget), Is.EqualTo(("list_item", (string?)"mode", (WidgetSpec?)null)));
+        Assert.That(list.DynamicOptions, Is.EqualTo(new[] { "List" }));
+        Assert.That(start.FindInput("initial_iteration_value")!.MatchTemplate, Is.EqualTo("carried_value"));
+        var parent = start.FindInput("parent_iteration")!;
+        Assert.That((parent.ForceInput, parent.Widget), Is.EqualTo((true, (WidgetSpec?)null)));
+        Assert.That(start.Outputs.Select(o => o.MatchTemplate), Is.EqualTo(new string?[] { null, null, null, "list_item", "carried_value" }));
+        Assert.That(start.Outputs[4].Type, Is.EqualTo(SocketType.Any));
+        var iteration = NodeSchemaJson.FromObjectInfo(info).Single(s => s.Id == "LoopIteration");
+        Assert.That(iteration.DevOnly, Is.True);
+        Assert.That(NodeSchemaJson.FromObjectInfo(info).Single(s => s.Id == "EndLoop").DevOnly, Is.False);
+    }
+
+    [Test]
     public void A_remote_node_can_be_placed_and_validated_but_is_not_run_here()
     {
         var schema = NodeSchemaJson.FromObjectInfo(JsonNode.Parse("""

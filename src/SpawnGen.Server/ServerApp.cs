@@ -283,22 +283,32 @@ public static class ServerApp
                 ["input"] = input,
                 ["input_order"] = inputOrder,
                 ["input_is_list"] = s.InputIsList,
-                ["output"] = new JsonArray(s.Outputs.Select(o => (JsonNode)o.Type.Name).ToArray()),
+                ["output"] = new JsonArray(s.Outputs.Select(o => (JsonNode)(o.MatchTemplate is null ? o.Type.Name : MatchTypeName)).ToArray()),
                 ["output_is_list"] = new JsonArray(s.Outputs.Select(o => (JsonNode)o.IsList).ToArray()),
                 ["output_name"] = new JsonArray(s.Outputs.Select(o => (JsonNode)o.Name).ToArray()),
+                ["output_matchtypes"] = s.Outputs.Any(o => o.MatchTemplate is not null) ? new JsonArray(s.Outputs.Select(o => (JsonNode?)o.MatchTemplate).ToArray()) : null,
                 ["name"] = s.Id, ["display_name"] = s.DisplayName, ["description"] = s.Description ?? "",
-                ["category"] = s.Category, ["output_node"] = s.IsOutputNode,
+                ["category"] = s.Category, ["output_node"] = s.IsOutputNode, ["dev_only"] = s.DevOnly,
             };
         }
         return root;
     }
 
+    /// <summary>ComfyUI's type name for a MatchType socket; its config carries the template.</summary>
+    const string MatchTypeName = "COMFY_MATCHTYPE_V3";
+
     static JsonArray InputEntry(InputSpec i)
     {
         var config = new JsonObject();
         if (i.Lazy) config["lazy"] = true;
+        if (i.ForceInput) config["forceInput"] = true;
         if (i.Group is { } group) { config["autogrow_group"] = group; config["autogrow_min"] = i.GroupMin; }
         if (i.DynamicParent is { } parent) { config["dynamic_parent"] = parent; config["dynamic_options"] = new JsonArray(i.DynamicOptions.Select(o => (JsonNode)o).ToArray()); }
+        if (i.MatchTemplate is { } template)
+        {
+            config["template"] = new JsonObject { ["template_id"] = template, ["allowed_types"] = "*" };
+            return new JsonArray(MatchTypeName, config);
+        }
         if (i.Widget is not { } w) return config.Count > 0 ? new JsonArray(i.Type.Name, config) : new JsonArray(i.Type.Name);
         if (w.Default is { } d) config["default"] = JsonSerializer.SerializeToNode(d);
         if (w.Min is { } min) config["min"] = min;

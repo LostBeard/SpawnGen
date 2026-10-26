@@ -1,0 +1,512 @@
+{
+ "simple_carry_accumulate": {
+  "graph": {
+   "1": {
+    "class_type": "StartLoop",
+    "inputs": {
+     "mode": "simple",
+     "cache_iterations": false,
+     "mode.num_iterations": 4,
+     "initial_iteration_value": [
+      "2",
+      0
+     ]
+    }
+   },
+   "2": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+     "value": 1
+    }
+   },
+   "3": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+     "expression": "a*10 + b",
+     "values.a": [
+      "1",
+      0
+     ],
+     "values.b": [
+      "1",
+      4
+     ]
+    }
+   },
+   "4": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": true,
+     "output_value": [
+      "3",
+      1
+     ],
+     "next_iteration_value": [
+      "3",
+      1
+     ]
+    }
+   },
+   "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "4",
+      0
+     ]
+    }
+   }
+  },
+  "comfy": {
+   "texts": {
+    "5": [
+     "1",
+     "11",
+     "31",
+     "61"
+    ]
+   },
+   "ran_outputs": [
+    "5"
+   ]
+  }
+ },
+ "for_last": {
+  "graph": {
+   "1": {
+    "class_type": "StartLoop",
+    "inputs": {
+     "mode": "For",
+     "cache_iterations": false,
+     "mode.start_iteration_index": 2,
+     "mode.max_iteration": 10,
+     "mode.step": 3
+    }
+   },
+   "3": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+     "expression": "a*a",
+     "values.a": [
+      "1",
+      0
+     ]
+    }
+   },
+   "4": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": false,
+     "output_value": [
+      "3",
+      1
+     ]
+    }
+   },
+   "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "4",
+      0
+     ]
+    }
+   }
+  },
+  "comfy": {
+   "texts": {
+    "5": [
+     "64"
+    ]
+   },
+   "ran_outputs": [
+    "5"
+   ]
+  }
+ },
+ "list_items": {
+  "graph": {
+   "11": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+     "value": 3
+    }
+   },
+   "12": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+     "value": 4
+    }
+   },
+   "13": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+     "value": 7
+    }
+   },
+   "10": {
+    "class_type": "CreateList",
+    "inputs": {
+     "inputs.input0": [
+      "11",
+      0
+     ],
+     "inputs.input1": [
+      "12",
+      0
+     ],
+     "inputs.input2": [
+      "13",
+      0
+     ]
+    }
+   },
+   "1": {
+    "class_type": "StartLoop",
+    "inputs": {
+     "mode": "List",
+     "cache_iterations": false,
+     "mode.list": [
+      "10",
+      0
+     ]
+    }
+   },
+   "3": {
+    "class_type": "StringFormat",
+    "inputs": {
+     "f_string": "{a}-{b}",
+     "values.a": [
+      "1",
+      3
+     ],
+     "values.b": [
+      "1",
+      0
+     ]
+    }
+   },
+   "4": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": true,
+     "output_value": [
+      "3",
+      0
+     ]
+    }
+   },
+   "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "4",
+      0
+     ]
+    }
+   }
+  },
+  "comfy": {
+   "texts": {
+    "5": [
+     "3-0",
+     "4-1",
+     "7-2"
+    ]
+   },
+   "ran_outputs": [
+    "5"
+   ]
+  }
+ },
+ "nested": {
+  "graph": {
+   "1": {
+    "class_type": "StartLoop",
+    "inputs": {
+     "mode": "simple",
+     "cache_iterations": false,
+     "mode.num_iterations": 2
+    }
+   },
+   "6": {
+    "class_type": "StartLoop",
+    "inputs": {
+     "mode": "simple",
+     "cache_iterations": false,
+     "mode.num_iterations": 3,
+     "parent_iteration": [
+      "1",
+      0
+     ]
+    }
+   },
+   "7": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+     "expression": "a*10 + b",
+     "values.a": [
+      "1",
+      0
+     ],
+     "values.b": [
+      "6",
+      0
+     ]
+    }
+   },
+   "8": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": true,
+     "output_value": [
+      "7",
+      1
+     ]
+    }
+   },
+   "4": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": true,
+     "output_value": [
+      "8",
+      0
+     ]
+    }
+   },
+   "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "4",
+      0
+     ]
+    }
+   }
+  },
+  "comfy": {
+   "texts": {
+    "5": [
+     "0",
+     "1",
+     "2",
+     "10",
+     "11",
+     "12"
+    ]
+   },
+   "ran_outputs": [
+    "5"
+   ]
+  }
+ },
+ "termination": {
+  "graph": {
+   "1": {
+    "class_type": "StartLoop",
+    "inputs": {
+     "mode": "simple",
+     "cache_iterations": false,
+     "mode.num_iterations": 3
+    }
+   },
+   "3": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+     "expression": "a + 100",
+     "values.a": [
+      "1",
+      0
+     ]
+    }
+   },
+   "6": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "3",
+      1
+     ]
+    }
+   },
+   "4": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": false,
+     "output_value": [
+      "3",
+      1
+     ],
+     "terminations.termination0": [
+      "6",
+      0
+     ]
+    }
+   },
+   "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "4",
+      0
+     ]
+    }
+   }
+  },
+  "comfy": {
+   "texts": {
+    "5": [
+     "102"
+    ]
+   },
+   "ran_outputs": [
+    "5"
+   ]
+  }
+ },
+ "zero_iterations": {
+  "graph": {
+   "1": {
+    "class_type": "StartLoop",
+    "inputs": {
+     "mode": "For",
+     "cache_iterations": false,
+     "mode.start_iteration_index": 2,
+     "mode.max_iteration": 2,
+     "mode.step": 3
+    }
+   },
+   "3": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+     "expression": "a*a",
+     "values.a": [
+      "1",
+      0
+     ]
+    }
+   },
+   "4": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": false,
+     "output_value": [
+      "3",
+      1
+     ]
+    }
+   },
+   "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "4",
+      0
+     ]
+    }
+   }
+  },
+  "comfy": {
+   "texts": {
+    "5": [
+     "None"
+    ]
+   },
+   "ran_outputs": [
+    "5"
+   ]
+  }
+ },
+ "end_without_start": {
+  "graph": {
+   "2": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+     "value": 1
+    }
+   },
+   "4": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": false,
+     "output_value": [
+      "2",
+      0
+     ]
+    }
+   },
+   "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "4",
+      0
+     ]
+    }
+   }
+  },
+  "comfy": {
+   "errors": {
+    "4": "loop_end_without_start"
+   }
+  }
+ },
+ "escape": {
+  "graph": {
+   "1": {
+    "class_type": "StartLoop",
+    "inputs": {
+     "mode": "simple",
+     "cache_iterations": false,
+     "mode.num_iterations": 2
+    }
+   },
+   "3": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+     "expression": "a + 1",
+     "values.a": [
+      "1",
+      0
+     ]
+    }
+   },
+   "6": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "3",
+      1
+     ]
+    }
+   },
+   "4": {
+    "class_type": "EndLoop",
+    "inputs": {
+     "accumulate": false,
+     "output_value": [
+      "3",
+      1
+     ]
+    }
+   },
+   "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+     "source": [
+      "4",
+      0
+     ]
+    }
+   }
+  },
+  "comfy": {
+   "errors": {
+    "1": "loop_escape",
+    "4": "loop_escape",
+    "6": "loop_escape"
+   }
+  }
+ }
+}

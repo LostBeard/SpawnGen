@@ -26,7 +26,27 @@ public sealed class NodeAttribute(string? id = null) : Attribute
     public string[]? OutputNames { get; init; }
     /// <summary>Socket types of the outputs in order, where the CLR type does not say it (a string that is a COLOR); null entries keep the derived type.</summary>
     public string?[]? OutputTypes { get; init; }
+    /// <summary>ComfyUI's MatchType outputs in order: the template id an output takes its type from (any type until linked), null for an ordinary output.</summary>
+    public string?[]? OutputMatchTypes { get; init; }
+    /// <summary>ComfyUI's loop_boundary: "start" (Start Loop) or "end" (End Loop). Validation pairs them and finds each loop's body.</summary>
+    public string? LoopBoundary { get; init; }
+    /// <summary>ComfyUI's accept_all_inputs: inputs the schema does not list are evaluated too and passed to an <see cref="ExtraInputsAttribute"/> parameter.</summary>
+    public bool AcceptAllInputs { get; init; }
+    /// <summary>
+    /// The node may be served from the cache only when this boolean input is true; otherwise it always runs (ComfyUI's fingerprint_inputs returning NaN unless the
+    /// input asks for reuse).
+    /// </summary>
+    public string? CacheWhen { get; init; }
+    /// <summary>ComfyUI's dev_only: an internal node (one that only expansions create); the editor does not offer it.</summary>
+    public bool DevOnly { get; init; }
 }
+
+/// <summary>
+/// Receives, on a node with <see cref="NodeAttribute.AcceptAllInputs"/>, every input its schema does not list (name to value; to the whole list for an
+/// <see cref="NodeAttribute.InputIsList"/> node). Declare it <c>IReadOnlyDictionary&lt;string, object?&gt;</c>.
+/// </summary>
+[AttributeUsage(AttributeTargets.Parameter)]
+public sealed class ExtraInputsAttribute : Attribute { }
 
 /// <summary>Widget and socket hints for an <c>Execute</c> parameter. Unset numeric hints use <see cref="double.NaN"/>.</summary>
 [AttributeUsage(AttributeTargets.Parameter)]
@@ -63,6 +83,10 @@ public sealed class InputAttribute : Attribute
     public bool Color { get; init; }
     /// <summary>The widget's default when the parameter cannot carry one itself (a list parameter of an <see cref="NodeAttribute.InputIsList"/> node).</summary>
     public object? Default { get; init; }
+    /// <summary>ComfyUI's MatchType input: the template id it shares with other inputs and outputs (any type until a link decides it).</summary>
+    public string? MatchType { get; init; }
+    /// <summary>ComfyUI's forceInput: a primitive input (INT, FLOAT, ...) that is a socket only, with no widget.</summary>
+    public bool ForceInput { get; init; }
 }
 
 /// <summary>

@@ -1,0 +1,33 @@
+{
+ "1": {
+  "class_type": "LoadImageTextDataSetFromFolder",
+  "inputs": {
+   "folder": "spawngen_dataset_0f2e2861"
+  }
+ },
+ "2": {
+  "class_type": "TextToUppercase",
+  "inputs": {
+   "texts": [
+    "1",
+    1
+   ]
+  }
+ },
+ "3": {
+  "class_type": "SaveImageTextDataSetToFolder",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "texts": [
+    "2",
+    0
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/bad",
+   "filename_prefix": "b",
+   "mode": "overwrite"
+  }
+ }
+}

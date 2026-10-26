@@ -109,6 +109,21 @@ public class CustomNodesTests
     }
 
     [Test]
+    public async Task A_text_socket_without_a_widget_is_listed_as_forceInput_and_reads_back_as_a_socket()
+    {
+        var info = JsonNode.Parse(await _http.GetStringAsync("/object_info"))!.AsObject();
+        // ComfyUI's frontend draws a widget for a STRING input unless it says forceInput.
+        var texts = info["ShuffleImageTextDataset"]!["input"]!["required"]!["texts"]!;
+        Assert.That(((string?)texts[0], (bool?)texts[1]!["forceInput"]), Is.EqualTo(("STRING", (bool?)true)));
+        Assert.That((bool?)info["SaveImageTextDataSetToFolder"]!["input"]!["optional"]!["texts"]![1]!["forceInput"], Is.True);
+        Assert.That(info["TruncateText"]!["input"]!["required"]!["texts"]![1]!["forceInput"], Is.Null, "a text widget");
+
+        var schemas = NodeSchemaJson.FromObjectInfo(info).ToDictionary(s => s.Id);
+        Assert.That(schemas["ShuffleImageTextDataset"].FindInput("texts")!.Widget, Is.Null);
+        Assert.That(schemas["TruncateText"].FindInput("texts")!.Widget!.Kind, Is.EqualTo(WidgetKind.String));
+    }
+
+    [Test]
     public void A_remote_node_can_be_placed_and_validated_but_is_not_run_here()
     {
         var schema = NodeSchemaJson.FromObjectInfo(JsonNode.Parse("""

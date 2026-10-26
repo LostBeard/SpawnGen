@@ -1,0 +1,24 @@
+{
+ "1": {
+  "class_type": "LoadImageTextDataSetFromFolder",
+  "inputs": {
+   "folder": "spawngen_dataset_0f2e2861"
+  }
+ },
+ "2": {
+  "class_type": "SaveImageTextDataSetToFolder",
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ],
+   "texts": [
+    "1",
+    1
+   ],
+   "folder_name": "spawngen_dataset_ref_0f2e2861/inc",
+   "filename_prefix": "image",
+   "mode": "increment"
+  }
+ }
+}

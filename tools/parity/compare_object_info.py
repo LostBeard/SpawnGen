@@ -8,7 +8,8 @@ import json, sys
 from collections import Counter
 
 FILE_COMBOS = {"ckpt_name", "vae_name", "lora_name", "clip_name", "clip_name1", "clip_name2", "clip_name3", "clip_name4", "unet_name", "image", "audio",
-               "video", "model_name", "control_net_name", "style_model_name", "gligen_name", "upscale_model", "file", "model", "latent", "text_encoder"}
+               "video", "model_name", "control_net_name", "style_model_name", "gligen_name", "upscale_model", "file", "model", "latent", "text_encoder",
+               "folder"}
 
 def inputs(info):
     """Inputs by name. SpawnGen lists an Autogrow group's members (images.image0, ...) and a dynamic combo's option inputs (resize_type.width);
@@ -86,7 +87,8 @@ def compare(cid, c, s):
     if [str(x) for x in co] != [str(x) for x in so] and not all(a == b or "*" in (a, b) for a, b in zip(map(str, co), map(str, so))) or len(co) != len(so):
         problems.append(f"outputs: comfy={co} ours={so}")
     if c.get("output_name") != s.get("output_name"): problems.append(f"output names: comfy={c.get('output_name')} ours={s.get('output_name')}")
-    if (c.get("output_is_list") or [False] * len(co)) != (s.get("output_is_list") or [False] * len(so)):
+    # ComfyUI lists None for an output that is not a list output (its text dataset nodes): the same as False.
+    if [bool(x) for x in c.get("output_is_list") or [False] * len(co)] != [bool(x) for x in s.get("output_is_list") or [False] * len(so)]:
         problems.append(f"output_is_list: comfy={c.get('output_is_list')} ours={s.get('output_is_list')}")
     return problems
 

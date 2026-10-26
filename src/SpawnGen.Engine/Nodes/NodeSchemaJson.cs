@@ -63,7 +63,7 @@ public static class NodeSchemaJson
         if (entry[0] is JsonArray options)
             return new InputSpec(name, SocketType.String, required, new WidgetSpec(WidgetKind.Combo) { Options = options.Select(o => (string)o!).ToList(), Default = options.Count > 0 ? (string?)options[0] : null });
         var type = (string)entry[0]!;
-        if (config is null) return new InputSpec(name, new SocketType(type), required);
+        if (config is null || config["forceInput"] is JsonValue force && force.TryGetValue<bool>(out var forced) && forced) return new InputSpec(name, new SocketType(type), required);
         var kind = type switch { "INT" => WidgetKind.Int, "FLOAT" => WidgetKind.Float, "BOOLEAN" => WidgetKind.Boolean, "STRING" => WidgetKind.String, "COLOR" => WidgetKind.Color, _ => (WidgetKind?)null };
         if (kind is null) return new InputSpec(name, new SocketType(type), required);
         return new InputSpec(name, new SocketType(type), required, new WidgetSpec(kind.Value)

@@ -61,6 +61,11 @@ public sealed class InputAttribute : Attribute
     public bool Optional { get; init; }
     /// <summary>A COLOR widget for a string parameter ("#rrggbb", ComfyUI's colour picker; default "#ffffff"). It has no socket, as in ComfyUI.</summary>
     public bool Color { get; init; }
+    /// <summary>
+    /// ComfyUI's <c>force_input</c>: a socket and no widget, even for text or a number. With <see cref="Type"/> "STRING" on an <c>object</c> parameter
+    /// (a STRING socket that takes whatever value comes, as Python does) this is what keeps it a socket: without it that parameter gets a text widget.
+    /// </summary>
+    public bool ForceInput { get; init; }
     /// <summary>The widget's default when the parameter cannot carry one itself (a list parameter of an <see cref="NodeAttribute.InputIsList"/> node).</summary>
     public object? Default { get; init; }
 }

@@ -490,6 +490,11 @@ public sealed class NodeRegistry
         var def = p.HasDefaultValue && p.DefaultValue is not DBNull ? p.DefaultValue : ia?.Default;
         double? Opt(double? v) => v is null || double.IsNaN(v.Value) ? null : v;
 
+        if (ia?.ForceInput == true) return null;
+
+        // A STRING input that takes any value (a node whose Python takes a list as well as text): a text widget, the value is passed on as it comes.
+        if (t == typeof(object) && ia?.Type == "STRING") return new WidgetSpec(WidgetKind.String) { Multiline = ia.Multiline, Default = def ?? "" };
+
         if (t.IsEnum)
             return new WidgetSpec(WidgetKind.Combo)
             {

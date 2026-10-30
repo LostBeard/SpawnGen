@@ -282,9 +282,112 @@ public class ComfyUIRenderParityTests
         Assert.That(diff, Is.LessThan(0.03 * scale));
     }
 
+    /// <summary>
+    /// SD 1.5 with a UNet patch node between the model and the sampler (run_comfy.py --patch): FreeU and FreeU_V2 at ComfyUI's defaults and
+    /// Perturbed-Attention Guidance at scale 3, against ComfyUI's renders of the same graph (euler, 10 steps, cfg 7.5).
+    /// </summary>
+    [TestCase("FreeU", "euler_freeu")]
+    [TestCase("FreeU_V2", "euler_freeu2")]
+    [TestCase("PerturbedAttentionGuidance", "euler_pag")]
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
+    public async Task SD15_with_a_UNet_patch_gives_ComfyUIs_result(string patch, string result)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: result, patches: [(patch, [])]);
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// The SD 1.5 inpainting UNet (stable-diffusion-v1-5/stable-diffusion-inpainting's unet/diffusion_pytorch_model.fp16.safetensors as
+    /// &lt;models&gt;/diffusion_models/sd15_inpainting_unet.fp16.safetensors, through Load Diffusion Model; CLIP and VAE from the SD 1.5 checkpoint) with
+    /// InpaintModelConditioning of ComfyUI's apple picture and an oval mask (noise_mask off), against ComfyUI's render (run_comfy.py --inpaint): checks the
+    /// 9-channel input (the mask and the masked picture's latent).
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors, diffusion_models/sd15_inpainting_unet.fp16.safetensors) and a GPU.")]
+    public async Task SD15_inpainting_model_gives_ComfyUIs_result()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: "euler_inpaint",
+            inpaint: ("sd15_inpainting_unet.fp16.safetensors", "inpaint_picture.png", "inpaint_mask.png"));
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// ModelMergeSimple and CLIPMergeSimple at ratio 0.5: SD 1.5's checkpoint with a second, separately loaded copy of its parts (Load Diffusion Model
+    /// sd15_unet, Load CLIP sd15_clip_l) that carries the LCM-LoRA, against ComfyUI's render of the same graph (run_comfy.py --merge; euler, 6 steps, cfg 2).
+    /// The merged weights are the checkpoint's plus half the LoRA, blended on the GPU by the library.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (the SD 1.5 checkpoint and split files, loras/lcm-lora-sdv1-5.safetensors) and a GPU.")]
+    public async Task SD15_merged_with_a_LoRA_copy_gives_ComfyUIs_result()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        CheckpointCatalog.ScanLoraFiles(root!);
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 6, 2.0, result: "euler_merge",
+            merge: ("sd15_unet.safetensors", "sd15_clip_l.safetensors", "lcm-lora-sdv1-5.safetensors", 0.5));
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
+    /// Save Checkpoint after the merge above, then the saved file loaded as a checkpoint and sampled plainly: it must give ComfyUI's merged result, so the file
+    /// holds the merged UNet and CLIP (and the VAE) under names the loader reads back. The file is written to &lt;models&gt;/checkpoints and deleted afterwards.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (the SD 1.5 checkpoint and split files, loras/lcm-lora-sdv1-5.safetensors), 2 GB free there, and a GPU.")]
+    public async Task A_saved_merged_checkpoint_loads_back_as_the_merge()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        CheckpointCatalog.ScanLoraFiles(root!);
+        ModelFolders.Scan(root!);
+        var prefix = "checkpoints/spawngen_merge_test_" + Guid.NewGuid().ToString("N")[..8];
+        var saved = Path.Combine(root!, prefix + "_00001_.safetensors");
+        try
+        {
+            using (var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders)))
+            {
+                var executor = new PromptExecutor(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly),
+                    new Services(runtime, new OutputOptions { Directory = root! }));
+                var g = new PromptGraph();
+                g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "v1-5-pruned-emaonly.safetensors"));
+                g.Add("14", "UNETLoader", ("unet_name", "sd15_unet.safetensors"), ("weight_dtype", "default"));
+                g.Add("15", "CLIPLoader", ("clip_name", "sd15_clip_l.safetensors"), ("type", "stable_diffusion"));
+                g.Add("16", "LoraLoader", ("model", PromptInput.Link("14")), ("clip", PromptInput.Link("15")), ("lora_name", "lcm-lora-sdv1-5.safetensors"),
+                    ("strength_model", 1.0), ("strength_clip", 1.0));
+                g.Add("17", "ModelMergeSimple", ("model1", PromptInput.Link("1")), ("model2", PromptInput.Link("16")), ("ratio", 0.5));
+                g.Add("18", "CLIPMergeSimple", ("clip1", PromptInput.Link("1", 1)), ("clip2", PromptInput.Link("16", 1)), ("ratio", 0.5));
+                g.Add("19", "CheckpointSave", ("model", PromptInput.Link("17")), ("clip", PromptInput.Link("18")), ("vae", PromptInput.Link("1", 2)),
+                    ("filename_prefix", prefix));
+                await executor.ExecuteAsync(g);
+            }
+            Assert.That(File.Exists(saved), $"Save Checkpoint wrote {saved}");
+            TestContext.Out.WriteLine($"saved {new FileInfo(saved).Length / 1e9:F2} GB");
+            CheckpointCatalog.ScanCheckpointFiles(root!);
+            using var reloaded = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+            var (diff, scale) = await RunAsync(reloaded, Path.GetFileName(prefix) + "_00001_.safetensors", "euler", "comfyui_sd15", 6, 2.0, result: "euler_merge");
+            Assert.That(diff, Is.LessThan(0.03 * scale));
+        }
+        finally
+        {
+            if (File.Exists(saved)) File.Delete(saved);
+        }
+    }
+
     static async Task<(double Diff, double Scale)> RunAsync(MlRuntime runtime, string checkpoint, string sampler, string fixture, int steps, double cfg,
         string? lora = null, string? result = null, Func<PromptGraph, (PromptInput Model, PromptInput Clip, PromptInput Vae)>? load = null, string? picture = null,
-        IReadOnlyList<(string Name, string Hint, double Strength, double Start, double End)>? controlNets = null)
+        IReadOnlyList<(string Name, string Hint, double Strength, double Start, double End)>? controlNets = null,
+        IReadOnlyList<(string Node, (string Name, object Value)[] Inputs)>? patches = null, (string Unet, string Picture, string Mask)? inpaint = null,
+        (string Unet, string Clip, string Lora, double Ratio)? merge = null)
     {
         var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", fixture);
         var outDir = Path.Combine(Path.GetTempPath(), "spawngen-comfy-parity-" + Guid.NewGuid().ToString("N"));
@@ -309,6 +412,17 @@ public class ComfyUIRenderParityTests
                 g.Add("9", "LoraLoader", ("model", model), ("clip", clip), ("lora_name", lora), ("strength_model", 1.0), ("strength_clip", 1.0));
                 (model, clip) = (PromptInput.Link("9"), PromptInput.Link("9", 1));
             }
+            // With --merge: a second copy of the parts with the LoRA, merged into the model and the CLIP (as run_comfy.py builds it).
+            if (merge is { } m)
+            {
+                g.Add("14", "UNETLoader", ("unet_name", m.Unet), ("weight_dtype", "default"));
+                g.Add("15", "CLIPLoader", ("clip_name", m.Clip), ("type", "stable_diffusion"));
+                g.Add("16", "LoraLoader", ("model", PromptInput.Link("14")), ("clip", PromptInput.Link("15")), ("lora_name", m.Lora),
+                    ("strength_model", 1.0), ("strength_clip", 1.0));
+                g.Add("17", "ModelMergeSimple", ("model1", model), ("model2", PromptInput.Link("16")), ("ratio", m.Ratio));
+                g.Add("18", "CLIPMergeSimple", ("clip1", clip), ("clip2", PromptInput.Link("16", 1)), ("ratio", m.Ratio));
+                (model, clip) = (PromptInput.Link("17"), PromptInput.Link("18"));
+            }
             g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", clip));
             g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", clip));
             g.Add("4", "LoadLatent", ("latent", "start.latent"));
@@ -326,6 +440,23 @@ public class ComfyUIRenderParityTests
                 g.Add(apply, "ControlNetApplyAdvanced", ("positive", positive), ("negative", negative), ("control_net", PromptInput.Link(loader)),
                     ("image", PromptInput.Link(hint)), ("strength", cn.Strength), ("start_percent", cn.Start), ("end_percent", cn.End));
                 (positive, negative) = (PromptInput.Link(apply), PromptInput.Link(apply, 1));
+            }
+            // With --inpaint: the inpainting UNet samples, with InpaintModelConditioning's mask and masked picture (as run_comfy.py builds it).
+            if (inpaint is { } ip)
+            {
+                g.Add("10", "UNETLoader", ("unet_name", ip.Unet), ("weight_dtype", "default"));
+                g.Add("11", "LoadImage", ("image", ip.Picture));
+                g.Add("12", "LoadImageMask", ("image", ip.Mask), ("channel", "red"));
+                g.Add("13", "InpaintModelConditioning", ("positive", positive), ("negative", negative), ("pixels", PromptInput.Link("11")), ("vae", vae),
+                    ("mask", PromptInput.Link("12")), ("noise_mask", false));
+                (model, positive, negative) = (PromptInput.Link("10"), PromptInput.Link("13"), PromptInput.Link("13", 1));
+            }
+            // Patch nodes go between the model and the sampler in order, their other inputs at their defaults unless given.
+            foreach (var (node, inputs) in patches ?? [])
+            {
+                string id = (next++).ToString();
+                g.Add(id, node, [("model", (object)model), .. inputs]);
+                model = PromptInput.Link(id);
             }
             g.Add("5", "KSamplerAdvanced", ("model", model), ("add_noise", "disable"), ("noise_seed", 0), ("steps", steps), ("cfg", cfg),
                 ("sampler_name", sampler), ("scheduler", "normal"), ("positive", positive), ("negative", negative),

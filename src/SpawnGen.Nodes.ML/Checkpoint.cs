@@ -6,9 +6,6 @@ using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Nodes.ML;
 
-/// <summary>One LoRA a model or CLIP carries: its file on the model source and how strongly it is merged.</summary>
-public sealed record LoraUse(string Repo, string File, float Strength);
-
 /// <summary>What a text encoder made of one prompt: the context rows the UNet cross-attends to (<c>[1, rows, width]</c>) and, for SDXL, the pooled embedding.</summary>
 public sealed record TextEncoding(float[] Context, int[] Shape, float[]? Pooled);
 
@@ -25,9 +22,7 @@ public sealed class Checkpoint : IDiffusionModel, ITextEncoderModel, IVaeModel, 
     readonly ICheckpointModels _models;
     readonly object _gate = new();
     readonly EmptyPromptCache _emptyPrompt = new();
-    readonly SemaphoreSlim _loraGate = new(1, 1);
-    IReadOnlyList<LoraUse> _unetLoras = [], _clipLoras = [];
-    string _appliedLoras = "";
+    readonly ComponentWeights? _unetWeights, _clipWeights;
 
     internal Checkpoint(string name, ICheckpointModels models, BPETokenizer tokenizer)
     {
@@ -36,6 +31,8 @@ public sealed class Checkpoint : IDiffusionModel, ITextEncoderModel, IVaeModel, 
         Tokenizer = tokenizer;
         Sigmas = ModelSigmas.LinearSchedule(); // ComfyUI's float64 table (the library's alphas are float32 products, about 1e-5 off)
         Sampling = new ModelSampling(Sigmas, models.Prediction);
+        if (models.UNet is { } unet) _unetWeights = ComponentWeights.For(unet, models.Source);
+        if (models.TextEncoder is { } te) _clipWeights = ComponentWeights.For(te, models.Source);
     }
 
     public string Name { get; }
@@ -64,62 +61,33 @@ public sealed class Checkpoint : IDiffusionModel, ITextEncoderModel, IVaeModel, 
         _models.EncodeAsync(ids, ids2, layer, cancellationToken);
 
     /// <summary>
-    /// The empty prompt's encoding at a layer, computed once per layer and CLIP LoRA set: the baseline weighted prompts are measured against. Call it while the
-    /// CLIP's LoRAs are merged (<see cref="UseLorasAsync"/>).
+    /// The empty prompt's encoding at a layer, computed once per layer and CLIP weight steps: the baseline weighted prompts are measured against. Call it while the
+    /// CLIP's steps are in (<see cref="ITextEncoderModel.UseWeightsAsync"/>).
     /// </summary>
-    public Task<TextEncoding> EmptyPromptAsync(int? layer = null, IReadOnlyList<LoraUse>? clipLoras = null) =>
-        _emptyPrompt.GetAsync(this, layer ?? DefaultClipLayer, clipLoras ?? []);
+    public Task<TextEncoding> EmptyPromptAsync(int? layer = null, IReadOnlyList<WeightStep>? clipWeights = null) =>
+        _emptyPrompt.GetAsync(this, layer ?? DefaultClipLayer, clipWeights ?? []);
 
-    Task<TextEncoding> ITextEncoderModel.EmptyPromptAsync(int? layer, IReadOnlyList<LoraUse> loras) => EmptyPromptAsync(layer, loras);
-    Task IDiffusionModel.UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) => UseLorasAsync(loras, null, cancellationToken);
-    Task ITextEncoderModel.UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) => UseLorasAsync(null, loras, cancellationToken);
+    Task<TextEncoding> ITextEncoderModel.EmptyPromptAsync(int? layer, IReadOnlyList<WeightStep> weights) => EmptyPromptAsync(layer, weights);
 
-    /// <summary>
-    /// Merges the LoRAs a model (<paramref name="unet"/>) or a CLIP (<paramref name="clip"/>) carries into the weights, keeping the other part's set (null = keep).
-    /// The merged set is replaced only when it changes; the library restores the original weights first, so the handles that come into a node never change
-    /// (ComfyUI's model.clone()). Nodes run one at a time, so a sampling run or an encode always sees the set it asked for.
-    /// </summary>
-    internal async Task UseLorasAsync(IReadOnlyList<LoraUse>? unet, IReadOnlyList<LoraUse>? clip, CancellationToken cancellationToken = default)
-    {
-        await _loraGate.WaitAsync(cancellationToken);
-        try
-        {
-            var u = unet ?? _unetLoras;
-            var c = clip ?? _clipLoras;
-            string key = LoraKey(u, c);
-            if (key != _appliedLoras)
-            {
-                _appliedLoras = "?"; // unknown until the merge finishes: a failed merge is redone next time
-                await _models.SetLorasAsync(CombineLoras(u, c), cancellationToken);
-                _appliedLoras = key;
-            }
-            _unetLoras = u;
-            _clipLoras = c;
-        }
-        finally
-        {
-            _loraGate.Release();
-        }
-    }
+    /// <summary>The UNet as SpawnDev.ILGPU.ML's Stable Diffusion code loaded it (null for an ONNX export).</summary>
+    public SdUNet? UNet => _models.UNet;
+    /// <summary>The text encoder(s) as SpawnDev.ILGPU.ML's Stable Diffusion code loaded them (null for an ONNX export).</summary>
+    public SdTextEncoder? TextEncoder => _models.TextEncoder;
+    /// <summary>The VAE as SpawnDev.ILGPU.ML's Stable Diffusion code loaded it (null for an ONNX export).</summary>
+    public SdVae? SdVae => _models.Vae;
+    /// <summary>The single file the checkpoint was loaded from (null for an ONNX export): Save Checkpoint writes it with its current weights.</summary>
+    internal SdCheckpoint? File => _models.File;
 
-    /// <summary>One entry per LoRA file in order of first use: its UNet strength (the model's uses summed) and its text-encoder strength (the CLIP's uses summed).</summary>
-    internal static List<(string Repo, string File, float Strength, float ClipStrength)> CombineLoras(IReadOnlyList<LoraUse> unet, IReadOnlyList<LoraUse> clip)
-    {
-        var combined = new List<(string Repo, string File, float Strength, float ClipStrength)>();
-        void Add(LoraUse l, bool isClip)
-        {
-            int i = combined.FindIndex(e => e.Repo == l.Repo && e.File == l.File);
-            if (i < 0) { combined.Add((l.Repo, l.File, 0f, 0f)); i = combined.Count - 1; }
-            var e = combined[i];
-            combined[i] = isClip ? e with { ClipStrength = e.ClipStrength + l.Strength } : e with { Strength = e.Strength + l.Strength };
-        }
-        foreach (var l in unet) Add(l, false);
-        foreach (var l in clip) Add(l, true);
-        return combined;
-    }
+    // The UNet's and the text encoder's steps are kept apart, as ComfyUI keeps a MODEL's and a CLIP's patches apart.
+    Task IDiffusionModel.UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) =>
+        UseAsync(_unetWeights, weights, cancellationToken);
+    Task ITextEncoderModel.UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) =>
+        UseAsync(_clipWeights, weights, cancellationToken);
 
-    static string LoraKey(IReadOnlyList<LoraUse> unet, IReadOnlyList<LoraUse> clip) =>
-        string.Join(";", CombineLoras(unet, clip).Select(e => $"{e.Repo}/{e.File}:{e.Strength:R}:{e.ClipStrength:R}"));
+    static Task UseAsync(ComponentWeights? component, IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) =>
+        component is not null ? component.UseAsync(weights, cancellationToken)
+        : weights.Count == 0 ? Task.CompletedTask
+        : throw new NotSupportedException("LoRAs and merges change single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
 
     /// <summary>Starts a sampling run on the UNet; dispose it when the run ends (it frees the run's GPU buffers).</summary>
     public UNetRun BeginRun(Accelerator accelerator) => _models.BeginRun(accelerator);
@@ -168,7 +136,8 @@ public sealed class Checkpoint : IDiffusionModel, ITextEncoderModel, IVaeModel, 
     public void Dispose()
     {
         _models.Dispose();
-        _loraGate.Dispose();
+        _unetWeights?.Dispose();
+        _clipWeights?.Dispose();
     }
 }
 
@@ -180,10 +149,13 @@ public abstract class UNetRun : IDisposable
 {
     /// <summary>
     /// One prediction (eps or v, as the model was trained) for <paramref name="input"/> [4, h, w] in the model's space at <paramref name="timestep"/>, with the
-    /// ControlNets active for this call (null or empty = none).
+    /// ControlNets active for this call (null or empty = none), the UNet options of the call (FreeU, PAG's perturbed pass) and, for an inpainting model,
+    /// the extra input channels [<see cref="ConcatChannels"/>, h, w].
     /// </summary>
     public abstract Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
-        CancellationToken cancellationToken);
+        UNetOptions options, float[]? concat, CancellationToken cancellationToken);
+    /// <summary>Extra input channels the UNet takes besides the latent (5 for an inpainting model: the mask and the masked picture's latent); 0 for most.</summary>
+    public virtual int ConcatChannels => 0;
     public abstract void Dispose();
 }
 
@@ -197,8 +169,14 @@ internal interface ICheckpointModels : IDisposable
     UNetRun BeginRun(Accelerator accelerator);
     Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken);
     Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken);
-    /// <summary>Merges exactly these LoRAs (an empty list removes every LoRA), replacing the set merged before.</summary>
-    Task SetLorasAsync(IReadOnlyList<(string Repo, string File, float Strength, float ClipStrength)> loras, CancellationToken cancellationToken);
+    /// <summary>The UNet and text encoder(s) as SpawnDev.ILGPU.ML's Stable Diffusion code loaded them, for LoRAs and merges (null for an ONNX export).</summary>
+    SdUNet? UNet { get; }
+    SdTextEncoder? TextEncoder { get; }
+    SdVae? Vae { get; }
+    /// <summary>The single file it was loaded from, for Save Checkpoint (null for an ONNX export).</summary>
+    SdCheckpoint? File { get; }
+    /// <summary>Where LoRA files are read from.</summary>
+    SpawnDev.ILGPU.ML.Hub.IModelSource Source { get; }
 }
 
 /// <summary>The denoiser (UNet) of a loaded checkpoint, with the sampling math constants.</summary>
@@ -215,11 +193,11 @@ public sealed class ModelHandle(IDiffusionModel model, ModelSampling sampling)
     public LatentFormat LatentFormat => Model?.LatentFormat ?? LatentFormat.SD15;
     /// <summary>The guidance patches (RescaleCFG, CFGNorm, APG, ...) sampling applies, ComfyUI's model_options.</summary>
     public ModelPatches Patches { get; init; } = ModelPatches.None;
-    /// <summary>The LoRAs merged into the UNet while this model samples (Load LoRA adds to a copy).</summary>
-    public IReadOnlyList<LoraUse> Loras { get; init; } = [];
+    /// <summary>The LoRAs and merges put into the UNet while this model samples, in order (Load LoRA and the merge nodes add to a copy).</summary>
+    public IReadOnlyList<WeightStep> Weights { get; init; } = [];
 
     /// <summary>A copy with other patches: patch nodes never change the model that came in, like ComfyUI's model.clone().</summary>
-    public ModelHandle WithPatches(Func<ModelPatches, ModelPatches> change) => new(Model, Sampling) { Patches = change(Patches), Loras = Loras };
+    public ModelHandle WithPatches(Func<ModelPatches, ModelPatches> change) => new(Model, Sampling) { Patches = change(Patches), Weights = Weights };
 }
 
 /// <summary>The CLIP text encoder(s) and tokenizer of a loaded checkpoint, and the layer prompts are read from.</summary>
@@ -230,8 +208,8 @@ public sealed class ClipHandle(ITextEncoderModel encoder)
     public ITextEncoderModel Encoder { get; } = encoder;
     /// <summary>CLIP Set Last Layer's choice (-1 the last layer, -2 the penultimate, ...); null = the model family's default.</summary>
     public int? Layer { get; init; }
-    /// <summary>The LoRAs merged into the text encoder(s) while this CLIP encodes (Load LoRA adds to a copy).</summary>
-    public IReadOnlyList<LoraUse> Loras { get; init; } = [];
+    /// <summary>The LoRAs and merges put into the text encoder(s) while this CLIP encodes, in order (Load LoRA and the merge nodes add to a copy).</summary>
+    public IReadOnlyList<WeightStep> Weights { get; init; } = [];
 }
 
 /// <summary>The VAE of a loaded checkpoint.</summary>

@@ -62,9 +62,9 @@ public sealed class CLIPTextEncode
         while (chunksL.Count < chunksG.Count) chunksL = [.. chunksL, emptyChunk];
         while (chunksG.Count < chunksL.Count) chunksG = [.. chunksG, emptyChunk];
 
-        await ckpt.UseLorasAsync(clip.Loras, cancellationToken);
+        await ckpt.UseWeightsAsync(clip.Weights, cancellationToken);
         bool weighted = chunksL.Concat(chunksG).Any(c => c.Weights.Any(w => w != 1f));
-        float[]? empty = weighted ? (await ckpt.EmptyPromptAsync(clip.Layer, clip.Loras)).Context : null;
+        float[]? empty = weighted ? (await ckpt.EmptyPromptAsync(clip.Layer, clip.Weights)).Context : null;
         var contexts = new List<float[]>();
         float[]? pooled = null;
         int width = 0;

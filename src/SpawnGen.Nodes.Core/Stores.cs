@@ -16,6 +16,17 @@ public interface IResultStore
     Task<ResultFile> SaveAsync(string type, string prefix, byte[] data, string extension);
 
     /// <summary>
+    /// Stores a result too big to hold as one array (a model file): <paramref name="write"/> writes it front to back. A store that keeps files in memory gets
+    /// the bytes; <see cref="DiskResultStore"/> streams them to the file.
+    /// </summary>
+    async Task<ResultFile> SaveStreamAsync(string type, string prefix, string extension, Func<Stream, Task> write)
+    {
+        using var buffer = new MemoryStream();
+        await write(buffer);
+        return await SaveAsync(type, prefix, buffer.ToArray(), extension);
+    }
+
+    /// <summary>
     /// The names in a results folder (a relative "a/b" path, "" for the top), files and folders, as Python's <c>os.listdir</c> gives them; null when
     /// there is no such folder. Save Image (to Folder) numbers its files from these.
     /// </summary>
@@ -165,6 +176,33 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
             File.WriteAllBytes(Path.Combine(dir, name), png);
         }
         return Task.FromResult(new ResultFile(name, subfolder, type));
+    }
+
+    /// <summary>The file's name is taken (an empty file under the next number) before it is written, so a long write never races another save.</summary>
+    public async Task<ResultFile> SaveStreamAsync(string type, string prefix, string extension, Func<Stream, Task> write)
+    {
+        var (subfolder, prefixName) = SavePrefix.Split(prefix);
+        string dir = Path.Combine(Root(type), subfolder);
+        Directory.CreateDirectory(dir);
+        FileStream file;
+        string name;
+        lock (_gate)
+        {
+            name = type == "temp"
+                ? $"{prefixName}_{Guid.NewGuid().ToString("N")[..10]}.{extension}"
+                : $"{prefixName}_{NextCounter(dir, prefixName, extension):D5}_.{extension}";
+            file = new FileStream(Path.Combine(dir, name), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20, useAsync: true);
+        }
+        try
+        {
+            await using (file) await write(file);
+        }
+        catch
+        {
+            File.Delete(Path.Combine(dir, name)); // no half-written model left behind
+            throw;
+        }
+        return new ResultFile(name, subfolder, type);
     }
 
     string Root(string type) => type == "temp" ? options.TempDirectory : options.Directory;

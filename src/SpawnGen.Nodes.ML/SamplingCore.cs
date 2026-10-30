@@ -42,8 +42,8 @@ internal static class SamplingCore
         int steps = sigmas.Length - 1, h = latent.Height, w = latent.Width, perImage = Checkpoint.LatentChannels * h * w;
         if (sigmas.Length == 0) return (latent, latent); // nothing to sample; a single sigma only noises the latent, as in ComfyUI
 
-        // The model's LoRAs are merged for this run; the embeddings go to the GPU once per run, not once per step.
-        await ckpt.UseLorasAsync(guider.Model.Loras, context.CancellationToken);
+        // The model's weight steps (LoRAs, merges) are put in for this run; the embeddings go to the GPU once per run, not once per step.
+        await ckpt.UseWeightsAsync(guider.Model.Weights, context.CancellationToken);
         // The old Apply ControlNet's controls reach the other conditionings at sampling time (ComfyUI's apply_empty_x_to_equal_area on 'control').
         var positive = guider.Conditionings.First();
         var filled = guider.Conditionings.Skip(1).Distinct(ReferenceEqualityComparer.Instance).Cast<Conditioning>()
@@ -72,13 +72,21 @@ internal static class SamplingCore
                 var x = sampling.NoiseScaling(sigmas[0], noise, original, maxDenoise);
                 float[]? lastDenoised = null; // ComfyUI's x0_output: the last callback's estimate, else the output itself
 
+                // An inpainting model takes the mask and the masked picture as extra input channels, per conditioning entry (ComfyUI's concat_cond).
+                var concats = new Dictionary<CondEntry, float[]>(ReferenceEqualityComparer.Instance);
+                int concatItem = b;
+                Func<CondEntry, float[]?> concat = unet.ConcatChannels == 0 ? _ => null : e =>
+                {
+                    if (!concats.TryGetValue(e, out var c)) concats[e] = c = InpaintConcat(e, original, latent.NoiseMask, format, concatItem, latent.Batch, h, w);
+                    return c;
+                };
                 var guidance = new GuidanceRun(guider, Checkpoint.LatentChannels, h, w, Samplers.DisablesCfg1Optimization(settings.Sampler)) { BatchIndex = b, BatchSize = latent.Batch };
                 int item = b;
 
                 Task<float[]> Denoise(float[] sample, float sigma) =>
                     InpaintedCall(sample, sigma, mask, guider.Model.Patches.DenoiseMask, runSigmas, sampling, original, inpaintNoise, h * w,
                         input => guidance.PredictAsync(input, sigma,
-                            (cond, scheduled) => GuidedAsync(Filled(cond).Entries, input, sigma, sampling, unet, h, w, scheduled, item, context.CancellationToken)));
+                            (cond, scheduled, options) => GuidedAsync(Filled(cond).Entries, input, sigma, sampling, unet, h, w, scheduled, options, concat, item, context.CancellationToken)));
 
                 x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise,
                     new Samplers.NoiseSource(itemSeed ^ 0x5EED, Checkpoint.LatentChannels, h, w),
@@ -127,7 +135,7 @@ internal static class SamplingCore
     /// 1e-37, so pixels no entry covers come out 0. <paramref name="scheduled"/> false ignores the entries' timestep ranges.
     /// </summary>
     static async Task<float[]> GuidedAsync(IReadOnlyList<CondEntry> entries, float[] x, double sigma, ModelSampling sampling, UNetRun unet,
-        int h, int w, bool scheduled, int batchIndex, CancellationToken cancellationToken)
+        int h, int w, bool scheduled, UNetOptions options, Func<CondEntry, float[]?> concat, int batchIndex, CancellationToken cancellationToken)
     {
         int plane = h * w, perImage = Checkpoint.LatentChannels * plane;
         var active = entries.Where(e => !scheduled || IsActive(e, sigma, sampling)).ToList();
@@ -136,7 +144,7 @@ internal static class SamplingCore
         var input = sampling.CalculateInput(sigma, x);
         float timestep = sampling.Timestep(sigma);
         async Task<float[]> Predict(CondEntry e) =>
-            sampling.CalculateDenoised(sigma, await unet.PredictAsync(input, h, w, timestep, e, Controls(e, sigma, sampling, batchIndex, h, w), cancellationToken), x);
+            sampling.CalculateDenoised(sigma, await unet.PredictAsync(input, h, w, timestep, e, Controls(e, sigma, sampling, batchIndex, h, w), options, concat(e), cancellationToken), x);
 
         if (active.Count == 1 && active[0].Area is null && active[0].Mask is null && active[0].Strength != 0f)
             return await Predict(active[0]); // the common case: one plain prompt (strength cancels in the blend)
@@ -158,6 +166,53 @@ internal static class SamplingCore
         for (int i = 0; i < plane; i++)
             for (int c = 0; c < Checkpoint.LatentChannels; c++) sum[c * plane + i] /= weightSum[i];
         return sum;
+    }
+
+    /// <summary>
+    /// ComfyUI's BaseModel.concat_cond for an inpainting model (concat keys mask, masked_image) for picture <paramref name="item"/> of a batch of
+    /// <paramref name="batch"/>: the mask rounded to 0 / 1 at the latent's size (InpaintModelConditioning's concat_mask, else the latent's noise mask), then
+    /// the masked picture's latent in the model's values (InpaintModelConditioning's, else the latent being sampled). Without any mask the whole picture is
+    /// repainted from a blank one.
+    /// </summary>
+    internal static float[] InpaintConcat(CondEntry e, float[] latentImage, MaskBatch? noiseMask, LatentFormat format, int item, int batch, int h, int w)
+    {
+        int plane = h * w, ch = Checkpoint.LatentChannels;
+        var r = new float[(1 + ch) * plane];
+        float[]? mask;
+        if (e.ConcatMask is { } cm)
+        {
+            int n = cm.Height * cm.Width, slot = BatchSlot(cm.Batch, batch, item);
+            var one = cm.Data[(slot * n)..((slot + 1) * n)];
+            mask = cm.Height == h && cm.Width == w ? one : TorchInterpolate.CommonUpscale(one, 1, 1, cm.Height, cm.Width, w, h, "bilinear", "center").Data;
+        }
+        else mask = ResizedMask(noiseMask, item, h, w);
+        if (mask is null)
+        {
+            Array.Fill(r, 1f, 0, plane);
+            // "Zero" in pixel space translated to SD's latent space (ComfyUI's blank_inpaint_image_like).
+            float[] blank = [0.8223f, -0.6876f, 0.6364f, 0.1380f];
+            for (int c = 0; c < ch; c++) Array.Fill(r, blank[c], (1 + c) * plane, plane);
+            return r;
+        }
+        for (int i = 0; i < plane; i++) r[i] = MathF.Round(mask[i]); // torch.round: half to even
+        var image = latentImage;
+        if (e.ConcatLatent is { } cl)
+        {
+            int n = cl.Channels * cl.Height * cl.Width, slot = BatchSlot(cl.Batch, batch, item);
+            image = format.ProcessIn(cl.Data[(slot * n)..((slot + 1) * n)]);
+            if (cl.Height != h || cl.Width != w) image = TorchInterpolate.CommonUpscale(image, 1, cl.Channels, cl.Height, cl.Width, w, h, "bilinear", "center").Data;
+        }
+        Array.Copy(image, 0, r, plane, ch * plane);
+        return r;
+    }
+
+    /// <summary>Which of <paramref name="count"/> pictures fills slot <paramref name="index"/> of a batch of <paramref name="batch"/> (ComfyUI's resize_to_batch_size).</summary>
+    internal static int BatchSlot(int count, int batch, int index)
+    {
+        if (count == batch) return index;
+        if (batch <= 1) return 0;
+        if (batch < count) return Math.Min((int)Math.Round(index * ((count - 1) / (double)(batch - 1)), MidpointRounding.ToEven), count - 1);
+        return Math.Min((int)Math.Floor((index + 0.5) * (count / (double)batch)), count - 1);
     }
 
     /// <summary>The ControlNets of an entry's chain active at this sigma, with their hints for this picture.</summary>

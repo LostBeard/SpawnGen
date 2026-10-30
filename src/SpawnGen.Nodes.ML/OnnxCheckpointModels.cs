@@ -55,19 +55,24 @@ internal sealed class OnnxCheckpointModels : ICheckpointModels
 
     public UNetRun BeginRun(Accelerator accelerator) => new Run(Unet, accelerator);
 
-    public Task SetLorasAsync(IReadOnlyList<(string Repo, string File, float Strength, float ClipStrength)> loras, CancellationToken cancellationToken) =>
-        loras.Count == 0 ? Task.CompletedTask
-            : throw new NotSupportedException("LoRAs are merged into single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
+    // An ONNX export has no weights SpawnGen can patch: LoRAs and merges need a .safetensors checkpoint.
+    SpawnDev.ILGPU.ML.StableDiffusion.SdUNet? ICheckpointModels.UNet => null;
+    SpawnDev.ILGPU.ML.StableDiffusion.SdTextEncoder? ICheckpointModels.TextEncoder => null;
+    SpawnDev.ILGPU.ML.StableDiffusion.SdVae? ICheckpointModels.Vae => null;
+    SpawnDev.ILGPU.ML.StableDiffusion.SdCheckpoint? ICheckpointModels.File => null;
+    SpawnDev.ILGPU.ML.Hub.IModelSource ICheckpointModels.Source => _runtime.ModelSource;
 
     sealed class Run(InferenceSession unet, Accelerator acc) : UNetRun
     {
         readonly Dictionary<CondEntry, (MemoryBuffer1D<float, Stride1D.Dense> Buffer, Tensor Tensor)> _uploaded = new(ReferenceEqualityComparer.Instance);
 
         public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
-            CancellationToken cancellationToken)
+            UNetOptions options, float[]? concat, CancellationToken cancellationToken)
         {
             if (controls is { Count: > 0 })
                 throw new NotSupportedException("ControlNets steer single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
+            if (!options.IsNone)
+                throw new NotSupportedException("FreeU and Perturbed-Attention Guidance patch single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
             if (!_uploaded.TryGetValue(entry, out var cond))
                 _uploaded[entry] = cond = GpuHelpers.Upload(acc, entry.Embeddings, entry.Shape);
             var (sampleBuf, sampleTensor) = GpuHelpers.Upload(acc, input, [1, Checkpoint.LatentChannels, h, w]);

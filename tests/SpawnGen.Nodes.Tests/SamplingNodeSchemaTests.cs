@@ -151,7 +151,7 @@ public class SamplingNodeSchemaTests
         var patched = new CFGOverride().Execute(new CFGOverride().Execute(model, 1, 0, 1), 4, 0, 0.5);
         var pos = new Conditioning(new float[4], [1, 1, 4]);
         var neg = new Conditioning(new float[4], [1, 1, 4]);
-        Task<float[]> Eval(Conditioning c, bool scheduled) => Task.FromResult(c == pos ? new[] { 1f } : new[] { 0f });
+        Task<float[]> Eval(Conditioning c, bool scheduled, UNetOptions options) => Task.FromResult(c == pos ? new[] { 1f } : new[] { 0f });
         var run = new GuidanceRun(new CfgGuider(patched, pos, neg, 7), 1, 1, 1, false);
         double early = sampling.PercentToSigma(0.2), late = sampling.PercentToSigma(0.8);
         Assert.That((await run.PredictAsync([0f], early, Eval))[0], Is.EqualTo(4f), "first half: the inner override");
@@ -166,7 +166,7 @@ public class SamplingNodeSchemaTests
         var model = new ModelHandle(null!, new ModelSampling(ModelSigmas.LinearSchedule()));
         var pos = new Conditioning(new float[4], [1, 1, 4]);
         int calls = 0;
-        Task<float[]> Eval(Conditioning c, bool scheduled) { calls++; return Task.FromResult(new[] { 0.5f, -0.25f }); }
+        Task<float[]> Eval(Conditioning c, bool scheduled, UNetOptions options) { calls++; return Task.FromResult(new[] { 0.5f, -0.25f }); }
         var run = new GuidanceRun((GuiderChoice)new BasicGuider().Execute(model, pos), 1, 1, 2, samplerDisablesCfg1: true);
         var d = await run.PredictAsync([0f, 0f], 3.0, Eval);
         Assert.That(d, Is.EqualTo(new[] { 0.5f, -0.25f }));

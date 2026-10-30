@@ -8,5 +8,9 @@
   <ItemGroup>
     <ProjectReference Include="..\SpawnGen.Engine\SpawnGen.Engine.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The model-saving nodes write through the same result helpers as Save Image. -->
+    <InternalsVisibleTo Include="SpawnGen.Nodes.ML" />
+  </ItemGroup>
 
 </Project>

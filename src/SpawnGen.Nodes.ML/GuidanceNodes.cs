@@ -173,7 +173,7 @@ public sealed class ModelSamplingContinuousEDM
         };
         return new ModelHandle(model.Model!, new ModelSampling(ModelSigmas.Continuous(sigmaMin, sigmaMax, v: false), prediction, sigmaData))
         {
-            Patches = model.Patches, Loras = model.Loras,
+            Patches = model.Patches, Weights = model.Weights,
         };
     }
 }
@@ -189,7 +189,7 @@ public sealed class ModelSamplingContinuousV
         [Input(Min = 0, Max = 1000, Step = 0.001, Default = 0.03)] double sigmaMin) =>
         new(model.Model!, new ModelSampling(ModelSigmas.Continuous(sigmaMin, sigmaMax, v: true), PredictionType.VPrediction))
         {
-            Patches = model.Patches, Loras = model.Loras,
+            Patches = model.Patches, Weights = model.Weights,
         };
 }
 
@@ -217,6 +217,6 @@ public sealed class ModelSamplingDiscrete
             _ => throw new ArgumentException($"Unknown sampling '{sampling}'. Known: {string.Join(", ", SamplingTypes())}.", nameof(sampling)),
         };
         if (prediction == PredictionType.Lcm) sigmas = sigmas.Distilled();
-        return new ModelHandle(model.Model!, new ModelSampling(sigmas, prediction)) { Patches = model.Patches, Loras = model.Loras };
+        return new ModelHandle(model.Model!, new ModelSampling(sigmas, prediction)) { Patches = model.Patches, Weights = model.Weights };
     }
 }

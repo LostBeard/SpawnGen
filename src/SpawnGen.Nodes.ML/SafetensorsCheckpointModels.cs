@@ -33,13 +33,12 @@ internal sealed class SafetensorsCheckpointModels : ICheckpointModels
 
     public UNetRun BeginRun(Accelerator accelerator) => new SdUNetRun(_ck.UNet!, accelerator);
 
-    public async Task SetLorasAsync(IReadOnlyList<(string Repo, string File, float Strength, float ClipStrength)> loras, CancellationToken cancellationToken)
-    {
-        var report = await _ck.ApplyLorasAsync([.. loras.Select(l => SdLoraSpec.From(_source, l.Repo, l.File, l.Strength, l.ClipStrength))], cancellationToken);
-        // ComfyUI warns about LoRA keys that match nothing (a LoRA made for another model family) and goes on; so does SpawnGen.
-        foreach (var (lora, patched, unmatched) in report.Loras)
-            if (unmatched.Count > 0) Console.WriteLine($"LoRA {lora}: {patched} modules merged, {unmatched.Count} keys matched nothing in this {Family} checkpoint (first: {unmatched[0]})");
-    }
+    public SdUNet? UNet => _ck.UNet;
+    public SdTextEncoder? TextEncoder => _ck.TextEncoder;
+    public SdVae? Vae => _ck.Vae;
+    public SpawnDev.ILGPU.ML.Hub.IModelSource Source => _source;
+    /// <summary>The loaded file (Save Checkpoint writes it back with its current weights).</summary>
+    public SdCheckpoint File => _ck;
 
     public Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken) => _ck.Vae!.DecodeAsync(latent, h, w, cancellationToken);
 
@@ -66,12 +65,14 @@ internal sealed class SafetensorsCheckpointModels : ICheckpointModels
 internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
 {
     readonly Dictionary<CondEntry, Uploaded> _uploaded = new(ReferenceEqualityComparer.Instance);
-    MemoryBuffer1D<float, Stride1D.Dense>? _in, _out;
+    MemoryBuffer1D<float, Stride1D.Dense>? _in, _out, _concat;
+
+    public override int ConcatChannels => unet.ConcatChannels;
 
     sealed record Uploaded(MemoryBuffer1D<float, Stride1D.Dense> Context, int Rows, MemoryBuffer1D<float, Stride1D.Dense>? Label);
 
     public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
-        CancellationToken cancellationToken)
+        UNetOptions options, float[]? concat, CancellationToken cancellationToken)
     {
         var cond = Upload(entry, h, w);
         int n = input.Length;
@@ -97,7 +98,20 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
                 residuals.Add(res);
             }
         }
-        await unet.ForwardAsync(inView, h, w, timestep, cond.Context.View, cond.Rows, cond.Label?.View, outView, residuals, cancellationToken);
+        // The options live on the shared UNet; nodes run one at a time, so setting them per call is enough (and Dispose clears them).
+        unet.FreeU = options.FreeU;
+        unet.PerturbMiddleSelfAttention = options.PerturbMiddleSelfAttention;
+        if (unet.ConcatChannels > 0)
+        {
+            long concatLength = (long)unet.ConcatChannels * h * w;
+            if (concat is null || concat.Length != concatLength)
+                throw new InvalidOperationException($"This inpainting UNet takes {unet.ConcatChannels} extra channels; the call gave {concat?.Length ?? 0} values for {concatLength}.");
+            if (_concat is null || _concat.Length < concatLength) { _concat?.Dispose(); _concat = acc.Allocate1D<float>(concatLength); }
+            var concatView = _concat.View.SubView(0, concatLength);
+            concatView.CopyFromCPU(concat);
+            await unet.ForwardAsync(inView, concatView, h, w, timestep, cond.Context.View, cond.Rows, cond.Label?.View, outView, residuals, cancellationToken);
+        }
+        else await unet.ForwardAsync(inView, h, w, timestep, cond.Context.View, cond.Rows, cond.Label?.View, outView, residuals, cancellationToken);
         await acc.SynchronizeAsync();
         return await _out.CopyToHostAsync(0, outLength);
     }
@@ -142,6 +156,8 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
 
     public override void Dispose()
     {
+        unet.FreeU = null;
+        unet.PerturbMiddleSelfAttention = false;
         foreach (var u in _uploaded.Values) { u.Context.Dispose(); u.Label?.Dispose(); }
         _uploaded.Clear();
         foreach (var b in _hints.Values) b.Dispose();
@@ -150,5 +166,6 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
         _residuals.Clear();
         _in?.Dispose();
         _out?.Dispose();
+        _concat?.Dispose();
     }
 }

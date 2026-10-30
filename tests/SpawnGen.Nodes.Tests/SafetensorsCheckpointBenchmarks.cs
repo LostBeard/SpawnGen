@@ -45,7 +45,7 @@ public class SafetensorsCheckpointBenchmarks
                 for (int i = 0; i < 10; i++)
                 {
                     sw.Restart();
-                    var eps = await run.PredictAsync(latent, h, w, 500f, entry, null, CancellationToken.None);
+                    var eps = await run.PredictAsync(latent, h, w, 500f, entry, null, UNetOptions.None, null, CancellationToken.None);
                     times.Add(sw.Elapsed.TotalMilliseconds);
                     Assert.That(eps.All(float.IsFinite), $"UNet output at {size} is finite");
                 }

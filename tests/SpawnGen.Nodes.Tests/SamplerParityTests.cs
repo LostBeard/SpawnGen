@@ -122,7 +122,7 @@ public class SamplerParityTests
         var run = new GuidanceRun(guider, 2, 3, 4, Samplers.DisablesCfg1Optimization(sampler));
         int calls = 0;
         float[]? lastDenoised = null;
-        Samplers.DenoiseFn model = (x, sigma) => { calls++; return run.PredictAsync(x, sigma, (cond, scheduled) => standIn.Evaluate(cond, scheduled, x, sigma)); };
+        Samplers.DenoiseFn model = (x, sigma) => { calls++; return run.PredictAsync(x, sigma, (cond, scheduled, _) => standIn.Evaluate(cond, scheduled, x, sigma)); };
         var draws = c.GetProperty("draws").EnumerateArray().Select(Floats).ToArray();
         var result = await Samplers.RunAsync(sampler, Floats(c.GetProperty("x")), Floats(c.GetProperty("sigmas")), model, new RecordedNoise(draws),
             uncond: () => run.Last, options: options, sampling: sampling, onDenoised: d => { lastDenoised = d; return Task.CompletedTask; });
@@ -199,7 +199,7 @@ public class SamplerParityTests
             {
                 calls++;
                 return SamplingCore.InpaintedCall(x, sigma, mask, handle.Patches.DenoiseMask, runSigmas, sampling, latent, noise, 12,
-                    input => run.PredictAsync(input, sigma, (cond, scheduled) => standIn.Evaluate(cond, scheduled, input, sigma)));
+                    input => run.PredictAsync(input, sigma, (cond, scheduled, _) => standIn.Evaluate(cond, scheduled, input, sigma)));
             };
             var x0 = sampling.NoiseScaling(sigmas[0], noise, latent, sampling.IsMaxDenoise(sigmas[0]));
             var draws = c.GetProperty("draws").EnumerateArray().Select(Floats).ToArray();

@@ -13,8 +13,10 @@ public interface IDiffusionModel
     LatentFormat LatentFormat { get; }
     /// <summary>The model's own sampling: eps or v prediction over SD's noise levels.</summary>
     ModelSampling Sampling { get; }
-    /// <summary>Merges exactly these LoRAs into the UNet (an empty list removes them).</summary>
-    Task UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken);
+    /// <summary>Puts exactly these LoRAs and merges into the UNet, in order (an empty list gives the file's weights).</summary>
+    Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken);
+    /// <summary>The UNet as SpawnDev.ILGPU.ML's Stable Diffusion code loaded it (null for an ONNX export): what merges and saving work on.</summary>
+    SdUNet? UNet { get; }
     /// <summary>Starts a sampling run; dispose it when the run ends (it frees the run's GPU buffers).</summary>
     UNetRun BeginRun(Accelerator accelerator);
 }
@@ -32,10 +34,12 @@ public interface ITextEncoderModel
     /// SDXL's second tower's prompt when it differs; <paramref name="layer"/> null = the family's default layer.
     /// </summary>
     Task<TextEncoding> EncodeAsync(int[] ids, int[]? ids2 = null, int? layer = null, CancellationToken cancellationToken = default);
-    /// <summary>The empty prompt's encoding at a layer, computed once per layer and LoRA set (call it while those LoRAs are merged).</summary>
-    Task<TextEncoding> EmptyPromptAsync(int? layer, IReadOnlyList<LoraUse> loras);
-    /// <summary>Merges exactly these LoRAs into the text encoder(s) (an empty list removes them).</summary>
-    Task UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken);
+    /// <summary>The empty prompt's encoding at a layer, computed once per layer and weight steps (call it while those steps are in).</summary>
+    Task<TextEncoding> EmptyPromptAsync(int? layer, IReadOnlyList<WeightStep> weights);
+    /// <summary>Puts exactly these LoRAs and merges into the text encoder(s), in order (an empty list gives the file's weights).</summary>
+    Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken);
+    /// <summary>The text encoder(s) as SpawnDev.ILGPU.ML's Stable Diffusion code loaded them (null for an ONNX export).</summary>
+    SdTextEncoder? TextEncoder { get; }
 }
 
 /// <summary>The VAE a VAE socket carries: a checkpoint's, or one loaded alone (Load VAE).</summary>
@@ -46,6 +50,8 @@ public interface IVaeModel
     Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default);
     /// <summary>Encodes a picture [3, H, W] in [-1, 1] (H and W multiples of 8) to the VAE's latent [4, H/8, W/8] (the posterior mean).</summary>
     Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default);
+    /// <summary>The VAE as SpawnDev.ILGPU.ML's Stable Diffusion code loaded it, for Save VAE (null for an ONNX export or a tiny VAE).</summary>
+    SdVae? SdVae { get; }
 }
 
 /// <summary>Per-family facts shared by checkpoints and components loaded alone.</summary>
@@ -71,14 +77,14 @@ internal static class SdFamilies
     public static SdFamily FromUNet(SdUNet unet) => unet.IsXL ? SdFamily.SDXL : unet.ContextDim == 1024 ? SdFamily.SD2 : SdFamily.SD1;
 }
 
-/// <summary>Empty-prompt encodings cached per layer and LoRA set.</summary>
+/// <summary>Empty-prompt encodings cached per layer and weight steps.</summary>
 internal sealed class EmptyPromptCache
 {
     readonly Dictionary<string, Task<TextEncoding>> _cache = new();
 
-    public Task<TextEncoding> GetAsync(ITextEncoderModel encoder, int layer, IReadOnlyList<LoraUse> loras)
+    public Task<TextEncoding> GetAsync(ITextEncoderModel encoder, int layer, IReadOnlyList<WeightStep> weights)
     {
-        string key = layer + "|" + string.Join(";", loras.Select(l => $"{l.Repo}/{l.File}:{l.Strength:R}"));
+        string key = layer + "|" + WeightStep.KeyOf(weights);
         lock (_cache)
         {
             if (!_cache.TryGetValue(key, out var task) || task.IsFaulted || task.IsCanceled)
@@ -88,54 +94,19 @@ internal sealed class EmptyPromptCache
     }
 }
 
-/// <summary>
-/// The LoRA set merged into one component loaded alone: merged again only when it changes (the library restores the original weights first). Nodes run one at a
-/// time, so a sampling run or an encode always sees the set it asked for.
-/// </summary>
-internal sealed class ComponentLoras(SpawnDev.ILGPU.ML.Hub.IModelSource source, Func<IReadOnlyList<SdLoraSpec>, CancellationToken, Task<SdLoraReport>> apply, bool clip)
-    : IDisposable
-{
-    readonly SemaphoreSlim _gate = new(1, 1);
-    string _applied = "";
-
-    public async Task UseAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            string key = string.Join(";", loras.Select(l => $"{l.Repo}/{l.File}:{l.Strength:R}"));
-            if (key == _applied) return;
-            _applied = "?"; // unknown until the merge finishes: a failed merge is redone next time
-            // One entry per file, its uses summed; this component reads Strength (a UNet) or ClipStrength (a text encoder).
-            var specs = loras.GroupBy(l => (l.Repo, l.File)).Select(g =>
-            {
-                float s = g.Sum(l => l.Strength);
-                return SdLoraSpec.From(source, g.Key.Repo, g.Key.File, clip ? 0f : s, clip ? s : 0f);
-            }).ToList();
-            await apply(specs, cancellationToken);
-            _applied = key;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    public void Dispose() => _gate.Dispose();
-}
-
 /// <summary>A UNet loaded alone (Load Diffusion Model): LDM names with or without <c>model.diffusion_model.</c>, or diffusers names.</summary>
 internal sealed class StandaloneDiffusionModel(string name, SdUNet unet, PredictionType prediction, SpawnDev.ILGPU.ML.Hub.IModelSource source)
     : IDiffusionModel, IDisposable
 {
-    readonly ComponentLoras _loras = new(source, unet.ApplyLorasAsync, clip: false);
+    readonly ComponentWeights _weights = ComponentWeights.For(unet, source);
 
     public string Name { get; } = name;
     public SdFamily Family { get; } = SdFamilies.FromUNet(unet);
     public LatentFormat LatentFormat => SdFamilies.LatentFormat(Family);
     public ModelSampling Sampling { get; } = new(ModelSigmas.LinearSchedule(), prediction);
 
-    public Task UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) => _loras.UseAsync(loras, cancellationToken);
+    public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) => _weights.UseAsync(weights, cancellationToken);
+    public SdUNet? UNet => unet;
 
     public UNetRun BeginRun(Accelerator accelerator) => new SdUNetRun(unet, accelerator);
 
@@ -153,7 +124,7 @@ internal sealed class StandaloneDiffusionModel(string name, SdUNet unet, Predict
 
     public void Dispose()
     {
-        _loras.Dispose();
+        _weights.Dispose();
         unet.Dispose();
     }
 }
@@ -163,7 +134,7 @@ internal sealed class StandaloneTextEncoder(string name, SdTextEncoder encoder, 
     : ITextEncoderModel, IDisposable
 {
     readonly EmptyPromptCache _empty = new();
-    readonly ComponentLoras _loras = new(source, encoder.ApplyLorasAsync, clip: true);
+    readonly ComponentWeights _weights = ComponentWeights.For(encoder, source);
 
     public string Name { get; } = name;
     public SdFamily Family { get; } = SdFamilies.FromTextWidth(encoder.Width, encoder.IsXL);
@@ -173,14 +144,15 @@ internal sealed class StandaloneTextEncoder(string name, SdTextEncoder encoder, 
     public Task<TextEncoding> EncodeAsync(int[] ids, int[]? ids2 = null, int? layer = null, CancellationToken cancellationToken = default) =>
         SdFamilies.EncodeAsync(encoder, Family, ids, ids2, layer ?? SdFamilies.DefaultClipLayer(Family), cancellationToken);
 
-    public Task<TextEncoding> EmptyPromptAsync(int? layer, IReadOnlyList<LoraUse> loras) =>
-        _empty.GetAsync(this, layer ?? SdFamilies.DefaultClipLayer(Family), loras);
+    public Task<TextEncoding> EmptyPromptAsync(int? layer, IReadOnlyList<WeightStep> weights) =>
+        _empty.GetAsync(this, layer ?? SdFamilies.DefaultClipLayer(Family), weights);
 
-    public Task UseLorasAsync(IReadOnlyList<LoraUse> loras, CancellationToken cancellationToken) => _loras.UseAsync(loras, cancellationToken);
+    public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) => _weights.UseAsync(weights, cancellationToken);
+    public SdTextEncoder? TextEncoder => encoder;
 
     public void Dispose()
     {
-        _loras.Dispose();
+        _weights.Dispose();
         encoder.Dispose();
     }
 }
@@ -191,6 +163,7 @@ internal sealed class StandaloneTaesd(string name, SdTaesd tae) : IVaeModel, IDi
     public string Name { get; } = name;
     public Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default) => tae.DecodeAsync(latent, h, w, cancellationToken);
     public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default) => tae.EncodeAsync(image, H, W, cancellationToken);
+    public SdVae? SdVae => null;
     public void Dispose() => tae.Dispose();
 }
 
@@ -200,5 +173,6 @@ internal sealed class StandaloneVae(string name, SdVae vae) : IVaeModel, IDispos
     public string Name { get; } = name;
     public Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default) => vae.DecodeAsync(latent, h, w, cancellationToken);
     public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default) => vae.EncodeAsync(image, H, W, cancellationToken);
+    public SdVae? SdVae => vae;
     public void Dispose() => vae.Dispose();
 }

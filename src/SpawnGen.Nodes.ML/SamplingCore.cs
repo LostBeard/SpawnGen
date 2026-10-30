@@ -86,7 +86,9 @@ internal static class SamplingCore
                 Task<float[]> Denoise(float[] sample, float sigma) =>
                     InpaintedCall(sample, sigma, mask, guider.Model.Patches.DenoiseMask, runSigmas, sampling, original, inpaintNoise, h * w,
                         input => guidance.PredictAsync(input, sigma,
-                            (cond, scheduled, options) => GuidedAsync(Filled(cond).Entries, input, sigma, sampling, unet, h, w, scheduled, options, concat, item, context.CancellationToken)));
+                            (cond, scheduled, options) => GuidedAsync(Filled(cond).Entries, input, sigma, sampling, unet, h, w, scheduled, options, concat, item, context.CancellationToken),
+                            (cond, sample, options) => GuidedAsync(Filled(cond).Entries, sample, sigma, sampling, unet, h, w, true, options, concat, item, context.CancellationToken),
+                            unet.ReadMiddleAttentionAsync));
 
                 x = await Samplers.RunAsync(settings.Sampler, x, sigmas, Denoise,
                     new Samplers.NoiseSource(itemSeed ^ 0x5EED, Checkpoint.LatentChannels, h, w),
@@ -143,6 +145,7 @@ internal static class SamplingCore
 
         var input = sampling.CalculateInput(sigma, x);
         float timestep = sampling.Timestep(sigma);
+        options = options.At(sigma);
         async Task<float[]> Predict(CondEntry e) =>
             sampling.CalculateDenoised(sigma, await unet.PredictAsync(input, h, w, timestep, e, Controls(e, sigma, sampling, batchIndex, h, w), options, concat(e), cancellationToken), x);
 

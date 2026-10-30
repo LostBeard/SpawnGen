@@ -19,6 +19,10 @@ public sealed class PatchContext
     public UNetOptions UNet { get; init; } = UNetOptions.None;
     /// <summary>ComfyUI's calc_cond_batch for one conditioning with other UNet options (PAG's perturbed pass): its timestep range applies.</summary>
     public Func<Conditioning, UNetOptions, Task<float[]>> EvaluateWith { get; init; } = (_, _) => throw new NotSupportedException("This context cannot call the model.");
+    /// <summary>ComfyUI's calc_cond_batch for one conditioning at another sample than the step's (SAG's degraded picture), with the run's UNet options.</summary>
+    public Func<Conditioning, float[], Task<float[]>> EvaluateAt { get; init; } = (_, _) => throw new NotSupportedException("This context cannot call the model.");
+    /// <summary>The middle-attention mass the last unconditional pass recorded (SAG; see <see cref="ModelPatches.RecordUncondMiddleAttention"/>), or null.</summary>
+    public Func<Task<float[]?>> ReadMiddleAttention { get; init; } = () => Task.FromResult<float[]?>(null);
 }
 
 /// <summary>
@@ -33,9 +37,22 @@ public sealed record UNetOptions
     public SpawnDev.ILGPU.ML.StableDiffusion.SdFreeU? FreeU { get; init; }
     /// <summary>The middle block's self-attention returns its values unchanged (Perturbed-Attention Guidance's perturbed pass).</summary>
     public bool PerturbMiddleSelfAttention { get; init; }
+    /// <summary>The call keeps the middle block's first self-attention mass for <see cref="PatchContext.ReadMiddleAttention"/> (SAG's unconditional pass).</summary>
+    public bool RecordMiddleSelfAttention { get; init; }
+    /// <summary>HyperTile's tiled self-attention (null = off).</summary>
+    public SpawnDev.ILGPU.ML.StableDiffusion.SdHyperTile? HyperTile { get; init; }
+    /// <summary>Deep shrink and the sigmas it applies between (null = off); <see cref="At"/> drops it outside that window.</summary>
+    public DeepShrinkWindow? DeepShrink { get; init; }
 
     public bool IsNone => this == None;
+
+    /// <summary>The options of a model call at <paramref name="sigma"/>: deep shrink only while sigma_end &lt;= sigma &lt;= sigma_start, as PatchModelAddDownscale checks per call.</summary>
+    public UNetOptions At(double sigma) =>
+        DeepShrink is { } d && !(sigma <= d.SigmaStart && sigma >= d.SigmaEnd) ? this with { DeepShrink = null } : this;
 }
+
+/// <summary>PatchModelAddDownscale's patch and its window: the sigmas of its start and end percent, taken when the node ran, as ComfyUI does.</summary>
+public sealed record DeepShrinkWindow(SpawnDev.ILGPU.ML.StableDiffusion.SdDeepShrink Shrink, double SigmaStart, double SigmaEnd);
 
 /// <summary>ComfyUI's sampler_cfg_function arguments: <c>Cond</c> / <c>Uncond</c> are x minus the denoised estimates; the result r gives the guided estimate x - r.</summary>
 public sealed record CfgFunctionArgs(float[] Cond, float[] Uncond, double CondScale, double Sigma, float[] Input, float[] CondDenoised, float[] UncondDenoised,
@@ -47,6 +64,8 @@ public sealed record PostCfgArgs(float[] Denoised, bool HasCond, bool HasUncond,
 {
     /// <summary>The conditioning the conditional estimate came from (ComfyUI's args["cond"]; PAG evaluates it again).</summary>
     public Conditioning? Cond { get; init; }
+    /// <summary>The conditioning the unconditional estimate came from, null when it was skipped (ComfyUI's args["uncond"]; SAG evaluates it at another sample).</summary>
+    public Conditioning? Uncond { get; init; }
 }
 
 /// <summary>ComfyUI's sampler_pre_cfg_function arguments: the denoised estimate of each conditioning (zero for one not used, see CondsPresent) before they are combined.</summary>
@@ -72,6 +91,11 @@ public sealed record ModelPatches
     public IReadOnlyList<CfgOverride> CfgOverrides { get; init; } = [];
     /// <summary>How the UNet runs on every call (FreeU, ...).</summary>
     public UNetOptions UNet { get; init; } = UNetOptions.None;
+    /// <summary>
+    /// SAG's attention capture: the unconditional pass of each step (ComfyUI's cond_or_uncond 1, the second conditioning of a calc_cond_batch) records the middle
+    /// block's first self-attention mass.
+    /// </summary>
+    public bool RecordUncondMiddleAttention { get; init; }
 
     public ModelPatches WithPreCfg(Func<Func<PreCfgArgs, float[][]>> patch, bool disableCfg1 = false) =>
         this with { PreCfg = [.. PreCfg, patch], DisableCfg1Optimization = DisableCfg1Optimization || disableCfg1 };
@@ -170,7 +194,7 @@ public sealed class PerpNegGuiderChoice(ModelHandle model, Conditioning positive
         }
         var outs = step.ApplyPreCfg([positive, negativeCond, emptyCond], await step.CalcCondBatch(positive, negativeCond, emptyCond), cfg);
         var result = GuidancePatches.PerpNeg(outs[0], outs[1], outs[2], negScale, cfg);
-        return await step.ApplyPostCfg(result, outs[0], outs[1], cfg, positive, negativeCond is not null);
+        return await step.ApplyPostCfg(result, outs[0], outs[1], cfg, positive, negativeCond);
     }
 }
 
@@ -210,7 +234,8 @@ public sealed class GuidanceRun
     /// The guided denoised estimate at <paramref name="x"/>, <paramref name="sigma"/>. <paramref name="evaluate"/> is calc_cond_batch for one conditioning: whether its
     /// timestep range applies, and the UNet options of the call.
     /// </summary>
-    public Task<float[]> PredictAsync(float[] x, double sigma, Func<Conditioning, bool, UNetOptions, Task<float[]>> evaluate)
+    public Task<float[]> PredictAsync(float[] x, double sigma, Func<Conditioning, bool, UNetOptions, Task<float[]>> evaluate,
+        Func<Conditioning, float[], UNetOptions, Task<float[]>>? evaluateAt = null, Func<Task<float[]?>>? readMiddleAttention = null)
     {
         var unet = Guider.Model.Patches.UNet;
         double cfg = Guider.Cfg;
@@ -220,6 +245,8 @@ public sealed class GuidanceRun
         {
             Channels = _channels, Height = _height, Width = _width, Sampling = Guider.Model.Sampling, BatchIndex = BatchIndex, BatchSize = BatchSize,
             EvaluateUnscheduled = c => evaluate(c, false, unet), UNet = unet, EvaluateWith = (c, options) => evaluate(c, true, options),
+            ReadMiddleAttention = readMiddleAttention ?? (() => Task.FromResult<float[]?>(null)),
+            EvaluateAt = evaluateAt is null ? (_, _) => throw new NotSupportedException("This run cannot call the model at another sample.") : (c, sample) => evaluateAt(c, sample, unet),
         });
         return Guider.PredictAsync(step, cfg);
     }
@@ -249,7 +276,10 @@ public sealed class GuidanceStep
     public async Task<float[][]> CalcCondBatch(params Conditioning?[] conds)
     {
         var r = new float[conds.Length][];
-        for (int i = 0; i < conds.Length; i++) r[i] = conds[i] is { } c ? await _evaluate(c, true) : new float[X.Length];
+        for (int i = 0; i < conds.Length; i++)
+            r[i] = conds[i] is not { } c ? new float[X.Length]
+                : i == 1 && _run.Guider.Model.Patches.RecordUncondMiddleAttention ? await Context.EvaluateWith(c, Context.UNet with { RecordMiddleSelfAttention = true })
+                : await _evaluate(c, true);
         return r;
     }
 
@@ -280,14 +310,15 @@ public sealed class GuidanceStep
             result = Samplers.Subtract(X, noise);
         }
         else result = Samplers.Guide(uncondPred, condPred, cfg);
-        return await ApplyPostCfg(result, condPred, uncondPred, cfg, cond, uncond is not null);
+        return await ApplyPostCfg(result, condPred, uncondPred, cfg, cond, uncond);
     }
 
     /// <summary>The post-cfg patches (and the CFG++ capture, which ComfyUI's samplers add as the last post-cfg function).</summary>
-    public async Task<float[]> ApplyPostCfg(float[] denoised, float[] condPred, float[] uncondPred, double cfg, Conditioning? cond, bool hasUncond)
+    public async Task<float[]> ApplyPostCfg(float[] denoised, float[] condPred, float[] uncondPred, double cfg, Conditioning? cond, Conditioning? uncond)
     {
+        bool hasUncond = uncond is not null;
         foreach (var fn in _run.PostCfg)
-            denoised = await fn(new PostCfgArgs(denoised, cond is not null, hasUncond, cfg, condPred, uncondPred, Sigma, X, Context) { Cond = cond });
+            denoised = await fn(new PostCfgArgs(denoised, cond is not null, hasUncond, cfg, condPred, uncondPred, Sigma, X, Context) { Cond = cond, Uncond = uncond });
         _run.Last = new GuidanceOutput(condPred, uncondPred, hasUncond);
         return denoised;
     }

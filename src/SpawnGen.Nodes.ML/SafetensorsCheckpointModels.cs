@@ -101,6 +101,9 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
         // The options live on the shared UNet; nodes run one at a time, so setting them per call is enough (and Dispose clears them).
         unet.FreeU = options.FreeU;
         unet.PerturbMiddleSelfAttention = options.PerturbMiddleSelfAttention;
+        unet.RecordMiddleSelfAttention = options.RecordMiddleSelfAttention;
+        unet.HyperTile = options.HyperTile;
+        unet.DeepShrink = options.DeepShrink?.Shrink;
         if (unet.ConcatChannels > 0)
         {
             long concatLength = (long)unet.ConcatChannels * h * w;
@@ -154,10 +157,15 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
         return uploaded;
     }
 
+    public override Task<float[]?> ReadMiddleAttentionAsync() => unet.ReadMiddleAttentionAsync();
+
     public override void Dispose()
     {
         unet.FreeU = null;
         unet.PerturbMiddleSelfAttention = false;
+        unet.RecordMiddleSelfAttention = false;
+        unet.HyperTile = null;
+        unet.DeepShrink = null;
         foreach (var u in _uploaded.Values) { u.Context.Dispose(); u.Label?.Dispose(); }
         _uploaded.Clear();
         foreach (var b in _hints.Values) b.Dispose();

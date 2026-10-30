@@ -156,6 +156,8 @@ public abstract class UNetRun : IDisposable
         UNetOptions options, float[]? concat, CancellationToken cancellationToken);
     /// <summary>Extra input channels the UNet takes besides the latent (5 for an inpainting model: the mask and the masked picture's latent); 0 for most.</summary>
     public virtual int ConcatChannels => 0;
+    /// <summary>The middle-attention mass of the last call made with <see cref="UNetOptions.RecordMiddleSelfAttention"/> (SAG), or null.</summary>
+    public virtual Task<float[]?> ReadMiddleAttentionAsync() => Task.FromResult<float[]?>(null);
     public abstract void Dispose();
 }
 

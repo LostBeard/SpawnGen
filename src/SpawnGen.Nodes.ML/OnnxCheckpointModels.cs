@@ -72,7 +72,7 @@ internal sealed class OnnxCheckpointModels : ICheckpointModels
             if (controls is { Count: > 0 })
                 throw new NotSupportedException("ControlNets steer single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
             if (!options.IsNone)
-                throw new NotSupportedException("FreeU and Perturbed-Attention Guidance patch single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
+                throw new NotSupportedException("UNet patches (FreeU, PAG, SAG, HyperTile, deep shrink) work on single-file checkpoints; this is an ONNX export. Load the model as a .safetensors checkpoint.");
             if (!_uploaded.TryGetValue(entry, out var cond))
                 _uploaded[entry] = cond = GpuHelpers.Upload(acc, entry.Embeddings, entry.Shape);
             var (sampleBuf, sampleTensor) = GpuHelpers.Upload(acc, input, [1, Checkpoint.LatentChannels, h, w]);

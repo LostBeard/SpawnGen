@@ -283,12 +283,16 @@ public class ComfyUIRenderParityTests
     }
 
     /// <summary>
-    /// SD 1.5 with a UNet patch node between the model and the sampler (run_comfy.py --patch): FreeU and FreeU_V2 at ComfyUI's defaults and
-    /// Perturbed-Attention Guidance at scale 3, against ComfyUI's renders of the same graph (euler, 10 steps, cfg 7.5).
+    /// SD 1.5 with a UNet patch node between the model and the sampler (run_comfy.py --patch): FreeU and FreeU_V2 at ComfyUI's defaults,
+    /// Perturbed-Attention Guidance at scale 3, and Self-Attention Guidance, HyperTile and deep shrink (PatchModelAddDownscale) at ComfyUI's defaults,
+    /// against ComfyUI's renders of the same graph (euler, 10 steps, cfg 7.5).
     /// </summary>
     [TestCase("FreeU", "euler_freeu")]
     [TestCase("FreeU_V2", "euler_freeu2")]
     [TestCase("PerturbedAttentionGuidance", "euler_pag")]
+    [TestCase("SelfAttentionGuidance", "euler_sag")]
+    [TestCase("HyperTile", "euler_hypertile")]
+    [TestCase("PatchModelAddDownscale", "euler_deepshrink")]
     [Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
     public async Task SD15_with_a_UNet_patch_gives_ComfyUIs_result(string patch, string result)
     {

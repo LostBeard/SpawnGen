@@ -14,8 +14,9 @@ public sealed class SaveAnimatedWEBP
 
     /// <summary>
     /// The whole batch as one animated WebP (<c>prefix_00001_.webp</c>), each frame <c>int(1000 / fps)</c> ms, looping, with ComfyUI's EXIF (the prompt in Model,
-    /// the workflow in Make). Encoded on the GPU by SpawnDev.Codecs: lossy is libwebp's WebPAnimEncoder (quality, method default = 4); lossless writes every frame
-    /// whole with its own VP8L coder (the pictures decode exactly; the file is larger than Pillow's). A single picture is saved as a still WebP, as Pillow does.
+    /// the workflow in Make). Encoded on the GPU by SpawnDev.Codecs, which ports libwebp's WebPAnimEncoder for both modes (change rectangles, disposal,
+    /// blending, key frames): lossy matches Pillow's file byte for byte (quality, method default = 4); lossless makes the same frame decisions with its own
+    /// VP8L coder (the pictures decode exactly; the bytes differ). A single picture is saved as a still WebP, as Pillow does.
     /// The pictures are passed on.
     /// </summary>
     public async Task<(ImageBatch Images, UiOutput Ui)> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services,
@@ -38,11 +39,11 @@ public sealed class SaveAnimatedWEBP
         if (lossless)
         {
             using var enc = new WebPLosslessEncoderGpu(accelerator);
-            var options = new WebPAnimationEncodeOptions { Quality = quality, Exif = exif };
+            // Exact = false is libwebp's default (it may change the colour under fully transparent pixels).
             file = frames.Count == 1
-                ? await enc.EncodeAsync(frames[0], w, h, options)
-                : await enc.EncodeAnimationAsync(frames,
-                    [.. Enumerable.Range(0, frames.Count).Select(i => new ImageFrameInfo(i, 0, 0, w, h, duration, FrameDispose.None, FrameBlend.Source))], w, h, options);
+                ? await enc.EncodeAsync(frames[0], w, h, new WebPEncodeOptions { Quality = quality, Exact = false, Exif = exif })
+                : await enc.EncodeAnimationAsync(frames, w, h, [.. Enumerable.Repeat(duration, frames.Count)],
+                    new WebPEncodeOptions { Quality = quality, Exact = false }, new WebPAnimEncoderOptions { Exif = exif });
         }
         else
         {
@@ -51,7 +52,7 @@ public sealed class SaveAnimatedWEBP
             file = frames.Count == 1
                 ? await enc.EncodeAsync(frames[0], w, h, new WebPLossyEncodeOptions { Quality = quality, Method = m, Exif = exif[6..] })
                 : await enc.EncodeAnimationAsync(frames, w, h, [.. Enumerable.Repeat(duration, frames.Count)],
-                    new WebPLossyEncodeOptions { Quality = quality, Method = m }, new WebPLossyAnimationOptions { Exif = exif });
+                    new WebPLossyEncodeOptions { Quality = quality, Method = m }, new WebPAnimEncoderOptions { Exif = exif });
         }
 
         var prefix = SavePrefix.ComputeVars(filenamePrefix, w, h, DateTime.Now);

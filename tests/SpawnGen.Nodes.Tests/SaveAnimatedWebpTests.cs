@@ -76,6 +76,20 @@ public class SaveAnimatedWebpTests
         await Check(runtime.Accelerator, name, frames, lossless);
     }
 
+    /// <summary>Each ANMF chunk's 16-byte header (x / 2, y / 2, width - 1, height - 1, duration, flags) as hex.</summary>
+    static List<string> FrameHeaders(byte[] webp)
+    {
+        var list = new List<string>();
+        for (int p = 12; p + 8 <= webp.Length;)
+        {
+            string fourcc = System.Text.Encoding.ASCII.GetString(webp, p, 4);
+            int size = BitConverter.ToInt32(webp, p + 4);
+            if (fourcc == "ANMF") list.Add(Convert.ToHexString(webp, p + 8, 16));
+            p += 8 + size + (size & 1);
+        }
+        return list;
+    }
+
     static async Task Check(Accelerator accelerator, string name, int count, bool lossless)
     {
         using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()), accelerator);
@@ -94,6 +108,8 @@ public class SaveAnimatedWebpTests
             Assert.That(ours, Is.EqualTo(pillow), "byte for byte with Pillow / libwebp");
             return;
         }
+        if (name == "anim_lossless")
+            Assert.That(FrameHeaders(ours), Is.EqualTo(FrameHeaders(pillow)), "libwebp's frame decisions: each ANMF's offset, size, duration, dispose and blend");
         // Otherwise: the same pictures as Pillow's file (lossless: exactly the input; lossy still: what libwebp decodes from Pillow's file).
         var mine = await CodecsImages.DecodeAsync(accelerator, ours);
         var theirs = await CodecsImages.DecodeAsync(accelerator, pillow);

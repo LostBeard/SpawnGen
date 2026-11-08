@@ -3,347 +3,550 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>Shared helpers for the image nodes: pictures are NHWC floats in 0..1 (<see cref="ImageBatch"/>).</summary>
-internal static class Pixels
+// The basic image nodes. Pictures are (batch, height, width, channels) float32, values nominally 0..1. Behavior measured with ComfyUI (2026-11-08)
+// by running each node on chosen tensors; the measurements are quoted next to the code they decided.
+
+/// <summary>Frame-by-frame helpers for <see cref="ImageBatch"/>: one frame is its interleaved (height, width, channels) floats.</summary>
+public static class Pixels
 {
-    public static float[] Frame(ImageBatch img, int index)
+    /// <summary>A copy of frame <paramref name="b"/>.</summary>
+    public static float[] Frame(ImageBatch images, int b)
     {
-        int n = img.Height * img.Width * img.Channels;
-        var f = new float[n];
-        Array.Copy(img.Data, index * n, f, 0, n);
-        return f;
+        int n = images.Height * images.Width * images.Channels;
+        var frame = new float[n];
+        Array.Copy(images.Data, (long)b * n, frame, 0, n);
+        return frame;
     }
 
-    public static ImageBatch From(IReadOnlyList<float[]> frames, int h, int w, int c)
+    /// <summary>The frames, each <paramref name="height"/> x <paramref name="width"/> x <paramref name="channels"/>, joined into one batch.</summary>
+    public static ImageBatch From(IReadOnlyList<float[]> frames, int height, int width, int channels)
     {
-        var batch = new ImageBatch(frames.Count, h, w, c);
-        for (int i = 0; i < frames.Count; i++) Array.Copy(frames[i], 0, batch.Data, i * h * w * c, h * w * c);
-        return batch;
-    }
-
-    public static ImageBatch Map(ImageBatch img, Func<float[], float[]> perFrame, int? newH = null, int? newW = null)
-    {
-        var frames = Enumerable.Range(0, img.Batch).Select(i => perFrame(Frame(img, i))).ToList();
-        return From(frames, newH ?? img.Height, newW ?? img.Width, img.Channels);
-    }
-
-    /// <summary>Gaussian blur with ComfyUI's kernel: a (2r+1) square sampled over [-1, 1], so sigma is relative to the radius. Edges reflect.</summary>
-    public static float[] Gaussian(float[] src, int w, int h, int c, int radius, float sigma)
-    {
-        if (radius < 1) return (float[])src.Clone();
-        int size = 2 * radius + 1;
-        var k1 = new double[size];
-        double sum = 0;
-        for (int i = 0; i < size; i++)
+        var result = new ImageBatch(frames.Count, height, width, channels);
+        int n = height * width * channels;
+        for (int b = 0; b < frames.Count; b++)
         {
-            double x = size == 1 ? 0 : -1 + 2.0 * i / (size - 1);
-            k1[i] = Math.Exp(-(x * x) / (2.0 * sigma * sigma));
-            sum += k1[i];
+            if (frames[b].Length != n) throw new ArgumentException($"Frame {b} holds {frames[b].Length} values, expected {n} ({width}x{height}x{channels}).", nameof(frames));
+            Array.Copy(frames[b], 0, result.Data, (long)b * n, n);
         }
-        for (int i = 0; i < size; i++) k1[i] /= sum; // a Gaussian is separable, so two 1D passes equal the 2D kernel
-
-        int Reflect(int i, int n) { if (n == 1) return 0; while (i < 0 || i >= n) i = i < 0 ? -i : 2 * (n - 1) - i; return i; }
-        var tmp = new float[src.Length];
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                for (int ch = 0; ch < c; ch++)
-                {
-                    double acc = 0;
-                    for (int k = -radius; k <= radius; k++) acc += k1[k + radius] * src[(y * w + Reflect(x + k, w)) * c + ch];
-                    tmp[(y * w + x) * c + ch] = (float)acc;
-                }
-        var dst = new float[src.Length];
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                for (int ch = 0; ch < c; ch++)
-                {
-                    double acc = 0;
-                    for (int k = -radius; k <= radius; k++) acc += k1[k + radius] * tmp[(Reflect(y + k, h) * w + x) * c + ch];
-                    dst[(y * w + x) * c + ch] = (float)acc;
-                }
-        return dst;
+        return result;
     }
 
-    /// <summary>The size ComfyUI's scale nodes pick: a 0 for one side keeps the aspect ratio; both 0 keeps the size.</summary>
-    public static (int W, int H) TargetSize(int w, int h, int width, int height)
+    /// <summary>
+    /// Runs <paramref name="step"/> on a copy of every frame and joins the results. The result keeps the channel count; its size is
+    /// <paramref name="height"/> x <paramref name="width"/> when given, else the input's.
+    /// </summary>
+    public static ImageBatch Map(ImageBatch image, Func<float[], float[]> step, int? height = null, int? width = null)
     {
-        if (width == 0 && height == 0) return (w, h);
-        if (width == 0) width = Math.Max(1, (int)Math.Round((double)w * height / h));
-        else if (height == 0) height = Math.Max(1, (int)Math.Round((double)h * width / w));
-        return (width, height);
+        var frames = new float[image.Batch][];
+        for (int b = 0; b < image.Batch; b++) frames[b] = step(Frame(image, b));
+        return From(frames, height ?? image.Height, width ?? image.Width, image.Channels);
     }
-}
 
-[Node(Category = "image/upscaling", DisplayName = "Upscale Image")]
-public sealed class ImageScale
-{
-    public static string[] Methods() => Resample.MethodNames;
-    public static string[] Crops() => ["disabled", "center"];
-
-    public ImageBatch Execute(ImageBatch image,
-        [Input(OptionsProvider = nameof(Methods))] string upscaleMethod = "nearest-exact",
-        [Input(Min = 0, Max = 16384, Step = 1)] int width = 512,
-        [Input(Min = 0, Max = 16384, Step = 1)] int height = 512,
-        [Input(OptionsProvider = nameof(Crops))] string crop = "disabled")
+    /// <summary>
+    /// Brings <paramref name="image"/> to <paramref name="channels"/> channels the way the measured nodes do: one channel of 1.0 is appended when it has
+    /// fewer (only one, so 1 next to 3 still differs), the extra channels are dropped when it has more.
+    /// </summary>
+    internal static ImageBatch MatchChannels(ImageBatch image, int channels)
     {
-        var method = Resample.Parse(upscaleMethod);
-        var (nw, nh) = Pixels.TargetSize(image.Width, image.Height, width, height);
-        if (nw == image.Width && nh == image.Height) return image;
-
-        return Pixels.Map(image, f => Resample.CommonUpscale(f, image.Width, image.Height, image.Channels, nw, nh, method, crop == "center"), nh, nw);
+        int c = image.Channels;
+        if (c == channels) return image;
+        int outC = c < channels ? c + 1 : channels, pixels = image.Batch * image.Height * image.Width;
+        var result = new ImageBatch(image.Batch, image.Height, image.Width, outC);
+        for (int p = 0; p < pixels; p++)
+        {
+            Array.Copy(image.Data, (long)p * c, result.Data, (long)p * outC, Math.Min(c, outC));
+            if (outC > c) result.Data[(long)p * outC + c] = 1f;
+        }
+        return result;
     }
-}
 
-[Node(Category = "image/upscaling", DisplayName = "Upscale Image By")]
-public sealed class ImageScaleBy
-{
-    public static string[] Methods() => Resample.MethodNames;
-
-    public ImageBatch Execute(ImageBatch image,
-        [Input(OptionsProvider = "Methods")] string upscaleMethod = "nearest-exact",
-        [Input(Min = 0.01, Max = 8, Step = 0.01)] float scaleBy = 1f)
+    /// <summary>
+    /// Resizes every picture with <see cref="CommonUpscale"/>. A size of 0 fails as in ComfyUI (measured): "area" gives an empty picture, "lanczos"
+    /// Pillow's error, the other modes PyTorch's.
+    /// </summary>
+    internal static ImageBatch Resize(ImageBatch image, int width, int height, string method, string crop = "disabled")
     {
-        int nw = Math.Max(1, (int)Math.Round(image.Width * scaleBy)), nh = Math.Max(1, (int)Math.Round(image.Height * scaleBy));
-        return new ImageScale().Execute(image, upscaleMethod, nw, nh);
+        if (width <= 0 || height <= 0)
+        {
+            if (!Resample.MethodNames.Contains(method)) throw new ArgumentException($"Unknown upscale method '{method}'.", nameof(method));
+            return method switch
+            {
+                "area" => new ImageBatch(image.Batch, Math.Max(height, 0), Math.Max(width, 0), image.Channels),
+                "lanczos" => throw new ArgumentException("height and width must be > 0"),
+                _ => throw new ArgumentException(
+                    $"Input and output sizes should be greater than 0, but got input (H: {image.Height}, W: {image.Width}) output (H: {height}, W: {width})"),
+            };
+        }
+        return CommonUpscale.Resize(image, width, height, method, crop);
     }
+
+    /// <summary>The message PyTorch gives when two sizes cannot be broadcast together.</summary>
+    internal static ArgumentException BroadcastMismatch(int a, int b, int dimension) =>
+        new($"The size of tensor a ({a}) must match the size of tensor b ({b}) at non-singleton dimension {dimension}");
 }
 
-[Node(Category = "image/upscaling", DisplayName = "Scale Image to Total Pixels")]
-public sealed class ImageScaleToTotalPixels
+/// <summary>A batch of pictures of one colour: <c>color</c> is 0xRRGGBB, each channel stored as the float32 of value / 255 (measured, bit for bit).</summary>
+[Node(Category = "image", DisplayName = "Empty Image")]
+public sealed class EmptyImage
 {
-    public static string[] Methods() => Resample.MethodNames;
-
-    public ImageBatch Execute(ImageBatch image,
-        [Input(OptionsProvider = "Methods")] string upscaleMethod = "nearest-exact",
-        [Input(Min = 0.01, Max = 16, Step = 0.01)] float megapixels = 1f,
-        [Input(Min = 1, Max = 256, Tooltip = "Width and height are rounded to a multiple of this")] int resolutionSteps = 1)
+    public ImageBatch Execute(
+        [Input(Min = 1, Max = 16384, Step = 1)] int width = 512,
+        [Input(Min = 1, Max = 16384, Step = 1)] int height = 512,
+        [Input(Min = 1, Max = 4096)] int batchSize = 1,
+        [Input(Min = 0, Max = 16777215, Step = 1)] int color = 0)
     {
-        double total = megapixels * 1024 * 1024, scale = Math.Sqrt(total / (image.Width * image.Height));
-        // Python's round() is round-half-to-even, as Math.Round is by default.
-        int Size(int side) => Math.Max(resolutionSteps, (int)Math.Round(side * scale / resolutionSteps) * resolutionSteps);
-        return new ImageScale().Execute(image, upscaleMethod, Size(image.Width), Size(image.Height));
+        float r = ((color >> 16) & 0xFF) / 255f, g = ((color >> 8) & 0xFF) / 255f, b = (color & 0xFF) / 255f;
+        var image = new ImageBatch(batchSize, height, width, 3);
+        var data = image.Data;
+        for (long i = 0; i < data.Length; i += 3) { data[i] = r; data[i + 1] = g; data[i + 2] = b; }
+        return image;
     }
 }
 
-[Node(Category = "image/color", DisplayName = "Invert Image Colors")]
-public sealed class ImageInvert
-{
-    public ImageBatch Execute(ImageBatch image) => Pixels.Map(image, f => f.Select(v => 1f - v).ToArray());
-}
-
+/// <summary>The deprecated two-input batch: measured to give the same pictures as Batch Images with the two inputs (see <see cref="Batching"/>).</summary>
 [Node("ImageBatch", Category = "image/batch", DisplayName = "Batch Images (DEPRECATED)")]
 public sealed class ImageBatchNode
 {
-    /// <summary>Stacks two batches; an RGB picture next to an RGBA one gets full alpha, and a picture of another size is scaled to the first's (bilinear, centred crop), like ComfyUI.</summary>
     public ImageBatch Execute(ImageBatch image1, ImageBatch image2) => Batching.Images([image1, image2]);
 }
 
+/// <summary>
+/// Blends <paramref name="image2"/> over <paramref name="image1"/>. Measured with ComfyUI:
+/// <list type="bullet">
+/// <item>The modes, with a = image1 and b = image2: normal b; multiply a*b; screen 1-(1-a)(1-b); overlay 2ab where a &lt;= 0.5, else 1-2(1-a)(1-b);
+/// soft_light the W3C compositing formula (b &lt;= 0.5: a-(1-2b)a(1-a); else a+(2b-1)(D(a)-a) with D(a) = ((16a-12)a+4)a for a &lt;= 0.25, else
+/// sqrt(a)); difference a-b (not its absolute value). All in float32, in that order, bit for bit.</item>
+/// <item>The result is a*(1-f) + mode*f, clamped to 0..1.</item>
+/// <item>image2 of another size is resized to image1's with bicubic and a centre crop. Channels: image2 with fewer channels gets one channel of 1.0,
+/// with more it is cut to image1's count. With 4 channels only the first 3 are blended and image1's 4th is kept as it is (not clamped).</item>
+/// <item>Batches broadcast when one of them is 1; other mismatches fail with PyTorch's message.</item>
+/// </list>
+/// </summary>
+[Node(Category = "image/filters", DisplayName = "Blend Images")]
+public sealed class ImageBlend
+{
+    public static readonly string[] Modes = ["normal", "multiply", "screen", "overlay", "soft_light", "difference"];
+
+    public ImageBatch Execute(ImageBatch image1, ImageBatch image2,
+        [Input(Min = 0.0, Max = 1.0, Step = 0.01)] double blendFactor = 0.5,
+        [Input(Options = ["normal", "multiply", "screen", "overlay", "soft_light", "difference"])] string blendMode = "normal")
+    {
+        Func<float, float, float> mode = blendMode switch
+        {
+            "normal" => (_, b) => b,
+            "multiply" => (a, b) => a * b,
+            "screen" => (a, b) => 1f - (1f - a) * (1f - b),
+            "overlay" => (a, b) => a <= 0.5f ? 2f * a * b : 1f - 2f * (1f - a) * (1f - b),
+            "soft_light" => SoftLight,
+            "difference" => (a, b) => a - b,
+            _ => throw new ArgumentException($"Unsupported blend mode: {blendMode}", nameof(blendMode)),
+        };
+        if (image2.Height != image1.Height || image2.Width != image1.Width)
+            image2 = Pixels.Resize(image2, image1.Width, image1.Height, "bicubic", "center");
+        int c = image1.Channels;
+        image2 = Pixels.MatchChannels(image2, c);
+        int b1 = image1.Batch, b2 = image2.Batch;
+        // PyTorch names the operands in the order the mode's formula meets them: image2 first for soft_light (measured).
+        bool secondFirst = blendMode == "soft_light";
+        if (image2.Channels != c) throw secondFirst ? Pixels.BroadcastMismatch(image2.Channels, c, 3) : Pixels.BroadcastMismatch(c, image2.Channels, 3);
+        if (b1 != b2 && b1 != 1 && b2 != 1) throw secondFirst ? Pixels.BroadcastMismatch(b2, b1, 0) : Pixels.BroadcastMismatch(b1, b2, 0);
+
+        int batch = Math.Max(b1, b2), pixels = image1.Height * image1.Width, frame = pixels * c;
+        int blended = c == 4 ? 3 : c;
+        float keep = (float)(1.0 - blendFactor), take = (float)blendFactor;
+        var result = new ImageBatch(batch, image1.Height, image1.Width, c);
+        for (int b = 0; b < batch; b++)
+        {
+            long o1 = (long)(b % b1) * frame, o2 = (long)(b % b2) * frame, o = (long)b * frame;
+            for (int p = 0; p < pixels; p++)
+                for (int ch = 0; ch < c; ch++)
+                {
+                    int i = p * c + ch;
+                    float a = image1.Data[o1 + i];
+                    if (ch >= blended) { result.Data[o + i] = a; continue; }
+                    float v = a * keep + mode(a, image2.Data[o2 + i]) * take;
+                    result.Data[o + i] = Math.Clamp(v, 0f, 1f);
+                }
+        }
+        return result;
+    }
+
+    static float SoftLight(float a, float b)
+    {
+        if (b <= 0.5f) return a - (1f - 2f * b) * a * (1f - a);
+        float d = a <= 0.25f ? ((16f * a - 12f) * a + 4f) * a : MathF.Sqrt(a);
+        return a + (2f * b - 1f) * (d - a);
+    }
+}
+
+/// <summary>
+/// Gaussian filters of radius r. Measured with ComfyUI: the kernel is (2r+1) x (2r+1) samples of exp(-(x² + y²) / (2 sigma²)) on an even grid from -1 to
+/// 1 (not one sample per pixel), normalised to sum 1, applied to every channel (alpha too) with mirrored edges (the edge pixel is not repeated).
+/// </summary>
+static class Gaussian
+{
+    /// <summary>The normalised one-dimensional kernel; the two-dimensional one is its outer product with itself.</summary>
+    static double[] Kernel(int radius, double sigma)
+    {
+        int size = 2 * radius + 1;
+        var k = new double[size];
+        double sum = 0;
+        for (int i = 0; i < size; i++)
+        {
+            double x = -1.0 + 2.0 * i / (size - 1);
+            k[i] = Math.Exp(-(x * x) / (2 * sigma * sigma));
+            sum += k[i];
+        }
+        for (int i = 0; i < size; i++) k[i] /= sum;
+        return k;
+    }
+
+    /// <summary>
+    /// Mirror index for any distance outside 0..n-1. ComfyUI refuses a radius that is not smaller than the picture's side (PyTorch's reflect padding
+    /// error); here the mirroring continues instead, so tiny pictures (one row, for example) still filter.
+    /// </summary>
+    static int Reflect(int i, int n)
+    {
+        if (n == 1) return 0;
+        int period = 2 * (n - 1);
+        i %= period;
+        if (i < 0) i += period;
+        return i < n ? i : period - i;
+    }
+
+    /// <summary>The blurred frame (interleaved h x w x c) in double precision.</summary>
+    public static double[] Blur(float[] src, int w, int h, int c, int radius, double sigma)
+    {
+        var k = Kernel(radius, sigma);
+        var across = new double[src.Length];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                for (int ch = 0; ch < c; ch++)
+                {
+                    double s = 0;
+                    for (int j = -radius; j <= radius; j++) s += k[j + radius] * src[(y * w + Reflect(x + j, w)) * c + ch];
+                    across[(y * w + x) * c + ch] = s;
+                }
+        var result = new double[src.Length];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                for (int ch = 0; ch < c; ch++)
+                {
+                    double s = 0;
+                    for (int j = -radius; j <= radius; j++) s += k[j + radius] * across[(Reflect(y + j, h) * w + x) * c + ch];
+                    result[(y * w + x) * c + ch] = s;
+                }
+        return result;
+    }
+}
+
+/// <summary>Gaussian blur (see <see cref="Gaussian"/>); the values are not clamped (measured: 1.5 stays 1.5).</summary>
+[Node(Category = "image/filters", DisplayName = "Blur Image")]
+public sealed class ImageBlur
+{
+    public ImageBatch Execute(ImageBatch image,
+        [Input(Min = 1, Max = 31, Step = 1)] int blurRadius = 1,
+        [Input(Min = 0.1, Max = 10.0, Step = 0.1)] double sigma = 1.0)
+    {
+        if (blurRadius <= 0) return image;
+        int w = image.Width, h = image.Height, c = image.Channels;
+        return Pixels.Map(image, f => Array.ConvertAll(Gaussian.Blur(f, w, h, c, blurRadius, sigma), v => (float)v));
+    }
+}
+
+/// <summary>
+/// Unsharp filter. Measured with ComfyUI: the kernel is -10 * alpha times the Gaussian of <see cref="Gaussian"/> with its centre raised so that it sums
+/// to 1, i.e. (1 + 10 alpha) * picture - 10 alpha * blurred picture; every channel is filtered and the result is clamped to 0..1.
+/// </summary>
+[Node(Category = "image/filters", DisplayName = "Sharpen Image")]
+public sealed class ImageSharpen
+{
+    public ImageBatch Execute(ImageBatch image,
+        [Input(Min = 1, Max = 31, Step = 1)] int sharpenRadius = 1,
+        [Input(Min = 0.1, Max = 10.0, Step = 0.01)] double sigma = 1.0,
+        [Input(Min = 0.0, Max = 5.0, Step = 0.01)] double alpha = 1.0)
+    {
+        if (sharpenRadius <= 0) return image;
+        int w = image.Width, h = image.Height, c = image.Channels;
+        double gain = 10 * alpha;
+        return Pixels.Map(image, f =>
+        {
+            var blurred = Gaussian.Blur(f, w, h, c, sharpenRadius, sigma);
+            var o = new float[f.Length];
+            for (int i = 0; i < o.Length; i++) o[i] = (float)Math.Clamp((1 + gain) * f[i] - gain * blurred[i], 0.0, 1.0);
+            return o;
+        });
+    }
+}
+
+/// <summary>
+/// Pastes <paramref name="source"/> onto <paramref name="destination"/> with its top-left corner at (x, y). Measured with ComfyUI:
+/// <list type="bullet">
+/// <item>resize_source stretches the source to the destination's size first (bilinear, no crop).</item>
+/// <item>The mask (all ones without one) is resized to the source's size (PyTorch bilinear) when it differs; each pixel is
+/// mask * source + (1 - mask) * destination in float32, the mask used as given (not clamped).</item>
+/// <item>Only the part inside the destination is pasted, from the source's (and mask's) top-left; a corner at or past the edge pastes nothing.</item>
+/// <item>Source and mask pictures repeat in turn to the destination's batch size (or are cut to it).</item>
+/// <item>Channels: a source with fewer channels gets one channel of 1.0 (an RGB source over RGBA is opaque), with more it is cut to the destination's
+/// count; counts that still differ fail with PyTorch's message.</item>
+/// </list>
+/// </summary>
+[Node(Category = "image/compositing", DisplayName = "Image Composite Masked")]
+public sealed class ImageCompositeMasked
+{
+    public ImageBatch Execute(ImageBatch destination, ImageBatch source,
+        [Input(Min = 0, Max = 16384, Step = 1)] int x = 0,
+        [Input(Min = 0, Max = 16384, Step = 1)] int y = 0,
+        bool resizeSource = false,
+        MaskBatch? mask = null)
+    {
+        if (resizeSource) source = Pixels.Resize(source, destination.Width, destination.Height, "bilinear");
+        int c = destination.Channels;
+        source = Pixels.MatchChannels(source, c);
+        if (source.Channels != c) throw Pixels.BroadcastMismatch(source.Channels, c, 1);
+        int sw = source.Width, sh = source.Height;
+        if (mask is not null && (mask.Width != sw || mask.Height != sh)) mask = CommonUpscale.Resize(mask, sw, sh, "bilinear");
+
+        var result = new ImageBatch(destination.Batch, destination.Height, destination.Width, c, (float[])destination.Data.Clone());
+        int W = destination.Width, H = destination.Height;
+        int visibleW = Math.Min(sw, W - x), visibleH = Math.Min(sh, H - y);
+        if (visibleW <= 0 || visibleH <= 0 || source.Batch == 0) return result;
+        for (int b = 0; b < destination.Batch; b++)
+        {
+            long srcFrame = (long)(b % source.Batch) * sh * sw * c, dstFrame = (long)b * H * W * c;
+            long maskFrame = mask is null || mask.Batch == 0 ? -1 : (long)(b % mask.Batch) * sh * sw;
+            for (int row = 0; row < visibleH; row++)
+                for (int col = 0; col < visibleW; col++)
+                {
+                    float m = maskFrame < 0 ? 1f : mask!.Data[maskFrame + row * sw + col];
+                    long s = srcFrame + ((long)row * sw + col) * c, d = dstFrame + ((long)(y + row) * W + x + col) * c;
+                    for (int ch = 0; ch < c; ch++)
+                        result.Data[d + ch] = m * source.Data[s + ch] + (1f - m) * result.Data[d + ch];
+                }
+        }
+        return result;
+    }
+}
+
+/// <summary>
+/// The width x height region whose top-left corner is (x, y). Measured with ComfyUI: x and y are first moved inside the picture (to at most the last
+/// column / row), and the region is cut at the picture's edge, so it is never empty.
+/// </summary>
 [Node(Category = "image/transform", DisplayName = "Crop Image (DEPRECATED)")]
 public sealed class ImageCrop
 {
     public ImageBatch Execute(ImageBatch image,
-        [Input(Min = 1, Max = 16384)] int width = 512, [Input(Min = 1, Max = 16384)] int height = 512,
-        [Input(Min = 0, Max = 16384)] int x = 0, [Input(Min = 0, Max = 16384)] int y = 0)
+        [Input(Min = 1, Max = 16384, Step = 1)] int width = 512,
+        [Input(Min = 1, Max = 16384, Step = 1)] int height = 512,
+        [Input(Min = 0, Max = 16384, Step = 1)] int x = 0,
+        [Input(Min = 0, Max = 16384, Step = 1)] int y = 0)
     {
-        x = Math.Min(x, image.Width - 1);
-        y = Math.Min(y, image.Height - 1);
-        int w = Math.Min(width, image.Width - x), h = Math.Min(height, image.Height - y);
-        return Pixels.Map(image, f =>
-        {
-            var cut = new float[w * h * image.Channels];
-            for (int row = 0; row < h; row++) Array.Copy(f, ((y + row) * image.Width + x) * image.Channels, cut, row * w * image.Channels, w * image.Channels);
-            return cut;
-        }, h, w);
+        int W = image.Width, H = image.Height, c = image.Channels;
+        int x0 = Math.Max(0, Math.Min(x, W - 1)), y0 = Math.Max(0, Math.Min(y, H - 1));
+        int w = (int)Math.Min((long)x0 + width, W) - x0, h = (int)Math.Min((long)y0 + height, H) - y0;
+        w = Math.Max(w, 0); h = Math.Max(h, 0);
+        var result = new ImageBatch(image.Batch, h, w, c);
+        for (int b = 0; b < image.Batch; b++)
+            for (int row = 0; row < h; row++)
+                Array.Copy(image.Data, (((long)b * H + y0 + row) * W + x0) * c, result.Data, (((long)b * h + row) * w) * c, (long)w * c);
+        return result;
     }
 }
 
+/// <summary>
+/// <paramref name="length"/> pictures starting at <paramref name="batchIndex"/>. Measured with ComfyUI: a negative index counts from the end, the
+/// start is then held to the batch (below 0 gives 0, past the end gives the last picture), and the length is cut at the end of the batch.
+/// </summary>
 [Node(Category = "image/batch", DisplayName = "Get Image from Batch")]
 public sealed class ImageFromBatch
 {
-    /// <summary>Pictures from <paramref name="batchIndex"/> on (a negative index counts from the end), at most <paramref name="length"/> of them, as ComfyUI cuts them.</summary>
-    public ImageBatch Execute(ImageBatch image, [Input(Min = -16384, Max = 16384)] int batchIndex = 0, [Input(Min = 1, Max = 4096)] int length = 1)
+    public ImageBatch Execute(ImageBatch image,
+        [Input(Min = -16384, Max = 16384)] int batchIndex = 0,
+        [Input(Min = 1, Max = 4096)] int length = 1)
     {
-        if (batchIndex < 0) batchIndex += image.Batch;
-        int start = Math.Max(0, Math.Min(image.Batch - 1, batchIndex)), count = Math.Min(length, image.Batch - start);
-        return Pixels.From(Enumerable.Range(start, count).Select(i => Pixels.Frame(image, i)).ToList(), image.Height, image.Width, image.Channels);
-    }
-}
-
-[Node(Category = "image/batch", DisplayName = "Repeat Image Batch")]
-public sealed class RepeatImageBatch
-{
-    public ImageBatch Execute(ImageBatch image, [Input(Min = 1, Max = 4096)] int amount = 1) =>
-        Pixels.From(Enumerable.Range(0, amount).SelectMany(_ => Enumerable.Range(0, image.Batch).Select(i => Pixels.Frame(image, i))).ToList(),
-            image.Height, image.Width, image.Channels);
-}
-
-[Node(Category = "image", DisplayName = "Empty Image")]
-public sealed class EmptyImage
-{
-    public ImageBatch Execute([Input(Min = 1, Max = 16384)] int width = 512, [Input(Min = 1, Max = 16384)] int height = 512,
-        [Input(Min = 1, Max = 4096)] int batchSize = 1, [Input(Min = 0, Max = 0xFFFFFF)] int color = 0)
-    {
-        var img = new ImageBatch(batchSize, height, width, 3);
-        float r = ((color >> 16) & 0xFF) / 255f, g = ((color >> 8) & 0xFF) / 255f, b = (color & 0xFF) / 255f;
-        for (int i = 0; i < img.Data.Length; i += 3) { img.Data[i] = r; img.Data[i + 1] = g; img.Data[i + 2] = b; }
-        return img;
-    }
-}
-
-[Node(Category = "image/filters", DisplayName = "Blend Images")]
-public sealed class ImageBlend
-{
-    public static string[] Modes() => ["normal", "multiply", "screen", "overlay", "soft_light", "difference"];
-
-    public ImageBatch Execute(ImageBatch image1, ImageBatch image2,
-        [Input(Min = 0, Max = 1, Step = 0.01)] float blendFactor = 0.5f,
-        [Input(OptionsProvider = nameof(Modes))] string blendMode = "normal")
-    {
-        if (!Modes().Contains(blendMode)) throw new ArgumentException($"Unknown blend mode '{blendMode}'.", nameof(blendMode));
-        if (image2.Width != image1.Width || image2.Height != image1.Height)
-            image2 = new ImageScale().Execute(image2, "bicubic", image1.Width, image1.Height, "center");
-        var result = new ImageBatch(image1.Batch, image1.Height, image1.Width, image1.Channels);
-        for (int i = 0; i < result.Data.Length; i++)
-        {
-            float a = image1.Data[i], b = image2.Data[i % image2.Data.Length];
-            float blended = blendMode switch
-            {
-                "multiply" => a * b,
-                "screen" => 1 - (1 - a) * (1 - b),
-                "overlay" => a < 0.5f ? 2 * a * b : 1 - 2 * (1 - a) * (1 - b),
-                "soft_light" => a > 0.5f ? b + (1 - b) * ((a - 0.5f) / 0.5f) * b : b - (1 - b) * (1 - a / 0.5f) * b,
-                "difference" => a - b,
-                _ => b,
-            };
-            result.Data[i] = Math.Clamp(a * (1 - blendFactor) + blended * blendFactor, 0f, 1f);
-        }
+        int n = image.Batch;
+        if (n == 0) return image;
+        int start = Math.Clamp(batchIndex < 0 ? batchIndex + n : batchIndex, 0, n - 1);
+        int count = Math.Max(0, Math.Min(length, n - start));
+        long frame = (long)image.Height * image.Width * image.Channels;
+        var result = new ImageBatch(count, image.Height, image.Width, image.Channels);
+        Array.Copy(image.Data, start * frame, result.Data, 0, count * frame);
         return result;
     }
 }
 
-[Node(Category = "image/filters", DisplayName = "Blur Image")]
-public sealed class ImageBlur
+/// <summary>
+/// 1 - value, unclamped. Measured with ComfyUI: a 4-channel picture keeps its alpha as it is; with any other channel count every channel is inverted
+/// (1, 2, 3 and 5 channels alike).
+/// </summary>
+[Node(Category = "image/color", DisplayName = "Invert Image Colors")]
+public sealed class ImageInvert
 {
-    public ImageBatch Execute(ImageBatch image, [Input(Min = 1, Max = 31)] int blurRadius = 1, [Input(Min = 0.1, Max = 10, Step = 0.1)] float sigma = 1f) =>
-        Pixels.Map(image, f => Pixels.Gaussian(f, image.Width, image.Height, image.Channels, blurRadius, sigma));
-}
-
-[Node(Category = "image/filters", DisplayName = "Sharpen Image")]
-public sealed class ImageSharpen
-{
-    /// <summary>ComfyUI's unsharp mask: <c>image + 10 * alpha * (image - blur)</c>, clamped.</summary>
-    public ImageBatch Execute(ImageBatch image, [Input(Min = 1, Max = 31)] int sharpenRadius = 1,
-        [Input(Min = 0.1, Max = 10, Step = 0.01)] float sigma = 1f, [Input(Min = 0, Max = 5, Step = 0.01)] float alpha = 1f) =>
-        sharpenRadius == 0 ? image : Pixels.Map(image, f =>
-        {
-            var blur = Pixels.Gaussian(f, image.Width, image.Height, image.Channels, sharpenRadius, sigma);
-            return f.Select((v, i) => Math.Clamp(v + 10f * alpha * (v - blur[i]), 0f, 1f)).ToArray();
-        });
-}
-
-[Node(Category = "image/compositing", DisplayName = "Image Composite Masked")]
-public sealed class ImageCompositeMasked
-{
-    /// <summary>Pastes <paramref name="source"/> onto <paramref name="destination"/> at (x, y), where the mask is 1 (or everywhere with no mask). Parts outside are cut off.</summary>
-    public ImageBatch Execute(ImageBatch destination, ImageBatch source, [Input(Min = 0, Max = 16384)] int x = 0, [Input(Min = 0, Max = 16384)] int y = 0,
-        bool resizeSource = false, MaskBatch? mask = null)
+    public ImageBatch Execute(ImageBatch image)
     {
-        if (resizeSource) source = new ImageScale().Execute(source, "bilinear", destination.Width, destination.Height);
-        var result = new ImageBatch(destination.Batch, destination.Height, destination.Width, destination.Channels);
-        Array.Copy(destination.Data, result.Data, destination.Data.Length);
-        int c = destination.Channels;
-        for (int b = 0; b < destination.Batch; b++)
-        {
-            int sb = b % source.Batch;
-            float[]? m = null;
-            if (mask is not null)
+        int c = image.Channels;
+        var result = new ImageBatch(image.Batch, image.Height, image.Width, c);
+        for (long i = 0; i < result.Data.Length; i++) result.Data[i] = c == 4 && i % 4 == 3 ? image.Data[i] : 1f - image.Data[i];
+        return result;
+    }
+}
+
+/// <summary>
+/// Adds borders for outpainting. Measured with ComfyUI:
+/// <list type="bullet">
+/// <item>The new area is 0.5 in every channel (alpha too); the mask (a batch of one) is 1 there.</item>
+/// <item>Inside the old picture the mask is 0, except that with feathering f &gt; 0 and 2f smaller than both the old width and height, each padded side
+/// fades in: at distance d from that side the value is ((f - d) / f)² for d &lt; f, where d counts from 0 at the first column / row on the left and top
+/// and from 1 at the last one on the right and bottom; where sides meet the larger value wins.</item>
+/// </list>
+/// </summary>
+[Node(Category = "image/transform", DisplayName = "Pad Image for Outpainting", OutputNames = ["IMAGE", "MASK"])]
+public sealed class ImagePadForOutpaint
+{
+    public (ImageBatch Image, MaskBatch Mask) Execute(ImageBatch image,
+        [Input(Min = 0, Max = 16384, Step = 8)] int left = 0,
+        [Input(Min = 0, Max = 16384, Step = 8)] int top = 0,
+        [Input(Min = 0, Max = 16384, Step = 8)] int right = 0,
+        [Input(Min = 0, Max = 16384, Step = 8)] int bottom = 0,
+        [Input(Min = 0, Max = 16384, Step = 1)] int feathering = 40)
+    {
+        int W = image.Width, H = image.Height, c = image.Channels;
+        int newW = W + left + right, newH = H + top + bottom;
+        var padded = new ImageBatch(image.Batch, newH, newW, c);
+        Array.Fill(padded.Data, 0.5f);
+        for (int b = 0; b < image.Batch; b++)
+            for (int row = 0; row < H; row++)
+                Array.Copy(image.Data, (((long)b * H + row) * W) * c, padded.Data, (((long)b * newH + top + row) * newW + left) * c, (long)W * c);
+
+        var mask = MaskBatch.Filled(1, newH, newW, 1f);
+        bool feather = feathering > 0 && 2L * feathering < W && 2L * feathering < H;
+        for (int row = 0; row < H; row++)
+            for (int col = 0; col < W; col++)
             {
-                int mb = b % mask.Batch;
-                var one = new float[mask.Height * mask.Width];
-                Array.Copy(mask.Data, mb * one.Length, one, 0, one.Length);
-                m = mask.Width == source.Width && mask.Height == source.Height ? one : Resample.Resize(one, mask.Width, mask.Height, 1, source.Width, source.Height, ResampleMethod.Bilinear);
-            }
-            for (int sy = 0; sy < source.Height; sy++)
-            {
-                int dy = y + sy;
-                if (dy >= destination.Height) break;
-                for (int sx = 0; sx < source.Width; sx++)
+                float v = 0f;
+                if (feather)
                 {
-                    int dx = x + sx;
-                    if (dx >= destination.Width) break;
-                    float k = m is null ? 1f : m[sy * source.Width + sx]; // not clamped, like ComfyUI
-                    for (int ch = 0; ch < c; ch++)
-                    {
-                        int di = ((b * destination.Height + dy) * destination.Width + dx) * c + ch;
-                        // ComfyUI's image_alpha_fix: an RGB source over an RGBA destination gets an opaque alpha (1).
-                        float s = ch < source.Channels ? source.Data[((sb * source.Height + sy) * source.Width + sx) * source.Channels + ch] : 1f;
-                        result.Data[di] = s * k + result.Data[di] * (1 - k);
-                    }
+                    if (left > 0) v = Math.Max(v, Fade(col, feathering));
+                    if (top > 0) v = Math.Max(v, Fade(row, feathering));
+                    if (right > 0) v = Math.Max(v, Fade(W - col, feathering));
+                    if (bottom > 0) v = Math.Max(v, Fade(H - row, feathering));
                 }
+                mask.Data[(long)(top + row) * newW + left + col] = v;
             }
-        }
-        return result;
+        return (padded, mask);
+    }
+
+    static float Fade(int distance, int feathering)
+    {
+        if (distance >= feathering) return 0f;
+        double t = (double)(feathering - distance) / feathering;
+        return (float)(t * t);
     }
 }
 
+/// <summary>
+/// Resizes to width x height. Measured with ComfyUI: both 0 returns the picture unchanged; one of them 0 keeps the aspect ratio, that side being
+/// max(1, round(other / other side * side)) with Python's rounding (half to even).
+/// </summary>
+[Node(Category = "image/upscaling", DisplayName = "Upscale Image")]
+public sealed class ImageScale
+{
+    public ImageBatch Execute(ImageBatch image,
+        [Input(Options = ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"])] string upscaleMethod = "nearest-exact",
+        [Input(Min = 0, Max = 16384, Step = 1)] int width = 512,
+        [Input(Min = 0, Max = 16384, Step = 1)] int height = 512,
+        [Input(Options = ["disabled", "center"])] string crop = "disabled")
+    {
+        if (width == 0 && height == 0) return image;
+        if (width == 0) width = Math.Max(1, (int)Math.Round((double)height / image.Height * image.Width, MidpointRounding.ToEven));
+        else if (height == 0) height = Math.Max(1, (int)Math.Round((double)width / image.Width * image.Height, MidpointRounding.ToEven));
+        return Pixels.Resize(image, width, height, upscaleMethod, crop);
+    }
+}
+
+/// <summary>Resizes by a factor: each side becomes round(side * factor) with Python's rounding (measured: 2.5 gives 2, 3.5 gives 4); 0 fails.</summary>
+[Node(Category = "image/upscaling", DisplayName = "Upscale Image By")]
+public sealed class ImageScaleBy
+{
+    public ImageBatch Execute(ImageBatch image,
+        [Input(Options = ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"])] string upscaleMethod = "nearest-exact",
+        [Input(Min = 0.01, Max = 8.0, Step = 0.01)] double scaleBy = 1.0)
+    {
+        int width = (int)Math.Round(image.Width * scaleBy, MidpointRounding.ToEven);
+        int height = (int)Math.Round(image.Height * scaleBy, MidpointRounding.ToEven);
+        return Pixels.Resize(image, width, height, upscaleMethod);
+    }
+}
+
+/// <summary>
+/// Resizes to about megapixels * 1024 * 1024 pixels keeping the aspect ratio. Measured with ComfyUI: with s = sqrt(total / (width * height)) each side
+/// becomes round(side * s / steps) * steps (Python's rounding), which can be 0 and then fails like Upscale Image By.
+/// </summary>
+[Node(Category = "image/upscaling", DisplayName = "Scale Image to Total Pixels")]
+public sealed class ImageScaleToTotalPixels
+{
+    public ImageBatch Execute(ImageBatch image,
+        [Input(Options = ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"])] string upscaleMethod = "nearest-exact",
+        [Input(Min = 0.01, Max = 16.0, Step = 0.01)] double megapixels = 1.0,
+        [Input(Min = 1, Max = 256)] int resolutionSteps = 1)
+    {
+        double scale = Math.Sqrt(megapixels * 1024 * 1024 / ((double)image.Width * image.Height));
+        int width = (int)Math.Round(image.Width * scale / resolutionSteps, MidpointRounding.ToEven) * resolutionSteps;
+        int height = (int)Math.Round(image.Height * scale / resolutionSteps, MidpointRounding.ToEven) * resolutionSteps;
+        return Pixels.Resize(image, width, height, upscaleMethod);
+    }
+}
+
+/// <summary>
+/// One channel of the picture as a mask. ComfyUI fails with an IndexError when the channel is missing (measured); here a missing alpha counts as opaque
+/// (all ones) and any other missing channel fails with the same message.
+/// </summary>
 [Node(Category = "image/mask", DisplayName = "Convert Image to Mask")]
 public sealed class ImageToMask
 {
-    public static string[] Channels() => ["red", "green", "blue", "alpha"];
-
-    /// <summary>One channel of a picture as a mask. Pictures here have no alpha channel unless they came with one: then alpha is fully opaque (1).</summary>
-    public MaskBatch Execute(ImageBatch image, [Input(OptionsProvider = nameof(Channels))] string channel = "red")
+    public MaskBatch Execute(ImageBatch image, [Input(Options = ["red", "green", "blue", "alpha"])] string channel = "red")
     {
-        int idx = Array.IndexOf(Channels(), channel);
-        if (idx < 0) throw new ArgumentException($"Unknown channel '{channel}'.", nameof(channel));
+        int index = channel switch
+        {
+            "red" => 0, "green" => 1, "blue" => 2, "alpha" => 3,
+            _ => throw new ArgumentException($"Unknown channel '{channel}'.", nameof(channel)),
+        };
+        int c = image.Channels, pixels = image.Batch * image.Height * image.Width;
+        if (index >= c)
+        {
+            if (index == 3) return MaskBatch.Filled(image.Batch, image.Height, image.Width, 1f);
+            throw new ArgumentException($"index {index} is out of bounds for dimension 3 with size {c}");
+        }
         var mask = new MaskBatch(image.Batch, image.Height, image.Width);
-        for (int i = 0; i < mask.Data.Length; i++)
-            mask.Data[i] = idx < image.Channels ? image.Data[i * image.Channels + idx] : 1f;
+        for (long p = 0; p < pixels; p++) mask.Data[p] = image.Data[p * c + index];
         return mask;
     }
 }
 
+/// <summary>The mask as a grey RGB picture (the value copied to all three channels).</summary>
 [Node(Category = "image/mask", DisplayName = "Convert Mask to Image")]
 public sealed class MaskToImage
 {
     public ImageBatch Execute(MaskBatch mask)
     {
-        var img = new ImageBatch(mask.Batch, mask.Height, mask.Width, 3);
-        for (int i = 0; i < mask.Data.Length; i++) { img.Data[i * 3] = img.Data[i * 3 + 1] = img.Data[i * 3 + 2] = mask.Data[i]; }
-        return img;
+        var image = new ImageBatch(mask.Batch, mask.Height, mask.Width, 3);
+        for (long p = 0; p < mask.Data.Length; p++)
+        {
+            float v = mask.Data[p];
+            image.Data[p * 3] = v; image.Data[p * 3 + 1] = v; image.Data[p * 3 + 2] = v;
+        }
+        return image;
     }
 }
 
-[Node(Category = "image/transform", DisplayName = "Pad Image for Outpainting", OutputNames = ["IMAGE", "MASK"])]
-public sealed class ImagePadForOutpaint
+/// <summary>The whole batch <paramref name="amount"/> times over, one copy after another (measured: [a, b] x 2 gives a, b, a, b).</summary>
+[Node(Category = "image/batch", DisplayName = "Repeat Image Batch")]
+public sealed class RepeatImageBatch
 {
-    /// <summary>Adds grey (0.5) borders and returns the picture plus a mask that is 1 on the new area, softened towards the old picture by <c>feathering</c> pixels.</summary>
-    public (ImageBatch Image, MaskBatch Mask) Execute(ImageBatch image,
-        [Input(Min = 0, Max = 16384, Step = 8)] int left = 0, [Input(Min = 0, Max = 16384, Step = 8)] int top = 0,
-        [Input(Min = 0, Max = 16384, Step = 8)] int right = 0, [Input(Min = 0, Max = 16384, Step = 8)] int bottom = 0,
-        [Input(Min = 0, Max = 16384)] int feathering = 40)
+    public ImageBatch Execute(ImageBatch image, [Input(Min = 1, Max = 4096)] int amount = 1)
     {
-        int nw = image.Width + left + right, nh = image.Height + top + bottom, c = image.Channels;
-        var padded = new ImageBatch(image.Batch, nh, nw, c);
-        Array.Fill(padded.Data, 0.5f);
-        var mask = MaskBatch.Filled(image.Batch, nh, nw, 1f);
-        for (int b = 0; b < image.Batch; b++)
-            for (int y = 0; y < image.Height; y++)
-            {
-                Array.Copy(image.Data, ((b * image.Height + y) * image.Width) * c, padded.Data, ((b * nh + top + y) * nw + left) * c, image.Width * c);
-                for (int x = 0; x < image.Width; x++)
-                {
-                    // Distance (in pixels) to the nearest edge that was padded; inside the old picture the mask is 0, ramping up to 1 over `feathering`.
-                    float d = float.MaxValue;
-                    if (left > 0) d = Math.Min(d, x);
-                    if (right > 0) d = Math.Min(d, image.Width - 1 - x);
-                    if (top > 0) d = Math.Min(d, y);
-                    if (bottom > 0) d = Math.Min(d, image.Height - 1 - y);
-                    float m = 0;
-                    if (d < feathering && feathering > 0) { float t = (feathering - d) / feathering; m = t * t; }
-                    mask.Data[(b * nh + top + y) * nw + left + x] = m;
-                }
-            }
-        return (padded, mask);
+        var result = new ImageBatch(image.Batch * amount, image.Height, image.Width, image.Channels);
+        for (int i = 0; i < amount; i++) Array.Copy(image.Data, 0, result.Data, (long)i * image.Data.Length, image.Data.Length);
+        return result;
     }
 }

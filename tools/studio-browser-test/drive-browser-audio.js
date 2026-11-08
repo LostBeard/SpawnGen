@@ -10,6 +10,8 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
 const PROFILE = process.env.PROFILE_DIR || path.join(__dirname, 'out', 'webgpu-profile');
 const OUT = path.join(__dirname, 'out');
 const FORMAT = process.env.FORMAT || 'flac';
+// INPUT_FILE: a sound file to upload for Load Audio instead of the generated WAV tone (a FLAC tests Load Audio's FLAC decoding on each engine).
+const INPUT_FILE = process.env.INPUT_FILE;
 fs.mkdirSync(OUT, { recursive: true });
 
 function toneWav() {
@@ -34,8 +36,9 @@ function framesStart(b) {
 }
 
 (async () => {
-  const wavPath = path.join(OUT, 'drive_tone.wav');
+  let wavPath = path.join(OUT, 'drive_tone.wav');
   fs.writeFileSync(wavPath, toneWav());
+  if (INPUT_FILE) { wavPath = path.join(OUT, 'drive_input' + path.extname(INPUT_FILE)); fs.copyFileSync(INPUT_FILE, wavPath); }
   const context = await chromium.launchPersistentContext(PROFILE, {
     executablePath: CHROME, headless: true, viewport: { width: 1600, height: 900 },
     args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--ignore-gpu-blocklist'],
@@ -57,7 +60,7 @@ function framesStart(b) {
     await page.waitForTimeout(1000);
     // A unique prefix per run: the server cannot answer from its cache, and the newest History entry is this run's.
     const prompt = {
-      '1': { class_type: 'LoadAudio', inputs: { audio: 'drive_tone.wav' } },
+      '1': { class_type: 'LoadAudio', inputs: { audio: path.basename(wavPath) } },
       '2': FORMAT === 'opus'
         ? { class_type: 'SaveAudioOpus', inputs: { audio: ['1', 0], filename_prefix: `audio/drive_${engine}_${Date.now()}`, quality: '128k' } }
         : { class_type: 'SaveAudio', inputs: { audio: ['1', 0], filename_prefix: `audio/drive_${engine}_${Date.now()}` } },
@@ -69,7 +72,7 @@ function framesStart(b) {
     if (!(await page.locator('.hist-entry').count())) await page.click('button:has-text("History")');
     const started = Date.now();
     await page.locator('button:has-text("Queue")').click();
-    for (let i = 0; i < 600; i++) { await page.waitForTimeout(500); if (i > 3 && !/Running|Queued/.test(await page.textContent('.status'))) break; }
+    for (let i = 0; i < 600; i++) { await page.waitForTimeout(500); const st = await page.textContent('.status', { timeout: 120000 }).catch(() => '(page not answering)'); if (i % 20 === 0) console.log(`  ${engine} ${((Date.now() - started) / 1000).toFixed(0)} s: ${st.trim().slice(0, 80)}`); if (i > 3 && !/Running|Queued|not answering/.test(st)) break; }
     await page.waitForTimeout(1200);
     if (!(await page.locator('.hist-entry').count())) await page.click('button:has-text("History")');
     await page.waitForTimeout(600);

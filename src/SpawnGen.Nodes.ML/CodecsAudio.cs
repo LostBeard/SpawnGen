@@ -25,6 +25,30 @@ public static class CodecsAudio
     {
         AudioFiles.Flac = async (clip, metadata) => await EncodeFlacAsync(await accelerator(), clip, metadata);
         AudioFiles.Opus = async (clip, bitrate, metadata) => await EncodeOpusAsync(await accelerator(), clip, bitrate, metadata);
+        AudioFiles.Decode = async data => IsFlac(data) ? await DecodeFlacAsync(await accelerator(), data) : null;
+    }
+
+    /// <summary>A FLAC stream, possibly after an ID3v2 tag.</summary>
+    public static bool IsFlac(byte[] data) => data.Length >= 4 && (data.AsSpan(0, 4).SequenceEqual("fLaC"u8) || data.AsSpan(0, 3).SequenceEqual("ID3"u8));
+
+    /// <summary>
+    /// A FLAC file as ComfyUI's Load Audio reads it: FFmpeg's decoder gives int16 for up to 16 bits and int32 above (the samples shifted up to fill the type),
+    /// and f32_pcm turns them to float32 and divides by 2^15 or 2^31. SpawnDev.Codecs does that conversion on the accelerator (DecodeFloatAsync).
+    /// </summary>
+    public static async Task<AudioClip> DecodeFlacAsync(Accelerator accelerator, byte[] data)
+    {
+        FlacDecodeResult result;
+        await Gate.WaitAsync();
+        try
+        {
+            using var decoder = new FlacDecoderGpu(accelerator);
+            result = await decoder.DecodeFloatAsync(data);
+        }
+        finally { Gate.Release(); }
+        int c = result.Channels;
+        var planar = result.PlanarFloat;
+        int n = planar.Length / c;
+        return new AudioClip([.. Enumerable.Range(0, c).Select(k => planar.AsSpan(k * n, n).ToArray())], result.SampleRateHz);
     }
 
     /// <summary>

@@ -1,0 +1,29 @@
+{
+ "pyav": "18.1.0",
+ "cases": [
+  {
+   "name": "stereo16_44100",
+   "channels": 2,
+   "samples": 30000,
+   "sample_rate": 44100
+  },
+  {
+   "name": "mono16_22050",
+   "channels": 1,
+   "samples": 12345,
+   "sample_rate": 22050
+  },
+  {
+   "name": "stereo24_48000",
+   "channels": 2,
+   "samples": 20000,
+   "sample_rate": 48000
+  },
+  {
+   "name": "surround24_48000",
+   "channels": 6,
+   "samples": 9000,
+   "sample_rate": 48000
+  }
+ ]
+}

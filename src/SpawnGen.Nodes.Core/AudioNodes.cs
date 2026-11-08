@@ -6,10 +6,12 @@ namespace SpawnGen.Nodes.Core;
 [Node(Category = "audio", DisplayName = "Load Audio")]
 public sealed class LoadAudio
 {
-    public static string[] AudioNames() => [.. InputFiles.Store.List(n => n.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))];
+    public static string[] AudioNames() =>
+        [.. InputFiles.Store.List(n => AudioFiles.LoadableExtensions.Any(e => n.EndsWith(e, StringComparison.OrdinalIgnoreCase)))];
 
+    /// <summary>A WAV or FLAC file from the inputs (FLAC through SpawnDev.Codecs), as floats the way ComfyUI's PyAV load gives them.</summary>
     public async Task<AudioClip> ExecuteAsync([Input(OptionsProvider = nameof(AudioNames))] string audio) =>
-        WavFile.Decode(await InputFiles.Store.ReadAsync(audio));
+        await AudioFiles.LoadAsync(await InputFiles.Store.ReadAsync(audio));
 }
 
 [Node(Category = "audio", DisplayName = "Save Audio (FLAC) (DEPRECATED)", IsOutput = true)]

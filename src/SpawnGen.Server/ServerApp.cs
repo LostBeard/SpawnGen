@@ -199,7 +199,7 @@ public static class ServerApp
             var form = await request.ReadFormAsync();
             if (form.Files["image"] is not { } file) return Results.BadRequest("no 'image' file");
             var name = Path.GetFileName(file.FileName);
-            if (!ImageDecoder.IsSupportedName(name) && !name.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".latent", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("only PNG, JPEG, WebP, GIF and BMP pictures, WAV sound and .latent files can be loaded for now");
+            if (!ImageDecoder.IsSupportedName(name) && !AudioFiles.LoadableExtensions.Any(e => name.EndsWith(e, StringComparison.OrdinalIgnoreCase)) && !name.EndsWith(".latent", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("only PNG, JPEG, WebP, GIF and BMP pictures, WAV and FLAC sound and .latent files can be loaded for now");
             var target = Path.Combine(options.InputPath, name);
             if (File.Exists(target) && (string?)form["overwrite"] != "true")
                 name = $"{Path.GetFileNameWithoutExtension(name)}_{Guid.NewGuid().ToString("N")[..6]}{Path.GetExtension(name)}";

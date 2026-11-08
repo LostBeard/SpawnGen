@@ -58,7 +58,7 @@
                 <option>No engine available</option>
             }
         </select>
-        <label class="button" title="Upload a PNG, JPEG, WebP, GIF or BMP for Load Image nodes, a WAV for Load Audio, or a .latent for Load Latent">Upload<InputFile @key="_fileInputs" OnChange="OnUploadChosenAsync" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.wav,.latent" hidden /></label>
+        <label class="button" title="Upload a PNG, JPEG, WebP, GIF or BMP for Load Image nodes, a WAV or FLAC for Load Audio, or a .latent for Load Latent">Upload<InputFile @key="_fileInputs" OnChange="OnUploadChosenAsync" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.wav,.flac,.latent" hidden /></label>
         <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
         @{ var statusText = $"{RunStatus()}{_doc.Graph.Nodes.Count} nodes, {_doc.Graph.Links.Count} links, {(int)Math.Round(_view.Viewport.Scale * 100)}%"; }
         <span class="status" title="@statusText">@statusText</span>

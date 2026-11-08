@@ -29,6 +29,25 @@ public static class AudioFiles
     /// </summary>
     public static Func<AudioClip, int?, IReadOnlyList<KeyValuePair<string, string>>, Task<byte[]>>? Opus { get; set; }
 
+    /// <summary>
+    /// Decodes a sound file Load Audio is given that is not WAV (FLAC), or null when the format is not one it reads. A host with an accelerator sets it
+    /// (SpawnDev.Codecs).
+    /// </summary>
+    public static Func<byte[], Task<AudioClip?>>? Decode { get; set; }
+
+    /// <summary>The sound file extensions Load Audio lists.</summary>
+    public static readonly string[] LoadableExtensions = [".wav", ".flac"];
+
+    /// <summary>A sound file as ComfyUI's Load Audio reads it: WAV here, other formats through <see cref="Decode"/>.</summary>
+    public static async Task<AudioClip> LoadAsync(byte[] data)
+    {
+        if (data.Length >= 12 && data.AsSpan(0, 4).SequenceEqual("RIFF"u8) && data.AsSpan(8, 4).SequenceEqual("WAVE"u8)) return WavFile.Decode(data);
+        if (Decode is { } decode && await decode(data) is { } clip) return clip;
+        throw new NotSupportedException(Decode is null
+            ? "Load Audio reads WAV here; FLAC needs SpawnDev.Codecs on an accelerator (the server or the browser engine)."
+            : "Load Audio reads WAV and FLAC; this file is neither.");
+    }
+
     /// <summary>The Opus quality choices and their bit rates (ComfyUI's SaveAudioOpus / Save Audio (Advanced)).</summary>
     public static readonly string[] OpusQualities = ["64k", "96k", "128k", "192k", "320k"];
     public static readonly string[] Mp3Qualities = ["V0", "128k", "320k"];

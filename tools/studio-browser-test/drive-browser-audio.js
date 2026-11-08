@@ -1,6 +1,7 @@
 // Save Audio's FLAC on both engines in the real page: uploads a 1 s stereo tone (WAV), queues Load Audio -> Save Audio on each engine, then checks the
 // History player loads the result (FLAC, about 1 s) and that the browser's file (SpawnDev.Codecs on WebGPU) has the same FLAC frames as the server's.
 // FORMAT=opus runs Save Audio (Opus) at 128k instead (Ogg Opus; the serial is random per file, so only the player check applies).
+// WARM_WAIT=<seconds> waits after opening the workflow before queueing (the browser engine warms its audio kernels up meanwhile).
 // STUDIO_URL (default http://localhost:8188/), ENGINES (default server,browser).
 const { chromium } = require('playwright-core');
 const fs = require('fs');
@@ -70,6 +71,8 @@ function framesStart(b) {
     await page.setInputFiles('input[accept=".json,.png"]', promptPath);
     await page.waitForTimeout(1200);
     if (!(await page.locator('.hist-entry').count())) await page.click('button:has-text("History")');
+    // WARM_WAIT=<seconds>: wait after opening the workflow, as a user would, so the engine's audio warm-up can finish before the run.
+    if (process.env.WARM_WAIT) await page.waitForTimeout(Number(process.env.WARM_WAIT) * 1000);
     const started = Date.now();
     await page.locator('button:has-text("Queue")').click();
     for (let i = 0; i < 600; i++) { await page.waitForTimeout(500); const st = await page.textContent('.status', { timeout: 120000 }).catch(() => '(page not answering)'); if (i % 20 === 0) console.log(`  ${engine} ${((Date.now() - started) / 1000).toFixed(0)} s: ${st.trim().slice(0, 80)}`); if (i > 3 && !/Running|Queued|not answering/.test(st)) break; }

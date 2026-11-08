@@ -72,6 +72,19 @@ public class SaveAudioFlacTests
     }
 
     [Test]
+    public async Task Warming_up_leaves_the_files_ComfyUIs()
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var acc = context.CreateCPUAccelerator(0);
+        await CodecsAudio.WarmUpAsync(acc, CodecsAudio.Work.FlacEncode | CodecsAudio.Work.FlacDecode | CodecsAudio.Work.Opus);
+        foreach (var name in new[] { "stereo_44100", "mono_22050_odd" })
+            Assert.That(await CodecsAudio.EncodeFlacAsync(acc, Clip(name), Metadata(true)), Is.EqualTo(File.ReadAllBytes(Path.Combine(Dir, name + ".flac"))), name);
+        Assert.That(CodecsAudio.WorkFor("SaveAudioAdvanced"), Is.EqualTo(CodecsAudio.Work.FlacEncode | CodecsAudio.Work.Opus));
+        Assert.That(CodecsAudio.WorkFor("LoadAudio"), Is.EqualTo(CodecsAudio.Work.FlacDecode));
+        Assert.That(CodecsAudio.WorkFor("KSampler"), Is.EqualTo(CodecsAudio.Work.None));
+    }
+
+    [Test]
     public async Task Save_Audio_writes_the_FLAC_with_the_runs_prompt_and_workflow()
     {
         var saved = AudioFiles.Flac;

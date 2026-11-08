@@ -28,6 +28,52 @@ public static class CodecsAudio
         AudioFiles.Decode = async data => IsFlac(data) ? await DecodeFlacAsync(await accelerator(), data) : null;
     }
 
+    /// <summary>What <see cref="WarmUpAsync"/> can prepare.</summary>
+    [Flags]
+    public enum Work { None = 0, FlacEncode = 1, FlacDecode = 2, Opus = 4 }
+
+    /// <summary>
+    /// Compiles the kernels of the audio work a graph is about to need (SpawnDev.Codecs' warm-ups: a short silent encode or decode, thrown away), so the
+    /// first real save or load does not wait for them. In the browser the first compile of the Opus stages takes minutes on some GPUs. Not called
+    /// automatically yet: in the browser the compile holds the page's only thread (measured: 30 s + 104 s without an answer on the RX 590, non-AOT build),
+    /// so warming up early would freeze the editor instead of the run.
+    /// </summary>
+    public static async Task WarmUpAsync(Accelerator accelerator, Work work)
+    {
+        await Gate.WaitAsync();
+        try
+        {
+            if (work.HasFlag(Work.FlacEncode))
+            {
+                if (_encoder is null || _accelerator != accelerator)
+                {
+                    _encoder?.Dispose();
+                    _encoder = new FlacEncoderGpu(accelerator);
+                    _accelerator = accelerator;
+                }
+                await _encoder.WarmUpAsync(2, 44100, 16);
+            }
+            if (work.HasFlag(Work.FlacDecode))
+            {
+                using var decoder = new FlacDecoderGpu(accelerator);
+                await decoder.WarmUpAsync();
+            }
+            if (work.HasFlag(Work.Opus))
+                await OggOpusEncoder.WarmUpAsync(accelerator, 48000, 2, new OggOpusEncodeOptions { Bitrate = 128000, Vendor = Lavf }, floatInput: true);
+        }
+        finally { Gate.Release(); }
+    }
+
+    /// <summary>The audio work a node type needs (Save / Preview Audio: FLAC; the Opus and Advanced saves: Opus too; Load Audio: FLAC decoding).</summary>
+    public static Work WorkFor(string classType) => classType switch
+    {
+        "SaveAudio" or "PreviewAudio" => Work.FlacEncode,
+        "SaveAudioOpus" => Work.Opus,
+        "SaveAudioAdvanced" => Work.FlacEncode | Work.Opus,
+        "LoadAudio" => Work.FlacDecode,
+        _ => Work.None,
+    };
+
     /// <summary>A FLAC stream, possibly after an ID3v2 tag.</summary>
     public static bool IsFlac(byte[] data) => data.Length >= 4 && (data.AsSpan(0, 4).SequenceEqual("fLaC"u8) || data.AsSpan(0, 3).SequenceEqual("ID3"u8));
 

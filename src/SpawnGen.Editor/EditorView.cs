@@ -32,7 +32,7 @@ public sealed class LinkDraft
 /// </summary>
 public sealed class EditorView
 {
-    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap }
+    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap, DraggingCurvePoint }
 
     const double DragThresholdPixels = 3;
 
@@ -157,6 +157,70 @@ public sealed class EditorView
         return node;
     }
 
+    // ---- curve widgets ----
+
+    /// <summary>The curve point being dragged: the node, the widget, the plot it is drawn in and the point's index.</summary>
+    sealed record CurveDrag(int NodeId, string Name, Rect Plot, int Index);
+    CurveDrag? _curve;
+
+    WidgetRow? CurveRow(Hit hit) =>
+        Document.Graph.FindNode(hit.NodeId) is { } n ? Hits.Geometry(n).Widgets.FirstOrDefault(w => w.Name == hit.Name && w.IsCurve) : null;
+
+    /// <summary>
+    /// A press on a curve: the label toggles monotone cubic / linear; a double-click on a point removes it (two stay); a press on a point drags it; a press on
+    /// empty space adds a point there and drags it.
+    /// </summary>
+    void PressCurve(int nodeId, WidgetRow row, Point world, int clickCount)
+    {
+        var node = Document.Graph.GetNode(nodeId);
+        var value = node.Widgets.GetValueOrDefault(row.Name);
+        var points = CurveWidget.Points(value);
+        var interpolation = CurveWidget.Interpolation(value);
+        var plot = CurveWidget.Plot(row.Bounds);
+        int index = CurveWidget.PointAt(plot, points, world);
+        // A point wins over the label: the (1, 1) corner point sits just under it.
+        if (index < 0 && CurveWidget.Label(row.Bounds).Contains(world))
+        {
+            Document.SetWidget(nodeId, row.Name, CurveWidget.Make(points, interpolation == "linear" ? "monotone_cubic" : "linear"));
+            Document.EndGesture();
+            return;
+        }
+        if (index >= 0 && clickCount >= 2)
+        {
+            if (points.Count > 2)
+            {
+                points.RemoveAt(index);
+                Document.SetWidget(nodeId, row.Name, CurveWidget.Make(points, interpolation));
+                Document.EndGesture();
+            }
+            return;
+        }
+        if (index < 0)
+        {
+            var p = CurveWidget.FromWorld(plot, world);
+            index = points.FindIndex(q => q.X > p.X);
+            if (index < 0) index = points.Count;
+            points.Insert(index, p);
+            Document.SetWidget(nodeId, row.Name, CurveWidget.Make(points, interpolation));
+        }
+        _curve = new CurveDrag(nodeId, row.Name, plot, index);
+        _mode = Mode.DraggingCurvePoint;
+        SetCursor("grabbing");
+    }
+
+    /// <summary>Moves the dragged point, kept between its neighbours' x so the order (and so the dragged point) stays the same.</summary>
+    void MoveCurvePoint(CurveDrag drag, Point world)
+    {
+        var node = Document.Graph.GetNode(drag.NodeId);
+        var value = node.Widgets.GetValueOrDefault(drag.Name);
+        var points = CurveWidget.Points(value);
+        if (drag.Index >= points.Count) return;
+        var (x, y) = CurveWidget.FromWorld(drag.Plot, world);
+        double lo = drag.Index > 0 ? points[drag.Index - 1].X : 0, hi = drag.Index < points.Count - 1 ? points[drag.Index + 1].X : 1;
+        points[drag.Index] = (Math.Clamp(x, lo, hi), y);
+        Document.SetWidget(drag.NodeId, drag.Name, CurveWidget.Make(points, CurveWidget.Interpolation(value)));
+    }
+
     // ---- pointer ----
 
     public void PointerDown(Point screen, PointerButton button, Modifiers mods = Modifiers.None, int clickCount = 1)
@@ -219,6 +283,11 @@ public sealed class EditorView
             case HitKind.CollapseButton:
                 Document.SetCollapsed(hit.NodeId, !Document.Graph.GetNode(hit.NodeId).Collapsed);
                 Document.EndGesture();
+                break;
+
+            case HitKind.Widget when CurveRow(hit) is { } curveRow:
+                SelectOnly(hit.NodeId);
+                PressCurve(hit.NodeId, curveRow, world, clickCount);
                 break;
 
             case HitKind.Widget:
@@ -327,6 +396,10 @@ public sealed class EditorView
 
         switch (_mode)
         {
+            case Mode.DraggingCurvePoint when _curve is { } drag:
+                MoveCurvePoint(drag, world);
+                break;
+
             case Mode.Panning:
                 Viewport.Pan(screen.X - _lastScreen.X, screen.Y - _lastScreen.Y);
                 ViewChanged?.Invoke();
@@ -418,6 +491,10 @@ public sealed class EditorView
                 break;
             case Mode.Minimap:
                 _minimapLock = null;
+                break;
+            case Mode.DraggingCurvePoint:
+                Document.EndGesture();
+                _curve = null;
                 break;
             case Mode.PressedWidget:
                 if (_moved && _number is not null) Document.EndGesture();

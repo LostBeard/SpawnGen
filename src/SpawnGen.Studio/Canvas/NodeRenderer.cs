@@ -495,6 +495,54 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.TextAlign = "left";
     }
 
+    /// <summary>A CURVE widget: the plot with a quarter grid, the curve as the node evaluates it (SpawnGen.Nodes.Core.Curve), its points and the interpolation.</summary>
+    void DrawCurve(CanvasRenderingContext2D ctx, WidgetRow w, object? value)
+    {
+        var plot = CurveWidget.Plot(w.Bounds);
+        var points = CurveWidget.Points(value);
+        var interpolation = CurveWidget.Interpolation(value);
+        ctx.Font = Theme.Font;
+        ctx.TextBaseline = "middle";
+        ctx.FillStyle = Theme.LabelText;
+        ctx.FillText(w.Name, w.Bounds.X + 8, w.Bounds.Y + (CurveWidget.LabelHeight - 6) / 2 + 1);
+        ctx.FillStyle = Theme.ValueText;
+        ctx.TextAlign = "right";
+        ctx.FillText(interpolation == "linear" ? "linear" : "monotone cubic", w.Bounds.Right - 8, w.Bounds.Y + (CurveWidget.LabelHeight - 6) / 2 + 1);
+        ctx.TextAlign = "left";
+
+        ctx.StrokeStyle = Theme.WidgetBorder;
+        ctx.LineWidth = 1;
+        ctx.StrokeRect(plot.X, plot.Y, plot.Width, plot.Height);
+        ctx.BeginPath();
+        for (int k = 1; k < 4; k++)
+        {
+            ctx.MoveTo(plot.X + plot.Width * k / 4, plot.Y); ctx.LineTo(plot.X + plot.Width * k / 4, plot.Bottom);
+            ctx.MoveTo(plot.X, plot.Y + plot.Height * k / 4); ctx.LineTo(plot.Right, plot.Y + plot.Height * k / 4);
+        }
+        ctx.Stroke();
+
+        var curve = new SpawnGen.Nodes.Core.Curve(points, interpolation);
+        ctx.StrokeStyle = Theme.ValueText;
+        ctx.LineWidth = 2;
+        ctx.BeginPath();
+        const int steps = 96;
+        for (int i = 0; i <= steps; i++)
+        {
+            double x = i / (double)steps;
+            var p = CurveWidget.ToWorld(plot, (x, Math.Clamp(curve.Interp(x), -0.1, 1.1)));
+            if (i == 0) ctx.MoveTo(p.X, p.Y); else ctx.LineTo(p.X, p.Y);
+        }
+        ctx.Stroke();
+        ctx.FillStyle = "#e8e8e8";
+        foreach (var pt in points)
+        {
+            var p = CurveWidget.ToWorld(plot, pt);
+            ctx.BeginPath();
+            ctx.Arc(p.X, p.Y, 4, 0, Math.PI * 2);
+            ctx.Fill();
+        }
+    }
+
     void DrawWidget(CanvasRenderingContext2D ctx, EditorNode node, WidgetRow w)
     {
         var r = w.Bounds;
@@ -507,6 +555,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.LineWidth = 1;
         ctx.StrokeStyle = Theme.WidgetBorder;
         ctx.Stroke();
+
+        if (w.IsCurve) { DrawCurve(ctx, w, value); return; }
 
         ctx.Font = Theme.Font;
         ctx.TextBaseline = "middle";

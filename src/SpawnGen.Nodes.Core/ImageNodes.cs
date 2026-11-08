@@ -49,12 +49,19 @@ public sealed class LoadImage
 {
     public static string[] ImageNames() => InputFiles.List();
 
-    /// <summary>The picture, and a mask from its transparency like ComfyUI's: 1 where the picture is transparent, 0 where it is opaque (all 0 for a picture without alpha).</summary>
-    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames))] string image)
+    /// <summary>
+    /// The picture, and a mask from its transparency like ComfyUI's: 1 where the picture is transparent, 0 where it is opaque. Every frame of an animated
+    /// WebP or GIF is one picture of the batch. A picture without transparency gets ComfyUI's empty mask: 64 x 64 zeros per picture.
+    /// </summary>
+    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames))] string image) =>
+        await LoadAsync(await InputFiles.Store.ReadAsync(image));
+
+    internal static async Task<(ImageBatch Image, MaskBatch Mask)> LoadAsync(byte[] file)
     {
-        var img = ImageDecoder.Decode(await InputFiles.Store.ReadAsync(image), out var alpha);
-        var mask = new MaskBatch(1, img.Height, img.Width);
-        if (alpha is not null) for (int i = 0; i < alpha.Length; i++) mask.Data[i] = 1f - alpha[i];
+        var (img, alpha) = await ImageDecoder.DecodeFramesAsync(file);
+        if (alpha is null) return (img, new MaskBatch(img.Batch, 64, 64));
+        var mask = new MaskBatch(img.Batch, img.Height, img.Width);
+        for (int i = 0; i < alpha.Length; i++) mask.Data[i] = 1f - alpha[i];
         return (img, mask);
     }
 }
@@ -65,15 +72,15 @@ public sealed class LoadImageMask
     public static string[] ImageNames() => InputFiles.List();
     public static string[] Channels() => ["alpha", "red", "green", "blue"];
 
-    /// <summary>A mask from one channel of a picture; the alpha channel is inverted (transparent = 1) like ComfyUI's.</summary>
+    /// <summary>ComfyUI's: Load Image's mask for the alpha channel (transparent = 1; 64 x 64 zeros without transparency), else that colour channel, per frame.</summary>
     public async Task<MaskBatch> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames))] string image,
         [Input(OptionsProvider = nameof(Channels))] string channel = "alpha")
     {
-        var img = ImageDecoder.Decode(await InputFiles.Store.ReadAsync(image), out var alpha);
-        var mask = new MaskBatch(1, img.Height, img.Width);
+        var (img, alphaMask) = await LoadImage.LoadAsync(await InputFiles.Store.ReadAsync(image));
         int c = channel switch { "red" => 0, "green" => 1, "blue" => 2, "alpha" => -1, _ => throw new ArgumentException($"Unknown channel '{channel}'.", nameof(channel)) };
-        for (int i = 0; i < mask.Data.Length; i++)
-            mask.Data[i] = c >= 0 ? img.Data[i * 3 + c] : alpha is null ? 0f : 1f - alpha[i];
+        if (c < 0) return alphaMask;
+        var mask = new MaskBatch(img.Batch, img.Height, img.Width);
+        for (int i = 0; i < mask.Data.Length; i++) mask.Data[i] = img.Data[i * 3 + c];
         return mask;
     }
 }

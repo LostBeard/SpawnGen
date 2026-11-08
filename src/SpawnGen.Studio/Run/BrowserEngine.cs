@@ -34,6 +34,8 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _js = js;
         _http = http;
         InputFiles.Store = _inputs;
+        // WebP, GIF and BMP for Load Image decode on the page's GPU (SpawnDev.Codecs over WebGPU), opened on the first such picture.
+        CodecsImages.Install(async () => (await GetAsync()).Accelerator);
         _bus.Published += e =>
         {
             if (_perOp) ReportPerOpTimings(e.Type);
@@ -162,9 +164,14 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     /// <summary>Results live in memory here, so the picture itself is the URL (a data URL).</summary>
     public string ViewUrl(string filename, string? subfolder, string? type) =>
         (type == "input" ? _inputs.ReadAsync(filename).GetAwaiter().GetResult() : _results.Get(type ?? "output", filename, subfolder)) is { } bytes
-            ? (filename.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? "data:audio/wav;base64,"
-                : filename.EndsWith(".glb", StringComparison.OrdinalIgnoreCase) ? "data:model/gltf-binary;base64," : "data:image/png;base64,") + Convert.ToBase64String(bytes)
+            ? $"data:{MediaType(filename)};base64," + Convert.ToBase64String(bytes)
             : "";
+
+    static string MediaType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
+    {
+        ".wav" => "audio/wav", ".glb" => "model/gltf-binary", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".gif" => "image/gif", ".bmp" => "image/bmp",
+        _ => "image/png",
+    };
 
     public async Task<string?> UploadImageAsync(string name, byte[] png) => await _inputs.SaveAsync(Path.GetFileName(name), png);
 

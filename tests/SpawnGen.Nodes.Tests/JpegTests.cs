@@ -56,7 +56,15 @@ public class JpegTests
     public void Files_that_are_not_pictures_say_so()
     {
         Assert.That(() => ImageDecoder.Decode([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]), Throws.TypeOf<InvalidDataException>());
-        Assert.That(() => ImageDecoder.Decode("RIFF\0\0\0\0WEBPVP8 "u8.ToArray()), Throws.TypeOf<NotSupportedException>().With.Message.Contains("WebP"));
+        Assert.That(() => ImageDecoder.Decode("RIFF\0\0\0\0WEBPVP8 "u8.ToArray()), Throws.TypeOf<InvalidDataException>().With.Message.Contains("WebP"));
+        var saved = ImageDecoder.Codecs;
+        ImageDecoder.Codecs = null;
+        try
+        {
+            Assert.That(() => ImageDecoder.DecodeFramesAsync("RIFF\0\0\0\0WEBPVP8 "u8.ToArray()), Throws.TypeOf<NotSupportedException>().With.Message.Contains("WebP"));
+            Assert.That(() => ImageDecoder.DecodeFramesAsync([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]), Throws.TypeOf<InvalidDataException>());
+        }
+        finally { ImageDecoder.Codecs = saved; }
         var truncated = File.ReadAllBytes(Fixture("baseline444.jpg"))[..200];
         Assert.That(() => JpegReader.Decode(truncated), Throws.InstanceOf<Exception>());
     }

@@ -102,7 +102,8 @@ public class ImageExtraTests
         Assert.That(mask.Data[0], Is.EqualTo(0f).Within(1e-5), "opaque: not masked");
         Assert.That(mask.Data[1], Is.EqualTo(1f - 128 / 255f).Within(1e-5), "half transparent");
         var (_, plainMask) = await new LoadImage().ExecuteAsync("plain.png");
-        Assert.That(plainMask.Data, Is.EqualTo(new[] { 0f, 0f }), "no alpha: nothing masked");
+        Assert.That(plainMask.Shape, Is.EqualTo(new[] { 1, 64, 64 }), "no alpha: ComfyUI's empty 64 x 64 mask");
+        Assert.That(plainMask.Data, Is.All.EqualTo(0f));
         var green = await new LoadImageMask().ExecuteAsync("a.png", "green");
         Assert.That(green.Data, Is.EqualTo(new[] { 0f, 1f }).Within(1e-5));
         var alpha = await new LoadImageMask().ExecuteAsync("a.png", "alpha");

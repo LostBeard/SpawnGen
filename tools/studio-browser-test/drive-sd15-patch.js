@@ -1,4 +1,4 @@
-// SD 1.5 with a UNet patch (FreeU, FreeU_V2, PerturbedAttentionGuidance) on one engine, to compare the browser's WebGPU picture with the server's.
+// SD 1.5 with a UNet patch (FreeU, FreeU_V2, PAG, SAG, HyperTile, deep shrink, ToMe) on one engine, to compare the browser's WebGPU picture with the server's.
 // Opens ComfyUI's stock workflow patched to v1-5-pruned-emaonly-fp16.safetensors (downloaded from Hugging Face on first use), 512x512, euler, cfg 7.5,
 // with the patch node between Load Checkpoint and the KSampler (PATCH=none leaves it out), runs it on ENGINE ("browser" or "server") and saves the
 // Save Image picture to out/sd15-<patch>-<engine>.png.
@@ -50,6 +50,10 @@ const PATCHES = {
   FreeU: [1.1, 1.2, 0.9, 0.2],
   FreeU_V2: [1.3, 1.4, 0.9, 0.2],
   PerturbedAttentionGuidance: [3.0],
+  SelfAttentionGuidance: [0.5, 2.0],
+  HyperTile: [256, 2, 0, false],
+  PatchModelAddDownscale: [3, 2.0, 0.0, 0.35, true, 'bicubic', 'bicubic'],
+  TomePatchModel: [0.3],
 };
 
 (async () => {

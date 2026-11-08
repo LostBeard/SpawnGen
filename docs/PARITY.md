@@ -92,8 +92,17 @@ The dataset nodes (comfy_extras/nodes_dataset.py: Load Image / Image-Text (from 
 normalize, brightness, contrast, shuffle, deduplicate, grid and merge nodes, and the text steps) are checked against ComfyUI's node classes and a
 ComfyUI server (Fixtures/dataset): pictures pixel for pixel (Pillow's 8-bit steps, numpy's legacy generator for Random Crop and the shuffles, the
 average hash bit for bit), the tensor maths bit for bit, captions, Preview as Text output, file names (overwrite and increment numbering) and caption
-bytes exactly. WebP files in a folder fail to load (no WebP decoder yet, see below); JPEGs go through SpawnGen's decoder, which is close to but
-not bit-exact with Pillow's libjpeg.
+bytes exactly. WebP files in a folder decode on the GPU (SpawnDev.Codecs, the first frame like Pillow's convert("RGB")); JPEGs go through
+SpawnGen's decoder, which is close to but not bit-exact with Pillow's libjpeg.
+
+Load Image reads PNG and JPEG itself and WebP (lossy, lossless, alpha, animated), GIF (animated) and BMP through SpawnDev.Codecs on the host's GPU
+(OpenCL / CUDA on the desktop, WebGPU in the browser): every frame is one picture of the batch, transparency gives the mask, and a picture without
+transparency gets ComfyUI's empty 64 x 64 mask (Load Image (as Mask) wraps Load Image, as ComfyUI's does). Checked against ComfyUI's own Load Image
+(Fixtures/codecs, make_load_image.py) on the CPU accelerator and on the RX 590: batch and mask layout as ComfyUI's, pixels and alpha exactly libwebp's /
+Pillow's. Deliberate difference: since ComfyUI #13594 (2026-04-28) its Load Image decodes through PyAV (ffmpeg), which converts most pixel formats
+through swscale to float: WebP and BMP colours come out 1 to 2.4 / 255 off the decoded values, fully opaque WebP / GIF pixels get a mask of 1/255
+instead of 0, and JPEGs are upsampled by ffmpeg instead of libjpeg (4:2:0 pictures: mean 5/255, up to 68/255 off Pillow's). SpawnGen keeps the
+reference decoders' values (what Pillow, libwebp and the browsers show).
 Deliberate difference (a ComfyUI bug not copied): ComfyUI's TextProcessingNode.execute wraps a text step's result in a list on its non-list output,
 so its text steps put out ["text"] (previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
 
@@ -112,7 +121,7 @@ Still missing, by kind:
    SD1 / SD2 / SDXL, CLIPMergeSimple / Subtract / Add) as weight steps replayed on the GPU in graph order with the LoRAs, and saving (Save Checkpoint,
    ModelSave, VAESave; fp16 LDM names) verified: a merge with a LoRA'd copy = ComfyUI (0.13 %), and the saved checkpoint loads back as that merge.
    Open: CLIPSave (ComfyUI writes Hugging Face names, one file per tower: asked the library), Save Checkpoint of parts loaded separately, fp8 weight_dtype.
-2. **Need a codec**: video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), WebP, MP3 / Opus / FLAC audio saving.
+2. **Need a codec** (SpawnDev.Codecs; requests with Geordi 2026-11-08 in this order: animated lossy WebP, WebM writer, FLAC of any length, Ogg Opus, VP9 / AV1 inter frames): Save Animated WEBP, SaveWEBM, video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), MP3 / Opus / FLAC audio saving. WebP / GIF / BMP loading is done.
 3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop), Custom Combo (frontend-defined options),
    Text Overlay (a font engine; the same engine would draw the number tags and descriptions in Create Bounding Boxes' preview and the labels of Draw
    BBoxes, which are left out until then). Done on branch `bbox-nodes`: object-valued widgets (BOUNDING_BOX, BOUNDING_BOXES, COMPOSITOR) in prompts,

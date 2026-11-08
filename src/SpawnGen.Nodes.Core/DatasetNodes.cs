@@ -467,13 +467,13 @@ internal static class DatasetFiles
 
     /// <summary>
     /// load_and_process_images: each file through Pillow (<c>Image.open(...).convert("RGB")</c>, no EXIF rotation), one list item each. WebP files
-    /// are listed as ComfyUI lists them but SpawnGen cannot decode WebP yet, so a folder with one fails on it.
+    /// are decoded on the GPU (SpawnDev.Codecs, through ImageDecoder.Codecs): the first frame, as Pillow's convert("RGB") gives it.
     /// </summary>
     public static async Task<IReadOnlyList<ImageBatch>> LoadAsync(IReadOnlyList<string> paths)
     {
         if (paths.Count == 0) throw new ArgumentException("No valid images found in input");
         var images = new List<ImageBatch>(paths.Count);
-        foreach (var path in paths) images.Add(ImageDecoder.DecodePillowRgb(await InputFiles.Store.ReadFileAsync(path)));
+        foreach (var path in paths) images.Add(await ImageDecoder.DecodePillowRgbAsync(await InputFiles.Store.ReadFileAsync(path)));
         return images;
     }
 

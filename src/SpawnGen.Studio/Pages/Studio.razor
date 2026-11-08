@@ -58,7 +58,7 @@
                 <option>No engine available</option>
             }
         </select>
-        <label class="button" title="Upload a PNG or JPEG for Load Image nodes, a WAV for Load Audio, or a .latent for Load Latent">Upload<InputFile OnChange="OnUploadChosen" accept=".png,.jpg,.jpeg,.wav,.latent" hidden /></label>
+        <label class="button" title="Upload a PNG, JPEG, WebP, GIF or BMP for Load Image nodes, a WAV for Load Audio, or a .latent for Load Latent">Upload<InputFile OnChange="OnUploadChosen" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.wav,.latent" hidden /></label>
         <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
         @{ var statusText = $"{RunStatus()}{_doc.Graph.Nodes.Count} nodes, {_doc.Graph.Links.Count} links, {(int)Math.Round(_view.Viewport.Scale * 100)}%"; }
         <span class="status" title="@statusText">@statusText</span>
@@ -1394,7 +1394,7 @@
             await stream.CopyToAsync(memory);
             var stored = await _engine.UploadImageAsync(e.File.Name, memory.ToArray());
             await RefreshInputImagesAsync();
-            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG and JPEG pictures, WAV sound and .latent files can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image, Load Audio or Load Latent node.");
+            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG, JPEG, WebP, GIF and BMP pictures, WAV sound and .latent files can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image, Load Audio or Load Latent node.");
         }
         catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
     }

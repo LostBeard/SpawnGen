@@ -97,7 +97,8 @@ average hash bit for bit), the tensor maths bit for bit, captions, Preview as Te
 bytes exactly. WebP files in a folder decode on the GPU (SpawnDev.Codecs, the first frame like Pillow's convert("RGB")); JPEGs go through
 SpawnGen's decoder, which is close to but not bit-exact with Pillow's libjpeg.
 
-Load Image reads PNG and JPEG itself and WebP (lossy, lossless, alpha, animated), GIF (animated) and BMP through SpawnDev.Codecs on the host's GPU
+Load Image reads PNG (animated PNGs too: every frame composited exactly as ffmpeg, i.e. ComfyUI's PyAV path, does, including its
+quirk of showing a frame disposed to the background unblended) and JPEG itself and WebP (lossy, lossless, alpha, animated), GIF (animated) and BMP through SpawnDev.Codecs on the host's GPU
 (OpenCL / CUDA on the desktop, WebGPU in the browser): every frame is one picture of the batch, transparency gives the mask, and a picture without
 transparency gets ComfyUI's empty 64 x 64 mask (Load Image (as Mask) wraps Load Image, as ComfyUI's does). Load Image (from Outputs) lists the output pictures newest first as ComfyUI's
 `/internal/files/output` does (the server serves that route too); the Studio refreshes the list after each run, and the node's right-click menu

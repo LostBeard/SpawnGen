@@ -130,3 +130,10 @@ public sealed class Previewer
         return value;
     }
 }
+
+/// <summary>Passes its value on and shows it (ui "shown"), with ComfyUI's has_intermediate_output like Curve Editor.</summary>
+[Node(Category = "test", HasIntermediateOutput = true)]
+public sealed class Charted
+{
+    public (long Value, UiOutput Ui) Execute(long value) { Calls.Hit(nameof(Charted)); return (value, new UiOutput("shown", new[] { value })); }
+}

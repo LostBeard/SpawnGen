@@ -64,6 +64,7 @@ public sealed class PromptExecutor
             {
                 foreach (var id in validation.OutputNodeIds)
                     if (!inLoops.Contains(id)) await run.EvaluateAsync(id).ConfigureAwait(false);
+                run.ResendIntermediateUi();
             }
             catch (Exception ex)
             {
@@ -143,6 +144,7 @@ public sealed class PromptExecutor
                 Values[id] = hit;
                 CachedIds.Add(id);
                 observer?.OnNodeCached(Display(id));
+                ResendUi(id, hit);
                 return hit;
             }
 
@@ -297,6 +299,34 @@ public sealed class PromptExecutor
         }
 
         /// <summary>Never served from the cache: an always-run node, or one whose cache switch (<see cref="NodeSchema.CacheWhen"/>) is not on.</summary>
+        readonly HashSet<string> _uiResent = new(StringComparer.Ordinal);
+
+        void ResendUi(string id, NodeOutputs cached)
+        {
+            if (cached.Ui is { Count: > 0 } && _uiResent.Add(id)) observer?.OnNodeCachedUi(Display(id), cached);
+        }
+
+        /// <summary>
+        /// After the run (ComfyUI's execute loop's else branch): every node of the prompt with an intermediate output (Curve Editor's histogram, GLSL Shader's
+        /// pictures) that did not run but has a cached result shows its ui again, so the page keeps it after a run that did not need it.
+        /// </summary>
+        public void ResendIntermediateUi()
+        {
+            if (observer is null) return;
+            foreach (var (id, node) in graph.Nodes)
+            {
+                if (Executed.Contains(id) || _uiResent.Contains(id)) continue;
+                if (!owner._registry.TryGet(node.ClassType, out var registered) || !registered.Schema.HasIntermediateOutput) continue;
+                NodeOutputs? cached = Values.GetValueOrDefault(id);
+                if (cached is null)
+                {
+                    try { if (!owner.Cache.TryGet(Signature(id), out cached)) continue; }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { continue; } // a node the run could not have reached (missing input)
+                }
+                ResendUi(id, cached!);
+            }
+        }
+
         static bool AlwaysRuns(PromptNode node, NodeSchema schema) =>
             schema.AlwaysExecute || schema.CacheWhen is { } input && !(node.Inputs.TryGetValue(input, out var given) && given.Literal is true);
 

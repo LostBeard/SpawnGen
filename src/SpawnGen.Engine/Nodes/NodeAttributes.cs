@@ -11,6 +11,11 @@ public sealed class NodeAttribute(string? id = null) : Attribute
     public string? Description { get; init; }
     public bool IsOutput { get; init; }
     public bool AlwaysExecute { get; init; }
+    /// <summary>
+    /// ComfyUI's <c>has_intermediate_output</c>: a node whose ui (a histogram, a picture) the page keeps showing; after a run that did not reach it, its
+    /// cached result sends its ui again.
+    /// </summary>
+    public bool HasIntermediateOutput { get; init; }
     /// <summary>A node that only exists in the editor (Reroute, Note): the compiler resolves or drops it, a run never sends it.</summary>
     public bool FrontendOnly { get; init; }
     /// <summary>Earlier ids of this node type: workflows and prompts that use them still find it.</summary>

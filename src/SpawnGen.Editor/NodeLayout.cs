@@ -9,7 +9,11 @@ public enum SlotKind { Input, Output }
 public sealed record SlotGeometry(SlotKind Kind, string Name, int Index, SocketType Type, Point Position, bool IsWidgetInput, bool IsConnected, bool IsList = false);
 
 /// <summary>One widget row (a number, text box, combo or toggle) inside a node body.</summary>
-public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds);
+public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds)
+{
+    /// <summary>A CURVE widget: a plot the pointer edits (<see cref="CurveWidget"/>), not a one-line value.</summary>
+    public bool IsCurve { get; init; }
+}
 
 /// <summary>Everything the renderer and hit tester need to know about where one node's parts are, in world units.</summary>
 public sealed class NodeGeometry
@@ -109,9 +113,10 @@ public static class NodeLayout
         var widgets = new List<WidgetRow>();
         foreach (var spec in widgetInputs)
         {
-            double h = spec.Widget!.Multiline ? MultilineWidgetHeight : WidgetRowHeight;
+            bool curve = spec.Type.Name == CurveWidget.TypeName;
+            double h = curve ? Math.Clamp((width - 2 * Padding) * 0.8, 120, 320) : spec.Widget!.Multiline ? MultilineWidgetHeight : WidgetRowHeight;
             var bounds = new Rect(node.X + Padding, y, width - 2 * Padding, h - 4);
-            widgets.Add(new WidgetRow(spec.Name, spec.Widget, bounds));
+            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve });
             // The drop target for linking a value into this widget: the left edge of its row.
             inputs.Add(new SlotGeometry(SlotKind.Input, spec.Name, inputs.Count, spec.Type, new Point(node.X, bounds.Center.Y), true, false));
             y += h;

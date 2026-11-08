@@ -238,6 +238,8 @@ public sealed class PromptQueue : IDisposable
             events.Publish(new("preview", d) { Image = png });
         }
 
+        public void OnNodeCachedUi(string nodeId, NodeOutputs outputs) => OnNodeExecuted(nodeId, outputs);
+
         public void OnNodeExecuted(string nodeId, NodeOutputs outputs)
         {
             if (outputs.Ui is not { Count: > 0 } ui) return;

@@ -1533,6 +1533,7 @@
     static JsonArray? AudioOf(JsonObject data) => data["output"]?["audio"] as JsonArray;
 
     static JsonArray? TextOf(JsonObject data) => data["output"]?["text"] as JsonArray;
+    static JsonArray? HistogramOf(JsonObject data) => data["output"]?["histogram"] as JsonArray;
 
     void OnServerEvent(JsonObject e)
     {
@@ -1577,6 +1578,9 @@
             case "executed" when node is { } modelId && _doc.Graph.FindNode(modelId) is { } modelled && ModelsOf(data) is { } models:
                 modelled.ResultModels = models.OfType<JsonObject>().Select(m => _engine!.ViewUrl((string)m["filename"]!, (string?)m["subfolder"], (string?)m["type"])).ToList();
                 modelled.ResultText = string.Join("\n", models.OfType<JsonObject>().Select(m => "▣ "+ (string?)m["filename"] + " (open it from the right-click menu)"));
+                break;
+            case "executed" when node is { } histId && _doc.Graph.FindNode(histId) is { } charted && HistogramOf(data) is { } bins:
+                charted.ResultHistogram = bins.Select(b => (double?)b ?? 0).ToList();
                 break;
             case "executed" when node is { } textId && _doc.Graph.FindNode(textId) is { } texted && TextOf(data) is { } texts:
                 texted.ResultText = string.Join("\n", texts.Select(t => (string?)t ?? ""));

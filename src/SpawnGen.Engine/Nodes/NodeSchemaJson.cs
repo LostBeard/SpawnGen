@@ -54,6 +54,7 @@ public static class NodeSchemaJson
             Inputs = inputs,
             Outputs = outputs,
             IsOutputNode = (bool?)n["output_node"] ?? false,
+            HasIntermediateOutput = (bool?)n["has_intermediate_output"] ?? false,
             InputIsList = n["input_is_list"] is JsonValue l && l.TryGetValue<bool>(out var inputIsList) && inputIsList,
             DevOnly = n["dev_only"] is JsonValue d && d.TryGetValue<bool>(out var devOnly) && devOnly,
         };

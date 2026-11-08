@@ -38,6 +38,8 @@ public sealed class EditorNode
     public string? ResultText { get; set; }
     /// <summary>URLs of 3D models this node produced (Save / Preview 3D Model): view state like <see cref="Previews"/>, opened in the viewer from the context menu.</summary>
     public IReadOnlyList<string> ResultModels { get; set; } = [];
+    /// <summary>Curve Editor: the histogram of its last run (ui "histogram", one count per level), drawn behind the curve: view state like <see cref="Previews"/>.</summary>
+    public IReadOnlyList<double>? ResultHistogram { get; set; }
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
     /// <summary>ComfyUI's per-node <c>properties</c> object ("Node name for S&amp;R", cnr_id, ver, ...): kept as read so a saved workflow loses nothing.</summary>

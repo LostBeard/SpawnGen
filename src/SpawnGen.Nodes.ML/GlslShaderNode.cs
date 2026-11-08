@@ -5,7 +5,7 @@ using SpawnGen.Nodes.Core;
 
 namespace SpawnGen.Nodes.ML;
 
-[Node("GLSLShader", Category = "image/shader", DisplayName = "GLSL Shader", OutputNames = ["IMAGE0", "IMAGE1", "IMAGE2", "IMAGE3"],
+[Node("GLSLShader", Category = "image/shader", DisplayName = "GLSL Shader", HasIntermediateOutput = true, OutputNames = ["IMAGE0", "IMAGE1", "IMAGE2", "IMAGE3"],
     Description = "Apply GLSL ES fragment shaders to images. u_resolution (vec2) is always available.")]
 public sealed class GLSLShader
 {

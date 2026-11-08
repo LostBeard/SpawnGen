@@ -233,6 +233,39 @@ public class ExecutionTests
         Assert.That(exec.Cache.Count, Is.LessThanOrEqualTo(3));
     }
 
+    [Test]
+    public async Task A_cached_run_shows_the_ui_of_reached_nodes_and_of_unreached_intermediate_nodes_again()
+    {
+        // 1 -> Charted 2 -> Sink 3. Measured on ComfyUI (LoadImage -> ImageHistogram -> CurveEditor -> PreviewAny queued twice): the second run sends
+        // "executed" for the cached output node, then for the Curve Editor it never reached, and keeps both in the history.
+        PromptGraph Graph()
+        {
+            var g = new PromptGraph();
+            g.Add("1", "IntSource", ("value", 4L));
+            g.Add("2", "Charted", ("value", L("1")));
+            g.Add("3", "Sink", ("value", L("2")));
+            return g;
+        }
+        var first = new Recorder();
+        await _executor.ExecuteAsync(Graph(), observer: first);
+        Assert.That(first.CachedUi, Is.Empty);
+
+        var second = new Recorder();
+        await _executor.ExecuteAsync(Graph(), observer: second);
+        Assert.That(second.CachedUi, Is.EqualTo(new[] { "3", "2" }), "the reached output node, then the intermediate node");
+        Assert.That(Calls.Of("Charted"), Is.EqualTo(1));
+
+        // A cached intermediate node no output depends on any more still shows its ui; a node without the flag does not.
+        var g = new PromptGraph();
+        g.Add("1", "IntSource", ("value", 4L));
+        g.Add("2", "Charted", ("value", L("1")));
+        g.Add("4", "IntSource", ("value", 9L));
+        g.Add("5", "Sink", ("value", L("4")));
+        var third = new Recorder();
+        await _executor.ExecuteAsync(g, observer: third);
+        Assert.That(third.CachedUi, Is.EqualTo(new[] { "2" }));
+    }
+
     sealed class Recorder : IExecutionObserver
     {
         public List<string> Events { get; } = [];
@@ -245,6 +278,8 @@ public class ExecutionTests
         public void OnNodeCached(string nodeId) => Events.Add("cached:" + nodeId);
         public void OnNodeExecuting(string nodeId) => Events.Add("exec:" + nodeId);
         public void OnNodeExecuted(string nodeId, NodeOutputs outputs) => Events.Add("done:" + nodeId);
+        public List<string> CachedUi { get; } = [];
+        public void OnNodeCachedUi(string nodeId, NodeOutputs outputs) => CachedUi.Add(nodeId);
         public void OnNodeProgress(string nodeId, double value, double max, string? message) { Progress.Add(message); OnProgress?.Invoke(); }
         public void OnError(string? nodeId, Exception error) { if (nodeId is not null) Errors.Add(nodeId); }
         public void OnFinished(ExecutionResult result) => Events.Add("finish");

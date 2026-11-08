@@ -41,6 +41,8 @@ public sealed record UNetOptions
     public bool RecordMiddleSelfAttention { get; init; }
     /// <summary>HyperTile's tiled self-attention (null = off).</summary>
     public SpawnDev.ILGPU.ML.StableDiffusion.SdHyperTile? HyperTile { get; init; }
+    /// <summary>ToMe's token merging in the self-attention (null = off). With random destinations and no <c>Rng</c>, each sampling run draws them from a generator of its own seeded the same way, so a run repeats.</summary>
+    public SpawnDev.ILGPU.ML.StableDiffusion.SdTokenMerge? TokenMerge { get; init; }
     /// <summary>Deep shrink and the sigmas it applies between (null = off); <see cref="At"/> drops it outside that window.</summary>
     public DeepShrinkWindow? DeepShrink { get; init; }
 

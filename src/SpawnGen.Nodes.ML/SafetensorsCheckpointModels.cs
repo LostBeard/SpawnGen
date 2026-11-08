@@ -66,6 +66,8 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
 {
     readonly Dictionary<CondEntry, Uploaded> _uploaded = new(ReferenceEqualityComparer.Instance);
     MemoryBuffer1D<float, Stride1D.Dense>? _in, _out, _concat;
+    /// <summary>ToMe's random destinations: drawn from a generator per run with a fixed seed, so the same graph gives the same picture (ComfyUI's come from torch's global generator, which the noise seeds).</summary>
+    readonly Random _tomeRng = new(0);
 
     public override int ConcatChannels => unet.ConcatChannels;
 
@@ -104,6 +106,7 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
         unet.RecordMiddleSelfAttention = options.RecordMiddleSelfAttention;
         unet.HyperTile = options.HyperTile;
         unet.DeepShrink = options.DeepShrink?.Shrink;
+        unet.TokenMerge = options.TokenMerge is { RandomDestinations: true, Rng: null } tm ? tm with { Rng = _tomeRng } : options.TokenMerge;
         if (unet.ConcatChannels > 0)
         {
             long concatLength = (long)unet.ConcatChannels * h * w;
@@ -166,6 +169,7 @@ internal sealed class SdUNetRun(SdUNet unet, Accelerator acc) : UNetRun
         unet.RecordMiddleSelfAttention = false;
         unet.HyperTile = null;
         unet.DeepShrink = null;
+        unet.TokenMerge = null;
         foreach (var u in _uploaded.Values) { u.Context.Dispose(); u.Label?.Dispose(); }
         _uploaded.Clear();
         foreach (var b in _hints.Values) b.Dispose();

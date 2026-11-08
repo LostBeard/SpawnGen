@@ -305,6 +305,51 @@ public class ComfyUIRenderParityTests
     }
 
     /// <summary>
+    /// ToMe (TomePatchModel, ratio 0.3) after one euler step (of a 1-step schedule, cfg 7.5), against ComfyUI's render with top-left destinations on both sides
+    /// (<see cref="TomePatchModelTopLeft"/> here, and on ComfyUI's side a custom node calling its bipartite_soft_matching_random2d with no_rand=True: its own
+    /// destinations come from torch.randint and cannot be repeated). One step, because the merge choices are discrete (argmax, ranking): the plain pipeline's own
+    /// small gap to ComfyUI (0.14 % after one step) flips a few of them, and the flips compound. Measured on the RX 590: 0.40 % / 1.3 % / 5.1 % of the latent's rms
+    /// after 1 / 3 / 10 steps (plain: 0.14 / 0.38 / 0.4 %), with 79 % of the one-step error in 5 % of the latent's pixels (plain: 20 %), i.e. a few flipped
+    /// windows, not a spread error. ToMe's own effect after one step is 0.28, 5.6 % of the rms.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
+    public async Task SD15_with_ToMe_gives_ComfyUIs_first_step()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 1, 7.5, result: "euler_tome_1step",
+            patches: [("TomePatchModelTopLeft", [])]);
+        var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", "comfyui_sd15");
+        var tome = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, "euler_tome_1step.latent"))).Data;
+        var plain = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, "euler_1step.latent"))).Data;
+        double effect = Math.Sqrt(tome.Zip(plain, (a, b) => (double)(a - b) * (a - b)).Average());
+        TestContext.Out.WriteLine($"ToMe's effect in ComfyUI {effect:F4}; our difference is {diff / effect:P1} of it");
+        Assert.That(diff, Is.LessThan(0.01 * scale));
+        Assert.That(diff, Is.LessThan(0.15 * effect));
+    }
+
+    /// <summary>
+    /// TomePatchModel itself (random destinations, 10 steps): a run draws them from its own generator, so the same graph gives the same latent twice, and the
+    /// picture moves away from the plain one by about as much as ComfyUI's ToMe does (0.66 for ComfyUI's top-left run). Open the printed picture.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
+    public async Task ToMe_with_random_destinations_repeats_its_picture()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var first = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: "euler", picture: "-",
+            patches: [("TomePatchModel", [])]);
+        var second = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: "euler", picture: "-",
+            patches: [("TomePatchModel", [])]);
+        Assert.That(second.Diff, Is.EqualTo(first.Diff), "the same graph twice");
+        Assert.That(first.Diff, Is.InRange(0.3, 1.2), "distance from the plain picture");
+    }
+
+    /// <summary>
     /// The SD 1.5 inpainting UNet (stable-diffusion-v1-5/stable-diffusion-inpainting's unet/diffusion_pytorch_model.fp16.safetensors as
     /// &lt;models&gt;/diffusion_models/sd15_inpainting_unet.fp16.safetensors, through Load Diffusion Model; CLIP and VAE from the SD 1.5 checkpoint) with
     /// InpaintModelConditioning of ComfyUI's apple picture and an oval mask (noise_mask off), against ComfyUI's render (run_comfy.py --inpaint): checks the
@@ -360,7 +405,7 @@ public class ComfyUIRenderParityTests
         {
             using (var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders)))
             {
-                var executor = new PromptExecutor(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly),
+                var executor = new PromptExecutor(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly).AddAssembly(typeof(TomePatchModelTopLeft).Assembly),
                     new Services(runtime, new OutputOptions { Directory = root! }));
                 var g = new PromptGraph();
                 g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "v1-5-pruned-emaonly.safetensors"));
@@ -399,7 +444,7 @@ public class ComfyUIRenderParityTests
         InputFiles.Directory = dir;
         try
         {
-            var executor = new PromptExecutor(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly),
+            var executor = new PromptExecutor(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly).AddAssembly(typeof(TomePatchModelTopLeft).Assembly),
                 new Services(runtime, new OutputOptions { Directory = outDir }));
             var g = new PromptGraph();
             // The model, CLIP and VAE come from Load Checkpoint, or from the loaders the test adds.
@@ -499,4 +544,12 @@ public class ComfyUIRenderParityTests
     {
         public object? GetService(Type serviceType) => instances.FirstOrDefault(serviceType.IsInstanceOfType);
     }
+}
+
+/// <summary>TomePatchModel with every 2x2 window's destination at its top-left token, so the parity test can repeat ComfyUI's picture.</summary>
+[Node("TomePatchModelTopLeft", Category = "_parity")]
+public sealed class TomePatchModelTopLeft
+{
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0.0, Max = 1.0, Step = 0.01)] double ratio = 0.3) =>
+        model.WithPatches(p => p with { UNet = p.UNet with { TokenMerge = new SpawnDev.ILGPU.ML.StableDiffusion.SdTokenMerge((float)ratio, RandomDestinations: false) } });
 }

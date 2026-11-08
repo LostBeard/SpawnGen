@@ -93,6 +93,18 @@ public sealed class HyperTile
         model.WithPatches(p => p with { UNet = p.UNet with { HyperTile = new SdHyperTile(tile_size, swap_size, max_depth, scale_depth) } });
 }
 
+[Node("TomePatchModel", Category = "model/patch/unet", DisplayName = "TomePatchModel")]
+public sealed class TomePatchModel
+{
+    /// <summary>
+    /// ToMe for SD (token merging), ComfyUI's version: in the self-attention of the full-resolution layers, <c>ratio</c> of the queries are averaged into their most
+    /// similar neighbour (one destination drawn at random in each 2x2 window) and the attention's output is copied back to them. Faster on large pictures, at some cost
+    /// in detail. HyperTile, when also applied, takes the layers it tiles.
+    /// </summary>
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0.0, Max = 1.0, Step = 0.01)] double ratio = 0.3) =>
+        model.WithPatches(p => p with { UNet = p.UNet with { TokenMerge = ratio <= 0 ? null : new SdTokenMerge((float)ratio) } });
+}
+
 [Node("SelfAttentionGuidance", Category = "experimental", DisplayName = "Self-Attention Guidance")]
 public sealed class SelfAttentionGuidance
 {

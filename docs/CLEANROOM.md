@@ -21,6 +21,8 @@ What a clean-room author must not use:
 - ComfyUI's source (any `.py` in a ComfyUI checkout, its git history, quotes of it), FFmpeg's source, or any other GPL / LGPL / AGPL / unlicensed code.
 - SpawnGen's current implementation of the code being rewritten, or its git history (it was written while reading ComfyUI).
 - Messages, notes or summaries that describe ComfyUI's or FFmpeg's internals rather than measured behavior.
+- Python tracebacks from ComfyUI: they print its source lines. Measurement scripts catch exceptions and print only the type and message, with
+  stderr captured. If source lines appear anyway, the author reports them and the affected code is redone by another fresh author.
 
 Code comments describe measured behavior or the specification ("measured with ComfyUI: ...", "PNG spec 12.x"), never "port of ComfyUI's ...".
 
@@ -43,10 +45,11 @@ Status: **rewrite** (written while reading ComfyUI), **review** (built from spec
 
 | Area | Files | Status |
 |---|---|---|
-| Node files, Nodes.Core | AudioNodes, AudioOps, BoundingBox*, ColorNodes, ColorTransferNodes, CompositingNodes, Compositor*, CurveNodes, DatasetNodes, Image* (Nodes, Ops, ExtraOps, ColorNodes, FilterNodes, SaveExtraNodes, TransformNodes, UtilityNodes), Latent* (Nodes, Ops, OperationNodes, SliceNodes, Files), LoopNodes, MaskNodes, Model3DNodes, PadImageNodes, ResizeNodes, TileNodes | rewrite |
+| Node files, Nodes.Core | AudioNodes, AudioOps, BoundingBox*, ColorTransferNodes, CompositingNodes (redo: a traceback showed two source lines during batch B), Compositor*, CurveNodes, DatasetNodes, Image* (Nodes, Ops, ExtraOps, ColorNodes, FilterNodes, SaveExtraNodes, TransformNodes, UtilityNodes), Latent* (Nodes, Ops, OperationNodes, SliceNodes, Files), LoopNodes, Model3DNodes, PadImageNodes, ResizeNodes, TileNodes | rewrite |
 | Done | StringNodes (12 nodes; pilot, 2026-11-08: schemas = ComfyUI's object_info, all tests, text chain identical to ComfyUI) | done |
 | Done | PrimitiveNodes, UtilityNodes, FlowNodes, FormulaNodes, FrontendNodes (batch A, 2026-11-08: Convert Number and If/Else Switch now take ComfyUI's typed inputs) | done |
 | Done | TextNodes, BatchNodes (with the Batching helper), RebatchNodes (batch C, 2026-11-08: schemas unchanged) | done |
+| Done | MaskNodes, ColorNodes (batch B, 2026-11-08: 254 random cases bit-identical to ComfyUI; schemas unchanged) | done |
 | Note for the GLSL batch | GLSLShader's default shader text has CRLF line endings (git checkout of a raw string); ComfyUI's is LF | to fix in the rewrite |
 | Node files, Nodes.ML | AudioModelNodes, ClassificationNodes, ClipNodes, ComponentLoaderNodes, Conditioning, ControlNetNodes, CustomSampling, FluxNodes, GlslShaderNode, GuidanceNodes, LatentOperationCfg, LoraNodes, MergeNodes, MlNodes, SamplerNodes, SamplingNodes, Trellis2Node, UNetPatchNodes, VisionNodes | rewrite |
 | Sampling stack | Samplers, SamplersAdvanced, Schedulers, SamplingCore, Guidance, GuidancePatches, ModelSampling, GitsTable, BetaMath, PromptWeights, LatentFormat, LatentPreview, WeightSteps, ModelParts, Checkpoint | rewrite (k-diffusion, MIT, and the papers are allowed sources) |

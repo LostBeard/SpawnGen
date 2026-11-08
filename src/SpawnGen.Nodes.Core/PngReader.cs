@@ -8,7 +8,7 @@ namespace SpawnGen.Nodes.Core;
 /// Minimal PNG decoder (non-interlaced; grayscale, grayscale+alpha, RGB, RGBA and palette; 8 and 16 bit) so loading an image needs no imaging
 /// dependency. The result is an RGB <see cref="ImageBatch"/> in 0..1, like ComfyUI's LoadImage IMAGE output; the alpha comes back separately (it becomes the MASK output).
 /// </summary>
-public static class PngReader
+public static partial class PngReader
 {
     static readonly byte[] Signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
@@ -127,29 +127,7 @@ public static class PngReader
         using (var z = new ZLibStream(idat, CompressionMode.Decompress))
             z.ReadExactly(raw);
 
-        // Undo the per-row filters in place, in a pixel buffer without the filter bytes.
-        var px = new byte[height * stride];
-        for (int y = 0; y < height; y++)
-        {
-            int filter = raw[y * (stride + 1)];
-            int src = y * (stride + 1) + 1, dst = y * stride, prev = dst - stride;
-            for (int x = 0; x < stride; x++)
-            {
-                int a = x >= bytesPerPixel ? px[dst + x - bytesPerPixel] : 0;
-                int b = y > 0 ? px[prev + x] : 0;
-                int c = x >= bytesPerPixel && y > 0 ? px[prev + x - bytesPerPixel] : 0;
-                int v = raw[src + x];
-                px[dst + x] = (byte)(filter switch
-                {
-                    0 => v,
-                    1 => v + a,
-                    2 => v + b,
-                    3 => v + ((a + b) >> 1),
-                    4 => v + Paeth(a, b, c),
-                    _ => throw new InvalidDataException($"Bad PNG filter type {filter}."),
-                });
-            }
-        }
+        var px = Unfilter(raw, height, stride, bytesPerPixel);
 
         var img = new ImageBatch(1, height, width, 3);
         alpha = colorType is 4 or 6 || (colorType == 3 && paletteAlpha is not null) ? new float[width * height] : null;

@@ -78,8 +78,10 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**285 shared nodes, 282 identical**; the 3 that differ do so by design: the background-removal model list (SpawnGen ships one),
-RecordAudio's recorder widget, Resolution Selector's preview-only widget. `tools/parity/apply_names.py` keeps names and categories in step.
+**288 shared nodes, 284 identical**; the 4 that differ do so by design: the background-removal model list (SpawnGen ships one),
+RecordAudio's recorder widget, Resolution Selector's preview-only widget, and Compare Images' view widget, for which SpawnGen states the `{}` its
+editor sends (ComfyUI's frontend supplies it; both servers require the input and accept `{}`). Compare Images draws picture A with B over it right of
+a split that follows the pointer (tools/studio-browser-test/drive-compare.js). `tools/parity/apply_names.py` keeps names and categories in step.
 
 Behaviour is checked against ComfyUI's own code: fixtures made by running ComfyUI's node code on real torch / kornia / Pillow / numpy (image ops,
 compositing, Canny, colour spaces, Pad Image, Color Transfer, SDR to HDR, Image Quantize byte for byte with Pillow's median cut and dithers,
@@ -95,9 +97,12 @@ average hash bit for bit), the tensor maths bit for bit, captions, Preview as Te
 bytes exactly. WebP files in a folder decode on the GPU (SpawnDev.Codecs, the first frame like Pillow's convert("RGB")); JPEGs go through
 SpawnGen's decoder, which is close to but not bit-exact with Pillow's libjpeg.
 
-Load Image reads PNG and JPEG itself and WebP (lossy, lossless, alpha, animated), GIF (animated) and BMP through SpawnDev.Codecs on the host's GPU
+Load Image reads PNG (animated PNGs too: every frame composited exactly as ffmpeg, i.e. ComfyUI's PyAV path, does, including its
+quirk of showing a frame disposed to the background unblended) and JPEG itself and WebP (lossy, lossless, alpha, animated), GIF (animated) and BMP through SpawnDev.Codecs on the host's GPU
 (OpenCL / CUDA on the desktop, WebGPU in the browser): every frame is one picture of the batch, transparency gives the mask, and a picture without
-transparency gets ComfyUI's empty 64 x 64 mask (Load Image (as Mask) wraps Load Image, as ComfyUI's does). Checked against ComfyUI's own Load Image
+transparency gets ComfyUI's empty 64 x 64 mask (Load Image (as Mask) wraps Load Image, as ComfyUI's does). Load Image (from Outputs) lists the output pictures newest first as ComfyUI's
+`/internal/files/output` does (the server serves that route too); the Studio refreshes the list after each run, and the node's right-click menu
+"Refresh and pick the newest output" stands for ComfyUI's refresh button (control_after_refresh "first"); tools/studio-browser-test/drive-outputs.js. Checked against ComfyUI's own Load Image
 (Fixtures/codecs, make_load_image.py) on the CPU accelerator and on the RX 590: batch and mask layout as ComfyUI's, pixels and alpha exactly libwebp's /
 Pillow's. Deliberate difference: since ComfyUI #13594 (2026-04-28) its Load Image decodes through PyAV (ffmpeg), which converts most pixel formats
 through swscale to float: WebP and BMP colours come out 1 to 2.4 / 255 off the decoded values, fully opaque WebP / GIF pixels get a mask of 1/255
@@ -122,7 +127,9 @@ Still missing, by kind:
    ModelSave, VAESave; fp16 LDM names) verified: a merge with a LoRA'd copy = ComfyUI (0.13 %), and the saved checkpoint loads back as that merge.
    Open: CLIPSave (ComfyUI writes Hugging Face names, one file per tower: asked the library), Save Checkpoint of parts loaded separately, fp8 weight_dtype.
 2. **Need a codec** (SpawnDev.Codecs; requests with Geordi 2026-11-08 in this order: animated lossy WebP, WebM writer, FLAC of any length, Ogg Opus, VP9 / AV1 inter frames): Save Animated WEBP, SaveWEBM, video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), MP3 / Opus / FLAC audio saving. WebP / GIF / BMP loading is done. Save Animated WEBP on branch `codecs-unreleased` (Codecs master d5c6e20): EXIF byte for byte with Pillow, lossy animations byte for byte with ComfyUI's Pillow / libwebp file (CPU and OpenCL); lossless (ComfyUI's default) decodes exactly but is larger than Pillow's until Codecs has libwebp's VP8L coder; lossy methods fastest / slowest (0 / 6) not yet. libwebp picks key frames by encoded size, so on content with transparency an ALPH size difference can change a key-frame choice (visually equivalent file).
-3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop), Custom Combo (frontend-defined options),
+3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop). Custom Combo is done: the editor
+   keeps ComfyUI's frontend-defined option widgets (option1 ..., one spare, hidden index; saved as [choice, index, options], all 116 blueprints
+   round-trip; drive-customcombo.js) and the node skips value checks as ComfyUI's validate_inputs does.
    Text Overlay (a font engine; the same engine would draw the number tags and descriptions in Create Bounding Boxes' preview and the labels of Draw
    BBoxes, which are left out until then). Done on branch `bbox-nodes`: object-valued widgets (BOUNDING_BOX, BOUNDING_BOXES, COMPOSITOR) in prompts,
    workflows and object_info, with Crop Image (ImageCropV2), Create Bounding Boxes, Draw BBoxes, Crop By Bounding Boxes, Split Image into List of Tiles,

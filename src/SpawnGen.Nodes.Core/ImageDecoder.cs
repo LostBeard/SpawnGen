@@ -23,11 +23,13 @@ public static class ImageDecoder
     public sealed record DecodedFrames(int Width, int Height, bool HasAlpha, IReadOnlyList<byte[]> Rgba);
 
     /// <summary>
-    /// Decodes by content, not by name: every frame as one picture of the batch (animated WebP and GIF), with its transparency (1 = opaque) or null for a
+    /// Decodes by content, not by name: every frame as one picture of the batch (animated PNG, WebP and GIF), with its transparency (1 = opaque) or null for a
     /// file without it, as ComfyUI's Load Image reads frames.
     /// </summary>
     public static async Task<(ImageBatch Images, float[]? Alpha)> DecodeFramesAsync(byte[] data)
     {
+        if (IsPng(data) && PngReader.DecodeAnimation(data) is { } apng)
+            return FromFrames(new DecodedFrames(apng.Width, apng.Height, apng.HasAlpha, apng.Frames));
         if (JpegReader.IsJpeg(data) || IsPng(data)) return (Decode(data, out var alpha), alpha);
         var frames = Codecs is { } codecs ? await codecs(data) : null;
         if (frames is null)
@@ -36,6 +38,11 @@ public static class ImageDecoder
                 throw new NotSupportedException($"{known} pictures are decoded on the GPU (SpawnDev.Codecs); this host has not set a decoder for them.");
             throw new InvalidDataException("The file is not a PNG, JPEG, WebP, GIF or BMP picture.");
         }
+        return FromFrames(frames);
+    }
+
+    static (ImageBatch Images, float[]? Alpha) FromFrames(DecodedFrames frames)
+    {
         int w = frames.Width, h = frames.Height, n = frames.Rgba.Count;
         var images = new ImageBatch(n, h, w, 3);
         float[]? alphaOut = frames.HasAlpha ? new float[n * h * w] : null;

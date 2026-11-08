@@ -40,6 +40,12 @@ public interface IResultStore
     /// Throws <see cref="DirectoryNotFoundException"/> when the folder is not there, as Python's <c>open</c> does.
     /// </summary>
     Task<ResultFile> WriteAsync(string type, string folder, string name, byte[] data);
+
+    /// <summary>A stored file's bytes (a relative "a/b" folder, "" for the top), or null when there is no such file (Load Image (from Outputs)).</summary>
+    Task<byte[]?> ReadAsync(string type, string folder, string name) => Task.FromResult<byte[]?>(null);
+
+    /// <summary>The files directly in a results type's top folder, newest first, hidden ones left out (ComfyUI's <c>/internal/files/{type}</c>).</summary>
+    IReadOnlyList<string> FilesNewestFirst(string type) => [];
 }
 
 /// <summary>Where Load Image finds its pictures.</summary>
@@ -110,6 +116,14 @@ public static class StorePaths
         normalized.Length == 0 ? root : Path.Combine(root, normalized.Replace('/', Path.DirectorySeparatorChar));
 
     /// <summary>A single file name: no folder part, not "." or "..".</summary>
+    /// <summary>The files directly in <paramref name="directory"/>, newest first, hidden ones (".name") left out; none when it does not exist.</summary>
+    public static IReadOnlyList<string> FilesNewestFirst(string directory)
+    {
+        var dir = new DirectoryInfo(directory);
+        if (!dir.Exists) return [];
+        return [.. dir.EnumerateFiles().Where(f => !f.Name.StartsWith('.')).OrderByDescending(f => f.LastWriteTimeUtc).Select(f => f.Name)];
+    }
+
     internal static void CheckName(string name)
     {
         if (name.Length == 0 || name.Contains('/') || name.Contains('\\') || name is "." or "..") throw new ArgumentException($"'{name}' is not a file name.", nameof(name));
@@ -215,6 +229,15 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
 
     public void CreateFolder(string type, string folder) => Directory.CreateDirectory(StorePaths.OnDisk(Root(type), StorePaths.Normalize(folder, "folder")));
 
+    public async Task<byte[]?> ReadAsync(string type, string folder, string name)
+    {
+        StorePaths.CheckName(name);
+        var path = Path.Combine(StorePaths.OnDisk(Root(type), StorePaths.Normalize(folder, "folder")), name);
+        return File.Exists(path) ? await File.ReadAllBytesAsync(path) : null;
+    }
+
+    public IReadOnlyList<string> FilesNewestFirst(string type) => StorePaths.FilesNewestFirst(Root(type));
+
     public async Task<ResultFile> WriteAsync(string type, string folder, string name, byte[] data)
     {
         var normalized = StorePaths.Normalize(folder, "folder");
@@ -240,6 +263,8 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
 public sealed class MemoryResultStore : IResultStore
 {
     readonly Dictionary<string, byte[]> _files = [];
+    readonly Dictionary<string, long> _written = [];
+    long _clock;
     readonly object _gate = new();
 
     public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png) => SaveAsync(type, prefix, png, "png");
@@ -258,7 +283,7 @@ public sealed class MemoryResultStore : IResultStore
                 while (_files.ContainsKey(Key(type, subfolder, $"{prefix}_{n:D5}_.{extension}"))) n++;
                 name = $"{prefix}_{n:D5}_.{extension}";
             }
-            _files[Key(type, subfolder, name)] = png;
+            Put(Key(type, subfolder, name), png);
             var file = new ResultFile(name, subfolder, type);
             Saved?.Invoke(file, png);
             return Task.FromResult(file);
@@ -307,11 +332,23 @@ public sealed class MemoryResultStore : IResultStore
         lock (_gate)
         {
             if (!FolderExists(Folder(type, normalized))) throw new DirectoryNotFoundException($"No such results folder: '{normalized}'.");
-            _files[Key(type, normalized, name)] = data;
+            Put(Key(type, normalized, name), data);
             var file = new ResultFile(name, normalized, type);
             Saved?.Invoke(file, data);
             return Task.FromResult(file);
         }
+    }
+
+    void Put(string key, byte[] data) { _files[key] = data; _written[key] = ++_clock; }
+
+    public Task<byte[]?> ReadAsync(string type, string folder, string name) =>
+        Task.FromResult(Get(type, name, StorePaths.Normalize(folder, "folder")));
+
+    public IReadOnlyList<string> FilesNewestFirst(string type)
+    {
+        lock (_gate)
+            return [.. _files.Keys.Where(k => k.StartsWith(type + "/", StringComparison.Ordinal) && !k[(type.Length + 1)..].Contains('/') && !k[(type.Length + 1)..].StartsWith('.'))
+                .OrderByDescending(k => _written[k]).Select(k => k[(type.Length + 1)..])];
     }
 
     static string Folder(string type, string normalized) => normalized.Length == 0 ? type : type + "/" + normalized;

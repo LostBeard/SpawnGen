@@ -281,6 +281,22 @@ public class ComfyImageNodeTests
     }
 
     [Test]
+    public async Task Compare_images_stores_both_sides_as_previews()
+    {
+        var (services, store) = Services();
+        var a = new ImageBatch(2, 1, 1, 3, [1f, 0f, 0f, 0f, 0f, 1f]);
+        var b = new ImageBatch(1, 1, 1, 3, [0f, 1f, 0f]);
+        var ui = await new ImageCompare().ExecuteAsync(Context(services), services, new Dictionary<string, object>(), a, b);
+        var sideA = ((List<object>)ui["a_images"]!).Cast<ResultFile>().ToArray();
+        var sideB = ((List<object>)ui["b_images"]!).Cast<ResultFile>().ToArray();
+        Assert.That((sideA.Length, sideB.Length), Is.EqualTo((2, 1)));
+        Assert.That(sideA.All(f => f.Type == "temp" && f.Filename.StartsWith("comfy.compare.a")), Is.True);
+        Assert.That(ImageDecoder.Decode(store.Get("temp", sideB[0].Filename)!).Data, Is.EqualTo(new[] { 0f, 1f, 0f }));
+        var onlyB = await new ImageCompare().ExecuteAsync(Context(services), services, null, null, b);
+        Assert.That(((List<object>)onlyB["a_images"]!), Is.Empty);
+    }
+
+    [Test]
     public async Task Save_animated_png_writes_one_apng_with_merged_repeats_changed_rectangles_and_comf_chunks()
     {
         var (services, store) = Services();

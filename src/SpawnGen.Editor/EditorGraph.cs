@@ -32,6 +32,8 @@ public sealed class EditorNode
     public int ZIndex { get; set; }
     /// <summary>Result images shown inside the node (view state: set from run results, never saved).</summary>
     public IReadOnlyList<NodePreview> Previews { get; set; } = [];
+    /// <summary>Compare Images: the second picture, drawn over the first right of a split that follows the pointer (view state like <see cref="Previews"/>).</summary>
+    public NodePreview? CompareWith { get; set; }
     /// <summary>Result text shown inside the node (Preview Any): view state like <see cref="Previews"/>.</summary>
     public string? ResultText { get; set; }
     /// <summary>URLs of 3D models this node produced (Save / Preview 3D Model): view state like <see cref="Previews"/>, opened in the viewer from the context menu.</summary>

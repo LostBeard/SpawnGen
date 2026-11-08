@@ -97,7 +97,7 @@ public static class PromptValidator
                 }
                 Walk(reg, graph, input.NodeId!, state, plan, errors);
             }
-            else
+            else if (!registered.Schema.ValidatesOwnInputs)
             {
                 var problem = CheckLiteral(registered, spec, input.Literal!);
                 if (problem is not null)

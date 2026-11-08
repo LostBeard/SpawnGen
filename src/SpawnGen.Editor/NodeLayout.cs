@@ -81,7 +81,8 @@ public static class NodeLayout
 
         var visible = VisibleInputs(schema, node, graph).ToList();
         var slotInputs = visible.Where(i => IsSlotRow(i, node, graph)).ToList();
-        var widgetInputs = visible.Where(i => i.Widget is not null && !IsSlotRow(i, node, graph)).ToList();
+        // Compare Images' IMAGECOMPARE widget is the picture itself (drawn as the preview with its split), not a row.
+        var widgetInputs = visible.Where(i => i.Widget is not null && !IsSlotRow(i, node, graph) && i.Type.Name != "IMAGECOMPARE" && !i.Widget!.Hidden).ToList();
         int slotRows = Math.Max(slotInputs.Count, schema.Outputs.Count);
 
         double width = node.Width ?? Math.Max(MinWidth, Math.Max(titleWidth,
@@ -205,6 +206,11 @@ public static class NodeLayout
     /// </summary>
     public static IEnumerable<InputSpec> OrderedInputs(NodeSchema schema, IReadOnlyDictionary<string, object?> widgets)
     {
+        if (schema.Id == CustomComboWidgets.NodeType && schema.FindInput(CustomComboWidgets.Choice) is not null)
+        {
+            foreach (var input in CustomComboWidgets.Inputs(schema, widgets)) yield return input;
+            yield break;
+        }
         foreach (var input in schema.Inputs)
         {
             if (input.DynamicParent is not null) continue;

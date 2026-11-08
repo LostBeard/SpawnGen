@@ -110,6 +110,39 @@ public class ImageExtraTests
         Assert.That(alpha.Data[1], Is.EqualTo(1f - 128 / 255f).Within(1e-5));
     }
 
+    sealed class ResultServices(IResultStore store) : IServiceProvider
+    {
+        public object? GetService(Type t) => t == typeof(IResultStore) ? store : null;
+    }
+
+    [Test]
+    public async Task Load_image_from_outputs_reads_annotated_results_and_plain_names_from_the_inputs()
+    {
+        var results = new MemoryResultStore();
+        var red = PngWriter.Encode(new ImageBatch(1, 1, 1, 3, [1f, 0f, 0f]));
+        var green = PngWriter.Encode(new ImageBatch(1, 1, 1, 3, [0f, 1f, 0f]));
+        var first = await results.SaveAsync("output", "a", red);
+        var second = await results.SaveAsync("output", "sub/b", green);
+        var third = await results.SaveAsync("output", "c", green);
+        Assert.That(results.FilesNewestFirst("output"), Is.EqualTo(new[] { third.Filename, first.Filename }), "top folder only, newest first");
+        var services = new ResultServices(results);
+        var (image, mask) = await new LoadImageOutput().ExecuteAsync($"{first.Filename} [output]", services);
+        Assert.That(image.Data, Is.EqualTo(new[] { 1f, 0f, 0f }));
+        Assert.That(mask.Shape, Is.EqualTo(new[] { 1, 64, 64 }));
+        Assert.That((await new LoadImageOutput().ExecuteAsync($"sub/{second.Filename} [output]", services)).Image.Data, Is.EqualTo(new[] { 0f, 1f, 0f }));
+        Assert.That(() => new LoadImageOutput().ExecuteAsync("missing.png [output]", services), Throws.TypeOf<FileNotFoundException>());
+
+        var inputs = new MemoryInputStore();
+        var saved = InputFiles.Store;
+        InputFiles.Store = inputs;
+        try
+        {
+            await inputs.SaveAsync("in.png", green);
+            Assert.That((await new LoadImageOutput().ExecuteAsync("in.png", services)).Image.Data, Is.EqualTo(new[] { 0f, 1f, 0f }), "no annotation: an input picture");
+        }
+        finally { InputFiles.Store = saved; }
+    }
+
     static byte[] RgbaPng(int w, int h, byte[] rgba)
     {
         using var raw = new MemoryStream();

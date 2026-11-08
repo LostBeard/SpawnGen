@@ -14,6 +14,17 @@ public static class InputFiles
     public static string[] List() => [.. Store.List()];
 }
 
+/// <summary>
+/// The output pictures Load Image (from Outputs) offers, newest first, as ComfyUI's annotated names (<c>name [output]</c>). The host sets the lister: the
+/// server lists its output folder, the browser its result store, the Studio a copy of its engine's list.
+/// </summary>
+public static class OutputFiles
+{
+    public static Func<IReadOnlyList<string>> Lister { get; set; } = () => [];
+
+    public static string[] List() => [.. Lister()];
+}
+
 internal static class Results
 {
     /// <summary>What goes into a saved picture's text chunks, like ComfyUI: <c>prompt</c> (the API graph that made it) plus the editor's extras (<c>workflow</c>).</summary>
@@ -63,6 +74,53 @@ public sealed class LoadImage
         var mask = new MaskBatch(img.Batch, img.Height, img.Width);
         for (int i = 0; i < alpha.Length; i++) mask.Data[i] = 1f - alpha[i];
         return (img, mask);
+    }
+}
+
+[Node(Category = "image", DisplayName = "Load Image (from Outputs)", OutputNames = ["IMAGE", "MASK"],
+    Description = "Load an image from the output folder. When the refresh button is clicked, the node will update the image list and automatically select the first image, allowing for easy iteration.")]
+public sealed class LoadImageOutput
+{
+    public static string[] ImageNames() => OutputFiles.List();
+
+    /// <summary>
+    /// Load Image on a picture from the results: <c>name [output]</c> (or <c>[temp]</c>, or <c>sub/name [output]</c>) as ComfyUI's annotated file names say;
+    /// a name without an annotation is an input picture, as in ComfyUI.
+    /// </summary>
+    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames))] string image, IServiceProvider services)
+    {
+        string? type = image.EndsWith(" [output]", StringComparison.Ordinal) ? "output" : image.EndsWith(" [temp]", StringComparison.Ordinal) ? "temp" : null;
+        var name = RecordAudio.StripAnnotation(image).Replace('\\', '/');
+        if (type is null) return await LoadImage.LoadAsync(await InputFiles.Store.ReadAsync(name));
+        int slash = name.LastIndexOf('/');
+        var (folder, file) = slash < 0 ? ("", name) : (name[..slash], name[(slash + 1)..]);
+        var bytes = await Results.For(services).ReadAsync(type, folder, file) ?? throw new FileNotFoundException($"There is no {type} picture '{name}'.");
+        return await LoadImage.LoadAsync(bytes);
+    }
+}
+
+[Node(Category = "image", DisplayName = "Compare Images", Description = "Compares two images side by side with a slider.", IsOutput = true)]
+public sealed class ImageCompare
+{
+    /// <summary>
+    /// Stores both pictures as previews (ComfyUI's <c>comfy.compare.a</c> / <c>.b</c>) and reports them as <c>a_images</c> / <c>b_images</c>; the editor draws the
+    /// first with the second over it right of a split that follows the pointer. <c>compare_view</c> is that view (no value of its own).
+    /// </summary>
+    public async Task<UiOutput> ExecuteAsync(NodeContext context, IServiceProvider services,
+        [Input(Type = "IMAGECOMPARE", Json = "{}")] object? compareView,
+        [Input(Optional = true)] ImageBatch? imageA = null, [Input(Optional = true)] ImageBatch? imageB = null)
+    {
+        var ui = new UiOutput("a_images", imageA is { Batch: > 0 } a ? await SaveAs(a, "comfy.compare.a") : new List<object>());
+        ui["b_images"] = imageB is { Batch: > 0 } b ? await SaveAs(b, "comfy.compare.b") : new List<object>();
+        return ui;
+
+        async Task<List<object>> SaveAs(ImageBatch images, string prefix)
+        {
+            var store = Results.For(services);
+            var saved = new List<object>();
+            for (int i = 0; i < images.Batch; i++) saved.Add(await store.SaveAsync("temp", prefix, PngWriter.Encode(images, i, Results.Metadata(context))));
+            return saved;
+        }
     }
 }
 

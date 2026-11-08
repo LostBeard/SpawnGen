@@ -158,6 +158,23 @@ public class ServerTests
     // ---- tests ----
 
     [Test]
+    public async Task Internal_files_lists_a_folder_newest_first_as_annotated_names_and_load_image_from_outputs_offers_them()
+    {
+        var output = Directory.CreateDirectory(Path.Combine(_dir, "output")).FullName;
+        File.WriteAllBytes(Path.Combine(output, "old.png"), [1]);
+        File.WriteAllBytes(Path.Combine(output, "new.png"), [2]);
+        File.WriteAllBytes(Path.Combine(output, ".hidden"), [3]);
+        Directory.CreateDirectory(Path.Combine(output, "sub"));
+        File.SetLastWriteTimeUtc(Path.Combine(output, "old.png"), DateTime.UtcNow.AddMinutes(-5));
+        var list = JsonNode.Parse(await _http.GetStringAsync("/internal/files/output"))!.AsArray().Select(n => (string)n!).ToArray();
+        Assert.That(list, Is.EqualTo(new[] { "new.png [output]", "old.png [output]" }));
+        Assert.That((await _http.GetAsync("/internal/files/models")).StatusCode, Is.EqualTo(System.Net.HttpStatusCode.BadRequest));
+        var info = JsonNode.Parse(await _http.GetStringAsync("/object_info/LoadImageOutput"))!["LoadImageOutput"]!;
+        Assert.That(info["display_name"]!.GetValue<string>(), Is.EqualTo("Load Image (from Outputs)"));
+        Assert.That(info["input"]!["required"]!["image"]![0]!.AsArray().Select(n => (string)n!), Is.EqualTo(list));
+    }
+
+    [Test]
     public async Task Object_info_describes_nodes_in_ComfyUIs_format()
     {
         var info = JsonNode.Parse(await _http.GetStringAsync("/object_info"))!.AsObject();

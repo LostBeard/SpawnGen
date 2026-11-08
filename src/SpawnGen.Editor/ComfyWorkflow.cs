@@ -209,6 +209,14 @@ public static class ComfyWorkflow
             return;
         }
         var list = values as JsonArray ?? [];
+        if (schema.Id == CustomComboWidgets.NodeType)
+        {
+            // [choice, index, option1, option2, ...] (the options are widgets ComfyUI's frontend adds).
+            node.Widgets[CustomComboWidgets.Choice] = (string?)list.ElementAtOrDefault(0) ?? "";
+            for (int k = 2; k < list.Count; k++) node.Widgets["option" + (k - 1)] = list[k]?.ToString() ?? "";
+            foreach (var (name, value) in CustomComboWidgets.Normalize(node.Widgets, keepChoice: true)) node.Widgets[name] = value;
+            return;
+        }
         int pos = 0;
         // A dynamic combo's values follow it: only the chosen option's inputs are in the list (the walk reads the combo's value as it reaches it).
         foreach (var w in NodeLayout.OrderedInputs(schema, node.Widgets).Where(i => i.Widget is not null))

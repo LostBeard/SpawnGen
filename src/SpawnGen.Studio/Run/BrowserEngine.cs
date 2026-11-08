@@ -178,4 +178,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     public Task<IReadOnlyList<string>> ListInputImagesAsync() => Task.FromResult(_inputs.List());
 
     public Task<IReadOnlyList<string>> ListInputFoldersAsync() => Task.FromResult(_inputs.Folders());
+
+    public Task<IReadOnlyList<string>> ListOutputFilesAsync() =>
+        Task.FromResult<IReadOnlyList<string>>([.. _results.FilesNewestFirst("output").Select(n => n + " [output]")]);
 }

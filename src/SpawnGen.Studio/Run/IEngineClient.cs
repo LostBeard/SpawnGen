@@ -39,4 +39,7 @@ public interface IEngineClient
 
     /// <summary>The input folders a Load Image (from Folder) node can pick from on this engine.</summary>
     Task<IReadOnlyList<string>> ListInputFoldersAsync();
+
+    /// <summary>The output pictures a Load Image (from Outputs) node can pick from, newest first, as annotated names (<c>name [output]</c>).</summary>
+    Task<IReadOnlyList<string>> ListOutputFilesAsync();
 }

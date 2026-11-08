@@ -92,3 +92,15 @@ public sealed class PrimitiveBoolean
 {
     public bool Execute(bool value = false) => value;
 }
+
+[Node(Category = "utilities", DisplayName = "Custom Combo", OutputNames = ["STRING", "INDEX"], AcceptAllInputs = true, ValidatesOwnInputs = true)]
+public sealed class CustomCombo
+{
+    /// <summary>
+    /// A drop-down whose options the user types into the node (the editor's <c>option1</c>, <c>option2</c>, ... text widgets, one empty one always last).
+    /// The editor sends the choice, its position among the options as <c>index</c>, and the options themselves; the node passes the choice and the index
+    /// on, as ComfyUI's does (which checks none of them: the options are not known to the server).
+    /// </summary>
+    public (string String, long Index) Execute([Input(Options = [])] string choice, [ExtraInputs] IReadOnlyDictionary<string, object?> options) =>
+        (choice, options.TryGetValue("index", out var index) && ValueCoercion.AsDouble(index) is { } i ? (long)i : 0);
+}

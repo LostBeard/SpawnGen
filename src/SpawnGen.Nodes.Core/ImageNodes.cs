@@ -99,6 +99,31 @@ public sealed class LoadImageOutput
     }
 }
 
+[Node(Category = "image", DisplayName = "Compare Images", Description = "Compares two images side by side with a slider.", IsOutput = true)]
+public sealed class ImageCompare
+{
+    /// <summary>
+    /// Stores both pictures as previews (ComfyUI's <c>comfy.compare.a</c> / <c>.b</c>) and reports them as <c>a_images</c> / <c>b_images</c>; the editor draws the
+    /// first with the second over it right of a split that follows the pointer. <c>compare_view</c> is that view (no value of its own).
+    /// </summary>
+    public async Task<UiOutput> ExecuteAsync(NodeContext context, IServiceProvider services,
+        [Input(Type = "IMAGECOMPARE", Json = "{}")] object? compareView,
+        [Input(Optional = true)] ImageBatch? imageA = null, [Input(Optional = true)] ImageBatch? imageB = null)
+    {
+        var ui = new UiOutput("a_images", imageA is { Batch: > 0 } a ? await SaveAs(a, "comfy.compare.a") : new List<object>());
+        ui["b_images"] = imageB is { Batch: > 0 } b ? await SaveAs(b, "comfy.compare.b") : new List<object>();
+        return ui;
+
+        async Task<List<object>> SaveAs(ImageBatch images, string prefix)
+        {
+            var store = Results.For(services);
+            var saved = new List<object>();
+            for (int i = 0; i < images.Batch; i++) saved.Add(await store.SaveAsync("temp", prefix, PngWriter.Encode(images, i, Results.Metadata(context))));
+            return saved;
+        }
+    }
+}
+
 [Node(Category = "image", DisplayName = "Load Image (as Mask)")]
 public sealed class LoadImageMask
 {

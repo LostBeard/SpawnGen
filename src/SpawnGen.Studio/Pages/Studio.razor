@@ -1549,6 +1549,17 @@
             case "executed" when node is { } textId && _doc.Graph.FindNode(textId) is { } texted && TextOf(data) is { } texts:
                 texted.ResultText = string.Join("\n", texts.Select(t => (string?)t ?? ""));
                 break;
+            case "executed" when node is { } compareId && _doc.Graph.FindNode(compareId) is { } compared
+                && (data["output"]?["a_images"] is JsonArray || data["output"]?["b_images"] is JsonArray):
+            {
+                // Compare Images: the first picture of each side; with only one side given it shows alone.
+                NodePreview? First(string key) => data["output"]?[key] is JsonArray list && list.OfType<JsonObject>().FirstOrDefault() is { } i
+                    ? new NodePreview(_engine!.ViewUrl((string)i["filename"]!, (string?)i["subfolder"], (string?)i["type"])) : null;
+                var (a, b) = (First("a_images"), First("b_images"));
+                compared.Previews = a is not null ? [a] : b is not null ? [b] : [];
+                compared.CompareWith = a is not null ? b : null;
+                break;
+            }
             case "executed" when node is { } shownId && _doc.Graph.FindNode(shownId) is { } shown:
                 if (data["output"]?["images"] is JsonArray images)
                 {

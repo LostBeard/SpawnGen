@@ -73,6 +73,8 @@ public sealed class EditorView
     /// <summary>The drag-select rectangle in world coordinates while one is being drawn.</summary>
     public Rect? SelectionBox { get; private set; }
     public Hit Hover { get; private set; }
+    /// <summary>Where the pointer last was, in world coordinates (Compare Images' split follows it).</summary>
+    public Point PointerWorld { get; private set; }
     /// <summary>The CSS cursor the canvas should show.</summary>
     public string Cursor { get; private set; } = "default";
     /// <summary>The canvas size in pixels, for fit-to-view. The UI keeps it current.</summary>
@@ -320,7 +322,7 @@ public sealed class EditorView
 
     public void PointerMove(Point screen, Modifiers mods = Modifiers.None)
     {
-        var world = Viewport.ScreenToWorld(screen);
+        var world = PointerWorld = Viewport.ScreenToWorld(screen);
         if (!_moved && _mode != Mode.Idle && screen.DistanceTo(_downScreen) >= DragThresholdPixels) _moved = true;
 
         switch (_mode)
@@ -376,6 +378,8 @@ public sealed class EditorView
 
             case Mode.Idle:
                 var hover = Hits.Test(world);
+                // Over a Compare Images picture the split moves with the pointer, so every move redraws.
+                if (hover.Kind == HitKind.NodeBody && Document.Graph.FindNode(hover.NodeId)?.CompareWith is not null) ViewChanged?.Invoke();
                 if (hover != Hover)
                 {
                     Hover = hover;

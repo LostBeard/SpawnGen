@@ -426,6 +426,26 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.Clip();
             ctx.DrawImage(image, area.X, area.Y, area.Width, area.Height);
             ctx.Restore();
+            if (node.CompareWith is { } other && images.Get(other.Url, (_, _) => view.Invalidate()) is { } second)
+            {
+                // Compare Images: the second picture right of the split, which follows the pointer over the picture (the middle otherwise).
+                var p = view.PointerWorld;
+                double split = area.Contains(p) ? p.X : area.X + area.Width / 2;
+                ctx.Save();
+                RoundRect(ctx, area, 5);
+                ctx.Clip();
+                ctx.BeginPath();
+                ctx.Rect(split, area.Y, area.Right - split, area.Height);
+                ctx.Clip();
+                ctx.DrawImage(second, area.X, area.Y, area.Width, area.Height);
+                ctx.Restore();
+                ctx.StrokeStyle = "#fff";
+                ctx.LineWidth = 1.5;
+                ctx.BeginPath();
+                ctx.MoveTo(split, area.Y);
+                ctx.LineTo(split, area.Bottom);
+                ctx.Stroke();
+            }
         }
         else if (detailed)
         {

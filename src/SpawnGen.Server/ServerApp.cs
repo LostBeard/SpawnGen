@@ -97,6 +97,15 @@ public static class ServerApp
             await app.Services.GetRequiredService<DesktopModelSource>().Remote.Store.ClearAsync();
             return Results.Ok();
         });
+        // ComfyUI's /internal/files/{type}: the files directly in the output, input or temp folder, newest first, as annotated names (Load Image (from Outputs)).
+        var resultFiles = new DiskResultStore(app.Services.GetRequiredService<OutputOptions>());
+        OutputFiles.Lister = () => [.. resultFiles.FilesNewestFirst("output").Select(n => n + " [output]")];
+        app.MapGet("/internal/files/{type}", (string type) => type switch
+        {
+            "output" or "temp" => Results.Json(resultFiles.FilesNewestFirst(type).Select(n => $"{n} [{type}]")),
+            "input" => Results.Json(StorePaths.FilesNewestFirst(options.InputPath).Select(n => $"{n} [input]")),
+            _ => Results.Json(new { error = "Invalid directory type" }, statusCode: 400),
+        });
         app.MapGet("/embeddings", () => Results.Json(Array.Empty<string>()));
         app.MapGet("/extensions", () => Results.Json(Array.Empty<string>()));
         app.MapPost("/free", () => Results.Ok()); // models stay loaded: this server frees them when it stops

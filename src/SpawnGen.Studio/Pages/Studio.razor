@@ -972,6 +972,8 @@
             else items.Add(new(_view.SelectedNodes.Count > 1 ? "Convert Selection to Subgraph  (Ctrl+Shift+E)" : "Convert to Subgraph  (Ctrl+Shift+E)", () => _view.ToggleSubgraph()));
             if (node.ClassType is "LoadImage" or "LoadImageMask")
                 items.Add(new("Open in Mask Editor", () => _ = OpenMaskEditorAsync(node)));
+            if (node.ClassType == "LoadImageOutput")
+                items.Add(new("Refresh and pick the newest output", () => _ = PickNewestOutputAsync(hit.NodeId)));
             foreach (var (name, color, bg) in EditorGroup.NodePalette)
                 items.Add(new($"Colour: {name}", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, color, bg); _doc.EndGesture(); }));
             if (node.Color is not null || node.BgColor is not null)
@@ -1374,6 +1376,14 @@
         ShowMessage($"Running on: {_engine?.Name}.");
     }
 
+    /// <summary>ComfyUI's refresh button on Load Image (from Outputs) (control_after_refresh "first"): the list is read again and the newest output picked.</summary>
+    async Task PickNewestOutputAsync(int nodeId)
+    {
+        await RefreshInputImagesAsync();
+        if (OutputFiles.List() is [var newest, ..]) { _doc.SetWidget(nodeId, "image", newest); _doc.EndGesture(); }
+        else ShowMessage("There are no output pictures yet.");
+    }
+
     /// <summary>Load Image offers the pictures of the engine in use; the page shows that engine's list through the shared input store.</summary>
     async Task RefreshInputImagesAsync()
     {
@@ -1381,6 +1391,8 @@
         var names = await _engine.ListInputImagesAsync();
         // The server's pictures and folders stay on the server; this is only the choice list.
         if (_engine is not BrowserEngine) InputFiles.Store = new ListedInputStore(names, await _engine.ListInputFoldersAsync());
+        var outputs = await _engine.ListOutputFilesAsync();
+        OutputFiles.Lister = () => outputs;
         _view.Invalidate();
     }
 
@@ -1555,6 +1567,7 @@
                 break;
             case "execution_success":
                 FinishHistoryEntry("done", null);
+                _ = RefreshInputImagesAsync(); // new outputs for Load Image (from Outputs)
                 _running = false;
                 _executingTitle = null;
                 _visuals.EndRun();

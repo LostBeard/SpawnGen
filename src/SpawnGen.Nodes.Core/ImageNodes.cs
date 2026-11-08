@@ -14,6 +14,17 @@ public static class InputFiles
     public static string[] List() => [.. Store.List()];
 }
 
+/// <summary>
+/// The output pictures Load Image (from Outputs) offers, newest first, as ComfyUI's annotated names (<c>name [output]</c>). The host sets the lister: the
+/// server lists its output folder, the browser its result store, the Studio a copy of its engine's list.
+/// </summary>
+public static class OutputFiles
+{
+    public static Func<IReadOnlyList<string>> Lister { get; set; } = () => [];
+
+    public static string[] List() => [.. Lister()];
+}
+
 internal static class Results
 {
     /// <summary>What goes into a saved picture's text chunks, like ComfyUI: <c>prompt</c> (the API graph that made it) plus the editor's extras (<c>workflow</c>).</summary>
@@ -63,6 +74,28 @@ public sealed class LoadImage
         var mask = new MaskBatch(img.Batch, img.Height, img.Width);
         for (int i = 0; i < alpha.Length; i++) mask.Data[i] = 1f - alpha[i];
         return (img, mask);
+    }
+}
+
+[Node(Category = "image", DisplayName = "Load Image (from Outputs)", OutputNames = ["IMAGE", "MASK"],
+    Description = "Load an image from the output folder. When the refresh button is clicked, the node will update the image list and automatically select the first image, allowing for easy iteration.")]
+public sealed class LoadImageOutput
+{
+    public static string[] ImageNames() => OutputFiles.List();
+
+    /// <summary>
+    /// Load Image on a picture from the results: <c>name [output]</c> (or <c>[temp]</c>, or <c>sub/name [output]</c>) as ComfyUI's annotated file names say;
+    /// a name without an annotation is an input picture, as in ComfyUI.
+    /// </summary>
+    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames))] string image, IServiceProvider services)
+    {
+        string? type = image.EndsWith(" [output]", StringComparison.Ordinal) ? "output" : image.EndsWith(" [temp]", StringComparison.Ordinal) ? "temp" : null;
+        var name = RecordAudio.StripAnnotation(image).Replace('\\', '/');
+        if (type is null) return await LoadImage.LoadAsync(await InputFiles.Store.ReadAsync(name));
+        int slash = name.LastIndexOf('/');
+        var (folder, file) = slash < 0 ? ("", name) : (name[..slash], name[(slash + 1)..]);
+        var bytes = await Results.For(services).ReadAsync(type, folder, file) ?? throw new FileNotFoundException($"There is no {type} picture '{name}'.");
+        return await LoadImage.LoadAsync(bytes);
     }
 }
 

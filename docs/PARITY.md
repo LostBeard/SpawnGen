@@ -97,7 +97,9 @@ SpawnGen's decoder, which is close to but not bit-exact with Pillow's libjpeg.
 
 Load Image reads PNG and JPEG itself and WebP (lossy, lossless, alpha, animated), GIF (animated) and BMP through SpawnDev.Codecs on the host's GPU
 (OpenCL / CUDA on the desktop, WebGPU in the browser): every frame is one picture of the batch, transparency gives the mask, and a picture without
-transparency gets ComfyUI's empty 64 x 64 mask (Load Image (as Mask) wraps Load Image, as ComfyUI's does). Checked against ComfyUI's own Load Image
+transparency gets ComfyUI's empty 64 x 64 mask (Load Image (as Mask) wraps Load Image, as ComfyUI's does). Load Image (from Outputs) lists the output pictures newest first as ComfyUI's
+`/internal/files/output` does (the server serves that route too); the Studio refreshes the list after each run, and the node's right-click menu
+"Refresh and pick the newest output" stands for ComfyUI's refresh button (control_after_refresh "first"); tools/studio-browser-test/drive-outputs.js. Checked against ComfyUI's own Load Image
 (Fixtures/codecs, make_load_image.py) on the CPU accelerator and on the RX 590: batch and mask layout as ComfyUI's, pixels and alpha exactly libwebp's /
 Pillow's. Deliberate difference: since ComfyUI #13594 (2026-04-28) its Load Image decodes through PyAV (ffmpeg), which converts most pixel formats
 through swscale to float: WebP and BMP colours come out 1 to 2.4 / 255 off the decoded values, fully opaque WebP / GIF pixels get a mask of 1/255

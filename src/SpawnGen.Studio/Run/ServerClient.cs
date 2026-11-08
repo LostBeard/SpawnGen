@@ -173,6 +173,13 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
 
     public Task<IReadOnlyList<string>> ListInputFoldersAsync() => ComboOptionsAsync("LoadImageDataSetFromFolder", "folder");
 
+    /// <summary>ComfyUI's <c>/internal/files/output</c>: the server's output pictures, newest first.</summary>
+    public async Task<IReadOnlyList<string>> ListOutputFilesAsync()
+    {
+        try { return await http.GetFromJsonAsync<string[]>("internal/files/output", _stop.Token) ?? []; }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { return []; }
+    }
+
     /// <summary>The options the server lists for a combo input of one of its nodes (its files and folders).</summary>
     async Task<IReadOnlyList<string>> ComboOptionsAsync(string node, string input)
     {

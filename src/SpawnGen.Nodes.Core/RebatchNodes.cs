@@ -6,24 +6,58 @@ namespace SpawnGen.Nodes.Core;
 [Node("RebatchImages", Category = "image/batch", DisplayName = "Rebatch Images", InputIsList = true, OutputIsList = [true])]
 public sealed class RebatchImages
 {
-    /// <summary>Every picture of every incoming batch, regrouped into batches of <c>batch_size</c> (the last may be smaller), as ComfyUI's Rebatch Images.</summary>
-    public IReadOnlyList<ImageBatch> Execute(IReadOnlyList<ImageBatch> images, [Input(Min = 1, Max = 4096, Default = 1L)] IReadOnlyList<long> batchSize)
+    /// <summary>
+    /// The pictures of every incoming batch, in order, regrouped into batches of <paramref name="batchSize"/> (the last one may be smaller). An
+    /// incoming batch is split where a group fills up. Measured with ComfyUI: pictures are not resized, so a group that would hold pictures of
+    /// different sizes fails as <c>torch.cat</c> does, naming the first piece of the group that differs from the group's first piece; an empty list
+    /// gives an empty list.
+    /// </summary>
+    public IReadOnlyList<ImageBatch> Execute(IReadOnlyList<ImageBatch> images,
+        [Input(Default = 1L, Min = 1, Max = 4096)] IReadOnlyList<long> batchSize)
     {
-        int size = (int)batchSize[0];
-        var singles = images.SelectMany(b => Enumerable.Range(0, b.Batch).Select(i => (Batch: b, Index: i))).ToList();
-        var result = new List<ImageBatch>();
-        for (int start = 0; start < singles.Count; start += size)
+        int size = (int)Math.Clamp(batchSize[0], 1, int.MaxValue);
+        var groups = new List<ImageBatch>();
+        var pieces = new List<(ImageBatch Source, int Start, int Count)>();
+        int filled = 0;
+        foreach (var image in images)
         {
-            var group = singles.Skip(start).Take(size).ToList();
-            var first = group[0].Batch;
-            if (group.Any(g => g.Batch.Height != first.Height || g.Batch.Width != first.Width || g.Batch.Channels != first.Channels))
-                throw new ArgumentException("Rebatch Images joins pictures of different sizes into one batch; resize them first.", nameof(images));
-            var batch = new ImageBatch(group.Count, first.Height, first.Width, first.Channels);
-            int per = first.Height * first.Width * first.Channels;
-            for (int i = 0; i < group.Count; i++) Array.Copy(group[i].Batch.Data, group[i].Index * per, batch.Data, i * per, per);
-            result.Add(batch);
+            for (int start = 0; start < image.Batch;)
+            {
+                int take = Math.Min(size - filled, image.Batch - start);
+                pieces.Add((image, start, take));
+                filled += take;
+                start += take;
+                if (filled == size)
+                {
+                    groups.Add(Join(pieces));
+                    pieces.Clear();
+                    filled = 0;
+                }
+            }
         }
-        return result;
+        if (pieces.Count > 0) groups.Add(Join(pieces));
+        return groups;
+    }
+
+    static ImageBatch Join(List<(ImageBatch Source, int Start, int Count)> pieces)
+    {
+        var first = pieces[0].Source;
+        for (int i = 1; i < pieces.Count; i++)
+        {
+            var s = pieces[i].Source;
+            if (s.Height != first.Height) throw Batching.SizeMismatch(first.Height, s.Height, i);
+            if (s.Width != first.Width) throw Batching.SizeMismatch(first.Width, s.Width, i);
+            if (s.Channels != first.Channels) throw Batching.SizeMismatch(first.Channels, s.Channels, i);
+        }
+        int per = first.Height * first.Width * first.Channels;
+        var r = new ImageBatch(pieces.Sum(p => p.Count), first.Height, first.Width, first.Channels);
+        int at = 0;
+        foreach (var (source, start, count) in pieces)
+        {
+            Array.Copy(source.Data, start * per, r.Data, at * per, count * per);
+            at += count;
+        }
+        return r;
     }
 }
 
@@ -31,98 +65,122 @@ public sealed class RebatchImages
 public sealed class RebatchLatents
 {
     /// <summary>
-    /// Every latent of every incoming batch, regrouped into batches of <c>batch_size</c>, as ComfyUI's Rebatch Latents: a change of latent size closes the batch
-    /// being filled, each latent keeps its noise mask (a missing one counts as all ones at the picture's size, and is dropped again when a whole batch has none)
-    /// and its batch_index (which noise of the seed it gets; by default its position in the whole list).
+    /// The latents of every incoming batch, in order, regrouped into batches of <paramref name="batchSize"/>. Measured with ComfyUI:
+    /// <list type="bullet">
+    /// <item>A latent of another height or width closes the group being filled (that group may be short); latents are not resized. Different channel
+    /// counts in one group fail as <c>torch.cat</c> does.</item>
+    /// <item>Batch indexes: a latent's own, or else a running count continued from the number of batch indexes of the latents before it (so
+    /// [0, 1, 2], then [3, 4] for the next latent of two). Each group takes the next <paramref name="batchSize"/> of them.</item>
+    /// <item>Noise masks: a latent without one counts as all ones at 8x its height and width; a mask with fewer pictures than its latent is repeated
+    /// (and cut) to the latent's count, one with more is kept whole. Each group takes the next <paramref name="batchSize"/> masks, so the masks
+    /// follow their pictures; masks of different sizes in one group fail as <c>torch.cat</c> does. A group whose masks sum to their number of values
+    /// (all ones) gets no mask.</item>
+    /// </list>
     /// </summary>
-    public IReadOnlyList<LatentBatch> Execute(IReadOnlyList<LatentBatch> latents, [Input(Min = 1, Max = 4096, Default = 1L)] IReadOnlyList<long> batchSize)
+    public IReadOnlyList<LatentBatch> Execute(IReadOnlyList<LatentBatch> latents,
+        [Input(Default = 1L, Min = 1, Max = 4096)] IReadOnlyList<long> batchSize)
     {
-        int size = (int)batchSize[0];
+        int size = (int)Math.Clamp(batchSize[0], 1, int.MaxValue);
         var output = new List<LatentBatch>();
-        Part? current = null;
-        int processed = 0;
+        Pending? pending = null;
+        int counted = 0;
         foreach (var latent in latents)
         {
-            var next = Part.Of(latent, processed);
-            processed += next.Count;
-            if (current is null) current = next;
-            else if (next.Height != current.Height || next.Width != current.Width)
+            var batchIndex = latent.BatchIndex ?? [.. Enumerable.Range(counted, latent.Batch)];
+            counted += batchIndex.Length;
+            var next = new Pending(latent, MaskRows(latent), batchIndex);
+            if (pending is not null && (pending.Height != latent.Height || pending.Width != latent.Width))
             {
-                output.Add(current.Take(0, size));
-                current = next;
+                pending.EmitInto(output, size);
+                pending = null;
             }
-            else current = current.Concat(next);
-            if (current.Count > size)
+            if (pending is null) pending = next;
+            else pending.Append(next);
+            while (pending.Samples.Count >= size)
             {
-                int whole = current.Count / size;
-                for (int i = 0; i < whole; i++) output.Add(current.Take(i * size, size));
-                current = whole * size < current.Count ? current.Slice(whole * size, current.Count - whole * size) : null;
+                pending.EmitInto(output, size);
+                pending.DropFirst(size);
             }
         }
-        if (current is not null) output.Add(current.Take(0, size));
+        pending?.EmitInto(output, size);
         return output;
     }
 
-    /// <summary>A run of latents being regrouped: samples, one mask per latent (picture size) and the batch indexes, as ComfyUI's (samples, mask, batch_inds).</summary>
-    sealed record Part(int Channels, int Height, int Width, List<float[]> Samples, List<float[]> Masks, int MaskHeight, int MaskWidth, List<int> Indexes)
+    /// <summary>The latent's noise mask, one row per mask picture: all ones at 8x the latent's size when it has none, repeated up to the latent's count.</summary>
+    static (List<float[]> Rows, int Height, int Width) MaskRows(LatentBatch latent)
     {
-        public int Count => Samples.Count;
-
-        public static Part Of(LatentBatch l, int offset)
+        var mask = latent.NoiseMask;
+        if (mask is null)
         {
-            int per = l.Channels * l.Height * l.Width;
-            var samples = Enumerable.Range(0, l.Batch).Select(b => l.Data[(b * per)..((b + 1) * per)]).ToList();
-            int mh = l.NoiseMask?.Height ?? l.Height * 8, mw = l.NoiseMask?.Width ?? l.Width * 8;
-            var masks = new List<float[]>();
-            for (int b = 0; b < l.Batch; b++)
-            {
-                if (l.NoiseMask is { } m)
-                {
-                    // ComfyUI repeats a shorter mask batch until it covers the latents. (A mask batch longer than its latents is kept whole by ComfyUI and
-                    // then sliced out of step with them; here each latent keeps its own mask.)
-                    int plane = m.Height * m.Width, at = b % m.Batch;
-                    masks.Add(m.Data[(at * plane)..((at + 1) * plane)]);
-                }
-                else
-                {
-                    var ones = new float[mh * mw];
-                    Array.Fill(ones, 1f);
-                    masks.Add(ones);
-                }
-            }
-            var indexes = l.BatchIndex is { } bi ? bi.ToList() : Enumerable.Range(offset, l.Batch).ToList();
-            return new Part(l.Channels, l.Height, l.Width, samples, masks, mh, mw, indexes);
+            int h = latent.Height * 8, w = latent.Width * 8;
+            return ([.. Enumerable.Range(0, latent.Batch).Select(_ => Enumerable.Repeat(1f, h * w).ToArray())], h, w);
+        }
+        int plane = mask.Height * mask.Width;
+        var rows = Enumerable.Range(0, mask.Batch).Select(b => mask.Data.AsSpan(b * plane, plane).ToArray()).ToList();
+        if (mask.Batch > 0 && mask.Batch < latent.Batch)
+            rows = [.. Enumerable.Range(0, latent.Batch).Select(i => rows[i % mask.Batch])];
+        return (rows, mask.Height, mask.Width);
+    }
+
+    /// <summary>The group being filled: sample rows, mask rows and batch indexes, each joined in order and cut from the front as groups are emitted.</summary>
+    sealed class Pending
+    {
+        public List<float[]> Samples { get; }
+        public int Channels { get; }
+        public int Height { get; }
+        public int Width { get; }
+        readonly List<float[]> _masks;
+        readonly int _maskHeight, _maskWidth;
+        readonly List<int> _batchIndex;
+
+        public Pending(LatentBatch latent, (List<float[]> Rows, int Height, int Width) mask, int[] batchIndex)
+        {
+            int per = latent.Channels * latent.Height * latent.Width;
+            Samples = [.. Enumerable.Range(0, latent.Batch).Select(b => latent.Data.AsSpan(b * per, per).ToArray())];
+            (Channels, Height, Width) = (latent.Channels, latent.Height, latent.Width);
+            (_masks, _maskHeight, _maskWidth) = mask;
+            _batchIndex = [.. batchIndex];
         }
 
-        public Part Concat(Part next)
+        public void Append(Pending next)
         {
-            if (next.Channels != Channels) throw new ArgumentException("Rebatch Latents joins latents with different channel counts.");
-            if (next.MaskHeight != MaskHeight || next.MaskWidth != MaskWidth)
-                throw new ArgumentException("Rebatch Latents joins latents whose noise masks have different sizes (ComfyUI cannot join them either).");
-            return this with { Samples = [.. Samples, .. next.Samples], Masks = [.. Masks, .. next.Masks], Indexes = [.. Indexes, .. next.Indexes] };
+            if (next.Channels != Channels) throw Batching.SizeMismatch(Channels, next.Channels, 1);
+            if (next._maskHeight != _maskHeight) throw Batching.SizeMismatch(_maskHeight, next._maskHeight, 1);
+            if (next._maskWidth != _maskWidth) throw Batching.SizeMismatch(_maskWidth, next._maskWidth, 1);
+            Samples.AddRange(next.Samples);
+            _masks.AddRange(next._masks);
+            _batchIndex.AddRange(next._batchIndex);
         }
 
-        public Part Slice(int start, int count) =>
-            this with { Samples = Samples.GetRange(start, count), Masks = Masks.GetRange(start, count), Indexes = Indexes.GetRange(start, count) };
-
-        /// <summary>Latents start .. start + count (fewer at the end) as a LATENT; the mask is dropped when it is all ones, as ComfyUI does.</summary>
-        public LatentBatch Take(int start, int count)
+        /// <summary>Adds a latent of the first <paramref name="size"/> rows (nothing when there are no samples left).</summary>
+        public void EmitInto(List<LatentBatch> output, int size)
         {
-            var part = Slice(start, Math.Min(count, Count - start));
-            int per = Channels * Height * Width, plane = MaskHeight * MaskWidth;
-            var data = new float[part.Count * per];
-            for (int i = 0; i < part.Count; i++) part.Samples[i].CopyTo(data, i * per);
-            var maskData = new float[part.Count * plane];
-            for (int i = 0; i < part.Count; i++) part.Masks[i].CopyTo(maskData, i * plane);
-            // ComfyUI: noise_mask.mean() == 1.0 in float32.
+            int n = Math.Min(size, Samples.Count);
+            if (n == 0) return;
+            int per = Channels * Height * Width;
+            var data = new float[n * per];
+            for (int i = 0; i < n; i++) Array.Copy(Samples[i], 0, data, i * per, per);
+
+            int maskCount = Math.Min(size, _masks.Count), plane = _maskHeight * _maskWidth;
+            var mask = new MaskBatch(maskCount, _maskHeight, _maskWidth);
             double sum = 0;
-            foreach (var v in maskData) sum += v;
-            bool allOnes = (float)(sum / maskData.Length) == 1f;
-            return new LatentBatch(part.Count, Channels, Height, Width, data)
+            for (int i = 0; i < maskCount; i++)
             {
-                NoiseMask = allOnes ? null : new MaskBatch(part.Count, MaskHeight, MaskWidth, maskData),
-                BatchIndex = [.. part.Indexes],
-            };
+                Array.Copy(_masks[i], 0, mask.Data, i * plane, plane);
+                foreach (var v in _masks[i]) sum += v;
+            }
+            output.Add(new LatentBatch(n, Channels, Height, Width, data)
+            {
+                NoiseMask = sum == (double)maskCount * plane ? null : mask,
+                BatchIndex = [.. _batchIndex.Take(size)],
+            });
+        }
+
+        public void DropFirst(int size)
+        {
+            Samples.RemoveRange(0, Math.Min(size, Samples.Count));
+            _masks.RemoveRange(0, Math.Min(size, _masks.Count));
+            _batchIndex.RemoveRange(0, Math.Min(size, _batchIndex.Count));
         }
     }
 }

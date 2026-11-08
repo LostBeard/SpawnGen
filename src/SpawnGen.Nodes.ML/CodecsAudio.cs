@@ -51,7 +51,7 @@ public static class CodecsAudio
                     _encoder = new FlacEncoderGpu(accelerator);
                     _accelerator = accelerator;
                 }
-                await _encoder.WarmUpAsync(2, 44100, 16);
+                await _encoder.WarmUpAsync();
             }
             if (work.HasFlag(Work.FlacDecode))
             {
@@ -59,7 +59,7 @@ public static class CodecsAudio
                 await decoder.WarmUpAsync();
             }
             if (work.HasFlag(Work.Opus))
-                await OggOpusEncoder.WarmUpAsync(accelerator, 48000, 2, new OggOpusEncodeOptions { Bitrate = 128000, Vendor = Lavf }, floatInput: true);
+                await OggOpusEncoder.WarmUpAsync(accelerator);
         }
         finally { Gate.Release(); }
     }

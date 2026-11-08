@@ -97,8 +97,9 @@ average hash bit for bit), the tensor maths bit for bit, captions, Preview as Te
 bytes exactly. WebP files in a folder decode on the GPU (SpawnDev.Codecs, the first frame like Pillow's convert("RGB")); JPEGs go through
 SpawnGen's decoder, which is close to but not bit-exact with Pillow's libjpeg.
 
-Load Image reads PNG (animated PNGs too: every frame composited exactly as ffmpeg, i.e. ComfyUI's PyAV path, does, including its
-quirk of showing a frame disposed to the background unblended) and JPEG itself and WebP (lossy, lossless, alpha, animated), GIF (animated) and BMP through SpawnDev.Codecs on the host's GPU
+Load Image reads PNG (animated PNGs too: frames composited by the APNG / PNG specifications with the frame choices measured from ComfyUI's
+PyAV path, including its showing a frame disposed to the background unblended; deliberate difference: "over" blending uses the PNG specification's
+formula rounded to nearest, so a blended value can differ from ComfyUI's by 1/255) and JPEG itself and WebP (lossy, lossless, alpha, animated), GIF (animated) and BMP through SpawnDev.Codecs on the host's GPU
 (OpenCL / CUDA on the desktop, WebGPU in the browser): every frame is one picture of the batch, transparency gives the mask, and a picture without
 transparency gets ComfyUI's empty 64 x 64 mask (Load Image (as Mask) wraps Load Image, as ComfyUI's does). Load Image (from Outputs) lists the output pictures newest first as ComfyUI's
 `/internal/files/output` does (the server serves that route too); the Studio refreshes the list after each run, and the node's right-click menu
@@ -108,6 +109,16 @@ Pillow's. Deliberate difference: since ComfyUI #13594 (2026-04-28) its Load Imag
 through swscale to float: WebP and BMP colours come out 1 to 2.4 / 255 off the decoded values, fully opaque WebP / GIF pixels get a mask of 1/255
 instead of 0, and JPEGs are upsampled by ffmpeg instead of libjpeg (4:2:0 pictures: mean 5/255, up to 68/255 off Pillow's). SpawnGen keeps the
 reference decoders' values (what Pillow, libwebp and the browsers show).
+Deliberate difference: Save Text writes line breaks as given (`
+`); ComfyUI opens its file in Python's text mode, so on Windows it writes `
+
+` (and `
+
+` becomes `
+
+
+`), on Linux `
+` (measured, clean-room batch C).
 Deliberate difference (a ComfyUI bug not copied): ComfyUI's TextProcessingNode.execute wraps a text step's result in a list on its non-list output,
 so its text steps put out ["text"] (previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
 
@@ -126,7 +137,7 @@ Still missing, by kind:
    SD1 / SD2 / SDXL, CLIPMergeSimple / Subtract / Add) as weight steps replayed on the GPU in graph order with the LoRAs, and saving (Save Checkpoint,
    ModelSave, VAESave; fp16 LDM names) verified: a merge with a LoRA'd copy = ComfyUI (0.13 %), and the saved checkpoint loads back as that merge.
    Open: CLIPSave (ComfyUI writes Hugging Face names, one file per tower: asked the library), Save Checkpoint of parts loaded separately, fp8 weight_dtype.
-2. **Need a codec** (SpawnDev.Codecs; requests with Geordi 2026-11-08 in this order: animated lossy WebP, WebM writer, FLAC of any length, Ogg Opus, VP9 / AV1 inter frames): Save Animated WEBP, SaveWEBM, video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), MP3 / Opus / FLAC audio saving. WebP / GIF / BMP loading is done. Save Animated WEBP on branch `codecs-unreleased` (Codecs 1.0.2-local.2): EXIF byte for byte with Pillow, lossy animations and single lossy pictures (Pillow's still path) byte for byte with ComfyUI's Pillow / libwebp files (CPU and OpenCL); lossless (ComfyUI's default) makes libwebp's frame decisions (every ANMF's rectangle, duration, dispose and blend = Pillow's) and decodes exactly, but the bytes differ until Codecs has libwebp's VP8L coder; lossy methods fastest / slowest (0 / 6) not yet. libwebp picks key frames by encoded size, so on content with transparency an ALPH size difference can change a key-frame choice (visually equivalent file). Save Audio / Preview Audio FLAC on the same branch (Codecs 1.0.2-local.3, a port of FFmpeg's flacenc): byte for byte with ComfyUI's files (16-bit, level 5, "Lavf62.12.102" vendor and encoder comment, prompt / workflow comments) on CPU and OpenCL; the browser's WebGPU encoder makes valid, lossless but slightly different frames (reported to Geordi). Without Codecs the nodes write the same samples as WAV.
+2. **Need a codec** (SpawnDev.Codecs; requests with Geordi 2026-11-08 in this order: animated lossy WebP, WebM writer, FLAC of any length, Ogg Opus, VP9 / AV1 inter frames): Save Animated WEBP, SaveWEBM, video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), MP3 / Opus / FLAC audio saving. WebP / GIF / BMP loading is done. Audio on branch `codecs-unreleased` (Codecs 1.0.2-local.8, all clean-room MIT): Save Audio / Preview Audio write FLAC (lossless, metadata byte-identical to FFmpeg's, frames not ComfyUI's bytes, by TJ's choice), Save Audio (Opus) / (Advanced) write Ogg Opus (FFmpeg's container bytes, packets from a fixed-point Opus encoder), Load Audio reads FLAC with ComfyUI's floats exactly; MP3 saving waits for the audio nodes' clean-room batch.
 3. **Need SpawnGen work**: done: GLSL Shader. src/SpawnGen.Glsl compiles GLSL ES 3.00 fragment shaders (the subset ComfyUI's blueprints use: functions
    and overloads, out / inout, loops, vectors and swizzles, int / uint, texture / texelFetch / textureSize and the usual built-ins) to .NET IL at run time
    and runs them as ILGPU kernels, so the same shader runs on CUDA, OpenCL, WebGPU in the browser and the CPU, with no GL. Against ComfyUI's own

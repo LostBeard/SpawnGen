@@ -3,104 +3,140 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>ComfyUI's batching rules (nodes_post_processing.batch_images / batch_masks / batch_latents), shared by the batch nodes.</summary>
+/// <summary>
+/// Joining pictures, masks and latents into one batch, as measured with ComfyUI's Batch Images / Batch Masks / Batch Latents (and the deprecated
+/// two-input Image Batch / Latent Batch, which behave the same):
+/// <list type="bullet">
+/// <item>Every item is brought to the first one's height and width: cut to the first one's aspect ratio around its middle, then resized bilinearly
+/// (PyTorch's bilinear without corner alignment).</item>
+/// <item>Pictures: when the channel counts differ, each picture with fewer channels than the most gets one channel of 1.0 added (an RGB picture next
+/// to an RGBA one gets full alpha). Counts that still differ (a 1-channel picture next to an RGB one) fail as PyTorch's <c>torch.cat</c> does.</item>
+/// <item>Latents: the result keeps the first latent's noise mask; its batch indexes are each latent's own (or 0, 1, ... when it has none), one after
+/// another. Different channel counts fail as <c>torch.cat</c> does.</item>
+/// </list>
+/// </summary>
 public static class Batching
 {
-    /// <summary>
-    /// One batch of every picture. A picture with fewer channels gets an opaque alpha channel (RGB next to RGBA), and every picture is scaled to the
-    /// first one's size (bilinear, centre crop).
-    /// </summary>
+    /// <summary>PyTorch's <c>torch.cat</c> message for a tensor whose size differs from the first one's outside the joined dimension.</summary>
+    internal static ArgumentException SizeMismatch(long expected, long got, int tensorNumber) =>
+        new($"Sizes of tensors must match except in dimension 0. Expected size {expected} but got size {got} for tensor number {tensorNumber} in the list.");
+
     public static ImageBatch Images(IReadOnlyList<ImageBatch> images)
     {
-        if (images.Count == 0) throw new ArgumentException("There are no pictures to batch.", nameof(images));
+        if (images.Count == 0) throw new ArgumentException("There are no images to batch.", nameof(images));
+        var first = images[0];
         int channels = images.Max(i => i.Channels);
-        var first = WithChannels(images[0], channels);
-        var frames = new List<float[]>();
-        foreach (var image in images)
+        var parts = new ImageBatch[images.Count];
+        for (int i = 0; i < images.Count; i++)
         {
-            var padded = WithChannels(image, channels);
-            if (padded.Width != first.Width || padded.Height != first.Height || padded.Channels != first.Channels)
-                padded = new ImageScale().Execute(padded, "bilinear", first.Width, first.Height, "center");
-            for (int b = 0; b < padded.Batch; b++) frames.Add(Pixels.Frame(padded, b));
+            var image = images[i].Channels < channels ? AddOpaqueChannel(images[i]) : images[i];
+            if (image.Height != first.Height || image.Width != first.Width)
+                image = CommonUpscale.Resize(image, first.Width, first.Height, "bilinear", "center");
+            parts[i] = image;
         }
-        return Pixels.From(frames, first.Height, first.Width, first.Channels);
+        for (int i = 1; i < parts.Length; i++)
+            if (parts[i].Channels != parts[0].Channels) throw SizeMismatch(parts[0].Channels, parts[i].Channels, i);
+        return new ImageBatch(parts.Sum(p => p.Batch), first.Height, first.Width, parts[0].Channels, Join(parts.Select(p => p.Data)));
     }
 
-    /// <summary>One batch of every mask, each scaled to the first one's size (bilinear, centre crop).</summary>
     public static MaskBatch Masks(IReadOnlyList<MaskBatch> masks)
     {
         if (masks.Count == 0) throw new ArgumentException("There are no masks to batch.", nameof(masks));
-        int h = masks[0].Height, w = masks[0].Width;
-        var data = new List<float>();
-        int batch = 0;
-        foreach (var mask in masks)
-        {
-            for (int b = 0; b < mask.Batch; b++)
-            {
-                var frame = mask.Data.AsSpan(b * mask.Height * mask.Width, mask.Height * mask.Width).ToArray();
-                data.AddRange(mask.Height == h && mask.Width == w ? frame : Resample.CommonUpscale(frame, mask.Width, mask.Height, 1, w, h, ResampleMethod.Bilinear, true));
-            }
-            batch += mask.Batch;
-        }
-        return new MaskBatch(batch, h, w, [.. data]);
+        var first = masks[0];
+        var parts = masks.Select(m => m.Height != first.Height || m.Width != first.Width
+            ? CommonUpscale.Resize(m, first.Width, first.Height, "bilinear", "center") : m).ToArray();
+        return new MaskBatch(parts.Sum(p => p.Batch), first.Height, first.Width, Join(parts.Select(p => p.Data)));
     }
 
-    /// <summary>
-    /// One batch of every latent, each reshaped to the first one's size (ComfyUI's reshape_latent_to: bilinear, centre crop). The batch indexes are
-    /// joined, so each picture keeps its own noise; the first one's noise mask is kept.
-    /// </summary>
     public static LatentBatch Latents(IReadOnlyList<LatentBatch> latents)
     {
         if (latents.Count == 0) throw new ArgumentException("There are no latents to batch.", nameof(latents));
         var first = latents[0];
-        var frames = new List<float[]>();
+        for (int i = 1; i < latents.Count; i++)
+            if (latents[i].Channels != first.Channels) throw SizeMismatch(first.Channels, latents[i].Channels, i);
+        var data = new List<float[]>();
         var batchIndex = new List<int>();
         foreach (var latent in latents)
         {
-            var same = Core.Latents.ReshapeTo(first, latent, repeatBatch: false);
-            if (same.Channels != first.Channels) throw new ArgumentException($"The latents have {first.Channels} and {same.Channels} channels and cannot be batched.");
-            for (int b = 0; b < same.Batch; b++) frames.Add(Core.Latents.Frame(same, b));
+            data.Add(latent.Height != first.Height || latent.Width != first.Width ? ResizePlanes(latent, first.Width, first.Height) : latent.Data);
             batchIndex.AddRange(latent.BatchIndex ?? Enumerable.Range(0, latent.Batch));
         }
-        return Core.Latents.From(frames, first.Channels, first.Height, first.Width, first.NoiseMask, [.. batchIndex]);
+        return new LatentBatch(latents.Sum(l => l.Batch), first.Channels, first.Height, first.Width, Join(data))
+        {
+            NoiseMask = first.NoiseMask,
+            BatchIndex = [.. batchIndex],
+        };
     }
 
-    /// <summary>ComfyUI pads a narrower picture with one channel of 1.0 (torch pad (0, 1)): RGB becomes RGBA with full alpha.</summary>
-    static ImageBatch WithChannels(ImageBatch image, int channels)
+    /// <summary>The picture with one more channel, filled with 1.0.</summary>
+    static ImageBatch AddOpaqueChannel(ImageBatch image)
     {
-        if (image.Channels >= channels) return image;
         int c = image.Channels, pixels = image.Batch * image.Height * image.Width;
-        var padded = new ImageBatch(image.Batch, image.Height, image.Width, c + 1);
+        var r = new ImageBatch(image.Batch, image.Height, image.Width, c + 1);
         for (int p = 0; p < pixels; p++)
         {
-            Array.Copy(image.Data, p * c, padded.Data, p * (c + 1), c);
-            padded.Data[p * (c + 1) + c] = 1f;
+            Array.Copy(image.Data, p * c, r.Data, p * (c + 1), c);
+            r.Data[p * (c + 1) + c] = 1f;
         }
-        return padded;
+        return r;
+    }
+
+    /// <summary>Each channel plane of each latent resized to (w, h) with a centre crop, bilinear.</summary>
+    static float[] ResizePlanes(LatentBatch latent, int w, int h)
+    {
+        int plane = latent.Height * latent.Width, planes = latent.Batch * latent.Channels;
+        var r = new float[planes * w * h];
+        for (int p = 0; p < planes; p++)
+        {
+            var one = new float[plane];
+            Array.Copy(latent.Data, p * plane, one, 0, plane);
+            Array.Copy(CommonUpscale.Resize(one, latent.Width, latent.Height, 1, w, h, "bilinear", "center"), 0, r, p * w * h, w * h);
+        }
+        return r;
+    }
+
+    static float[] Join(IEnumerable<float[]> parts)
+    {
+        var list = parts.ToList();
+        var r = new float[list.Sum(p => (long)p.Length)];
+        long at = 0;
+        foreach (var p in list)
+        {
+            Array.Copy(p, 0, r, at, p.Length);
+            at += p.Length;
+        }
+        return r;
     }
 }
 
 [Node("BatchImagesNode", Category = "image/batch", DisplayName = "Batch Images")]
 public sealed class BatchImagesNode
 {
+    /// <summary>The pictures as one batch, in input order, at the first picture's size (see <see cref="Batching"/>).</summary>
     public ImageBatch Execute([Autogrow(Prefix = "image", Min = 1, Max = 50)] IReadOnlyList<ImageBatch> images) => Batching.Images(images);
 }
 
 [Node("BatchMasksNode", Category = "image/mask", DisplayName = "Batch Masks")]
 public sealed class BatchMasksNode
 {
+    /// <summary>The masks as one batch, in input order, at the first mask's size (see <see cref="Batching"/>).</summary>
     public MaskBatch Execute([Autogrow(Prefix = "mask", Min = 1, Max = 50)] IReadOnlyList<MaskBatch> masks) => Batching.Masks(masks);
 }
 
 [Node("BatchLatentsNode", Category = "model/latent/batch", DisplayName = "Batch Latents")]
 public sealed class BatchLatentsNode
 {
+    /// <summary>The latents as one batch, in input order, at the first latent's size, with the first latent's noise mask (see <see cref="Batching"/>).</summary>
     public LatentBatch Execute([Autogrow(Prefix = "latent", Min = 1, Max = 50)] IReadOnlyList<LatentBatch> latents) => Batching.Latents(latents);
 }
 
-/// <summary>ComfyUI's Create List: every connected input, in order, made into one list (each input may itself bring a list).</summary>
 [Node("CreateList", Category = "utilities", DisplayName = "Create List", InputIsList = true, OutputIsList = [true], OutputNames = ["list"])]
 public sealed class CreateList
 {
-    public IReadOnlyList<object?> Execute([Autogrow(Prefix = "input")] IReadOnlyList<IReadOnlyList<object?>> inputs) => [.. inputs.SelectMany(i => i)];
+    /// <summary>
+    /// One list of everything connected, in input order. Measured with ComfyUI: an input that is itself a list (another Create List) adds its items,
+    /// so the result is flat; items of any type can be mixed.
+    /// </summary>
+    public IReadOnlyList<object?> Execute([Autogrow(Prefix = "input", Min = 1, Max = 10), Input(Type = "*")] IReadOnlyList<IReadOnlyList<object?>> inputs) =>
+        [.. inputs.SelectMany(items => items)];
 }

@@ -1,106 +1,85 @@
+using System.Numerics;
 using SpawnGen.Engine.Nodes;
+using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>ComfyUI's Preview as Text: shows any value as text in the node (and passes the text on), formatted as Python's str() would.</summary>
-[Node("PreviewAny", Category = "utilities", DisplayName = "Preview as Text", IsOutput = true, Description = "Preview any input value as text.", OutputNames = ["STRING"])]
-public sealed class PreviewAny
+// The primitive nodes hand on the value of their one widget. Their interfaces (ranges, steps, multiline) are ComfyUI's object_info entries.
+
+[Node("PrimitiveInt", Category = "utilities/primitive", DisplayName = "Int")]
+public sealed class PrimitiveInt
 {
-    public (string Text, UiOutput Ui) Execute(object? source)
-    {
-        var text = Format(source);
-        return (text, new UiOutput("text", new[] { text }));
-    }
-
-    /// <summary>
-    /// Text the way ComfyUI's node builds it: strings as they are; numbers and booleans as Python prints them (1.0, 1e-05, True); lists and dicts as
-    /// <c>json.dumps(value, indent=4, ensure_ascii=False)</c> (the text nodes of the dataset family put out a list of one text), or their Python
-    /// <c>str</c> when they hold something JSON cannot write; anything else by its description.
-    /// </summary>
-    public static string Format(object? value) => value switch
-    {
-        null => "None",
-        string s => s,
-        bool b => b ? "True" : "False",
-        double d => PythonFloat(d),
-        float f => PythonFloat(f),
-        IFormattable n => n.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
-        Engine.Types.HostTensor t => t.ToString(),
-        System.Collections.IList or IEnumerable<KeyValuePair<string, object?>> or PyTuple => Json(value),
-        _ => value.ToString() ?? "None",
-    };
-
-    static string Json(object value)
-    {
-        try { return PyJson.Dumps(value, 4); }
-        catch (PyException e) when (e.PyType == "TypeError") { return PyText.Str(value); }
-    }
-
-    /// <summary>Python's repr of a float: the shortest text that reads back the same, with ".0" on whole numbers and Python's exponent form.</summary>
-    static string PythonFloat(double d)
-    {
-        if (double.IsNaN(d)) return "nan";
-        if (double.IsInfinity(d)) return d > 0 ? "inf" : "-inf";
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
-        double abs = Math.Abs(d);
-        if (abs != 0 && (abs < 1e-4 || abs >= 1e16))
-        {
-            // Python switches to exponent form here; the mantissa is the shortest that still reads back as d.
-            for (int digits = 1; ; digits++)
-            {
-                var candidate = d.ToString("E" + (digits - 1), inv);
-                if (digits < 17 && double.Parse(candidate, inv) != d) continue;
-                int e = candidate.IndexOf('E');
-                var mantissa = candidate[..e].Contains('.') ? candidate[..e].TrimEnd('0').TrimEnd('.') : candidate[..e];
-                int exponent = int.Parse(candidate[(e + 1)..], inv);
-                return $"{mantissa}e{(exponent < 0 ? "-" : "+")}{Math.Abs(exponent):00}";
-            }
-        }
-        var r = d.ToString("R", inv);
-        return r.Contains('.') ? r : r + ".0";
-    }
+    public long Execute([Input(Min = -9223372036854775807d, Max = 9223372036854775807d)] long value = 0) => value;
 }
 
-// Backend value nodes (ComfyUI's comfy_extras primitives): a widget that produces a value other nodes can read, so one number or text can feed many inputs.
+[Node("PrimitiveFloat", Category = "utilities/primitive", DisplayName = "Float")]
+public sealed class PrimitiveFloat
+{
+    public double Execute([Input(Min = -9223372036854775807d, Max = 9223372036854775807d, Step = 0.1)] double value = 0) => value;
+}
 
-[Node(Category = "utilities/primitive", DisplayName = "Text")]
+[Node("PrimitiveString", Category = "utilities/primitive", DisplayName = "Text")]
 public sealed class PrimitiveString
 {
     public string Execute(string value = "") => value;
 }
 
-[Node(Category = "utilities/primitive", DisplayName = "Text (Multiline)")]
+[Node("PrimitiveStringMultiline", Category = "utilities/primitive", DisplayName = "Text (Multiline)")]
 public sealed class PrimitiveStringMultiline
 {
     public string Execute([Input(Multiline = true)] string value = "") => value;
 }
 
-[Node(Category = "utilities/primitive", DisplayName = "Int")]
-public sealed class PrimitiveInt
-{
-    public long Execute([Input(Min = -9223372036854775807, Max = 9223372036854775807)] long value = 0) => value;
-}
-
-[Node(Category = "utilities/primitive", DisplayName = "Float")]
-public sealed class PrimitiveFloat
-{
-    public double Execute([Input(Min = -9223372036854775807, Max = 9223372036854775807, Step = 0.1)] double value = 0) => value;
-}
-
-[Node(Category = "utilities/primitive", DisplayName = "Boolean")]
+[Node("PrimitiveBoolean", Category = "utilities/primitive", DisplayName = "Boolean")]
 public sealed class PrimitiveBoolean
 {
     public bool Execute(bool value = false) => value;
 }
 
-[Node(Category = "utilities", DisplayName = "Custom Combo", OutputNames = ["STRING", "INDEX"], AcceptAllInputs = true, ValidatesOwnInputs = true)]
+/// <summary>
+/// Custom Combo. Its schema has only the <c>choice</c> combo with no options: the editor adds the option widgets and a hidden <c>index</c>
+/// (see the editor's CustomComboWidgets) and sends them all, so the node takes inputs its schema does not list and does not check the choice
+/// against the (empty) option list. Measured with ComfyUI: STRING is the choice as sent (even one that is not among the options), INDEX is the
+/// <c>index</c> value as sent (5 stays 5 when the choice is the second option; 2.0 stays 2.0; -1 stays -1), and 0 when no index is sent.
+/// </summary>
+[Node("CustomCombo", Category = "utilities", DisplayName = "Custom Combo", OutputNames = ["STRING", "INDEX"], OutputTypes = [null, "INT"],
+    AcceptAllInputs = true, ValidatesOwnInputs = true)]
 public sealed class CustomCombo
 {
-    /// <summary>
-    /// A drop-down whose options the user types into the node (the editor's <c>option1</c>, <c>option2</c>, ... text widgets, one empty one always last).
-    /// The editor sends the choice, its position among the options as <c>index</c>, and the options themselves; the node passes the choice and the index
-    /// on, as ComfyUI's does (which checks none of them: the options are not known to the server).
-    /// </summary>
-    public (string String, long Index) Execute([Input(Options = [])] string choice, [ExtraInputs] IReadOnlyDictionary<string, object?> options) =>
-        (choice, options.TryGetValue("index", out var index) && ValueCoercion.AsDouble(index) is { } i ? (long)i : 0);
+    public (string Choice, object? Index) Execute([Input(Options = [])] string choice, [ExtraInputs] IReadOnlyDictionary<string, object?> extra)
+        => (choice, extra.TryGetValue("index", out var index) && index is not null ? index : 0L);
+}
+
+/// <summary>
+/// Preview as Text: shows any value as text in the node and passes that text on. Measured with ComfyUI: text is shown as it is; ints, floats,
+/// booleans and None as Python's <c>str</c> prints them ("120", "1.0", "1e+16", "1.5e-05", "-0.0", "nan", "True", "None"). Lists and dicts read as
+/// <c>json.dumps(value, indent=4, ensure_ascii=False)</c>, and what JSON cannot write falls back to <c>str</c>. A tensor (which ComfyUI prints
+/// with all its numbers) reads as its kind and shape, "ImageBatch [1, 512, 512, 3]".
+/// </summary>
+[Node("PreviewAny", Category = "utilities", DisplayName = "Preview as Text", Description = "Preview any input value as text.", IsOutput = true)]
+public sealed class PreviewAny
+{
+    public (string, UiOutput) Execute(object? source)
+    {
+        var text = Format(source);
+        return (text, new UiOutput("text", new[] { text }));
+    }
+
+    /// <summary>The text the node shows for <paramref name="value"/>.</summary>
+    public static string Format(object? value)
+    {
+        switch (value)
+        {
+            case string s: return s;
+            case null or bool or long or int or short or byte or BigInteger or double or float: return PyText.Str(value);
+        }
+        try
+        {
+            return PyJson.Dumps(value, 4);
+        }
+        catch (PyException)
+        {
+            return PyText.Str(value);
+        }
+    }
 }

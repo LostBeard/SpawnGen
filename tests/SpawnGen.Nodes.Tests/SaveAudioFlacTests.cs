@@ -11,7 +11,7 @@ using SpawnGen.Nodes.ML;
 namespace SpawnGen.Nodes.Tests;
 
 /// <summary>
-/// Save Audio's FLAC against ComfyUI's own saving (Fixtures/codecs/save_audio, make_save_audio.py: AudioSaveHelper.save_audio, PyAV 18.1 / FFmpeg 8:
+/// Save Audio's FLAC against ComfyUI's own saving (metadata byte for byte, frames lossless; see AssertComfyUIsFlac) (Fixtures/codecs/save_audio, make_save_audio.py: AudioSaveHelper.save_audio, PyAV 18.1 / FFmpeg 8:
 /// 16-bit samples, compression level 5, vendor and encoder comment "Lavf62.12.102", 8192 bytes of padding), encoded by SpawnDev.Codecs on the CPU accelerator.
 /// </summary>
 public class SaveAudioFlacTests
@@ -53,9 +53,8 @@ public class SaveAudioFlacTests
         using var context = Context.Create(b => b.CPU());
         using var acc = context.CreateCPUAccelerator(0);
         var ours = await CodecsAudio.EncodeFlacAsync(acc, Clip(name), Metadata(c.GetProperty("metadata").GetBoolean()));
-        var theirs = File.ReadAllBytes(Path.Combine(Dir, name + ".flac"));
-        int first = Enumerable.Range(0, Math.Min(ours.Length, theirs.Length)).FirstOrDefault(i => ours[i] != theirs[i], -1);
-        Assert.That(ours, Is.EqualTo(theirs), $"{ours.Length} vs {theirs.Length} bytes, first difference at {first}");
+        await AssertComfyUIsFlac(acc, ours, name);
+
     }
 
     [TestCase("stereo_44100")]
@@ -68,7 +67,7 @@ public class SaveAudioFlacTests
         using var acc = context.Devices.First(d => d.AcceleratorType == AcceleratorType.OpenCL).CreateAccelerator(context);
         TestContext.Out.WriteLine(acc.Name);
         var ours = await CodecsAudio.EncodeFlacAsync(acc, Clip(name), Metadata(c.GetProperty("metadata").GetBoolean()));
-        Assert.That(ours, Is.EqualTo(File.ReadAllBytes(Path.Combine(Dir, name + ".flac"))));
+        await AssertComfyUIsFlac(acc, ours, name);
     }
 
     [Test]
@@ -78,7 +77,7 @@ public class SaveAudioFlacTests
         using var acc = context.CreateCPUAccelerator(0);
         await CodecsAudio.WarmUpAsync(acc, CodecsAudio.Work.FlacEncode | CodecsAudio.Work.FlacDecode | CodecsAudio.Work.Opus);
         foreach (var name in new[] { "stereo_44100", "mono_22050_odd" })
-            Assert.That(await CodecsAudio.EncodeFlacAsync(acc, Clip(name), Metadata(true)), Is.EqualTo(File.ReadAllBytes(Path.Combine(Dir, name + ".flac"))), name);
+            await AssertComfyUIsFlac(acc, await CodecsAudio.EncodeFlacAsync(acc, Clip(name), Metadata(true)), name);
         Assert.That(CodecsAudio.WorkFor("SaveAudioAdvanced"), Is.EqualTo(CodecsAudio.Work.FlacEncode | CodecsAudio.Work.Opus));
         Assert.That(CodecsAudio.WorkFor("LoadAudio"), Is.EqualTo(CodecsAudio.Work.FlacDecode));
         Assert.That(CodecsAudio.WorkFor("KSampler"), Is.EqualTo(CodecsAudio.Work.None));
@@ -103,9 +102,38 @@ public class SaveAudioFlacTests
             var (_, ui) = await new SaveAudio().ExecuteAsync(Clip("stereo_44100"), node, services);
             var file = (ResultFile)((object[])ui["audio"]!)[0];
             Assert.That((file.Subfolder, file.Filename, file.Type), Is.EqualTo(("audio", "ComfyUI_00001.flac", "output")));
-            Assert.That(store.Get("output", file.Filename, "audio"), Is.EqualTo(File.ReadAllBytes(Path.Combine(Dir, "stereo_44100.flac"))));
+            await AssertComfyUIsFlac(acc, store.Get("output", file.Filename, "audio")!, "stereo_44100");
         }
         finally { AudioFiles.Flac = saved; }
+    }
+
+    /// <summary>
+    /// A FLAC as ComfyUI saves it, minus the frames' bytes (TJ's choice: SpawnDev.Codecs' clean-room encoder makes its own lossless frames): the
+    /// metadata blocks (STREAMINFO with the MD5 of the samples, apart from its min / max frame sizes; VORBIS_COMMENT with vendor, prompt, workflow and encoder, PADDING) are ComfyUI's byte for
+    /// byte, and the frames decode to exactly the 16-bit samples ComfyUI encodes.
+    /// </summary>
+    static async Task AssertComfyUIsFlac(Accelerator acc, byte[] ours, string name)
+    {
+        var theirs = File.ReadAllBytes(Path.Combine(Dir, name + ".flac"));
+        // STREAMINFO's minimum and maximum frame sizes (file bytes 12..17) describe the frames, which are the encoder's own; everything else matches.
+        static byte[] Metadata(byte[] f) { var m = f.AsSpan(0, MetadataLength(f)).ToArray(); m.AsSpan(12, 6).Clear(); return m; }
+        Assert.That(Metadata(ours), Is.EqualTo(Metadata(theirs)), $"{name}: metadata blocks (frame sizes aside)");
+        using var decoder = new SpawnDev.Codecs.Audio.Flac.FlacDecoderGpu(acc);
+        var decoded = await decoder.DecodeAsync(ours);
+        Assert.That(decoded.InterleavedSamples, Is.EqualTo(AudioFiles.Samples16(Clip(name))), $"{name}: lossless");
+        Assert.That(decoded.Md5Matches, Is.True, $"{name}: STREAMINFO MD5");
+    }
+
+    /// <summary>"fLaC" and the metadata blocks, up to the first frame.</summary>
+    static int MetadataLength(byte[] flac)
+    {
+        int i = 4;
+        while (true)
+        {
+            bool last = (flac[i] & 0x80) != 0;
+            i += 4 + (flac[i + 1] << 16 | flac[i + 2] << 8 | flac[i + 3]);
+            if (last) return i;
+        }
     }
 
     sealed class Services(IResultStore store) : IServiceProvider

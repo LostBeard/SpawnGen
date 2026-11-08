@@ -45,13 +45,14 @@ Status: **rewrite** (written while reading ComfyUI), **review** (built from spec
 
 | Area | Files | Status |
 |---|---|---|
-| Node files, Nodes.Core | AudioNodes, AudioOps, BoundingBox*, ColorTransferNodes, Compositor*, DatasetNodes, Image* (Nodes, Ops, ExtraOps, ColorNodes, FilterNodes, SaveExtraNodes, TransformNodes), Latent* (Nodes, Ops, OperationNodes, SliceNodes, Files), PadImageNodes, ResizeNodes, TileNodes | rewrite |
+| Node files, Nodes.Core | AudioNodes, AudioOps, BoundingBox*, ColorTransferNodes, Compositor*, DatasetNodes, Image* (Nodes, Ops, ExtraOps, ColorNodes, SaveExtraNodes, TransformNodes), Latent* (Nodes, Ops, OperationNodes, SliceNodes, Files), ResizeNodes | rewrite |
 | Done | StringNodes (12 nodes; pilot, 2026-11-08: schemas = ComfyUI's object_info, all tests, text chain identical to ComfyUI) | done |
 | Done | PrimitiveNodes, UtilityNodes, FlowNodes, FormulaNodes, FrontendNodes (batch A, 2026-11-08: Convert Number and If/Else Switch now take ComfyUI's typed inputs) | done |
 | Done | TextNodes, BatchNodes (with the Batching helper), RebatchNodes (batch C, 2026-11-08: schemas unchanged) | done |
 | Done | MaskNodes, ColorNodes (batch B, 2026-11-08: 254 random cases bit-identical to ComfyUI; schemas unchanged) | done |
 | Done | LoopNodes, CurveNodes, Model3DNodes, ImageUtilityNodes (batch D, 2026-11-08: schemas unchanged; curve widget and histogram page checks pass) | done |
 | Done | CompositingNodes (redo F, 2026-11-08: 336 random cases bit-identical to ComfyUI, no source seen; schemas unchanged) | done |
+| Done | TileNodes, PadImageNodes (with TorchMath, PyTorch's documented lerp), ImageFilterNodes (batch E, 2026-11-08: Canny pixel-exact on the fixtures, matched against kornia's public functions (Apache-2.0); schemas unchanged) | done |
 | Note for the GLSL batch | GLSLShader's default shader text has CRLF line endings (git checkout of a raw string); ComfyUI's is LF | to fix in the rewrite |
 | Node files, Nodes.ML | AudioModelNodes, ClassificationNodes, ClipNodes, ComponentLoaderNodes, Conditioning, ControlNetNodes, CustomSampling, FluxNodes, GlslShaderNode, GuidanceNodes, LatentOperationCfg, LoraNodes, MergeNodes, MlNodes, SamplerNodes, SamplingNodes, Trellis2Node, UNetPatchNodes, VisionNodes | rewrite |
 | Sampling stack | Samplers, SamplersAdvanced, Schedulers, SamplingCore, Guidance, GuidancePatches, ModelSampling, GitsTable, BetaMath, PromptWeights, LatentFormat, LatentPreview, WeightSteps, ModelParts, Checkpoint | rewrite (k-diffusion, MIT, and the papers are allowed sources) |

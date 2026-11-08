@@ -43,8 +43,10 @@ Status: **rewrite** (written while reading ComfyUI), **review** (built from spec
 
 | Area | Files | Status |
 |---|---|---|
-| Node files, Nodes.Core | AudioNodes, AudioOps, BatchNodes, BoundingBox*, ColorNodes, ColorTransferNodes, CompositingNodes, Compositor*, CurveNodes, DatasetNodes, FlowNodes, FormulaNodes, FrontendNodes, Image* (Nodes, Ops, ExtraOps, ColorNodes, FilterNodes, SaveExtraNodes, TransformNodes, UtilityNodes), Latent* (Nodes, Ops, OperationNodes, SliceNodes, Files), LoopNodes, MaskNodes, Model3DNodes, PadImageNodes, PrimitiveNodes, RebatchNodes, ResizeNodes, TextNodes, TileNodes, UtilityNodes | rewrite |
+| Node files, Nodes.Core | AudioNodes, AudioOps, BatchNodes, BoundingBox*, ColorNodes, ColorTransferNodes, CompositingNodes, Compositor*, CurveNodes, DatasetNodes, Image* (Nodes, Ops, ExtraOps, ColorNodes, FilterNodes, SaveExtraNodes, TransformNodes, UtilityNodes), Latent* (Nodes, Ops, OperationNodes, SliceNodes, Files), LoopNodes, MaskNodes, Model3DNodes, PadImageNodes, RebatchNodes, ResizeNodes, TextNodes, TileNodes | rewrite |
 | Done | StringNodes (12 nodes; pilot, 2026-11-08: schemas = ComfyUI's object_info, all tests, text chain identical to ComfyUI) | done |
+| Done | PrimitiveNodes, UtilityNodes, FlowNodes, FormulaNodes, FrontendNodes (batch A, 2026-11-08: Convert Number and If/Else Switch now take ComfyUI's typed inputs) | done |
+| Note for the GLSL batch | GLSLShader's default shader text has CRLF line endings (git checkout of a raw string); ComfyUI's is LF | to fix in the rewrite |
 | Node files, Nodes.ML | AudioModelNodes, ClassificationNodes, ClipNodes, ComponentLoaderNodes, Conditioning, ControlNetNodes, CustomSampling, FluxNodes, GlslShaderNode, GuidanceNodes, LatentOperationCfg, LoraNodes, MergeNodes, MlNodes, SamplerNodes, SamplingNodes, Trellis2Node, UNetPatchNodes, VisionNodes | rewrite |
 | Sampling stack | Samplers, SamplersAdvanced, Schedulers, SamplingCore, Guidance, GuidancePatches, ModelSampling, GitsTable, BetaMath, PromptWeights, LatentFormat, LatentPreview, WeightSteps, ModelParts, Checkpoint | rewrite (k-diffusion, MIT, and the papers are allowed sources) |
 | Helpers shaped after ComfyUI | AudioDsp, CommonUpscale, Resample, Stores (naming and counter), ImageDecoder | rewrite |

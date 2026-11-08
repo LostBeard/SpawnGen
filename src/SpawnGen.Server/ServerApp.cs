@@ -302,7 +302,7 @@ public static class ServerApp
                 ["output_name"] = new JsonArray(s.Outputs.Select(o => (JsonNode)o.Name).ToArray()),
                 ["output_matchtypes"] = s.Outputs.Any(o => o.MatchTemplate is not null) ? new JsonArray(s.Outputs.Select(o => (JsonNode?)o.MatchTemplate).ToArray()) : null,
                 ["name"] = s.Id, ["display_name"] = s.DisplayName, ["description"] = s.Description ?? "",
-                ["category"] = s.Category, ["output_node"] = s.IsOutputNode, ["dev_only"] = s.DevOnly,
+                ["category"] = s.Category, ["output_node"] = s.IsOutputNode, ["has_intermediate_output"] = s.HasIntermediateOutput, ["dev_only"] = s.DevOnly,
             };
         }
         return root;

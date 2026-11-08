@@ -3,7 +3,7 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-[Node("ImageCropV2", Category = "image/transform", DisplayName = "Crop Image", OutputNames = ["IMAGE"], Description = "Crop an image to the specified dimensions.")]
+[Node("ImageCropV2", Category = "image/transform", DisplayName = "Crop Image", HasIntermediateOutput = true, OutputNames = ["IMAGE"], Description = "Crop an image to the specified dimensions.")]
 public sealed class ImageCropV2
 {
     /// <summary>

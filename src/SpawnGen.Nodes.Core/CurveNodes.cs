@@ -131,12 +131,12 @@ public sealed class Curve
     public override string ToString() => $"{(Interpolation == "linear" ? "LinearCurve" : "MonotoneCubicCurve")}(points={string.Join(", ", Points.Select(p => $"({p.X}, {p.Y})"))})";
 }
 
-[Node(Category = "utilities", DisplayName = "Curve Editor", OutputNames = ["curve"])]
+[Node(Category = "utilities", DisplayName = "Curve Editor", HasIntermediateOutput = true, OutputNames = ["curve"])]
 public sealed class CurveEditor
 {
     /// <summary>
     /// ComfyUI's Curve Editor: the curve its widget holds (control points, monotone cubic or linear), for GLSL Shader's u_curve inputs and other curve users.
-    /// A histogram, when connected, is shown behind the curve (ui "histogram"). The editor edits the points as JSON until it has ComfyUI's curve widget.
+    /// A histogram, when connected, is shown behind the curve (ui "histogram").
     /// </summary>
     public (Curve Curve, UiOutput? Ui) Execute([Input(Type = "CURVE", Json = """{"points": [[0.0, 0.0], [1.0, 1.0]], "interpolation": "monotone_cubic"}""")] object curve,
         Histogram? histogram = null) =>

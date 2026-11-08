@@ -75,6 +75,8 @@ public sealed class NodeSchema
     public bool IsOutputNode { get; init; }
     /// <summary>Never served from cache (clocks, randomness, external state).</summary>
     public bool AlwaysExecute { get; init; }
+    /// <summary>ComfyUI's <c>has_intermediate_output</c> (see <see cref="NodeAttribute.HasIntermediateOutput"/>).</summary>
+    public bool HasIntermediateOutput { get; init; }
     /// <summary>Editor-only node (Reroute, Note): not part of the prompt that is run.</summary>
     public bool FrontendOnly { get; init; }
     /// <summary>ComfyUI's <c>INPUT_IS_LIST</c>: one run with whole lists rather than one run per item.</summary>

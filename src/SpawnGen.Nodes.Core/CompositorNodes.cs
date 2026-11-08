@@ -380,7 +380,7 @@ public static class Compositor
     }
 }
 
-[Node(Category = "image", DisplayName = "Create Layered Image", IsOutput = true, OutputNames = ["IMAGE", "MASK"])]
+[Node(Category = "image", DisplayName = "Create Layered Image", IsOutput = true, HasIntermediateOutput = true, OutputNames = ["IMAGE", "MASK"])]
 public sealed class ImageCompositor
 {
     /// <summary>

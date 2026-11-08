@@ -68,6 +68,11 @@ public interface IExecutionObserver
     void OnNodeExecuting(string nodeId) { }
     void OnNodeProgress(string nodeId, double value, double max, string? message) { }
     void OnNodeExecuted(string nodeId, NodeOutputs outputs) { }
+    /// <summary>
+    /// A node served from the cache shows its ui again (ComfyUI's emit_cached_output: an "executed" message with the cached ui): a cached node the run reached,
+    /// and after the run any cached node with an intermediate output it did not reach. Only called when the cached result has ui.
+    /// </summary>
+    void OnNodeCachedUi(string nodeId, NodeOutputs outputs) { }
     /// <summary>A node shows a picture while it works (a sampler's latent preview): a PNG, replaced by the next one.</summary>
     void OnNodePreview(string nodeId, byte[] png) { }
     void OnError(string? nodeId, Exception error) { }

@@ -496,7 +496,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
     }
 
     /// <summary>A CURVE widget: the plot with a quarter grid, the curve as the node evaluates it (SpawnGen.Nodes.Core.Curve), its points and the interpolation.</summary>
-    void DrawCurve(CanvasRenderingContext2D ctx, WidgetRow w, object? value)
+    void DrawCurve(CanvasRenderingContext2D ctx, WidgetRow w, object? value, IReadOnlyList<double>? histogram)
     {
         var plot = CurveWidget.Plot(w.Bounds);
         var points = CurveWidget.Points(value);
@@ -520,6 +520,24 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.MoveTo(plot.X, plot.Y + plot.Height * k / 4); ctx.LineTo(plot.Right, plot.Y + plot.Height * k / 4);
         }
         ctx.Stroke();
+
+        // ComfyUI's faint identity diagonal, then the last run's histogram filled in the curve's colour at 15%.
+        ctx.GlobalAlpha = 0.15;
+        ctx.StrokeStyle = Theme.ValueText;
+        ctx.BeginPath();
+        ctx.MoveTo(plot.X, plot.Bottom); ctx.LineTo(plot.Right, plot.Y);
+        ctx.Stroke();
+        if (histogram is { Count: > 0 } && CurveWidget.HistogramOutline(histogram) is { Count: > 0 } outline)
+        {
+            ctx.FillStyle = Theme.ValueText;
+            ctx.BeginPath();
+            ctx.MoveTo(plot.X, plot.Bottom);
+            foreach (var o in outline) { var p = CurveWidget.ToWorld(plot, o); ctx.LineTo(p.X, p.Y); }
+            ctx.LineTo(plot.Right, plot.Bottom);
+            ctx.ClosePath();
+            ctx.Fill();
+        }
+        ctx.GlobalAlpha = 1;
 
         var curve = new SpawnGen.Nodes.Core.Curve(points, interpolation);
         ctx.StrokeStyle = Theme.ValueText;
@@ -556,7 +574,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.StrokeStyle = Theme.WidgetBorder;
         ctx.Stroke();
 
-        if (w.IsCurve) { DrawCurve(ctx, w, value); return; }
+        if (w.IsCurve) { DrawCurve(ctx, w, value, node.ResultHistogram); return; }
 
         ctx.Font = Theme.Font;
         ctx.TextBaseline = "middle";

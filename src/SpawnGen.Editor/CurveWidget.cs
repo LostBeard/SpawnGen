@@ -44,6 +44,22 @@ public static class CurveWidget
     public static (double X, double Y) FromWorld(Rect plot, Point w) =>
         (Math.Clamp((w.X - plot.X) / plot.Width, 0, 1), Math.Clamp((plot.Bottom - w.Y) / plot.Height, 0, 1));
 
+    /// <summary>
+    /// The histogram outline behind the curve, as ComfyUI's curve widget draws it (histogramToPath): each bin's square root, scaled so the 99.5th
+    /// percentile bin reaches the top, clamped; x spreads the bins over 0..1 and y is the height in 0..1. Empty when there is nothing to draw.
+    /// </summary>
+    public static List<(double X, double Y)> HistogramOutline(IReadOnlyList<double> bins)
+    {
+        int n = bins.Count;
+        var outline = new List<(double, double)>(n);
+        if (n == 0) return outline;
+        var roots = bins.Select(b => (double)MathF.Sqrt((float)b)).ToArray(); // Float32Array in the frontend
+        double top = roots.Order().ElementAt((int)Math.Floor((n - 1) * 0.995));
+        if (top == 0) return outline;
+        for (int i = 0; i < n; i++) outline.Add((n == 1 ? 0.5 : i / (double)(n - 1), Math.Min(1, roots[i] * (1 / top))));
+        return outline;
+    }
+
     /// <summary>The point under <paramref name="world"/> (within <see cref="PickRadius"/>), or -1.</summary>
     public static int PointAt(Rect plot, IReadOnlyList<(double X, double Y)> points, Point world)
     {

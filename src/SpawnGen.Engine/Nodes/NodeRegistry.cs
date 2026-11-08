@@ -293,7 +293,7 @@ public sealed class NodeRegistry
         {
             Id = node.Schema.Id, DisplayName = node.Schema.DisplayName, Category = node.Schema.Category, Description = node.Schema.Description,
             Inputs = node.Schema.Inputs.Select(i => i.Name == input ? i with { Widget = widget } : i).ToList(),
-            Outputs = node.Schema.Outputs, IsOutputNode = node.Schema.IsOutputNode, AlwaysExecute = node.Schema.AlwaysExecute, FrontendOnly = node.Schema.FrontendOnly,
+            Outputs = node.Schema.Outputs, IsOutputNode = node.Schema.IsOutputNode, AlwaysExecute = node.Schema.AlwaysExecute, HasIntermediateOutput = node.Schema.HasIntermediateOutput, FrontendOnly = node.Schema.FrontendOnly,
             InputIsList = node.Schema.InputIsList, DynamicCombos = node.Schema.DynamicCombos, LoopBoundary = node.Schema.LoopBoundary,
             AcceptAllInputs = node.Schema.AcceptAllInputs, ValidatesOwnInputs = node.Schema.ValidatesOwnInputs, CacheWhen = node.Schema.CacheWhen, DevOnly = node.Schema.DevOnly,
         };
@@ -464,6 +464,7 @@ public sealed class NodeRegistry
             Outputs = outputs,
             IsOutputNode = attr?.IsOutput ?? false,
             AlwaysExecute = attr?.AlwaysExecute ?? false,
+            HasIntermediateOutput = attr?.HasIntermediateOutput ?? false,
             FrontendOnly = attr?.FrontendOnly ?? false,
             InputIsList = inputIsList,
             DynamicCombos = dynamicCombos,

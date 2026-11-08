@@ -64,4 +64,21 @@ public class CurveWidgetTests
         doc.Undo();
         Assert.That(CurveWidget.Points(node.Widgets["curve"]), Has.Count.EqualTo(3), "undo brings the removed point back");
     }
+
+    [Test]
+    public void The_histogram_outline_matches_ComfyUIs_curve_widget()
+    {
+        // Expected from the ComfyUI frontend's histogramToPath (histogramUtil.js) run on the same bins under node: sqrt, scaled to the 99.5th percentile, clamped.
+        var bins = Enumerable.Range(0, 256).Select(i => Math.Round(1000 * Math.Exp(-Math.Pow(i - 90, 2) / 800) + (i == 255 ? 50000 : 0) + i % 7, MidpointRounding.AwayFromZero)).ToList();
+        var outline = CurveWidget.HistogramOutline(bins);
+        Assert.That(outline, Has.Count.EqualTo(256));
+        int[] at = [0, 1, 45, 90, 128, 200, 254, 255];
+        double[] expected = [0, 0.03155972032740517, 0.28752273579858334, 1, 0.4066185613205616, 0.06311944065481023, 0.044632183747870924, 1];
+        for (int k = 0; k < at.Length; k++)
+        {
+            Assert.That(outline[at[k]].X, Is.EqualTo(at[k] / 255.0).Within(1e-12));
+            Assert.That(outline[at[k]].Y, Is.EqualTo(expected[k]).Within(1e-6), $"bin {at[k]}");
+        }
+        Assert.That(CurveWidget.HistogramOutline(new double[256]), Is.Empty, "an all-zero histogram draws nothing");
+    }
 }

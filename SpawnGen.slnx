@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/SpawnGen.Engine/SpawnGen.Engine.csproj" />
     <Project Path="src/SpawnGen.Runtime/SpawnGen.Runtime.csproj" />
+    <Project Path="src/SpawnGen.Glsl/SpawnGen.Glsl.csproj" />
     <Project Path="src/SpawnGen.Nodes.Core/SpawnGen.Nodes.Core.csproj" />
     <Project Path="src/SpawnGen.Nodes.ML/SpawnGen.Nodes.ML.csproj" />
     <Project Path="src/SpawnGen.Editor/SpawnGen.Editor.csproj" />
@@ -14,6 +15,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SpawnGen.Engine.Tests/SpawnGen.Engine.Tests.csproj" />
+    <Project Path="tests/SpawnGen.Glsl.Tests/SpawnGen.Glsl.Tests.csproj" />
     <Project Path="tests/SpawnGen.Nodes.Tests/SpawnGen.Nodes.Tests.csproj" />
     <Project Path="tests/SpawnGen.Editor.Tests/SpawnGen.Editor.Tests.csproj" />
     <Project Path="tests/SpawnGen.Server.Tests/SpawnGen.Server.Tests.csproj" />

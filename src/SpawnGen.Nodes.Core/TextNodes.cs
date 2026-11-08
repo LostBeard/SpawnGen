@@ -108,7 +108,7 @@ public sealed class SaveText
         }
         // ComfyUI computes the file name variables for a 1x1 "image".
         var prefix = SavePrefix.ComputeVars(filenamePrefix, 1, 1, DateTime.Now);
-        var file = await Results.For(services).SaveAsync("output", prefix, new UTF8Encoding(false).GetBytes(body), format);
+        var file = await Results.For(services).SaveAsync("output", prefix, new UTF8Encoding(false).GetBytes(body), format, trailingUnderscore: false); // ComfyUI: prefix_00001.txt
         var ui = new UiOutput { ["text"] = new[] { content }, ["files"] = new object[] { file } };
         return (content, ui);
     }

@@ -1,0 +1,102 @@
+{
+ "platform": "win32",
+ "cases": [
+  {
+   "prefix": "ComfyUI",
+   "names": [],
+   "counter": 1
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_00001_.png",
+    "ComfyUI_00002.flac"
+   ],
+   "counter": 3
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_00007_.png",
+    "comfyui_00009_.png"
+   ],
+   "counter": 10
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_abc_.png"
+   ],
+   "counter": 1
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_00003"
+   ],
+   "counter": 4
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUIx_00005_.png",
+    "Comfy_00008_.png"
+   ],
+   "counter": 1
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_00004_00009.png"
+   ],
+   "counter": 5
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_.png"
+   ],
+   "counter": 1
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_ 12 .png"
+   ],
+   "counter": 13
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_-3_.png"
+   ],
+   "counter": -2
+  },
+  {
+   "prefix": "ComfyUI",
+   "names": [
+    "ComfyUI_00002_.png",
+    "ComfyUI_00010.latent",
+    "ComfyUI_00006_.webm",
+    "other.txt"
+   ],
+   "counter": 11
+  },
+  {
+   "prefix": "café",
+   "names": [
+    "café_00002_.png"
+   ],
+   "counter": 3
+  },
+  {
+   "prefix": "clip",
+   "names": [
+    "clip_00001.wav",
+    "clip_00001_.wav",
+    "clip_00002.flac"
+   ],
+   "counter": 3
+  }
+ ]
+}

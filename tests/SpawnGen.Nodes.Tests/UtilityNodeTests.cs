@@ -153,10 +153,10 @@ public class UtilityNodeTests
         var ui = result.Outputs["3"].Ui!;
         Assert.That(ui["text"], Is.EqualTo(new[] { "4" }));
         var file = (ResultFile)((object[])ui["files"]!)[0];
-        Assert.That((file.Filename, file.Subfolder, file.Type), Is.EqualTo(("legs_00001_.txt", "notes", "output")));
-        Assert.That(Encoding.UTF8.GetString(store.Get("output", "legs_00001_.txt", "notes")!), Is.EqualTo("4"));
+        Assert.That((file.Filename, file.Subfolder, file.Type), Is.EqualTo(("legs_00001.txt", "notes", "output")));
+        Assert.That(Encoding.UTF8.GetString(store.Get("output", "legs_00001.txt", "notes")!), Is.EqualTo("4"));
         Assert.That(result.Outputs["3"].Values, Is.EqualTo(new object[] { "4" }), "the text is also an output");
-        Assert.That(Encoding.UTF8.GetString(store.Get("output", "raw_00001_.md")!), Is.EqualTo("{\"name\": \"cat\", \"legs\": 4} trailing"));
+        Assert.That(Encoding.UTF8.GetString(store.Get("output", "raw_00001.md")!), Is.EqualTo("{\"name\": \"cat\", \"legs\": 4} trailing"));
     }
 
     [Test]

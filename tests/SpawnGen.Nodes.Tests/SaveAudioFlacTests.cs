@@ -89,7 +89,7 @@ public class SaveAudioFlacTests
                 ["1", "SaveAudio", services, CancellationToken.None, null, new Lazy<string>(() => prompt), extra, null, null, 0], null)!;
             var (_, ui) = await new SaveAudio().ExecuteAsync(Clip("stereo_44100"), node, services);
             var file = (ResultFile)((object[])ui["audio"]!)[0];
-            Assert.That((file.Subfolder, file.Filename, file.Type), Is.EqualTo(("audio", "ComfyUI_00001_.flac", "output")));
+            Assert.That((file.Subfolder, file.Filename, file.Type), Is.EqualTo(("audio", "ComfyUI_00001.flac", "output")));
             Assert.That(store.Get("output", file.Filename, "audio"), Is.EqualTo(File.ReadAllBytes(Path.Combine(Dir, "stereo_44100.flac"))));
         }
         finally { AudioFiles.Flac = saved; }

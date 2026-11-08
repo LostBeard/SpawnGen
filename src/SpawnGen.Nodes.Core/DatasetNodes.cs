@@ -568,17 +568,7 @@ internal static class DatasetFiles
         var outputFolder = Within(folder, sub);
         var names = store.List("output", outputFolder);
         if (names is null) { store.CreateFolder("output", outputFolder); return (1, prefix); }
-        int prefixLength = PyText.Length(BaseName(prefix));
-        BigInteger? best = null;
-        foreach (var name in names)
-        {
-            var head = PyText.Slice(name, null, prefixLength + 1);
-            if (head.Length == 0 || head[^1] != '_' || NormCase(head[..^1]) != NormCase(filename)) continue;
-            var rest = PyText.Slice(name, prefixLength + 1, null);
-            var digits = PyNumber.TryParseInt(rest.Split('.')[0].Split('_')[0]) ?? BigInteger.Zero;
-            if (best is null || digits > best) best = digits;
-        }
-        return (best is { } max ? max + 1 : 1, prefix);
+        return (SavePrefix.NextCounter(names, filename, PyText.Length(BaseName(prefix))), prefix);
     }
 
     static string BaseName(string path)
@@ -587,7 +577,6 @@ internal static class DatasetFiles
         return path[(cut + 1)..];
     }
 
-    static string NormCase(string s) => OperatingSystem.IsWindows() ? PyText.Lower(s).Replace('/', '\\') : s;
 
     /// <summary>Python's <c>os.path.normpath</c> with "/" between parts: "." parts dropped, "a/.." folded, leading ".." kept, "" becomes ".".</summary>
     static string NormPath(string path)

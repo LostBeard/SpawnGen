@@ -23,7 +23,7 @@ public sealed class SaveAudio
     {
         if (audio is null) throw new ArgumentException("SaveAudio: input audio is None (source video may have no audio track).", nameof(audio));
         var (data, extension) = await AudioFiles.EncodeAsync(audio, Results.Metadata(context));
-        var file = await Results.For(services).SaveAsync("output", filenamePrefix, data, extension);
+        var file = await Results.For(services).SaveAsync("output", filenamePrefix, data, extension, trailingUnderscore: false); // ComfyUI: prefix_00001.flac
         return (audio, new UiOutput("audio", new object[] { file }));
     }
 }

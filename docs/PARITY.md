@@ -109,10 +109,15 @@ Pillow's. Deliberate difference: since ComfyUI #13594 (2026-04-28) its Load Imag
 through swscale to float: WebP and BMP colours come out 1 to 2.4 / 255 off the decoded values, fully opaque WebP / GIF pixels get a mask of 1/255
 instead of 0, and JPEGs are upsampled by ffmpeg instead of libjpeg (4:2:0 pictures: mean 5/255, up to 68/255 off Pillow's). SpawnGen keeps the
 reference decoders' values (what Pillow, libwebp and the browsers show).
+Deliberate differences (SpawnGen is more forgiving where ComfyUI fails): Convert Image to Mask with channel "alpha" on an image without alpha gives a mask of ones (ComfyUI: IndexError); Image Blur / Image Sharpen with a radius as large as the picture keep mirroring the edges (ComfyUI: PyTorch's reflect-padding error).
 Deliberate difference: Save Text writes line breaks as given (`
-`); ComfyUI opens its file in Python's text mode, so on Windows it writes `
-` (and `
-` becomes `
+`); ComfyUI opens its file in Python's text mode, so on Windows it writes `
+
+` (and `
+
+` becomes `
+
+
 `), on Linux `
 ` (measured, clean-room batch C).
 Deliberate difference (a ComfyUI bug not copied): ComfyUI's TextProcessingNode.execute wraps a text step's result in a list on its non-list output,

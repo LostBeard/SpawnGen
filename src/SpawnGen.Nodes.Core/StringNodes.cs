@@ -3,38 +3,44 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-// Text nodes (ComfyUI's comfy_extras/nodes_string.py): small, exact, host-side. Python's str rules come from PyText (code points, full case mappings,
-// Python whitespace) and its re rules from PyRegex. ComfyUI marks case_sensitive / case_insensitive / multiline / dotall / group_index / count as
-// "advanced" widgets (folded away in its frontend); here they are ordinary widgets, in the same order.
+// The text nodes work on Python strings: lengths, slices and case changes count code points (an emoji is one character), as the Python
+// documentation describes str. The Py* helpers give those semantics; each node here is a thin layer over them. Behavior that the
+// documentation leaves open (what a mode outside the list does, how "not case sensitive" compares) was measured by running ComfyUI.
 
-[Node(Category = "text", DisplayName = "Concatenate Text")]
+[Node("StringConcatenate", Category = "text", DisplayName = "Concatenate Text")]
 public sealed class StringConcatenate
 {
-    public string Execute([Input(Multiline = true)] string stringA = "", [Input(Multiline = true)] string stringB = "", string delimiter = "") =>
-        stringA + delimiter + stringB;
+    /// <summary>The two texts joined with the delimiter between them.</summary>
+    public string Execute([Input(Multiline = true)] string stringA = "", [Input(Multiline = true)] string stringB = "", string delimiter = "")
+        => string.Concat(stringA, delimiter, stringB);
 }
 
-[Node(Category = "text", DisplayName = "Substring")]
+[Node("StringSubstring", Category = "text", DisplayName = "Substring")]
 public sealed class StringSubstring
 {
-    /// <summary>Characters [start, end) of the text (Python's <c>string[start:end]</c>): negative values count from the end, out-of-range values are clamped.</summary>
+    /// <summary>
+    /// The characters from <paramref name="start"/> up to (not including) <paramref name="end"/>, as a Python slice <c>s[start:end]</c>: a negative
+    /// index counts from the end, an index past either end is clamped, and an end before the start gives "".
+    /// </summary>
     public string Execute([Input(Multiline = true)] string @string = "", long start = 0, long end = 0) => PyText.Slice(@string, start, end);
 }
 
-[Node(Category = "text", DisplayName = "Text Length", OutputNames = ["length"])]
+[Node("StringLength", Category = "text", DisplayName = "Text Length", OutputNames = ["length"])]
 public sealed class StringLength
 {
-    /// <summary>The number of characters as Python counts them (an emoji is one).</summary>
+    /// <summary>The number of characters (Unicode code points, as Python's <c>len</c>).</summary>
     public long Execute([Input(Multiline = true)] string @string = "") => PyText.Length(@string);
 }
 
-[Node(Category = "text", DisplayName = "Convert Text Case")]
+[Node("CaseConverter", Category = "text", DisplayName = "Convert Text Case")]
 public sealed class CaseConverter
 {
-    public static string[] Modes() => ["UPPERCASE", "lowercase", "Capitalize", "Title Case"];
-
-    /// <summary>Python's upper / lower / capitalize / title ("ß" upper-cases to "SS"; Title Case starts a word after any non-letter, so "it's" becomes "It'S").</summary>
-    public string Execute([Input(Multiline = true)] string @string = "", [Input(OptionsProvider = nameof(Modes))] string mode = "UPPERCASE") => mode switch
+    /// <summary>
+    /// Python's <c>str.upper</c>, <c>str.lower</c>, <c>str.capitalize</c> or <c>str.title</c>. Measured with ComfyUI: a mode outside the list (fed
+    /// through a link, which validation does not check) gives the text back unchanged.
+    /// </summary>
+    public string Execute([Input(Multiline = true)] string @string = "",
+        [Input(Options = ["UPPERCASE", "lowercase", "Capitalize", "Title Case"])] string mode = "UPPERCASE") => mode switch
     {
         "UPPERCASE" => PyText.Upper(@string),
         "lowercase" => PyText.Lower(@string),
@@ -44,13 +50,14 @@ public sealed class CaseConverter
     };
 }
 
-[Node(Category = "text", DisplayName = "Trim Text")]
+[Node("StringTrim", Category = "text", DisplayName = "Trim Text")]
 public sealed class StringTrim
 {
-    public static string[] Modes() => ["Both", "Left", "Right"];
-
-    /// <summary>Removes Python's whitespace (spaces, tabs, line breaks and the other Unicode spaces) from the ends.</summary>
-    public string Execute([Input(Multiline = true)] string @string = "", [Input(OptionsProvider = nameof(Modes))] string mode = "Both") => mode switch
+    /// <summary>
+    /// Removes whitespace (Python's definition, as <c>str.strip</c>) from both ends, the start or the end. Measured with ComfyUI: a mode outside the
+    /// list gives the text back unchanged.
+    /// </summary>
+    public string Execute([Input(Multiline = true)] string @string = "", [Input(Options = ["Both", "Left", "Right"])] string mode = "Both") => mode switch
     {
         "Both" => PyText.Strip(@string),
         "Left" => PyText.LStrip(@string),
@@ -59,101 +66,189 @@ public sealed class StringTrim
     };
 }
 
-[Node(Category = "text", DisplayName = "Replace Text")]
+[Node("StringReplace", Category = "text", DisplayName = "Replace Text")]
 public sealed class StringReplace
 {
-    /// <summary>Replaces every occurrence. An empty <c>find</c> inserts <c>replace</c> between all characters and at both ends, as Python's <c>str.replace</c> does.</summary>
-    public string Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string find = "", [Input(Multiline = true)] string replace = "") =>
-        PyText.Replace(@string, find, replace);
+    /// <summary>Every occurrence of <paramref name="find"/> replaced, as Python's <c>str.replace</c> (an empty find inserts between every character).</summary>
+    public string Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string find = "", [Input(Multiline = true)] string replace = "")
+        => PyText.Replace(@string, find, replace);
 }
 
-[Node(Category = "text", DisplayName = "Contains Text", OutputNames = ["contains"])]
+/// <summary>
+/// Case-insensitive comparison for the text nodes. Measured with ComfyUI: both texts are lowercased with Python's <c>str.lower</c> (not casefolded):
+/// "STRASSE" does not contain "ß", "ﬁ" is not "fi", "ſ" is not "s", while "İ" (lowercased to "i" plus a combining dot) does contain "i".
+/// </summary>
+static class TextCase
+{
+    public static (string A, string B) Fold(string a, string b, bool caseSensitive) => caseSensitive ? (a, b) : (PyText.Lower(a), PyText.Lower(b));
+}
+
+[Node("StringContains", Category = "text", DisplayName = "Contains Text", OutputNames = ["contains"])]
 public sealed class StringContains
 {
-    public bool Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string substring = "", bool caseSensitive = true) =>
-        caseSensitive ? @string.Contains(substring, StringComparison.Ordinal) : PyText.Lower(@string).Contains(PyText.Lower(substring), StringComparison.Ordinal);
+    /// <summary>True when <paramref name="substring"/> occurs in the text (an empty substring always does).</summary>
+    public bool Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string substring = "", bool caseSensitive = true)
+    {
+        var (text, part) = TextCase.Fold(@string, substring, caseSensitive);
+        return text.Contains(part, StringComparison.Ordinal);
+    }
 }
 
-[Node(Category = "text", DisplayName = "Compare Text")]
+[Node("StringCompare", Category = "text", DisplayName = "Compare Text")]
 public sealed class StringCompare
 {
-    public static string[] Modes() => ["Starts With", "Ends With", "Equal"];
-
+    /// <summary>
+    /// Whether text A starts with, ends with, or equals text B. Measured with ComfyUI: a mode outside the list (fed through a link) fails the run
+    /// with "IndexError: list index out of range".
+    /// </summary>
     public bool Execute([Input(Multiline = true)] string stringA = "", [Input(Multiline = true)] string stringB = "",
-        [Input(OptionsProvider = nameof(Modes))] string mode = "Starts With", bool caseSensitive = true)
+        [Input(Options = ["Starts With", "Ends With", "Equal"])] string mode = "Starts With", bool caseSensitive = true)
     {
-        string a = caseSensitive ? stringA : PyText.Lower(stringA), b = caseSensitive ? stringB : PyText.Lower(stringB);
+        var (a, b) = TextCase.Fold(stringA, stringB, caseSensitive);
         return mode switch
         {
             "Starts With" => a.StartsWith(b, StringComparison.Ordinal),
             "Ends With" => a.EndsWith(b, StringComparison.Ordinal),
             "Equal" => string.Equals(a, b, StringComparison.Ordinal),
-            _ => throw new ArgumentException($"Unknown mode '{mode}'.", nameof(mode)),
+            _ => throw new PyException("IndexError", "list index out of range"),
         };
     }
 }
 
-[Node("RegexMatch", Category = "text", DisplayName = "Match Text", Aliases = ["RegexMatchNode"], OutputNames = ["matches"])]
+[Node("RegexMatch", Category = "text", DisplayName = "Match Text", OutputNames = ["matches"], Aliases = ["RegexMatchNode"])]
 public sealed class RegexMatchNode
 {
-    /// <summary>True when the Python regex matches anywhere in the text; a pattern Python cannot compile gives false (ComfyUI catches <c>re.error</c>).</summary>
+    /// <summary>
+    /// True when the Python regular expression matches anywhere in the text (<c>re.search</c>). Measured with ComfyUI: a pattern that does not
+    /// compile ("(") gives false rather than an error; an empty pattern matches.
+    /// </summary>
     public bool Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string regexPattern = "",
         bool caseInsensitive = true, bool multiline = false, bool dotall = false)
     {
+        PyRegex regex;
         try
         {
-            return PyRegex.Compile(regexPattern, caseInsensitive, multiline, dotall).Search(@string) is not null;
+            regex = PyRegex.Compile(regexPattern, caseInsensitive, multiline, dotall);
         }
-        catch (PyException e) when (e.PyType == "error")
+        catch (PyException)
         {
             return false;
         }
+        return regex.Search(@string) is not null;
     }
 }
 
-[Node("RegexReplace", Category = "text", DisplayName = "Replace Text (Regex)", Description = "Find and replace text using regex patterns.", Aliases = ["RegexReplaceNode"])]
+[Node("RegexReplace", Category = "text", DisplayName = "Replace Text (Regex)", Description = "Find and replace text using regex patterns.",
+    Aliases = ["RegexReplaceNode"])]
 public sealed class RegexReplaceNode
 {
     /// <summary>
-    /// Python's <c>re.sub</c>: <c>\1</c>, <c>\g&lt;1&gt;</c> and <c>\g&lt;name&gt;</c> in the replacement refer to groups, <c>\n</c> is a line break, <c>$</c> is a plain dollar sign;
-    /// <c>count</c> 0 replaces every match.
+    /// Python's <c>re.sub</c>: <c>\1</c> and <c>\g&lt;name&gt;</c> in the replacement insert groups, a <c>$</c> is plain text. Measured with ComfyUI: a
+    /// pattern that does not compile, or a reference to a group the pattern does not have, fails the run with <c>re.error</c>
+    /// ("missing ), unterminated subpattern at position 0", "invalid group reference 2 at position 1").
     /// </summary>
-    public string Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string regexPattern = "", [Input(Multiline = true)] string replace = "",
-        [Input(Optional = true)] bool caseInsensitive = true, [Input(Optional = true)] bool multiline = false,
-        [Input(Optional = true, Tooltip = "When enabled, the dot (.) character will match any character including newline characters. When disabled, dots won't match newlines.")] bool dotall = false,
-        [Input(Optional = true, Min = 0, Max = 100, Tooltip = "Maximum number of replacements to make. Set to 0 to replace all occurrences (default). Set to 1 to replace only the first match, 2 for the first two matches, etc.")] int count = 0) =>
-        PyRegex.Compile(regexPattern, caseInsensitive, multiline, dotall).Sub(replace, @string, count);
+    public string Execute([Input(Multiline = true)] string @string = "", [Input(Multiline = true)] string regexPattern = "",
+        [Input(Multiline = true)] string replace = "",
+        [Input(Optional = true)] bool caseInsensitive = true,
+        [Input(Optional = true)] bool multiline = false,
+        [Input(Optional = true, Tooltip = "When enabled, the dot (.) character will match any character including newline characters. When disabled, dots won't match newlines.")]
+        bool dotall = false,
+        [Input(Optional = true, Min = 0, Max = 100,
+            Tooltip = "Maximum number of replacements to make. Set to 0 to replace all occurrences (default). Set to 1 to replace only the first match, 2 for the first two matches, etc.")]
+        long count = 0)
+        => PyRegex.Compile(regexPattern, caseInsensitive, multiline, dotall).Sub(replace, @string, (int)Math.Clamp(count, 0, int.MaxValue));
 }
 
-[Node(Category = "utils/math", DisplayName = "Math")]
+/// <summary>
+/// SpawnGen's own arithmetic node (ComfyUI has no node of this id; its Math Expression is <c>ComfyMathExpression</c>). The operations follow
+/// Python's float arithmetic as the Python documentation describes it: floor division rounds toward negative infinity, the remainder takes the
+/// sign of the divisor, and dividing by zero is an error rather than infinity.
+/// </summary>
+[Node("MathNode", Category = "utils/math", DisplayName = "Math", Description = "Applies an arithmetic operation to two numbers; the result as a float and rounded to an int.")]
 public sealed class MathNode
 {
-    public static string[] Operations() => ["add", "subtract", "multiply", "divide", "floor divide", "modulo", "power", "min", "max"];
+    public static readonly string[] Operations = ["add", "subtract", "multiply", "divide", "floor divide", "modulo", "power", "min", "max"];
 
-    /// <summary>One calculation on two numbers; <c>int</c> is the result rounded to the nearest whole number. Dividing by zero is an error, not infinity.</summary>
-    public (double Float, long Int) Execute([Input(Min = -1e15, Max = 1e15, Step = 0.01)] double a = 0, [Input(Min = -1e15, Max = 1e15, Step = 0.01)] double b = 0,
-        [Input(OptionsProvider = nameof(Operations))] string operation = "add")
+    /// <summary>The result as a float, and as an int rounded half away from zero (3.5 gives 4, -3.5 gives -4).</summary>
+    public (double Float, long Int) Execute([Input(Min = -1e15, Max = 1e15)] double a = 0, [Input(Min = -1e15, Max = 1e15)] double b = 0,
+        [Input(OptionsProvider = nameof(OperationOptions))] string operation = "add")
     {
-        if (operation is "divide" or "floor divide" or "modulo" && b == 0) throw new DivideByZeroException("The second number is 0.");
         double r = operation switch
         {
             "add" => a + b,
             "subtract" => a - b,
             "multiply" => a * b,
-            "divide" => a / b,
-            "floor divide" => Math.Floor(a / b),
-            "modulo" => a - b * Math.Floor(a / b), // the sign follows b, as in Python
-            "power" => Math.Pow(a, b),
+            "divide" => b == 0 ? throw new DivideByZeroException("float division by zero") : a / b,
+            "floor divide" => FloorDivide(a, b),
+            "modulo" => Modulo(a, b),
+            "power" => Power(a, b),
             "min" => Math.Min(a, b),
             "max" => Math.Max(a, b),
-            _ => throw new ArgumentException($"Unknown operation '{operation}'.", nameof(operation)),
+            _ => throw new ArgumentException($"Unknown operation '{operation}'. Expected one of: {string.Join(", ", Operations)}."),
         };
-        return (r, (long)Math.Round(r, MidpointRounding.AwayFromZero));
+        return (r, ToInt(r));
+    }
+
+    public static IEnumerable<string> OperationOptions() => Operations;
+
+    /// <summary>Python's <c>a % b</c> for floats: zero or the sign of <paramref name="b"/>, so that <c>a == (a // b) * b + a % b</c>.</summary>
+    static double Modulo(double a, double b)
+    {
+        if (b == 0) throw new DivideByZeroException("float modulo");
+        double r = a % b; // C#'s % on doubles truncates toward zero (the sign of a)
+        if (r != 0)
+        {
+            if (r < 0 != b < 0) r += b;
+        }
+        else r = Math.CopySign(0.0, b);
+        return r;
+    }
+
+    /// <summary>Python's <c>a // b</c> for floats: the quotient rounded toward negative infinity, consistent with <see cref="Modulo"/>.</summary>
+    static double FloorDivide(double a, double b)
+    {
+        if (b == 0) throw new DivideByZeroException("float floor division by zero");
+        double truncRem = a % b;
+        double q = (a - truncRem) / b; // exact multiple of b, so this is (nearly) an integer
+        if (truncRem != 0 && truncRem < 0 != b < 0) q -= 1;
+        if (q == 0) return Math.CopySign(0.0, a / b);
+        double f = Math.Floor(q);
+        return q - f > 0.5 ? f + 1 : f;
+    }
+
+    /// <summary>Python's <c>a ** b</c> for floats, refusing the cases Python refuses (or answers with a complex number).</summary>
+    static double Power(double a, double b)
+    {
+        if (a == 0 && b < 0) throw new DivideByZeroException("0.0 cannot be raised to a negative power");
+        if (a < 0 && double.IsFinite(b) && b != Math.Floor(b))
+            throw new ArgumentException("A negative number raised to a fractional power has no real result.");
+        double r = Math.Pow(a, b);
+        if (double.IsInfinity(r) && double.IsFinite(a) && double.IsFinite(b)) throw new OverflowException("(34, 'Result too large')");
+        return r;
+    }
+
+    static long ToInt(double r)
+    {
+        if (double.IsNaN(r)) throw new ArgumentException("cannot convert float NaN to integer");
+        if (double.IsInfinity(r)) throw new OverflowException("cannot convert float infinity to integer");
+        double rounded = Math.Round(r, MidpointRounding.AwayFromZero);
+        // 2^63 is the first double past long's range.
+        if (rounded >= 9223372036854775808.0 || rounded < -9223372036854775808.0) throw new OverflowException($"{PyNumber.FloatRepr(r)} does not fit in an INT.");
+        return (long)rounded;
     }
 }
 
-[Node(Category = "image", DisplayName = "Get Image Size")]
+[Node("GetImageSize", Category = "image", DisplayName = "Get Image Size", Description = "Returns the width, height, and batch size of the image.")]
 public sealed class GetImageSize
 {
-    public (long Width, long Height, long BatchSize) Execute(ImageBatch image) => (image.Width, image.Height, image.Batch);
+    /// <summary>
+    /// The image's width, height and number of pictures. Measured with ComfyUI: the node also shows the numbers as text,
+    /// "width: 37, height: 21\n batch size: 2".
+    /// </summary>
+    public (long Width, long Height, long BatchSize) Execute(ImageBatch image, NodeContext? context = null)
+    {
+        long width = image.Width, height = image.Height, batchSize = image.Batch;
+        context?.Status($"width: {width}, height: {height}\n batch size: {batchSize}");
+        return (width, height, batchSize);
+    }
 }

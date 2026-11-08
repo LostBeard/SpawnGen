@@ -12,8 +12,11 @@ public interface IResultStore
     /// <param name="type">"output" for a result to keep, "temp" for a throw-away preview.</param>
     Task<ResultFile> SaveAsync(string type, string prefix, byte[] png);
 
-    /// <summary>Stores any result file (a WAV, say) with the given extension (no dot).</summary>
-    Task<ResultFile> SaveAsync(string type, string prefix, byte[] data, string extension);
+    /// <summary>
+    /// Stores any result file (a WAV, say) with the given extension (no dot). Output files are named <c>prefix_00001_.ext</c>, or <c>prefix_00001.ext</c>
+    /// without <paramref name="trailingUnderscore"/> (ComfyUI's audio, text and some 3D saves), numbered by <see cref="SavePrefix.NextCounter"/>.
+    /// </summary>
+    Task<ResultFile> SaveAsync(string type, string prefix, byte[] data, string extension, bool trailingUnderscore = true);
 
     /// <summary>
     /// Stores a result too big to hold as one array (a model file): <paramref name="write"/> writes it front to back. A store that keeps files in memory gets
@@ -154,6 +157,39 @@ public static class SavePrefix
     }
 
     /// <summary>
+    /// ComfyUI's counter (get_save_image_path): 1 + the highest number among the names in the folder (files and folders, any extension, with or without the
+    /// trailing "_") that start with the prefix's name and "_" (compared as os.path.normcase does) and have a number up to the next "_" or "."; a name
+    /// without one counts as 0; 1 when nothing matches. <paramref name="prefixLength"/> is the prefix's length in Python characters.
+    /// </summary>
+    public static System.Numerics.BigInteger NextCounter(IEnumerable<string> names, string filename, int? prefixLength = null)
+    {
+        int length = prefixLength ?? PyText.Length(filename);
+        System.Numerics.BigInteger? best = null;
+        foreach (var name in names)
+        {
+            var head = PyText.Slice(name, null, length + 1);
+            if (head.Length == 0 || head[^1] != '_' || NormCase(head[..^1]) != NormCase(filename)) continue;
+            var rest = PyText.Slice(name, length + 1, null);
+            var digits = PyNumber.TryParseInt(rest.Split('.')[0].Split('_')[0]) ?? System.Numerics.BigInteger.Zero;
+            if (best is null || digits > best) best = digits;
+        }
+        return best is { } max ? max + 1 : 1;
+    }
+
+    /// <summary>os.path.normcase: lower case and backslashes on Windows, unchanged elsewhere.</summary>
+    public static string NormCase(string s) => OperatingSystem.IsWindows() ? PyText.Lower(s).Replace('/', '\\') : s;
+
+    /// <summary>An output file's name: <c>prefix_00001_.ext</c> (or without the trailing "_"); the number as Python's <c>f"{counter:05}"</c> (the sign counts toward the width).</summary>
+    public static string FileName(string prefix, System.Numerics.BigInteger counter, string extension, bool trailingUnderscore = true) =>
+        $"{prefix}_{Pad5(counter)}{(trailingUnderscore ? "_" : "")}.{extension}";
+
+    static string Pad5(System.Numerics.BigInteger n)
+    {
+        var digits = System.Numerics.BigInteger.Abs(n).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return n.Sign < 0 ? "-" + digits.PadLeft(4, '0') : digits.PadLeft(5, '0');
+    }
+
+    /// <summary>
     /// ComfyUI's <c>compute_vars</c>: %width% and %height% of the picture (0 for files that are not pictures), and %year%, %month%, %day%, %hour%,
     /// %minute%, %second% of the local time. The Studio has already filled %date:...% and %Node.widget% when it made the prompt.
     /// </summary>
@@ -174,7 +210,7 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
 
     public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png) => SaveAsync(type, prefix, png, "png");
 
-    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png, string extension)
+    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png, string extension, bool trailingUnderscore = true)
     {
         var (subfolder, prefixName) = SavePrefix.Split(prefix);
         prefix = prefixName;
@@ -186,7 +222,7 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
             // Output files continue after the highest existing number; previews just get a unique name.
             name = type == "temp"
                 ? $"{prefix}_{Guid.NewGuid().ToString("N")[..10]}.{extension}"
-                : $"{prefix}_{NextCounter(dir, prefix, extension):D5}_.{extension}";
+                : SavePrefix.FileName(prefix, NextCounter(dir, prefix), extension, trailingUnderscore);
             File.WriteAllBytes(Path.Combine(dir, name), png);
         }
         return Task.FromResult(new ResultFile(name, subfolder, type));
@@ -204,7 +240,7 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
         {
             name = type == "temp"
                 ? $"{prefixName}_{Guid.NewGuid().ToString("N")[..10]}.{extension}"
-                : $"{prefixName}_{NextCounter(dir, prefixName, extension):D5}_.{extension}";
+                : SavePrefix.FileName(prefixName, NextCounter(dir, prefixName), extension);
             file = new FileStream(Path.Combine(dir, name), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20, useAsync: true);
         }
         try
@@ -246,17 +282,8 @@ public sealed class DiskResultStore(OutputOptions options) : IResultStore
         return new ResultFile(name, normalized, type);
     }
 
-    static int NextCounter(string dir, string prefix, string extension)
-    {
-        int max = 0;
-        foreach (var f in Directory.EnumerateFiles(dir, $"{prefix}_*_.{extension}"))
-        {
-            var stem = Path.GetFileNameWithoutExtension(f);
-            var digits = stem[(prefix.Length + 1)..^1];
-            if (int.TryParse(digits, out var v) && v > max) max = v;
-        }
-        return max + 1;
-    }
+    static System.Numerics.BigInteger NextCounter(string dir, string prefix) =>
+        SavePrefix.NextCounter(Directory.EnumerateFileSystemEntries(dir).Select(e => Path.GetFileName(e)!), prefix);
 }
 
 /// <summary>Pictures kept in memory (the browser, where there is no folder to write to). Numbering matches <see cref="DiskResultStore"/>.</summary>
@@ -269,7 +296,7 @@ public sealed class MemoryResultStore : IResultStore
 
     public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png) => SaveAsync(type, prefix, png, "png");
 
-    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png, string extension)
+    public Task<ResultFile> SaveAsync(string type, string prefix, byte[] png, string extension, bool trailingUnderscore = true)
     {
         var (subfolder, prefixName) = SavePrefix.Split(prefix);
         prefix = prefixName;
@@ -277,12 +304,7 @@ public sealed class MemoryResultStore : IResultStore
         {
             string name;
             if (type == "temp") name = $"{prefix}_{Guid.NewGuid().ToString("N")[..10]}.{extension}";
-            else
-            {
-                int n = 1;
-                while (_files.ContainsKey(Key(type, subfolder, $"{prefix}_{n:D5}_.{extension}"))) n++;
-                name = $"{prefix}_{n:D5}_.{extension}";
-            }
+            else name = SavePrefix.FileName(prefix, SavePrefix.NextCounter(List(type, subfolder) ?? [], prefix), extension, trailingUnderscore);
             Put(Key(type, subfolder, name), png);
             var file = new ResultFile(name, subfolder, type);
             Saved?.Invoke(file, png);

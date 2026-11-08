@@ -100,17 +100,17 @@ public class AudioTests
         var executor = new PromptExecutor(registry, services);
         var result = await executor.ExecuteAsync(g);
         var saved = (object[])result.Outputs["2"].Ui!["audio"]!;
-        Assert.That(((ResultFile)saved[0]).Filename, Is.EqualTo("clip_00001_.wav"));
-        Assert.That(File.Exists(Path.Combine(dir, "output", "clip_00001_.wav")), Is.True);
+        Assert.That(((ResultFile)saved[0]).Filename, Is.EqualTo("clip_00001.wav"));
+        Assert.That(File.Exists(Path.Combine(dir, "output", "clip_00001.wav")), Is.True);
         Assert.That(((ResultFile)((object[])result.Outputs["3"].Ui!["audio"]!)[0]).Type, Is.EqualTo("temp"));
 
         // A second run with another picture of the graph numbers on: change the prefix to get a fresh cache key.
         var again = await new PromptExecutor(registry, services).ExecuteAsync(g);
-        Assert.That(((ResultFile)((object[])again.Outputs["2"].Ui!["audio"]!)[0]).Filename, Is.EqualTo("clip_00002_.wav"), "never overwritten");
+        Assert.That(((ResultFile)((object[])again.Outputs["2"].Ui!["audio"]!)[0]).Filename, Is.EqualTo("clip_00002.wav"), "never overwritten");
         Assert.That(LoadAudio.AudioNames(), Is.EqualTo(new[] { "tone.wav" }));
         Assert.That(LoadImage.ImageNames(), Is.Empty, "pictures and sound are listed apart");
 
-        var saved1 = WavFile.Decode(File.ReadAllBytes(Path.Combine(dir, "output", "clip_00001_.wav")));
+        var saved1 = WavFile.Decode(File.ReadAllBytes(Path.Combine(dir, "output", "clip_00001.wav")));
         Assert.That((saved1.SampleRate, saved1.Length, saved1.ChannelCount), Is.EqualTo((8000, 800, 1)));
         Directory.Delete(dir, true);
     }
@@ -122,7 +122,7 @@ public class AudioTests
         var a = results.SaveAsync("output", "x", [1, 2], "wav").Result;
         var b = results.SaveAsync("output", "x", [3], "wav").Result;
         var p = results.SaveAsync("output", "x", [4]).Result;
-        Assert.That((a.Filename, b.Filename, p.Filename), Is.EqualTo(("x_00001_.wav", "x_00002_.wav", "x_00001_.png")));
+        Assert.That((a.Filename, b.Filename, p.Filename), Is.EqualTo(("x_00001_.wav", "x_00002_.wav", "x_00003_.png")), "one counter for every file of the prefix, as ComfyUI's get_save_image_path");
         Assert.That(results.Get("output", "x_00002_.wav"), Is.EqualTo(new byte[] { 3 }));
 
         var inputs = new MemoryInputStore();

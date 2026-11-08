@@ -219,7 +219,7 @@ public class AudioOpsTests
         var (saved, ui) = await new SaveAudio().ExecuteAsync(clip, services);
         Assert.That(saved, Is.SameAs(clip));
         var file = (ResultFile)((object[])ui["audio"]!)[0];
-        Assert.That((file.Subfolder, file.Filename, file.Type), Is.EqualTo(("audio", "ComfyUI_00001_.wav", "output")));
+        Assert.That((file.Subfolder, file.Filename, file.Type), Is.EqualTo(("audio", "ComfyUI_00001.wav", "output")));
         Assert.That(WavFile.Decode(store.Get("output", file.Filename, "audio")!).Channels[0], Is.EqualTo(clip.Channels[0]));
         var (previewed, pui) = await new PreviewAudio().ExecuteAsync(clip, services);
         Assert.That((previewed, ((ResultFile)((object[])pui["audio"]!)[0]).Type), Is.EqualTo((clip, "temp")));

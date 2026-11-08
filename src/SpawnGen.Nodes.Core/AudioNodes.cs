@@ -22,7 +22,7 @@ public sealed class SaveAudio
     public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, IServiceProvider services, string filenamePrefix = "audio/ComfyUI")
     {
         if (audio is null) throw new ArgumentException("SaveAudio: input audio is None (source video may have no audio track).", nameof(audio));
-        var file = await Results.For(services).SaveAsync("output", filenamePrefix, WavFile.Encode(audio), "wav");
+        var file = await Results.For(services).SaveAsync("output", filenamePrefix, WavFile.Encode(audio), "wav", trailingUnderscore: false); // ComfyUI: prefix_00001.flac
         return (audio, new UiOutput("audio", new object[] { file }));
     }
 }

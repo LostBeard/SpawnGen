@@ -131,9 +131,9 @@ Still missing, by kind:
    and overloads, out / inout, loops, vectors and swizzles, int / uint, texture / texelFetch / textureSize and the usual built-ins) to .NET IL at run time
    and runs them as ILGPU kernels, so the same shader runs on CUDA, OpenCL, WebGPU in the browser and the CPU, with no GL. Against ComfyUI's own
    renderer (ANGLE on the RX 590, Fixtures in tests/SpawnGen.Glsl.Tests): all 21 blueprint cases within 0.33/255 (most 0.000) on the CPU and OpenCL,
-   except Film Grain on GPUs until SpawnDev.ILGPU's uint constant-conversion fix (Data, 2026-11-08); browser WebGPU = server OpenCL pixel for pixel
-   (drive-glsl.js). Curve Editor (CURVE, ComfyUI's monotone cubic / linear curves, = ComfyUI's LUTs to 1e-12) feeds u_curve; its widget is edited as JSON
-   until the Studio has a curve editor. Custom Combo is done: the editor
+   Film Grain included since SpawnDev.ILGPU 5.4.17 (Data's uint constant-conversion fix); browser WebGPU = server OpenCL pixel for pixel
+   (drive-glsl.js). Curve Editor (CURVE, ComfyUI's monotone cubic / linear curves, = ComfyUI's LUTs to 1e-12) feeds u_curve; the Studio draws and edits it
+   as ComfyUI's curve widget does (drag, add, double-click to remove, interpolation label) with the last run's histogram behind it (drive-curve*.js). Custom Combo is done: the editor
    keeps ComfyUI's frontend-defined option widgets (option1 ..., one spare, hidden index; saved as [choice, index, options], all 116 blueprints
    round-trip; drive-customcombo.js) and the node skips value checks as ComfyUI's validate_inputs does.
    Text Overlay (a font engine; the same engine would draw the number tags and descriptions in Create Bounding Boxes' preview and the labels of Draw

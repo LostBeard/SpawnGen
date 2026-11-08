@@ -358,18 +358,21 @@ public sealed class NodeRegistry
                 var chosenByDefault = ia?.Default as string ?? (p.HasDefaultValue ? p.DefaultValue as string : null) ?? keys[0];
                 inputs.Add(new InputSpec(name, SocketType.String, Required: true, new WidgetSpec(WidgetKind.Combo) { Options = keys, Default = chosenByDefault }, ia?.Tooltip));
                 // Options may share an input name (two ways to scale both have "width"): one input, brought by every option that has it.
-                var nested = new Dictionary<string, (DynamicInput Spec, List<string> Options)>(StringComparer.Ordinal);
+                // Options may share an input name with different widgets (mp3's and opus's "quality"): each option's widget is kept.
+                var nested = new Dictionary<string, (DynamicInput Spec, List<string> Options, Dictionary<string, WidgetSpec?> Widgets)>(StringComparer.Ordinal);
                 var order = new List<string>();
                 foreach (var option in options)
                     foreach (var input in option.Inputs)
                     {
-                        if (!nested.TryGetValue(input.Name, out var entry)) { nested[input.Name] = entry = (input, []); order.Add(input.Name); }
+                        if (!nested.TryGetValue(input.Name, out var entry)) { nested[input.Name] = entry = (input, [], new(StringComparer.Ordinal)); order.Add(input.Name); }
                         entry.Options.Add(option.Key);
+                        entry.Widgets[option.Key] = input.Widget;
                     }
                 foreach (var n in order)
                     inputs.Add(new InputSpec($"{name}.{n}", nested[n].Spec.Type, Required: false, nested[n].Spec.Widget, nested[n].Spec.Tooltip)
                     {
                         DynamicParent = name, DynamicOptions = nested[n].Options, Optional = !nested[n].Spec.Required, MatchTemplate = nested[n].Spec.MatchTemplate,
+                        OptionWidgets = nested[n].Widgets.Values.Distinct().Count() > 1 ? nested[n].Widgets : null,
                     });
                 dynamicCombos[name] = options.ToDictionary(o => o.Key, o => (IReadOnlyList<string>)o.Inputs.Select(i => $"{name}.{i.Name}").ToList(), StringComparer.Ordinal);
                 bindings.Add(new(p, RegisteredNode.ParamKind.Input, name)

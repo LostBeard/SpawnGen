@@ -217,6 +217,28 @@ public sealed class EditorDocument(NodeRegistry registry)
             });
             return;
         }
+        // A dynamic combo whose options share an input with different choices (Save Audio (Advanced)'s quality: V0 for mp3, 128k for opus): a value the
+        // new option does not offer becomes its default, in the same undo step.
+        if (Registry.GetSchema(node.ClassType) is { } schema && schema.DynamicCombos.TryGetValue(name, out var combos) && value is string chosen
+            && combos.TryGetValue(chosen, out var brought))
+        {
+            var resets = new List<(string Input, object? Value)>();
+            foreach (var input in brought)
+            {
+                if (schema.FindInput(input) is not { OptionWidgets: not null } shared || shared.ForOption(chosen).Widget is not { Kind: WidgetKind.Combo } widget) continue;
+                var current = node.Widgets.GetValueOrDefault(input) as string;
+                if (current is null || !widget.ResolveOptions().Contains(current)) resets.Add((input, widget.Default));
+            }
+            if (resets.Count > 0)
+            {
+                Group(() =>
+                {
+                    Run(new SetWidgetCommand(nodeId, name, old, value));
+                    foreach (var (input, now) in resets) Run(new SetWidgetCommand(nodeId, input, node.Widgets.GetValueOrDefault(input), now));
+                });
+                return;
+            }
+        }
         Run(new SetWidgetCommand(nodeId, name, old, value));
     }
 

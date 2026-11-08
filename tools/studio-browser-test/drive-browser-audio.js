@@ -1,5 +1,6 @@
 // Save Audio's FLAC on both engines in the real page: uploads a 1 s stereo tone (WAV), queues Load Audio -> Save Audio on each engine, then checks the
 // History player loads the result (FLAC, about 1 s) and that the browser's file (SpawnDev.Codecs on WebGPU) has the same FLAC frames as the server's.
+// FORMAT=opus runs Save Audio (Opus) at 128k instead (Ogg Opus; the serial is random per file, so only the player check applies).
 // STUDIO_URL (default http://localhost:8188/), ENGINES (default server,browser).
 const { chromium } = require('playwright-core');
 const fs = require('fs');
@@ -8,6 +9,7 @@ const STUDIO = process.env.STUDIO_URL || 'http://localhost:8188/';
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const PROFILE = process.env.PROFILE_DIR || path.join(__dirname, 'out', 'webgpu-profile');
 const OUT = path.join(__dirname, 'out');
+const FORMAT = process.env.FORMAT || 'flac';
 fs.mkdirSync(OUT, { recursive: true });
 
 function toneWav() {
@@ -56,7 +58,9 @@ function framesStart(b) {
     // A unique prefix per run: the server cannot answer from its cache, and the newest History entry is this run's.
     const prompt = {
       '1': { class_type: 'LoadAudio', inputs: { audio: 'drive_tone.wav' } },
-      '2': { class_type: 'SaveAudio', inputs: { audio: ['1', 0], filename_prefix: `audio/drive_${engine}_${Date.now()}` } },
+      '2': FORMAT === 'opus'
+        ? { class_type: 'SaveAudioOpus', inputs: { audio: ['1', 0], filename_prefix: `audio/drive_${engine}_${Date.now()}`, quality: '128k' } }
+        : { class_type: 'SaveAudio', inputs: { audio: ['1', 0], filename_prefix: `audio/drive_${engine}_${Date.now()}` } },
     };
     const promptPath = path.join(OUT, `audio-prompt-${engine}.json`);
     fs.writeFileSync(promptPath, JSON.stringify(prompt));
@@ -88,11 +92,12 @@ function framesStart(b) {
     const bytes = src.startsWith('data:') ? Buffer.from(src.split(',')[1], 'base64')
       : Buffer.from(await (await page.request.get(new URL(src, STUDIO).href)).body());
     files[engine] = bytes;
-    fs.writeFileSync(path.join(OUT, `drive-audio-${engine}.flac`), bytes);
-    check(`ran on the ${engine}: FLAC the player loads`, bytes.subarray(0, 4).toString() === 'fLaC' && Math.abs(duration - 1) < 0.05,
+    fs.writeFileSync(path.join(OUT, `drive-audio-${engine}.${FORMAT}`), bytes);
+    const magic = FORMAT === 'opus' ? 'OggS' : 'fLaC';
+    check(`ran on the ${engine}: ${FORMAT} the player loads`, bytes.subarray(0, 4).toString() === magic && Math.abs(duration - 1) < 0.05,
       `${bytes.length} bytes, ${Number(duration).toFixed(3)} s, ${((Date.now() - started) / 1000).toFixed(1)} s to run, src ${src.slice(0, 24)}`);
   }
-  if (files.server && files.browser) {
+  if (FORMAT === 'flac' && files.server && files.browser) {
     const a = files.server.subarray(framesStart(files.server)), b = files.browser.subarray(framesStart(files.browser));
     check('the browser encodes the same FLAC frames as the server', a.equals(b), `${a.length} vs ${b.length} bytes of frames`);
   }

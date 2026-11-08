@@ -1,5 +1,6 @@
 using ILGPU.Runtime;
 using SpawnDev.Codecs.Audio.Flac;
+using SpawnDev.Codecs.Audio.Opus;
 using SpawnGen.Engine.Types;
 using SpawnGen.Nodes.Core;
 
@@ -20,8 +21,35 @@ public static class CodecsAudio
     static Accelerator? _accelerator;
 
     /// <summary>Lets the audio save nodes write FLAC on the accelerator <paramref name="accelerator"/> gives (asked for on the first save).</summary>
-    public static void Install(Func<Task<Accelerator>> accelerator) =>
+    public static void Install(Func<Task<Accelerator>> accelerator)
+    {
         AudioFiles.Flac = async (clip, metadata) => await EncodeFlacAsync(await accelerator(), clip, metadata);
+        AudioFiles.Opus = async (clip, bitrate, metadata) => await EncodeOpusAsync(await accelerator(), clip, bitrate, metadata);
+    }
+
+    /// <summary>
+    /// Ogg Opus as ComfyUI's PyAV writes it around the packets: FFmpeg's Ogg muxer, OpusTags vendor "Lavf62.12.102" with the comments and a trailing
+    /// <c>encoder</c>, a random stream serial (as FFmpeg's). The samples go in as floats; the encoder rounds them to 16 bits as FFmpeg's swresample does.
+    /// The packets come from SpawnDev.Codecs' port of libopus' fixed-point build (ComfyUI's PyAV ships the float build), so they are valid but not
+    /// byte-identical. <paramref name="serial"/> fixes the serial for tests.
+    /// </summary>
+    public static async Task<byte[]> EncodeOpusAsync(Accelerator accelerator, AudioClip clip, int? bitrate, IReadOnlyList<KeyValuePair<string, string>> metadata, uint? serial = null)
+    {
+        int n = clip.Length, c = clip.ChannelCount;
+        var interleaved = new float[n * c];
+        for (int f = 0; f < n; f++)
+            for (int k = 0; k < c; k++) interleaved[f * c + k] = clip.Channels[k][f];
+        var options = new OggOpusEncodeOptions
+        {
+            Bitrate = bitrate,
+            Vendor = Lavf,
+            Tags = [.. metadata, new("encoder", Lavf)],
+            Serial = serial ?? (uint)Random.Shared.NextInt64(0, 1L << 32),
+        };
+        await Gate.WaitAsync();
+        try { return await OggOpusEncoder.EncodeAsync(accelerator, interleaved, clip.SampleRate, c, options); }
+        finally { Gate.Release(); }
+    }
 
     public static async Task<byte[]> EncodeFlacAsync(Accelerator accelerator, AudioClip clip, IReadOnlyList<KeyValuePair<string, string>> metadata)
     {

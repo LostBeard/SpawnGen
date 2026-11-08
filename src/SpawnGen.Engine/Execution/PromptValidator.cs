@@ -99,7 +99,9 @@ public static class PromptValidator
             }
             else if (!registered.Schema.ValidatesOwnInputs)
             {
-                var problem = CheckLiteral(registered, spec, input.Literal!);
+                // An input several dynamic combo options bring is checked against the chosen option's widget.
+                var chosen = spec.DynamicParent is { } parent && node.Inputs.TryGetValue(parent, out var p) ? p.Literal as string : null;
+                var problem = CheckLiteral(registered, spec.ForOption(chosen), input.Literal!);
                 if (problem is not null)
                     errors.Add(new(id, spec.Name, "bad_value", $"Node {id} ({node.ClassType}) input '{spec.Name}': {problem}"));
             }

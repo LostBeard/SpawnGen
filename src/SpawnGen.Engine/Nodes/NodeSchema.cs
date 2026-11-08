@@ -42,6 +42,15 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
     public string? DynamicParent { get; init; }
     /// <summary>For an input of a dynamic combo option: the options that bring it (shown, saved and sent only while one of them is chosen).</summary>
     public IReadOnlyList<string> DynamicOptions { get; init; } = [];
+    /// <summary>
+    /// For an input several dynamic combo options bring with different widgets (Save Audio (Advanced): mp3's quality V0 / 128k / 320k, opus's 64k ...
+    /// 320k): each option's widget. <see cref="Widget"/> is the first option's; <see cref="ForOption"/> gives the chosen one's.
+    /// </summary>
+    public IReadOnlyDictionary<string, WidgetSpec?>? OptionWidgets { get; init; }
+
+    /// <summary>This input as the dynamic combo option <paramref name="option"/> brings it (its own widget when the options differ).</summary>
+    public InputSpec ForOption(string? option) =>
+        OptionWidgets is { } widgets && option is not null && widgets.TryGetValue(option, out var widget) && !ReferenceEquals(widget, Widget) ? this with { Widget = widget } : this;
     /// <summary>ComfyUI's MatchType: the template id this any-type input shares with other inputs and outputs of the node.</summary>
     public string? MatchTemplate { get; init; }
     /// <summary>ComfyUI's forceInput: a primitive that is only a socket.</summary>

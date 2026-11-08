@@ -34,5 +34,21 @@
    "samples": 32000,
    "metadata": false
   }
+ ],
+ "opus": [
+  {
+   "name": "stereo_44100",
+   "quality": "128k",
+   "file": "stereo_44100_128k.opus",
+   "rate": 48000,
+   "resampled": "stereo_44100_48000.resampled.f32"
+  },
+  {
+   "name": "mono_22050_odd",
+   "quality": "64k",
+   "file": "mono_22050_odd_64k.opus",
+   "rate": 24000,
+   "resampled": "mono_22050_odd_24000.resampled.f32"
+  }
  ]
 }

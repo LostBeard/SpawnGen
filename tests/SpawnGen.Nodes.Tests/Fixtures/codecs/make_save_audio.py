@@ -57,7 +57,20 @@ if __name__ == "__main__":
         os.replace(os.path.join(HERE, r[0].filename), os.path.join(HERE, name + ".flac"))
         wave[0].numpy().astype("<f4").tofile(os.path.join(HERE, name + ".f32"))  # channels x samples, little-endian float32
         cases.append({"name": name, "channels": ch, "sample_rate": rate, "samples": wave.shape[-1], "metadata": meta})
+    # Opus (ComfyUI resamples to an Opus rate first, then libopus at the quality's bit rate): stereo 44.1 kHz -> 48 kHz at 128k, mono 22.05 kHz -> 24 kHz
+    # at 64k. The packets come from libopus' float build; SpawnGen's tests compare the Ogg pages around them and the decoded sound.
+    opus = []
+    for name, quality in [("stereo_44100", "128k"), ("mono_22050_odd", "64k")]:
+        c = next(c for c in cases if c["name"] == name)
+        Cls.hidden = Hidden(PROMPT, EXTRA)
+        wave = torch.from_numpy(np.fromfile(os.path.join(HERE, name + ".f32"), "<f4").reshape(c["channels"], -1))[None]
+        r = AudioSaveHelper.save_audio({"waveform": wave, "sample_rate": c["sample_rate"]}, name + "_" + quality, FolderType.output, Cls, format="opus", quality=quality)
+        os.replace(os.path.join(HERE, r[0].filename), os.path.join(HERE, f"{name}_{quality}.opus"))
+        import comfy.audio
+        target = {44100: 48000, 22050: 24000}[c["sample_rate"]]
+        comfy.audio.resample(wave[0], c["sample_rate"], target).numpy().astype("<f4").tofile(os.path.join(HERE, f"{name}_{target}.resampled.f32"))
+        opus.append({"name": name, "quality": quality, "file": f"{name}_{quality}.opus", "rate": target, "resampled": f"{name}_{target}.resampled.f32"})
     json.dump({"pyav": av.__version__, "libavcodec": ".".join(map(str, av.library_versions["libavcodec"])),
-               "prompt": json.dumps(PROMPT), "extra": {k: json.dumps(v) for k, v in EXTRA.items()}, "cases": cases},
+               "prompt": json.dumps(PROMPT), "extra": {k: json.dumps(v) for k, v in EXTRA.items()}, "cases": cases, "opus": opus},
               open(os.path.join(HERE, "cases.json"), "w"), indent=1)
     print("wrote", [c["name"] for c in cases])

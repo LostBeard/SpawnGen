@@ -226,7 +226,7 @@ public static class NodeLayout
             IEnumerable<InputSpec?> nested = schema.DynamicCombos.TryGetValue(input.Name, out var options)
                 ? options.TryGetValue(chosen, out var names) ? names.Select(schema.FindInput) : []
                 : schema.Inputs.Where(i => i.DynamicParent == input.Name && i.DynamicOptions.Contains(chosen)); // a remote schema: schema order
-            foreach (var n in nested) if (n is not null) yield return n;
+            foreach (var n in nested) if (n is not null) yield return n.ForOption(chosen);
         }
     }
 

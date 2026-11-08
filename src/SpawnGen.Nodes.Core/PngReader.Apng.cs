@@ -9,10 +9,10 @@ public static partial class PngReader
     sealed record ApngFrame(int Width, int Height, int X, int Y, int Dispose, int Blend, MemoryStream Data);
 
     /// <summary>
-    /// Every frame of an animated PNG as the full canvas while it shows, RGBA8, composited the way ffmpeg's APNG decoder does it (ComfyUI's Load Image decodes
-    /// PNGs through PyAV): the canvas starts transparent black; before a frame, the one before is disposed (background: its rectangle cleared; previous:
+    /// Every frame of an animated PNG as the full canvas while it shows, RGBA8, by the APNG specification with the frame choices ComfyUI's Load Image
+    /// was measured to make: the canvas starts transparent black; before a frame, the one before is disposed (background: its rectangle cleared; previous:
     /// the canvas as it was before it); "source" frames, the first frame and frames disposed to the background replace their rectangle, other "over" frames
-    /// are blended with ffmpeg's integer formula. Null for a PNG
+    /// are composited by the PNG specification's alpha compositing (<see cref="Draw"/>). Null for a PNG
     /// without an acTL chunk or with one frame (decode those with <see cref="Decode(byte[], out float[])"/>). <c>HasAlpha</c> is false for grey and RGB
     /// pictures without transparency (their alpha bytes are 255).
     /// </summary>
@@ -74,8 +74,8 @@ public static partial class PngReader
             // A frame disposed to "previous" needs the canvas as it was before it (the first frame's "previous" means "background", as the format says).
             saved = f.Dispose == 2 && output.Count > 0 ? (byte[])canvas.Clone() : null;
             var rgba = Rgba8(f.Data.ToArray(), f.Width, f.Height, depth, colorType, palette, paletteAlpha);
-            // ffmpeg blends only onto a previous picture (the first frame is written as it is, its colour kept under transparent pixels), and a frame that
-            // is itself disposed to the background is shown unblended too (measured with PyAV for every pair of disposals: Fixtures/codecs/apng, probe_*).
+            // Measured with ComfyUI's Load Image (PyAV) for every pair of disposals (Fixtures/codecs/apng, probe_*): the first frame is written as it is (its
+            // colour kept under transparent pixels), and a frame that is itself disposed to the background is shown unblended.
             Draw(canvas, width, f, rgba, over: f.Blend == 1 && hasAlpha && output.Count > 0 && f.Dispose != 1);
             output.Add((byte[])canvas.Clone());
             previous = f.Dispose == 2 && output.Count == 1 ? f with { Dispose = 1 } : f;
@@ -88,9 +88,11 @@ public static partial class PngReader
         for (int y = f.Y; y < f.Y + f.Height; y++) Array.Clear(canvas, (y * width + f.X) * 4, f.Width * 4);
     }
 
-    /// <summary>ffmpeg's FAST_DIV255: x / 255 rounded, for x up to 255 * 255.</summary>
-    static int Div255(int x) => ((x + 128) * 257) >> 16;
-
+    /// <summary>
+    /// Draws a frame's pixels onto the canvas: replaced (APNG_BLEND_OP_SOURCE), or composited over it (APNG_BLEND_OP_OVER), which the APNG specification
+    /// defines as the PNG specification's alpha compositing: out_alpha = a + b_alpha * (1 - a), out_colour = (a * colour + b_alpha * (1 - a) * b_colour) /
+    /// out_alpha, computed here in real arithmetic and rounded to the nearest 8-bit value.
+    /// </summary>
     static void Draw(byte[] canvas, int width, ApngFrame f, byte[] rgba, bool over)
     {
         for (int y = 0; y < f.Height; y++)
@@ -98,15 +100,13 @@ public static partial class PngReader
             {
                 int s = (y * f.Width + x) * 4, d = ((f.Y + y) * width + f.X + x) * 4;
                 if (!over) { Array.Copy(rgba, s, canvas, d, 4); continue; }
-                int fa = rgba[s + 3], ba = canvas[d + 3];
-                if (fa == 255) { Array.Copy(rgba, s, canvas, d, 4); continue; }
-                if (fa == 0) continue;
-                int oa = fa + Div255((255 - fa) * ba);
+                double a = rgba[s + 3] / 255.0, b = canvas[d + 3] / 255.0;
+                if (a >= 1) { Array.Copy(rgba, s, canvas, d, 4); continue; }
+                if (a <= 0) continue;
+                double outAlpha = a + b * (1 - a);
                 for (int c = 0; c < 3; c++)
-                    canvas[d + c] = (byte)(ba == 255
-                        ? Div255(fa * rgba[s + c] + (255 - fa) * canvas[d + c])
-                        : (255 * fa * rgba[s + c] + (255 - fa) * ba * canvas[d + c]) / (255 * oa));
-                canvas[d + 3] = (byte)oa;
+                    canvas[d + c] = (byte)Math.Round((a * rgba[s + c] + b * (1 - a) * canvas[d + c]) / outAlpha, MidpointRounding.AwayFromZero);
+                canvas[d + 3] = (byte)Math.Round(outAlpha * 255, MidpointRounding.AwayFromZero);
             }
     }
 

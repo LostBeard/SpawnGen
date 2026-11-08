@@ -3,41 +3,58 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
+// The LATENT_OPERATION nodes. Behavior measured with ComfyUI (2026-11-08) by applying each operation through Latent Apply Operation to latents
+// loaded from files and saving the result with Save Latent.
+
 /// <summary>
-/// ComfyUI's LATENT_OPERATION: something to do to a latent, made by one node and applied by another (Latent Apply Operation, or Latent Apply Operation CFG
-/// during sampling). <c>first</c> is where the latent's first picture sits in the whole batch: a sampler hands pictures over one at a time, and an operation
-/// that matches a reference batch picture by picture needs to know which one it has.
+/// A change to a latent that a node hands on to be applied later (ComfyUI's LATENT_OPERATION): by Latent Apply Operation directly, or inside sampling by
+/// Latent Apply Operation CFG. The function gets the latent and the batch position of its first picture (0 outside sampling; inside sampling the
+/// sampler may hand over one picture of a larger batch at a time).
 /// </summary>
 [Socket("LATENT_OPERATION")]
 public sealed class LatentOperation(Func<LatentBatch, int, LatentBatch> apply)
 {
+    /// <summary>Runs the operation on <paramref name="latent"/>, whose first picture is picture <paramref name="first"/> of the whole batch.</summary>
     public LatentBatch Apply(LatentBatch latent, int first = 0) => apply(latent, first);
 }
 
-/// <summary>Shared by the latent operations: the per-position length of the channel vector (<c>torch.linalg.vector_norm(latent, dim=1)</c>).</summary>
-internal static class ChannelNorm
+/// <summary>The length of the channel vector at each position of a latent: one value per picture, row and column.</summary>
+public static class ChannelNorm
 {
-    public static float[] Of(float[] data, int b, int c, int plane)
+    /// <summary>
+    /// For each picture and position, the Euclidean length over the channels (accumulated in double, rounded to float32), laid out (batch, height,
+    /// width).
+    /// </summary>
+    public static float[] Lengths(LatentBatch latent)
     {
-        var m = new float[b * plane];
-        for (int n = 0; n < b; n++)
+        int n = latent.Batch, c = latent.Channels, plane = latent.Height * latent.Width;
+        var r = new float[n * plane];
+        for (int b = 0; b < n; b++)
             for (int p = 0; p < plane; p++)
             {
                 double sum = 0;
-                for (int ch = 0; ch < c; ch++) { double v = data[(n * c + ch) * plane + p]; sum += v * v; }
-                m[n * plane + p] = (float)Math.Sqrt(sum);
+                for (int k = 0; k < c; k++)
+                {
+                    double v = latent.Data[(b * c + k) * plane + p];
+                    sum += v * v;
+                }
+                r[b * plane + p] = (float)Math.Sqrt(sum);
             }
-        return m;
+        return r;
     }
 }
 
 [Node(Category = "model/latent/advanced/operations", DisplayName = "LatentApplyOperation")]
 public sealed class LatentApplyOperation
 {
+    /// <summary>Runs the operation on the whole latent (its first picture is picture 0). The noise mask and batch index are kept.</summary>
     public LatentBatch Execute(LatentBatch samples, LatentOperation operation)
     {
-        var r = operation.Apply(samples);
-        return Latents.Like(samples, r.Batch, r.Channels, r.Height, r.Width, r.Data);
+        var changed = operation.Apply(samples, 0);
+        return new LatentBatch(changed.Batch, changed.Channels, changed.Height, changed.Width, changed.Data)
+        {
+            NoiseMask = samples.NoiseMask, BatchIndex = samples.BatchIndex,
+        };
     }
 }
 
@@ -45,145 +62,157 @@ public sealed class LatentApplyOperation
     Description = "Blend the entire latent toward the reference latent, resizing the reference with nearest-neighbor interpolation when needed.")]
 public sealed class LatentOperationBlend
 {
-    /// <summary><c>torch.lerp(latent, reference, strength)</c>, the reference resized (nearest) to the latent and repeated or cut to its batch.</summary>
+    /// <summary>
+    /// Moves the latent toward the reference by <paramref name="strength"/> (torch.lerp, its vectorized multiply-add form: 502 of 504 random values bit-equal to ComfyUI, the rest within 6e-8). Measured with ComfyUI:
+    /// <list type="bullet">
+    /// <item>A reference of another height or width is resized to the latent's with PyTorch's legacy "nearest" (3x3 to 2x2 takes cells 0 and 1 of each
+    /// axis, not "nearest-exact"'s 0 and 2).</item>
+    /// <item>The reference batch is read around the latent's batch (latent picture i gets reference picture i mod n); a one-channel reference is
+    /// spread over the channels.</item>
+    /// </list>
+    /// Strength 0 hands the latent back unchanged.
+    /// </summary>
     public LatentOperation Execute(LatentBatch reference,
         [Input(Min = 0, Max = 1, Step = 0.0001, Tooltip = "0 leaves the latent unchanged; 1 matches the resized reference latent.")] double strength = 1.0) =>
-        new((latent, first) =>
+        new((latent, first) => Blend(latent, reference, (float)strength, first));
+
+    static LatentBatch Blend(LatentBatch latent, LatentBatch reference, float strength, int first)
+    {
+        if (strength == 0) return latent;
+        int h = latent.Height, w = latent.Width, plane = h * w;
+        var refData = reference.Height == h && reference.Width == w
+            ? reference.Data
+            : TorchInterpolate.Resize(reference.Data, reference.Batch * reference.Channels, reference.Height, reference.Width, h, w, "nearest");
+        if (reference.Batch == 0) throw new ArgumentException("The reference latent has no pictures.", nameof(reference));
+        int c = Latents.Broadcast(latent.Channels, reference.Channels, 1), n = latent.Batch;
+        var r = new float[n * c * plane];
+        for (int i = 0; i < n; i++)
         {
-            if (strength == 0) return latent;
-            var target = reference;
-            if (target.Height != latent.Height || target.Width != latent.Width)
-                target = new LatentBatch(target.Batch, target.Channels, latent.Height, latent.Width,
-                    TorchInterpolate.Resize(target.Data, target.Batch * target.Channels, target.Height, target.Width, latent.Height, latent.Width, "nearest"));
-            if (target.Channels != latent.Channels && target.Channels != 1)
-                throw new ArgumentException($"The size of tensor a ({latent.Channels}) must match the size of tensor b ({target.Channels}) at non-singleton dimension 1.");
-            int c = latent.Channels, plane = latent.Height * latent.Width;
-            float weight = (float)strength;
-            var r = new float[latent.Data.Length];
-            for (int n = 0; n < latent.Batch; n++)
+            int rb = (first + i) % reference.Batch;
+            for (int k = 0; k < c; k++)
             {
-                int tb = (first + n) % target.Batch; // repeat_to_batch_size over the whole batch
-                for (int ch = 0; ch < c; ch++)
-                {
-                    int tc = target.Channels == 1 ? 0 : ch;
-                    for (int p = 0; p < plane; p++)
-                    {
-                        float a = latent.Data[(n * c + ch) * plane + p], e = target.Data[(tb * target.Channels + tc) * plane + p];
-                        // PyTorch's lerp: from the nearer end, for precision.
-                        r[(n * c + ch) * plane + p] = weight < 0.5f ? a + weight * (e - a) : e - (e - a) * (1f - weight);
-                    }
-                }
+                int ia = (i * latent.Channels + (latent.Channels == 1 ? 0 : k)) * plane;
+                int ib = (rb * reference.Channels + (reference.Channels == 1 ? 0 : k)) * plane;
+                int o = (i * c + k) * plane;
+                for (int p = 0; p < plane; p++) r[o + p] = TorchMath.LerpFma(latent.Data[ia + p], refData[ib + p], strength);
             }
-            return new LatentBatch(latent.Batch, c, latent.Height, latent.Width, r);
-        });
+        }
+        return new LatentBatch(n, c, h, w, r);
+    }
 }
 
 [Node(Category = "model/latent/advanced/operations", DisplayName = "LatentOperationTonemapReinhard")]
 public sealed class LatentOperationTonemapReinhard
 {
     /// <summary>
-    /// Reinhard tone mapping of the latent's per-position strength: lengths are compressed towards a ceiling of (5 standard deviations + mean) x <c>multiplier</c>
-    /// of the picture's lengths, keeping every direction. Tames over-strong areas (what high cfg produces).
+    /// Reinhard tone mapping of the channel-vector lengths, keeping each vector's direction. Per picture, the lengths' mean and unbiased standard
+    /// deviation over the positions give a ceiling <c>top = (5 std + mean) * multiplier</c>; each length L becomes <c>x / (x + 1) * top</c> with
+    /// <c>x = L / top</c>. Multiplier 0 makes every value NaN (0 / 0), as in ComfyUI. A position whose channels are all 0 stays 0 (measured).
     /// </summary>
     public LatentOperation Execute([Input(Min = 0, Max = 100, Step = 0.01)] double multiplier = 1.0) =>
-        new((latent, _) =>
+        new((latent, _) => Tonemap(latent, (float)multiplier));
+
+    static LatentBatch Tonemap(LatentBatch latent, float multiplier)
+    {
+        int n = latent.Batch, c = latent.Channels, plane = latent.Height * latent.Width;
+        var lengths = ChannelNorm.Lengths(latent);
+        var r = new float[latent.Data.Length];
+        for (int b = 0; b < n; b++)
         {
-            int b = latent.Batch, c = latent.Channels, plane = latent.Height * latent.Width;
-            var magnitude = ChannelNorm.Of(latent.Data, b, c, plane);
-            for (int i = 0; i < magnitude.Length; i++) magnitude[i] += 1e-10f;
-            var r = new float[latent.Data.Length];
-            for (int n = 0; n < b; n++)
+            double mean = 0;
+            for (int p = 0; p < plane; p++) mean += lengths[b * plane + p];
+            mean /= plane;
+            double sq = 0;
+            for (int p = 0; p < plane; p++)
             {
-                // Mean and unbiased standard deviation of this picture's lengths.
-                double sum = 0;
-                for (int p = 0; p < plane; p++) sum += magnitude[n * plane + p];
-                double mean = sum / plane, sq = 0;
-                for (int p = 0; p < plane; p++) { double d = magnitude[n * plane + p] - mean; sq += d * d; }
-                float std = (float)Math.Sqrt(sq / (plane - 1)), m = (float)mean;
-                float top = (std * 5 + m) * (float)multiplier, inverse = 1f / top;
-                for (int p = 0; p < plane; p++)
+                double d = lengths[b * plane + p] - mean;
+                sq += d * d;
+            }
+            float std = (float)Math.Sqrt(sq / (plane - 1));
+            float top = (std * 5f + (float)mean) * multiplier;
+            for (int p = 0; p < plane; p++)
+            {
+                float length = lengths[b * plane + p];
+                float x = length / top;
+                float mapped = x / (x + 1f) * top;
+                for (int k = 0; k < c; k++)
                 {
-                    float length = magnitude[n * plane + p], scaled = length * inverse;
-                    float mapped = scaled / (scaled + 1f) * top;
-                    for (int ch = 0; ch < c; ch++)
-                    {
-                        int i = (n * c + ch) * plane + p;
-                        r[i] = latent.Data[i] / length * mapped;
-                    }
+                    int i = (b * c + k) * plane + p;
+                    r[i] = length == 0 ? 0 : latent.Data[i] / length * mapped;
                 }
             }
-            return new LatentBatch(b, c, latent.Height, latent.Width, r);
-        });
+        }
+        return new LatentBatch(n, c, latent.Height, latent.Width, r);
+    }
 }
 
 [Node(Category = "model/latent/advanced/operations", DisplayName = "LatentOperationSharpen")]
 public sealed class LatentOperationSharpen
 {
     /// <summary>
-    /// Sharpens the direction of the latent's channel vectors (an unsharp kernel built from ComfyUI's Gaussian over a (2 x radius + 1) square, edges reflected) and puts
-    /// the original lengths back.
+    /// An unsharp mask on the directions of the channel vectors: each channel is divided by the vector length (plus 1e-6), convolved with
+    /// <see cref="Kernel"/> over reflected edges, and multiplied by the same length again.
     /// </summary>
-    public LatentOperation Execute([Input(Min = 1, Max = 31, Step = 1)] int sharpenRadius = 9, [Input(Min = 0.1, Max = 10, Step = 0.1)] double sigma = 1.0,
-        [Input(Min = 0, Max = 5, Step = 0.01)] double alpha = 0.1) =>
-        new((latent, _) =>
-        {
-            int b = latent.Batch, c = latent.Channels, h = latent.Height, w = latent.Width, plane = h * w, r = sharpenRadius;
-            if (r >= h || r >= w)
-                throw new ArgumentException($"Padding size should be less than the corresponding input dimension, but got padding {r} for a {w}x{h} latent (sharpen_radius must be smaller than the latent).");
-            var kernel = Kernel(sharpenRadius, sigma, alpha);
-            int size = 2 * r + 1;
-            var luminance = ChannelNorm.Of(latent.Data, b, c, plane);
-            for (int i = 0; i < luminance.Length; i++) luminance[i] += 1e-6f;
-            static int Reflect(int i, int n) => i < 0 ? -i : i >= n ? 2 * (n - 1) - i : i;
-
-            var normalized = new float[latent.Data.Length];
-            for (int n = 0; n < b; n++)
-                for (int ch = 0; ch < c; ch++)
-                    for (int p = 0; p < plane; p++) normalized[(n * c + ch) * plane + p] = latent.Data[(n * c + ch) * plane + p] / luminance[n * plane + p];
-            var result = new float[latent.Data.Length];
-            for (int n = 0; n < b; n++)
-                for (int ch = 0; ch < c; ch++)
-                {
-                    int planeBase = (n * c + ch) * plane;
-                    for (int y = 0; y < h; y++)
-                        for (int x = 0; x < w; x++)
-                        {
-                            double acc = 0;
-                            for (int i = 0; i < size; i++)
-                            {
-                                int sy = Reflect(y + i - r, h);
-                                for (int j = 0; j < size; j++) acc += kernel[i * size + j] * normalized[planeBase + sy * w + Reflect(x + j - r, w)];
-                            }
-                            result[planeBase + y * w + x] = luminance[n * plane + y * w + x] * (float)acc;
-                        }
-                }
-            return new LatentBatch(b, c, h, w, result);
-        });
+    public LatentOperation Execute([Input(Min = 1, Max = 31)] int sharpenRadius = 9,
+        [Input(Min = 0.1, Max = 10, Step = 0.1)] double sigma = 1.0,
+        [Input(Min = 0, Max = 5, Step = 0.01)] double alpha = 0.1)
+    {
+        var kernel = Kernel(sharpenRadius, sigma, alpha);
+        return new((latent, _) => Sharpen(latent, sharpenRadius, kernel));
+    }
 
     /// <summary>
-    /// ComfyUI's <c>gaussian_kernel(2r + 1, sigma)</c> (sampled over [-1, 1] with PyTorch's linspace, normalised), scaled by -10 x alpha, with the centre raised so the
-    /// kernel sums to 1.
+    /// The (2r+1)² sharpening kernel: a Gaussian over a grid that spans -1..1 on both axes (whatever the radius), <c>exp(-d² / (2 sigma²))</c>
+    /// normalised to sum 1, scaled by <c>-10 alpha</c>, with <c>1 + 10 alpha</c> added to the centre so the kernel sums to 1.
     /// </summary>
     public static float[] Kernel(int radius, double sigma, double alpha)
     {
         int size = 2 * radius + 1;
-        var lin = new float[size];
-        float step = 2f / (size - 1);
-        for (int i = 0; i < size; i++) lin[i] = i < size / 2 ? -1f + step * i : 1f - step * (size - i - 1);
-        float twoSigmaSq = (float)(2.0 * sigma * sigma), scale = (float)(alpha * -10);
-        var k = new float[size * size];
-        double total = 0;
-        for (int i = 0; i < size; i++)
-            for (int j = 0; j < size; j++)
-            {
-                float d = MathF.Sqrt(lin[i] * lin[i] + lin[j] * lin[j]);
-                k[i * size + j] = MathF.Exp(-(d * d) / twoSigmaSq);
-                total += k[i * size + j];
-            }
+        var g = new double[size * size];
         double sum = 0;
-        for (int i = 0; i < k.Length; i++) { k[i] = k[i] / (float)total * scale; sum += k[i]; }
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                double gy = size == 1 ? -1 : -1 + 2.0 * y / (size - 1), gx = size == 1 ? -1 : -1 + 2.0 * x / (size - 1);
+                sum += g[y * size + x] = Math.Exp(-(gx * gx + gy * gy) / (2 * sigma * sigma));
+            }
+        var k = new float[size * size];
+        for (int i = 0; i < k.Length; i++) k[i] = (float)(-10 * alpha * g[i] / sum);
         int centre = radius * size + radius;
-        k[centre] = k[centre] - (float)sum + 1f;
+        k[centre] = (float)(-10 * alpha * g[centre] / sum + 1 + 10 * alpha);
         return k;
+    }
+
+    static LatentBatch Sharpen(LatentBatch latent, int radius, float[] kernel)
+    {
+        int n = latent.Batch, c = latent.Channels, h = latent.Height, w = latent.Width, plane = h * w, size = 2 * radius + 1;
+        // Reflect padding needs the radius below each side (PyTorch's message, measured).
+        if (radius >= w) throw new ArgumentException($"Argument #4: Padding size should be less than the corresponding input dimension, but got: padding ({radius}, {radius}) at dimension 3 of input [{n}, {c}, {h}, {w}]");
+        if (radius >= h) throw new ArgumentException($"Argument #6: Padding size should be less than the corresponding input dimension, but got: padding ({radius}, {radius}) at dimension 2 of input [{n}, {c}, {h}, {w}]");
+        var lengths = ChannelNorm.Lengths(latent);
+        var unit = new float[latent.Data.Length];
+        for (int b = 0; b < n; b++)
+            for (int k = 0; k < c; k++)
+                for (int p = 0; p < plane; p++)
+                    unit[(b * c + k) * plane + p] = latent.Data[(b * c + k) * plane + p] / (lengths[b * plane + p] + 1e-6f);
+        static int Reflect(int i, int n) => i < 0 ? -i : i >= n ? 2 * (n - 1) - i : i;
+        var r = new float[latent.Data.Length];
+        for (int b = 0; b < n; b++)
+            for (int k = 0; k < c; k++)
+            {
+                int o = (b * c + k) * plane;
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        double acc = 0;
+                        for (int ky = 0; ky < size; ky++)
+                        {
+                            int row = o + Reflect(y + ky - radius, h) * w;
+                            for (int kx = 0; kx < size; kx++) acc += (double)kernel[ky * size + kx] * unit[row + Reflect(x + kx - radius, w)];
+                        }
+                        r[o + y * w + x] = (float)acc * (lengths[b * plane + y * w + x] + 1e-6f);
+                    }
+            }
+        return new LatentBatch(n, c, h, w, r);
     }
 }

@@ -45,18 +45,19 @@ Status: **rewrite** (written while reading ComfyUI), **review** (built from spec
 
 | Area | Files | Status |
 |---|---|---|
-| Node files, Nodes.Core | AudioNodes, AudioOps, BoundingBox*, ColorTransferNodes, CompositingNodes (redo: a traceback showed two source lines during batch B), Compositor*, DatasetNodes, Image* (Nodes, Ops, ExtraOps, ColorNodes, FilterNodes, SaveExtraNodes, TransformNodes), Latent* (Nodes, Ops, OperationNodes, SliceNodes, Files), PadImageNodes, ResizeNodes, TileNodes | rewrite |
+| Node files, Nodes.Core | AudioNodes, AudioOps, BoundingBox*, ColorTransferNodes, Compositor*, DatasetNodes, Image* (Nodes, Ops, ExtraOps, ColorNodes, FilterNodes, SaveExtraNodes, TransformNodes), Latent* (Nodes, Ops, OperationNodes, SliceNodes, Files), PadImageNodes, ResizeNodes, TileNodes | rewrite |
 | Done | StringNodes (12 nodes; pilot, 2026-11-08: schemas = ComfyUI's object_info, all tests, text chain identical to ComfyUI) | done |
 | Done | PrimitiveNodes, UtilityNodes, FlowNodes, FormulaNodes, FrontendNodes (batch A, 2026-11-08: Convert Number and If/Else Switch now take ComfyUI's typed inputs) | done |
 | Done | TextNodes, BatchNodes (with the Batching helper), RebatchNodes (batch C, 2026-11-08: schemas unchanged) | done |
 | Done | MaskNodes, ColorNodes (batch B, 2026-11-08: 254 random cases bit-identical to ComfyUI; schemas unchanged) | done |
 | Done | LoopNodes, CurveNodes, Model3DNodes, ImageUtilityNodes (batch D, 2026-11-08: schemas unchanged; curve widget and histogram page checks pass) | done |
+| Done | CompositingNodes (redo F, 2026-11-08: 336 random cases bit-identical to ComfyUI, no source seen; schemas unchanged) | done |
 | Note for the GLSL batch | GLSLShader's default shader text has CRLF line endings (git checkout of a raw string); ComfyUI's is LF | to fix in the rewrite |
 | Node files, Nodes.ML | AudioModelNodes, ClassificationNodes, ClipNodes, ComponentLoaderNodes, Conditioning, ControlNetNodes, CustomSampling, FluxNodes, GlslShaderNode, GuidanceNodes, LatentOperationCfg, LoraNodes, MergeNodes, MlNodes, SamplerNodes, SamplingNodes, Trellis2Node, UNetPatchNodes, VisionNodes | rewrite |
 | Sampling stack | Samplers, SamplersAdvanced, Schedulers, SamplingCore, Guidance, GuidancePatches, ModelSampling, GitsTable, BetaMath, PromptWeights, LatentFormat, LatentPreview, WeightSteps, ModelParts, Checkpoint | rewrite (k-diffusion, MIT, and the papers are allowed sources) |
 | Helpers shaped after ComfyUI | AudioDsp, CommonUpscale, Resample, Stores (naming and counter), ImageDecoder | rewrite |
 | Format readers and writers | PngReader (+Apng: blend done from the spec, 2026-11-08), PngWriter (+Apng), JpegReader, WavFile | review |
-| Pillow / PyTorch behavior | PilDraw, PilTransform, PilQuantize, TorchRandom, TorchInterpolate | review (Pillow HPND, PyTorch BSD: notices) |
+| Pillow / PyTorch behavior | PilDraw, PilTransform, PilQuantize, TorchRandom, TorchInterpolate | review (Pillow HPND, PyTorch BSD: notices). Found in batch F: TorchInterpolate's bilinear is up to 1.2e-7 off torch (the new CompositingNodes carries an exact one) |
 | Python semantics | Python/Py* | review (Python documentation; CPython is PSF) |
 | Runtime and model loading | MlRuntime, GpuHelpers, model sources, CheckpointCatalog, OnnxCheckpointModels, SafetensorsCheckpointModels, CodecsImages, CodecsAudio (branch) | review |
 | Engine, Editor, Studio, Server, Runtime, Glsl | SpawnGen's own design, compatible with ComfyUI's formats and API; the executor's caching and validation were modeled on ComfyUI's | review the executor and validator; the rest is SpawnGen's own |

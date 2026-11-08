@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SpawnGen.Glsl</RootNamespace>
+    <Description>GLSL ES 3.00 fragment shaders compiled to ILGPU kernels at run time (runs on CUDA, OpenCL, WebGPU and the CPU). No SpawnGen dependencies.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SpawnGen.Glsl.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SpawnDev.ILGPU" Version="5.4.16" />
+  </ItemGroup>
+
+</Project>

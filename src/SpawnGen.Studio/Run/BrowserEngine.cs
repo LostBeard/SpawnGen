@@ -26,6 +26,9 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     readonly RunEventBus _bus = new();
     readonly MemoryResultStore _results = new();
     readonly MemoryInputStore _inputs = new();
+
+    /// <summary>The pictures uploaded to this engine (Load Image reads them when this engine runs).</summary>
+    public IInputStore Inputs => _inputs;
     readonly PromptQueue _queue;
     Task<MlRuntime>? _runtime;
 

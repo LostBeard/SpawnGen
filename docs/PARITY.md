@@ -78,7 +78,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**288 shared nodes, 284 identical**; the 4 that differ do so by design: the background-removal model list (SpawnGen ships one),
+**290 shared nodes, 286 identical**; the 4 that differ do so by design: the background-removal model list (SpawnGen ships one),
 RecordAudio's recorder widget, Resolution Selector's preview-only widget, and Compare Images' view widget, for which SpawnGen states the `{}` its
 editor sends (ComfyUI's frontend supplies it; both servers require the input and accept `{}`). Compare Images draws picture A with B over it right of
 a split that follows the pointer (tools/studio-browser-test/drive-compare.js). `tools/parity/apply_names.py` keeps names and categories in step.
@@ -127,7 +127,13 @@ Still missing, by kind:
    ModelSave, VAESave; fp16 LDM names) verified: a merge with a LoRA'd copy = ComfyUI (0.13 %), and the saved checkpoint loads back as that merge.
    Open: CLIPSave (ComfyUI writes Hugging Face names, one file per tower: asked the library), Save Checkpoint of parts loaded separately, fp8 weight_dtype.
 2. **Need a codec** (SpawnDev.Codecs; requests with Geordi 2026-11-08 in this order: animated lossy WebP, WebM writer, FLAC of any length, Ogg Opus, VP9 / AV1 inter frames): Save Animated WEBP, SaveWEBM, video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), MP3 / Opus / FLAC audio saving. WebP / GIF / BMP loading is done.
-3. **Need SpawnGen work**: GLSL Shader (14 blueprints; WebGL2 in the browser, a GL ES backend on the desktop). Custom Combo is done: the editor
+3. **Need SpawnGen work**: done: GLSL Shader. src/SpawnGen.Glsl compiles GLSL ES 3.00 fragment shaders (the subset ComfyUI's blueprints use: functions
+   and overloads, out / inout, loops, vectors and swizzles, int / uint, texture / texelFetch / textureSize and the usual built-ins) to .NET IL at run time
+   and runs them as ILGPU kernels, so the same shader runs on CUDA, OpenCL, WebGPU in the browser and the CPU, with no GL. Against ComfyUI's own
+   renderer (ANGLE on the RX 590, Fixtures in tests/SpawnGen.Glsl.Tests): all 21 blueprint cases within 0.33/255 (most 0.000) on the CPU and OpenCL,
+   except Film Grain on GPUs until SpawnDev.ILGPU's uint constant-conversion fix (Data, 2026-11-08); browser WebGPU = server OpenCL pixel for pixel
+   (drive-glsl.js). Curve Editor (CURVE, ComfyUI's monotone cubic / linear curves, = ComfyUI's LUTs to 1e-12) feeds u_curve; its widget is edited as JSON
+   until the Studio has a curve editor. Custom Combo is done: the editor
    keeps ComfyUI's frontend-defined option widgets (option1 ..., one spare, hidden index; saved as [choice, index, options], all 116 blueprints
    round-trip; drive-customcombo.js) and the node skips value checks as ComfyUI's validate_inputs does.
    Text Overlay (a font engine; the same engine would draw the number tags and descriptions in Create Bounding Boxes' preview and the labels of Draw

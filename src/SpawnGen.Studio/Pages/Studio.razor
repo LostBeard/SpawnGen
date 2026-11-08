@@ -796,7 +796,9 @@
     void OnWidgetActivated(int nodeId, string name)
     {
         var node = _doc.Graph.GetNode(nodeId);
-        var spec = name == ControlAfterGenerate.Name ? ControlAfterGenerate.Spec : Registry.GetSchema(node.ClassType)?.FindInput(name)?.Widget;
+        // The node's own widget list: it includes widgets that are not in the schema (a dynamic combo's chosen inputs, Custom Combo's options).
+        var spec = name == ControlAfterGenerate.Name ? ControlAfterGenerate.Spec
+            : Registry.GetSchema(node.ClassType) is { } schema ? NodeLayout.OrderedInputs(schema, node.Widgets).FirstOrDefault(i => i.Name == name)?.Widget : null;
         if (spec is null) return;
         var value = node.Widgets.GetValueOrDefault(name) ?? spec.Default;
 

@@ -20,6 +20,8 @@ public sealed record WidgetSpec(WidgetKind Kind)
     public Func<IReadOnlyList<string>>? OptionsProvider { get; init; }
     /// <summary>ComfyUI's <c>socketless</c> for a <see cref="WidgetKind.Json"/> widget: true when it cannot be turned into a socket (null = not stated).</summary>
     public bool? Socketless { get; init; }
+    /// <summary>A widget the editor keeps, saves and sends but does not draw (ComfyUI's hidden widgets: Custom Combo's index).</summary>
+    public bool Hidden { get; init; }
 
     public IReadOnlyList<string> ResolveOptions() => OptionsProvider?.Invoke() ?? Options ?? [];
 }
@@ -81,6 +83,8 @@ public sealed class NodeSchema
     public string? LoopBoundary { get; init; }
     /// <summary>ComfyUI's accept_all_inputs: inputs the schema does not list are evaluated and passed on too.</summary>
     public bool AcceptAllInputs { get; init; }
+    /// <summary>See <see cref="NodeAttribute.ValidatesOwnInputs"/>: literal values are not checked against the schema.</summary>
+    public bool ValidatesOwnInputs { get; init; }
     /// <summary>The boolean input that allows caching (see <see cref="NodeAttribute.CacheWhen"/>), null when caching follows <see cref="AlwaysExecute"/>.</summary>
     public string? CacheWhen { get; init; }
     /// <summary>ComfyUI's dev_only: made by expansions, not offered in the editor.</summary>

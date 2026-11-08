@@ -295,7 +295,7 @@ public sealed class NodeRegistry
             Inputs = node.Schema.Inputs.Select(i => i.Name == input ? i with { Widget = widget } : i).ToList(),
             Outputs = node.Schema.Outputs, IsOutputNode = node.Schema.IsOutputNode, AlwaysExecute = node.Schema.AlwaysExecute, FrontendOnly = node.Schema.FrontendOnly,
             InputIsList = node.Schema.InputIsList, DynamicCombos = node.Schema.DynamicCombos, LoopBoundary = node.Schema.LoopBoundary,
-            AcceptAllInputs = node.Schema.AcceptAllInputs, CacheWhen = node.Schema.CacheWhen, DevOnly = node.Schema.DevOnly,
+            AcceptAllInputs = node.Schema.AcceptAllInputs, ValidatesOwnInputs = node.Schema.ValidatesOwnInputs, CacheWhen = node.Schema.CacheWhen, DevOnly = node.Schema.DevOnly,
         };
         _nodes[nodeId] = new RegisteredNode
         {
@@ -469,6 +469,7 @@ public sealed class NodeRegistry
             DynamicCombos = dynamicCombos,
             LoopBoundary = attr?.LoopBoundary,
             AcceptAllInputs = attr?.AcceptAllInputs ?? false,
+            ValidatesOwnInputs = attr?.ValidatesOwnInputs ?? false,
             CacheWhen = attr?.CacheWhen,
             DevOnly = attr?.DevOnly ?? false,
         };
@@ -548,8 +549,8 @@ public sealed class NodeRegistry
                     Default = def,
                 };
             }
-            if (ia?.Options is { Length: > 0 } options)
-                return new WidgetSpec(WidgetKind.Combo) { Options = options, Default = def ?? options[0] };
+            if (ia?.Options is { } options) // an empty list stays a combo (Custom Combo: the editor supplies the options)
+                return new WidgetSpec(WidgetKind.Combo) { Options = options, Default = def ?? options.FirstOrDefault() };
             return new WidgetSpec(WidgetKind.String) { Multiline = ia?.Multiline ?? false, Default = def ?? "" };
         }
 

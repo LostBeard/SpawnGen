@@ -78,7 +78,7 @@
                            @onchange="e => Commit(() => Doc.SetNodeProperty(node.Id, ComfyWorkflow.NameForSearchReplace, Blank(e.Value?.ToString()) ? null : e.Value!.ToString()!.Trim()))" />
                 </label>
 
-                @{ var shown = schema is null ? [] : NodeLayout.VisibleInputs(schema, node, Doc.Graph).ToList(); }
+                @{ var shown = schema is null ? [] : NodeLayout.VisibleInputs(schema, node, Doc.Graph).Where(i => i.Widget is not { Hidden: true }).ToList(); }
                 @if (shown.Any(i => i.Widget is not null))
                 {
                     <div class="props-section">Parameters</div>

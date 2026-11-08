@@ -33,6 +33,11 @@ public sealed class NodeAttribute(string? id = null) : Attribute
     /// <summary>ComfyUI's accept_all_inputs: inputs the schema does not list are evaluated too and passed to an <see cref="ExtraInputsAttribute"/> parameter.</summary>
     public bool AcceptAllInputs { get; init; }
     /// <summary>
+    /// ComfyUI's validate_inputs taking every input and returning True (Custom Combo): the values the prompt gives are not checked against the schema
+    /// (a combo's option list, a number's range); required inputs must still be there.
+    /// </summary>
+    public bool ValidatesOwnInputs { get; init; }
+    /// <summary>
     /// The node may be served from the cache only when this boolean input is true; otherwise it always runs (ComfyUI's fingerprint_inputs returning NaN unless the
     /// input asks for reuse).
     /// </summary>

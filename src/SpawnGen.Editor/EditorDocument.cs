@@ -50,6 +50,8 @@ public sealed class EditorDocument(NodeRegistry registry)
         var node = new EditorNode { Id = Graph.NextNodeId, ClassType = classType, X = x, Y = y };
         foreach (var input in schema.Inputs)
             if (input.Widget is { } w) node.Widgets[input.Name] = DefaultValue(w);
+        if (classType == CustomComboWidgets.NodeType)
+            foreach (var (name, value) in CustomComboWidgets.Normalize(node.Widgets)) node.Widgets[name] = value;
         Run(new AddNodeCommand(node));
         return node;
     }
@@ -204,6 +206,17 @@ public sealed class EditorDocument(NodeRegistry registry)
         var node = Graph.GetNode(nodeId);
         node.Widgets.TryGetValue(name, out var old);
         if (Equals(old, value)) return;
+        if (node.ClassType == CustomComboWidgets.NodeType && name != CustomComboWidgets.Index)
+        {
+            // Custom Combo's option widgets grow and shrink and its choice and index follow them: one undo step.
+            Group(() =>
+            {
+                Run(new SetWidgetCommand(nodeId, name, old, value));
+                foreach (var (other, now) in CustomComboWidgets.Normalize(node.Widgets))
+                    Run(new SetWidgetCommand(nodeId, other, node.Widgets.GetValueOrDefault(other), now));
+            });
+            return;
+        }
         Run(new SetWidgetCommand(nodeId, name, old, value));
     }
 

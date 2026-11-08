@@ -39,6 +39,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         InputFiles.Store = _inputs;
         // WebP, GIF and BMP for Load Image decode on the page's GPU (SpawnDev.Codecs over WebGPU), opened on the first such picture.
         CodecsImages.Install(async () => (await GetAsync()).Accelerator);
+        CodecsAudio.Install(async () => (await GetAsync()).Accelerator);
         _bus.Published += e =>
         {
             if (_perOp) ReportPerOpTimings(e.Type);
@@ -172,7 +173,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     static string MediaType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
     {
-        ".wav" => "audio/wav", ".glb" => "model/gltf-binary", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".gif" => "image/gif", ".bmp" => "image/bmp",
+        ".wav" => "audio/wav", ".flac" => "audio/flac", ".mp3" => "audio/mpeg", ".opus" => "audio/ogg", ".glb" => "model/gltf-binary", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".gif" => "image/gif", ".bmp" => "image/bmp",
         _ => "image/png",
     };
 

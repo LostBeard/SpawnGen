@@ -16,13 +16,14 @@ public sealed class LoadAudio
 public sealed class SaveAudio
 {
     /// <summary>
-    /// Writes the clip as a 16-bit WAV file (<c>prefix_00001_.wav</c>) and passes it on. ComfyUI writes FLAC; the 16-bit samples are the same (x 32768,
-    /// rounded half to even, clipped), only the container differs: there is no FLAC encoder here.
+    /// Writes the clip as a 16-bit FLAC file with the prompt and workflow as Vorbis comments, like ComfyUI (<see cref="AudioFiles"/>), and passes it on.
+    /// Without SpawnDev.Codecs (a host with no accelerator) the same 16-bit samples go into a WAV file.
     /// </summary>
-    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, IServiceProvider services, string filenamePrefix = "audio/ComfyUI")
+    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, NodeContext context, IServiceProvider services, string filenamePrefix = "audio/ComfyUI")
     {
         if (audio is null) throw new ArgumentException("SaveAudio: input audio is None (source video may have no audio track).", nameof(audio));
-        var file = await Results.For(services).SaveAsync("output", filenamePrefix, WavFile.Encode(audio), "wav");
+        var (data, extension) = await AudioFiles.EncodeAsync(audio, Results.Metadata(context));
+        var file = await Results.For(services).SaveAsync("output", filenamePrefix, data, extension);
         return (audio, new UiOutput("audio", new object[] { file }));
     }
 }
@@ -30,10 +31,12 @@ public sealed class SaveAudio
 [Node(Category = "audio", DisplayName = "Preview Audio", IsOutput = true, Description = "Preview the audio without saving it to the ComfyUI output directory.")]
 public sealed class PreviewAudio
 {
-    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, IServiceProvider services)
+    /// <summary>A temporary FLAC file (ComfyUI's PreviewAudio saves like Save Audio, into temp), WAV without SpawnDev.Codecs.</summary>
+    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, NodeContext context, IServiceProvider services)
     {
         if (audio is null) throw new ArgumentException("PreviewAudio: input audio is None (source video may have no audio track).", nameof(audio));
-        var file = await Results.For(services).SaveAsync("temp", "preview", WavFile.Encode(audio), "wav");
+        var (data, extension) = await AudioFiles.EncodeAsync(audio, Results.Metadata(context));
+        var file = await Results.For(services).SaveAsync("temp", "preview", data, extension);
         return (audio, new UiOutput("audio", new object[] { file }));
     }
 }

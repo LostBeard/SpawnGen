@@ -1,0 +1,38 @@
+{
+ "pyav": "18.1.0",
+ "libavcodec": "62.28.102",
+ "prompt": "{\"3\": {\"class_type\": \"SaveAudio\", \"inputs\": {\"filename_prefix\": \"audio/ComfyUI\", \"text\": \"caf\\u00e9 \\\"quoted\\\"\"}}}",
+ "extra": {
+  "workflow": "{\"nodes\": [1, 2, 3], \"version\": 0.4}"
+ },
+ "cases": [
+  {
+   "name": "stereo_44100",
+   "channels": 2,
+   "sample_rate": 44100,
+   "samples": 88200,
+   "metadata": true
+  },
+  {
+   "name": "mono_22050_odd",
+   "channels": 1,
+   "sample_rate": 22050,
+   "samples": 33333,
+   "metadata": true
+  },
+  {
+   "name": "loud_clipping",
+   "channels": 2,
+   "sample_rate": 48000,
+   "samples": 48000,
+   "metadata": true
+  },
+  {
+   "name": "stereo_no_metadata",
+   "channels": 2,
+   "sample_rate": 32000,
+   "samples": 32000,
+   "metadata": false
+  }
+ ]
+}

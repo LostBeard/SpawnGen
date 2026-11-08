@@ -211,20 +211,31 @@ public class AudioOpsTests
     }
 
     [Test]
-    public async Task Save_and_preview_pass_the_clip_on()
+    public async Task Save_and_preview_pass_the_clip_on_and_write_WAV_without_a_FLAC_encoder()
     {
-        var clip = Clip(8000, [0.5f, 0.25f]);
-        var store = new MemoryResultStore();
-        var services = new Services(store);
-        var (saved, ui) = await new SaveAudio().ExecuteAsync(clip, services);
-        Assert.That(saved, Is.SameAs(clip));
-        var file = (ResultFile)((object[])ui["audio"]!)[0];
-        Assert.That((file.Subfolder, file.Filename, file.Type), Is.EqualTo(("audio", "ComfyUI_00001_.wav", "output")));
-        Assert.That(WavFile.Decode(store.Get("output", file.Filename, "audio")!).Channels[0], Is.EqualTo(clip.Channels[0]));
-        var (previewed, pui) = await new PreviewAudio().ExecuteAsync(clip, services);
-        Assert.That((previewed, ((ResultFile)((object[])pui["audio"]!)[0]).Type), Is.EqualTo((clip, "temp")));
-        Assert.That(() => new SaveAudio().ExecuteAsync(null, services), Throws.ArgumentException);
+        var savedFlac = AudioFiles.Flac;
+        AudioFiles.Flac = null; // no SpawnDev.Codecs: the same 16-bit samples as WAV (SaveAudioFlacTests covers FLAC)
+        try
+        {
+            var clip = Clip(8000, [0.5f, 0.25f]);
+            var store = new MemoryResultStore();
+            var services = new Services(store);
+            var context = Context(services);
+            var (saved, ui) = await new SaveAudio().ExecuteAsync(clip, context, services);
+            Assert.That(saved, Is.SameAs(clip));
+            var file = (ResultFile)((object[])ui["audio"]!)[0];
+            Assert.That((file.Subfolder, file.Filename, file.Type), Is.EqualTo(("audio", "ComfyUI_00001_.wav", "output")));
+            Assert.That(WavFile.Decode(store.Get("output", file.Filename, "audio")!).Channels[0], Is.EqualTo(clip.Channels[0]));
+            var (previewed, pui) = await new PreviewAudio().ExecuteAsync(clip, context, services);
+            Assert.That((previewed, ((ResultFile)((object[])pui["audio"]!)[0]).Type), Is.EqualTo((clip, "temp")));
+            Assert.That(() => new SaveAudio().ExecuteAsync(null, context, services), Throws.ArgumentException);
+        }
+        finally { AudioFiles.Flac = savedFlac; }
     }
+
+    static NodeContext Context(IServiceProvider services) =>
+        (NodeContext)Activator.CreateInstance(typeof(NodeContext), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
+            ["1", "SaveAudio", services, CancellationToken.None, null, new Lazy<string>(() => "{}"), new Dictionary<string, string>(), null, null, 0], null)!;
 
     [Test]
     public void Schemas_match_ComfyUI()

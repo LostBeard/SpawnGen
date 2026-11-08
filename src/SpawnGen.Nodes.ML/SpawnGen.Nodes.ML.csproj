@@ -15,7 +15,7 @@
     <ProjectReference Include="$(IlgpuMlProject)" Condition="'$(IlgpuMlProject)' != ''" />
     <!-- 5.4.1 corrupts streamed weight uploads on some AMD OpenCL drivers (Polaris): SD-Turbo output turns to noise. 5.4.2 fixes it. -->
     <PackageReference Include="SpawnDev.ILGPU" Version="5.4.16" />
-    <PackageReference Include="SpawnDev.Codecs" Version="1.0.1" Condition="'$(CodecsProject)' == ''" />
+    <PackageReference Include="SpawnDev.Codecs" Version="1.0.2-local.1" Condition="'$(CodecsProject)' == ''" />
     <!-- Test an unreleased Codecs build: dotnet build -p:CodecsProject=<path to SpawnDev.Codecs.csproj> -->
     <ProjectReference Include="$(CodecsProject)" Condition="'$(CodecsProject)' != ''" />
   </ItemGroup>

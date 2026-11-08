@@ -46,10 +46,12 @@ public sealed class SaveAnimatedWEBP
         }
         else
         {
-            // A single lossy picture goes through the animation encoder too: the still lossy encoder takes no EXIF yet.
             using var enc = new WebPLossyEncoderGpu(accelerator);
-            file = await enc.EncodeAnimationAsync(frames, w, h, [.. Enumerable.Repeat(duration, frames.Count)],
-                new WebPLossyEncodeOptions { Quality = quality, Method = m }, new WebPLossyAnimationOptions { Exif = exif });
+            // A single picture takes Pillow's still path, which strips the "Exif\0\0" prefix before libwebp writes the chunk.
+            file = frames.Count == 1
+                ? await enc.EncodeAsync(frames[0], w, h, new WebPLossyEncodeOptions { Quality = quality, Method = m, Exif = exif[6..] })
+                : await enc.EncodeAnimationAsync(frames, w, h, [.. Enumerable.Repeat(duration, frames.Count)],
+                    new WebPLossyEncodeOptions { Quality = quality, Method = m }, new WebPLossyAnimationOptions { Exif = exif });
         }
 
         var prefix = SavePrefix.ComputeVars(filenamePrefix, w, h, DateTime.Now);

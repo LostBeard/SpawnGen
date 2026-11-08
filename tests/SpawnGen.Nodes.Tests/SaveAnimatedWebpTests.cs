@@ -12,8 +12,8 @@ namespace SpawnGen.Nodes.Tests;
 /// <summary>
 /// Save Animated WEBP against ComfyUI's own saving (Fixtures/codecs/save_webp, make_save_webp.py: ImageSaveHelper.save_animated_webp, Pillow 13 / libwebp
 /// 1.6.0). EXIF: byte for byte with Pillow's Exif.tobytes(). Lossy animation (SpawnDev.Codecs' port of WebPAnimEncoder): byte for byte with Pillow's file.
-/// Lossless (SpawnDev.Codecs' own VP8L, whole frames): the pictures decode exactly. A single lossy picture goes through the animation encoder (the still lossy
-/// encoder takes no EXIF yet), so it decodes like Pillow's still file but is laid out differently.
+/// A single lossy picture (Pillow's still path, EXIF without its prefix): byte for byte too. Lossless (SpawnDev.Codecs' own VP8L, whole frames): the pictures
+/// decode exactly.
 /// </summary>
 public class SaveAnimatedWebpTests
 {
@@ -89,7 +89,7 @@ public class SaveAnimatedWebpTests
         Assert.That(ui.ContainsKey("animated"), Is.EqualTo(count > 1));
         var ours = store.Get("output", file.Filename)!;
         var pillow = File.ReadAllBytes(Path.Combine(Dir, name + ".webp"));
-        if (name == "anim_lossy")
+        if (name is "anim_lossy" or "one_lossy")
         {
             Assert.That(ours, Is.EqualTo(pillow), "byte for byte with Pillow / libwebp");
             return;

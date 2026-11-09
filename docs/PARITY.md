@@ -110,6 +110,9 @@ through swscale to float: WebP and BMP colours come out 1 to 2.4 / 255 off the d
 instead of 0, and JPEGs are upsampled by ffmpeg instead of libjpeg (4:2:0 pictures: mean 5/255, up to 68/255 off Pillow's). SpawnGen keeps the
 reference decoders' values (what Pillow, libwebp and the browsers show).
 Deliberate differences (SpawnGen is more forgiving where ComfyUI fails): Convert Image to Mask with channel "alpha" on an image without alpha gives a mask of ones (ComfyUI: IndexError); Image Blur / Image Sharpen with a radius as large as the picture keep mirroring the edges (ComfyUI: PyTorch's reflect-padding error).
+Deliberate difference: Convert Image Color Space computes every pixel in double precision and rounds once, so it gives the exact values where
+ComfyUI's float32 arithmetic differs by up to about 1e-6 of a pixel's largest channel (PQ, LogC3 and ACEScct decoded to large linear values; checked
+in float64, 2026-11-08). Results in the 0..1 range agree within 2e-5.
 Deliberate difference: Save Text writes line breaks as given (`
 `); ComfyUI opens its file in Python's text mode, so on Windows it writes `
 

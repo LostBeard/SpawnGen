@@ -28,9 +28,11 @@ Code comments describe measured behavior or the specification ("measured with Co
 
 ## Process (one batch at a time)
 
-1. Lore (who has read ComfyUI's source and so does not write rewritten code) picks a batch: a few files, with the tests that cover them.
-2. A fresh agent that has not seen this project's history works in a git worktree. It deletes the batch's implementation files without reading them,
-   then writes new ones from the allowed sources until the batch's tests pass. Where a test fixture is unclear, it measures ComfyUI by running it.
+1. Lore picks a batch: a few files, with the tests that cover them.
+2. The author is a session that has not read ComfyUI's source or the old implementation: a fresh Lore session (from batch I on; a new session
+   starts with none of that in its context) or a fresh agent. It works on a branch or in a git worktree, deletes the batch's implementation files
+   without reading them, then writes new ones from the allowed sources until the batch's tests pass. Where a test fixture is unclear, it measures
+   ComfyUI by running it (in-process calls of the node class or the HTTP API, with tracebacks and warnings suppressed).
 3. Lore verifies: the full test suite, behavior checks in the Studio where the nodes have UI, `object_info` parity, and a provenance review of the new
    code (no ComfyUI identifiers or structure beyond the public interface, comments cite measurements or specs).
 4. The batch is committed to `main` as "Clean-room: ..." and marked done below.
@@ -45,7 +47,7 @@ Status: **rewrite** (written while reading ComfyUI), **review** (built from spec
 
 | Area | Files | Status |
 |---|---|---|
-| Node files, Nodes.Core | AudioNodes, AudioOps, BoundingBox*, ColorTransferNodes, Compositor*, DatasetNodes, Image* (Nodes, ExtraOps, ColorNodes, SaveExtraNodes, TransformNodes), Latent* (OperationNodes, SliceNodes, Files), ResizeNodes | rewrite |
+| Node files, Nodes.Core | AudioNodes, AudioOps, BoundingBox*, ColorTransferNodes, Compositor*, DatasetNodes, Image* (Nodes, SaveExtraNodes, TransformNodes), ResizeNodes | rewrite |
 | Done | StringNodes (12 nodes; pilot, 2026-11-08: schemas = ComfyUI's object_info, all tests, text chain identical to ComfyUI) | done |
 | Done | PrimitiveNodes, UtilityNodes, FlowNodes, FormulaNodes, FrontendNodes (batch A, 2026-11-08: Convert Number and If/Else Switch now take ComfyUI's typed inputs) | done |
 | Done | TextNodes, BatchNodes (with the Batching helper), RebatchNodes (batch C, 2026-11-08: schemas unchanged) | done |
@@ -55,6 +57,8 @@ Status: **rewrite** (written while reading ComfyUI), **review** (built from spec
 | Done | TileNodes, PadImageNodes (with TorchMath, PyTorch's documented lerp), ImageFilterNodes (batch E, 2026-11-08: Canny pixel-exact on the fixtures, matched against kornia's public functions (Apache-2.0); schemas unchanged) | done |
 | Done | ImageOps (batch G, 2026-11-08: 16 nodes + Pixels; 430 random cases bit-exact or within 3.4e-6; the soft_light test was wrong and is corrected to ComfyUI's measured 0.8189) | done |
 | Done | LatentOps, LatentNodes (batch H, 2026-11-08: 19 nodes; 689 random cases bit-exact except bilinear / bislerp resizes, which come from the resize helpers) | done |
+| Done | LatentOperationNodes, LatentSliceNodes, LatentFiles (batch K, 2026-11-08, e69116b: the .latent header key order differs from ComfyUI's, both valid) | done |
+| Done | ImageColorNodes (+ ColorSpaces), ImageExtraOps (batch I, 2026-11-08, written by a fresh Lore session: 8 nodes, schemas = ComfyUI's object_info; Quantize byte-exact on all 233 fixture cases, Bayer spread 512 / palette size measured; YUV, Morphology, Flip, Rotate, Colour to Mask exact; Convert Image Color Space from IEC 61966-2-1, BT.2100, ST 2084, ARRI LogC3, ACEScct S-2016-001 and Bradford, with tone mapping and gamut fitting measured: extended Reinhard (Reinhard et al. 2002) on the batch peak, luminance-keeping fit; computed in double, within 1e-6 of each pixel's largest channel of ComfyUI's float32) | done |
 | Note for the GLSL batch | GLSLShader's default shader text has CRLF line endings (git checkout of a raw string); ComfyUI's is LF | to fix in the rewrite |
 | Node files, Nodes.ML | AudioModelNodes, ClassificationNodes, ClipNodes, ComponentLoaderNodes, Conditioning, ControlNetNodes, CustomSampling, FluxNodes, GlslShaderNode, GuidanceNodes, LatentOperationCfg, LoraNodes, MergeNodes, MlNodes, SamplerNodes, SamplingNodes, Trellis2Node, UNetPatchNodes, VisionNodes | rewrite |
 | Sampling stack | Samplers, SamplersAdvanced, Schedulers, SamplingCore, Guidance, GuidancePatches, ModelSampling, GitsTable, BetaMath, PromptWeights, LatentFormat, LatentPreview, WeightSteps, ModelParts, Checkpoint | rewrite (k-diffusion, MIT, and the papers are allowed sources) |

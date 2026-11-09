@@ -64,15 +64,23 @@ public class ComfyImageParityTests
     static double D(Case c, string name) => c.Args.GetProperty(name).GetDouble();
     static bool B(Case c, string name) => c.Args.GetProperty(name).GetBoolean();
 
-    static void Same(HostTensor actual, JsonElement expected, double tolerance, string what = "")
+    /// <summary>
+    /// Every value within <paramref name="tolerance"/> plus <paramref name="relative"/> times the largest expected magnitude in its pixel (the last
+    /// dimension).
+    /// </summary>
+    static void Same(HostTensor actual, JsonElement expected, double tolerance, string what = "", double relative = 0)
     {
         var e = ReadTensor(expected);
         Assert.That(actual.Shape, Is.EqualTo(e.Shape), "shape " + what);
+        int channels = e.Shape[^1];
         double worst = 0;
         int at = -1;
         for (int i = 0; i < e.Data.Length; i++)
         {
-            double d = Math.Abs(actual.Data[i] - e.Data[i]);
+            double magnitude = 0;
+            if (relative > 0)
+                for (int k = i - i % channels; k < i - i % channels + channels; k++) magnitude = Math.Max(magnitude, Math.Abs(e.Data[k]));
+            double d = Math.Abs(actual.Data[i] - e.Data[i]) - relative * magnitude;
             if (!(d <= worst)) { worst = d; at = i; }
         }
         Assert.That(worst, Is.LessThanOrEqualTo(tolerance), $"{what} worst at {at}: {(at >= 0 ? actual.Data[at] : 0)} vs {(at >= 0 ? e.Data[at] : 0)}");
@@ -137,7 +145,10 @@ public class ComfyImageParityTests
                 Same(new ImageAddNoise().Execute(Img(c.Inputs["image"]), c.Args.GetProperty("seed").GetInt64(), (float)D(c, "strength")), o[0], 2e-6);
                 break;
             case "ImageColorSpace":
-                Same(new ImageColorSpace().Execute(Img(c.Inputs["image"]), S(c, "source"), S(c, "destination")), o[0], 2e-5);
+                // SpawnGen computes each pixel in double and rounds once; ComfyUI rounds to float32 along the way. Where PQ, LogC3 and ACEScct decode to
+                // large linear values the two differ by up to about 1e-6 of the pixel's largest channel (float32 rounding, also of the cancelling terms of
+                // the primaries matrices), with SpawnGen at the exact value (checked in float64 for the worst cases, 2026-11-08).
+                Same(new ImageColorSpace().Execute(Img(c.Inputs["image"]), S(c, "source"), S(c, "destination")), o[0], 2e-5, relative: 1e-6);
                 break;
             case "ColorToRGBInt":
                 if (o[0].ValueKind == JsonValueKind.String && o[0].GetString() == "error")

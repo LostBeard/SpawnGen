@@ -3,334 +3,221 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries, SpawnGen's tests and the fixtures made by running ComfyUI
+// (Fixtures/comfy/comfy_image_nodes_main.json.gz: 30 Scale to Max Dimension, 40 Resize And Pad, 96 Stitch cases, all reproduced), plus probes of
+// ComfyUI (2026-11-08) for RGBA padding and zero sizes.
+
+/// <summary>
+/// Scales every picture so its longer side is <c>largest_size</c>: a taller picture gets height = largest and width = round(w / h * largest), otherwise
+/// width = largest and height = round(h / w * largest) (Python round). A size of 0 fails as the resize method does (area gives an empty picture).
+/// </summary>
 [Node(Category = "image/upscaling", DisplayName = "Scale Image to Max Dimension")]
 public sealed class ImageScaleToMaxDimension
 {
-    // ComfyUI's list, "bilinear" twice included: saved workflows store the name, the editor shows the list.
-    public static string[] Methods() => ["area", "lanczos", "bilinear", "nearest-exact", "bilinear", "bicubic"];
-
-    /// <summary>Scales so the longer side is <paramref name="largestSize"/> (the shorter one keeps the aspect ratio, Python <c>round</c>); a square becomes largest x largest.</summary>
-    public ImageBatch Execute(ImageBatch image, [Input(OptionsProvider = nameof(Methods))] string upscaleMethod = "area",
+    public ImageBatch Execute(ImageBatch image,
+        [Input(Options = ["area", "lanczos", "bilinear", "nearest-exact", "bilinear", "bicubic"])] string upscaleMethod = "area",
         [Input(Min = 0, Max = 16384, Step = 1)] int largestSize = 512)
     {
-        int height = image.Height, width = image.Width;
-        if (height > width) { width = (int)Math.Round((double)width / height * largestSize); height = largestSize; }
-        else if (width > height) { height = (int)Math.Round((double)height / width * largestSize); width = largestSize; }
-        else height = width = largestSize;
-        return CommonUpscale.Resize(image, width, height, upscaleMethod);
+        int h = image.Height, w = image.Width, nw, nh;
+        if (h > w)
+        {
+            nh = largestSize;
+            nw = (int)Math.Round((double)w / h * largestSize, MidpointRounding.ToEven);
+        }
+        else
+        {
+            nw = largestSize;
+            nh = (int)Math.Round((double)h / w * largestSize, MidpointRounding.ToEven);
+        }
+        return Pixels.Resize(image, nw, nh, upscaleMethod);
     }
 }
 
+/// <summary>
+/// Fits every picture inside target_width x target_height without changing its aspect: scale s = min(tw / w, th / h), size int(w s) x int(h s), placed at
+/// ((tw - nw) / 2, (th - nh) / 2) (integer halves) on a canvas of padding_color, 1.0 or 0.0 in every channel (alpha too).
+/// </summary>
 [Node(Category = "image/transform", DisplayName = "Resize And Pad Image")]
 public sealed class ResizeAndPadImage
 {
-    public static string[] PaddingColors() => ["white", "black"];
-    public static string[] Interpolations() => ["area", "bicubic", "nearest-exact", "bilinear", "lanczos"];
-
-    /// <summary>Scales the picture to fit inside the target keeping its aspect ratio (sizes truncated), centred on a white or black canvas of the target size.</summary>
-    public ImageBatch Execute(ImageBatch image, [Input(Min = 1, Max = 16384, Step = 1)] int targetWidth = 512, [Input(Min = 1, Max = 16384, Step = 1)] int targetHeight = 512,
-        [Input(OptionsProvider = nameof(PaddingColors))] string paddingColor = "white",
-        [Input(OptionsProvider = nameof(Interpolations))] string interpolation = "area")
+    public ImageBatch Execute(ImageBatch image,
+        [Input(Min = 1, Max = 16384, Step = 1)] int targetWidth = 512,
+        [Input(Min = 1, Max = 16384, Step = 1)] int targetHeight = 512,
+        [Input(Options = ["white", "black"])] string paddingColor = "white",
+        [Input(Options = ["area", "bicubic", "nearest-exact", "bilinear", "lanczos"])] string interpolation = "area")
     {
+        float fill = paddingColor switch
+        {
+            "white" => 1f,
+            "black" => 0f,
+            _ => throw new ArgumentException($"Unknown padding color '{paddingColor}'.", nameof(paddingColor)),
+        };
         double scale = Math.Min((double)targetWidth / image.Width, (double)targetHeight / image.Height);
-        int newW = (int)(image.Width * scale), newH = (int)(image.Height * scale), c = image.Channels;
-        var resized = CommonUpscale.Resize(image, newW, newH, interpolation);
+        int nw = (int)(image.Width * scale), nh = (int)(image.Height * scale);
+        var resized = Pixels.Resize(image, nw, nh, interpolation);
+        int c = image.Channels, x0 = (targetWidth - nw) / 2, y0 = (targetHeight - nh) / 2;
         var result = new ImageBatch(image.Batch, targetHeight, targetWidth, c);
-        Array.Fill(result.Data, paddingColor == "black" ? 0f : 1f);
-        int y0 = (targetHeight - newH) / 2, x0 = (targetWidth - newW) / 2;
+        Array.Fill(result.Data, fill);
         for (int b = 0; b < image.Batch; b++)
-            for (int y = 0; y < newH; y++)
-                Array.Copy(resized.Data, ((b * newH + y) * newW) * c, result.Data, ((b * targetHeight + y0 + y) * targetWidth + x0) * c, newW * c);
+            for (int y = 0; y < resized.Height; y++)
+                Array.Copy(resized.Data, (((long)b * resized.Height + y) * resized.Width) * c, result.Data,
+                    (((long)b * targetHeight + y + y0) * targetWidth + x0) * c, (long)resized.Width * c);
         return result;
     }
 }
 
+/// <summary>
+/// Joins image2 to image1 on the given side, as measured with ComfyUI:
+/// <list type="number">
+/// <item>The shorter batch repeats its last picture.</item>
+/// <item>match_image_size: image2 is scaled with lanczos to image1's height (left / right; width int(w2 h1 / h2)) or width (up / down; height
+/// int(h2 w1 / w2)). Otherwise the smaller picture is padded across the joining direction, half before (rounded down) and the rest after, with 1.0
+/// in every channel when spacing_color is white and 0.0 otherwise.</item>
+/// <item>Then both get the larger channel count, missing channels set to 1.0.</item>
+/// <item>A spacing strip of spacing_width rounded up to even pixels, in spacing_color (alpha 1), goes between them.</item>
+/// </list>
+/// Without image2, image1 is returned as it is.
+/// </summary>
 [Node(Category = "image/transform", DisplayName = "Stitch Images",
     Description = "Stitches image2 to image1 in the specified direction.\nIf image2 is not provided, returns image1 unchanged.\nOptional spacing can be added between images.")]
 public sealed class ImageStitch
 {
-    public static string[] Directions() => ["right", "down", "left", "up"];
-    public static string[] SpacingColors() => ["white", "black", "red", "green", "blue"];
-
-    /// <summary>
-    /// ComfyUI's Stitch Images: the shorter batch repeats its last picture; with <paramref name="matchImageSize"/> image2 is scaled (lanczos) to image1's
-    /// height (left/right) or width (up/down), else the smaller side is padded (centred); missing channels are filled with 1; an even
-    /// <paramref name="spacingWidth"/> strip of the colour goes between them.
-    /// </summary>
     public ImageBatch Execute(ImageBatch image1,
-        [Input(OptionsProvider = nameof(Directions))] string direction = "right",
+        [Input(Options = ["right", "down", "left", "up"])] string direction = "right",
         bool matchImageSize = true,
         [Input(Min = 0, Max = 1024, Step = 2)] int spacingWidth = 0,
-        [Input(OptionsProvider = nameof(SpacingColors))] string spacingColor = "white",
-        ImageBatch? image2 = null)
+        [Input(Options = ["white", "black", "red", "green", "blue"])] string spacingColor = "white",
+        [Input(Optional = true)] ImageBatch? image2 = null)
     {
         if (image2 is null) return image1;
-        if (!Directions().Contains(direction)) throw new ArgumentException($"Unknown direction '{direction}'.", nameof(direction));
-        float[] colour = spacingColor switch
+        bool sideways = direction switch
         {
-            "white" => [1f], "black" => [0f], "red" => [1f, 0f, 0f], "green" => [0f, 1f, 0f], "blue" => [0f, 0f, 1f],
+            "left" or "right" => true,
+            "up" or "down" => false,
+            _ => throw new ArgumentException($"Unknown direction '{direction}'.", nameof(direction)),
+        };
+        float[] rgb = spacingColor switch
+        {
+            "white" => [1f, 1f, 1f],
+            "black" => [0f, 0f, 0f],
+            "red" => [1f, 0f, 0f],
+            "green" => [0f, 1f, 0f],
+            "blue" => [0f, 0f, 1f],
             _ => throw new ArgumentException($"Unknown spacing color '{spacingColor}'.", nameof(spacingColor)),
         };
-        bool horizontal = direction is "left" or "right";
-
         int batch = Math.Max(image1.Batch, image2.Batch);
-        image1 = RepeatLast(image1, batch);
-        image2 = RepeatLast(image2, batch);
-
+        var a = RepeatLast(image1, batch);
+        var b = RepeatLast(image2, batch);
         if (matchImageSize)
         {
-            double aspect = (double)image2.Width / image2.Height;
-            int tw, th;
-            if (horizontal) { th = image1.Height; tw = (int)(image1.Height * aspect); }
-            else { tw = image1.Width; th = (int)(image1.Width / aspect); }
-            image2 = CommonUpscale.Resize(image2, tw, th, "lanczos");
+            if (sideways) b = CommonUpscale.Resize(b, (int)((double)b.Width * a.Height / b.Height), a.Height, "lanczos");
+            else b = CommonUpscale.Resize(b, a.Width, (int)((double)b.Height * a.Width / b.Width), "lanczos");
         }
         else
         {
-            // Pad the other side to match, half before and the rest after, with white/black (0 for the coloured choices).
-            float pad = colour.Length == 1 ? colour[0] : 0f;
-            if (horizontal && image1.Height != image2.Height)
+            float fill = spacingColor == "white" ? 1f : 0f;
+            if (sideways)
             {
-                int target = Math.Max(image1.Height, image2.Height);
-                image1 = Pad(image1, 0, target - image1.Height, pad);
-                image2 = Pad(image2, 0, target - image2.Height, pad);
+                int height = Math.Max(a.Height, b.Height);
+                a = Pad(a, height, a.Width, fill);
+                b = Pad(b, height, b.Width, fill);
             }
-            else if (!horizontal && image1.Width != image2.Width)
+            else
             {
-                int target = Math.Max(image1.Width, image2.Width);
-                image1 = Pad(image1, target - image1.Width, 0, pad);
-                image2 = Pad(image2, target - image2.Width, 0, pad);
+                int width = Math.Max(a.Width, b.Width);
+                a = Pad(a, a.Height, width, fill);
+                b = Pad(b, b.Height, width, fill);
             }
         }
-
-        int channels = Math.Max(image1.Channels, image2.Channels);
-        image1 = WithChannels(image1, channels);
-        image2 = WithChannels(image2, channels);
-
-        var parts = direction is "left" or "up" ? new List<ImageBatch> { image2, image1 } : [image1, image2];
+        int channels = Math.Max(a.Channels, b.Channels);
+        a = WithChannels(a, channels);
+        b = WithChannels(b, channels);
+        var parts = new List<ImageBatch> { a };
         if (spacingWidth > 0)
         {
-            spacingWidth += spacingWidth % 2;
-            var strip = horizontal
-                ? new ImageBatch(batch, Math.Max(image1.Height, image2.Height), spacingWidth, channels)
-                : new ImageBatch(batch, spacingWidth, Math.Max(image1.Width, image2.Width), channels);
-            for (int p = 0; p < strip.Data.Length; p += channels)
+            int sp = spacingWidth + spacingWidth % 2;
+            var strip = sideways ? new ImageBatch(batch, a.Height, sp, channels) : new ImageBatch(batch, sp, a.Width, channels);
+            for (long i = 0; i < strip.Data.Length; i++)
             {
-                if (colour.Length == 3) for (int k = 0; k < Math.Min(3, channels); k++) strip.Data[p + k] = colour[k];
-                else for (int k = 0; k < Math.Min(3, channels); k++) strip.Data[p + k] = colour[0];
-                if (channels == 4) strip.Data[p + 3] = 1f;
+                int ch = (int)(i % channels);
+                strip.Data[i] = ch < 3 ? rgb[ch] : 1f;
             }
-            parts.Insert(1, strip);
+            parts.Add(strip);
         }
-        return horizontal ? ConcatWidth(parts) : ConcatHeight(parts);
+        parts.Add(b);
+        if (direction is "left" or "up") parts.Reverse();
+        return sideways ? JoinColumns(parts) : JoinRows(parts);
     }
 
-    static ImageBatch RepeatLast(ImageBatch img, int batch)
+    static ImageBatch RepeatLast(ImageBatch image, int batch)
     {
-        if (img.Batch >= batch) return img;
-        int n = img.Height * img.Width * img.Channels;
-        var r = new ImageBatch(batch, img.Height, img.Width, img.Channels);
-        Array.Copy(img.Data, r.Data, img.Data.Length);
-        for (int b = img.Batch; b < batch; b++) Array.Copy(img.Data, (img.Batch - 1) * n, r.Data, b * n, n);
-        return r;
+        if (image.Batch >= batch) return image;
+        int n = image.Height * image.Width * image.Channels;
+        var result = new ImageBatch(batch, image.Height, image.Width, image.Channels);
+        for (int i = 0; i < batch; i++) Array.Copy(image.Data, (long)Math.Min(i, image.Batch - 1) * n, result.Data, (long)i * n, n);
+        return result;
     }
 
-    /// <summary>Adds <paramref name="padW"/> columns (half left, the rest right) and <paramref name="padH"/> rows (half on top) of <paramref name="value"/> in every channel.</summary>
-    static ImageBatch Pad(ImageBatch img, int padW, int padH, float value)
+    /// <summary>Pads to <paramref name="height"/> x <paramref name="width"/>: half the difference before (rounded down), the rest after.</summary>
+    static ImageBatch Pad(ImageBatch image, int height, int width, float fill)
     {
-        if (padW == 0 && padH == 0) return img;
-        int c = img.Channels, nw = img.Width + padW, nh = img.Height + padH, left = padW / 2, top = padH / 2;
-        var r = new ImageBatch(img.Batch, nh, nw, c);
-        Array.Fill(r.Data, value);
-        for (int b = 0; b < img.Batch; b++)
-            for (int y = 0; y < img.Height; y++)
-                Array.Copy(img.Data, ((b * img.Height + y) * img.Width) * c, r.Data, ((b * nh + top + y) * nw + left) * c, img.Width * c);
-        return r;
+        if (image.Height == height && image.Width == width) return image;
+        int c = image.Channels, top = (height - image.Height) / 2, left = (width - image.Width) / 2;
+        var result = new ImageBatch(image.Batch, height, width, c);
+        Array.Fill(result.Data, fill);
+        for (int b = 0; b < image.Batch; b++)
+            for (int y = 0; y < image.Height; y++)
+                Array.Copy(image.Data, (((long)b * image.Height + y) * image.Width) * c, result.Data, (((long)b * height + y + top) * width + left) * c,
+                    (long)image.Width * c);
+        return result;
     }
 
-    static ImageBatch WithChannels(ImageBatch img, int channels)
+    /// <summary>Adds channels of 1.0 up to <paramref name="channels"/>.</summary>
+    static ImageBatch WithChannels(ImageBatch image, int channels)
     {
-        if (img.Channels == channels) return img;
-        var r = new ImageBatch(img.Batch, img.Height, img.Width, channels);
-        for (int p = 0; p < img.Batch * img.Height * img.Width; p++)
-            for (int k = 0; k < channels; k++) r.Data[p * channels + k] = k < img.Channels ? img.Data[p * img.Channels + k] : 1f;
-        return r;
-    }
-
-    static ImageBatch ConcatWidth(List<ImageBatch> parts)
-    {
-        int h = parts[0].Height, c = parts[0].Channels, batch = parts[0].Batch;
-        if (parts.Any(p => p.Height != h)) throw new ArgumentException("The pictures have different heights; turn on match_image_size or use pictures of the same height.");
-        int w = parts.Sum(p => p.Width);
-        var r = new ImageBatch(batch, h, w, c);
-        for (int b = 0; b < batch; b++)
-            for (int y = 0; y < h; y++)
-            {
-                int x0 = 0;
-                foreach (var p in parts)
-                {
-                    Array.Copy(p.Data, ((b * h + y) * p.Width) * c, r.Data, ((b * h + y) * w + x0) * c, p.Width * c);
-                    x0 += p.Width;
-                }
-            }
-        return r;
-    }
-
-    static ImageBatch ConcatHeight(List<ImageBatch> parts)
-    {
-        int w = parts[0].Width, c = parts[0].Channels, batch = parts[0].Batch;
-        if (parts.Any(p => p.Width != w)) throw new ArgumentException("The pictures have different widths; turn on match_image_size or use pictures of the same width.");
-        int h = parts.Sum(p => p.Height), row = w * c;
-        var r = new ImageBatch(batch, h, w, c);
-        for (int b = 0; b < batch; b++)
+        int c = image.Channels;
+        if (c == channels) return image;
+        long pixels = (long)image.Batch * image.Height * image.Width;
+        var result = new ImageBatch(image.Batch, image.Height, image.Width, channels);
+        for (long p = 0; p < pixels; p++)
         {
-            int y0 = 0;
-            foreach (var p in parts)
-            {
-                Array.Copy(p.Data, b * p.Height * row, r.Data, (b * h + y0) * row, p.Height * row);
-                y0 += p.Height;
-            }
-        }
-        return r;
-    }
-}
-
-[Node(Category = "image/transform", DisplayName = "Crop Image to Mask", OutputNames = ["images"])]
-public sealed class ImageCropToMask
-{
-    /// <summary>
-    /// ComfyUI's Crop Image to Mask (the TRELLIS.2 preprocessing): the box around the mask (alpha above 0.8) grown to the output aspect ratio
-    /// and by <paramref name="padFactor"/>, cut out (zero outside the picture), the subject composited over <paramref name="background"/> and
-    /// scaled (lanczos) to width x height. An inverted mask (border set, centre clear) is turned around first; <paramref name="growMask"/> dilates
-    /// (or erodes, negative) the mask, values under 0.05 are dropped, and a picture larger than the output is scaled down first.
-    /// </summary>
-    public ImageBatch Execute(ImageBatch images, MaskBatch masks,
-        [Input(Min = 64, Max = 4096, Step = 8, Tooltip = "Output width in pixels.")] int width = 1024,
-        [Input(Min = 64, Max = 4096, Step = 8, Tooltip = "Output height in pixels.")] int height = 1024,
-        [Input(Min = 1.0, Max = 2.0, Step = 0.01, Tooltip = "Extra margin around the mask bounding box as a multiplier.")] double padFactor = 1.0,
-        [Input(Min = -32, Max = 32, Step = 1, Tooltip = "Grow or shrink the mask by this many pixels before cropping.")] int growMask = 0,
-        [Input(Color = true, Tooltip = "Background color behind the masked subject.")] string background = "#000000")
-    {
-        var hex = background.TrimStart('#');
-        float[] bg = hex.Length == 6
-            ? [(float)(PyInt.Parse(hex[0..2], 16) / 255.0), (float)(PyInt.Parse(hex[2..4], 16) / 255.0), (float)(PyInt.Parse(hex[4..6], 16) / 255.0)]
-            : [0f, 0f, 0f];
-        int batch = images.Batch, h = images.Height, w = images.Width;
-        if (masks.Batch != 1 && masks.Batch != batch) throw new ArgumentException($"Mask batch {masks.Batch} does not match image batch {batch}");
-        if (masks.Height != h || masks.Width != w) masks = CommonUpscale.Resize(masks, w, h, "bilinear");
-
-        var result = new ImageBatch(batch, height, width, 3);
-        for (int b = 0; b < batch; b++)
-        {
-            var img = new float[h * w * 3];
-            for (int p = 0; p < h * w; p++)
-                for (int k = 0; k < 3; k++) img[p * 3 + k] = Math.Clamp(images.Data[(b * h * w + p) * images.Channels + Math.Min(k, images.Channels - 1)], 0f, 1f);
-            var mask = new float[h * w];
-            int mb = masks.Batch == 1 ? 0 : b;
-            for (int p = 0; p < h * w; p++) mask[p] = Math.Clamp(masks.Data[mb * h * w + p], 0f, 1f);
-
-            var (composite, cw, ch) = Crop(img, mask, w, h, Math.Max(width, height), padFactor, growMask, bg, (double)width / height);
-            var scaled = PilLanczos.Resize(composite, cw, ch, 3, width, height);
-            Array.Copy(scaled, 0, result.Data, b * width * height * 3, scaled.Length);
+            Array.Copy(image.Data, p * c, result.Data, p * channels, c);
+            for (int k = c; k < channels; k++) result.Data[p * channels + k] = 1f;
         }
         return result;
     }
 
-    /// <summary>ComfyUI's <c>_crop_image_with_mask</c> with its default threshold 0.05: the composited crop and its size.</summary>
-    static (float[] Image, int W, int H) Crop(float[] img, float[] mask, int W, int H, int maxSize, double padFactor, int offset, float[] bg, double aspectRatio)
+    static ImageBatch JoinColumns(List<ImageBatch> parts)
     {
-        // An inverted mask is detected only when border and centre disagree (border pixels as ComfyUI lists them: rows then columns, corners twice).
-        double border = 0;
-        for (int x = 0; x < W; x++) border += mask[x] + mask[(H - 1) * W + x];
-        for (int y = 0; y < H; y++) border += mask[y * W] + mask[y * W + W - 1];
-        border /= 2 * W + 2 * H;
-        double centre = 0;
-        int cy0 = H / 4, cy1 = H - H / 4, cx0 = W / 4, cx1 = W - W / 4, count = 0;
-        for (int y = cy0; y < cy1; y++) for (int x = cx0; x < cx1; x++) { centre += mask[y * W + x]; count++; }
-        centre = count == 0 ? double.NaN : centre / count;
-        if (border > 0.5 && centre < 0.5) for (int i = 0; i < mask.Length; i++) mask[i] = 1f - mask[i];
-
-        if (offset != 0) mask = Grow(mask, W, H, offset);
-        for (int i = 0; i < mask.Length; i++) if (mask[i] < 0.05f) mask[i] = 0f;
-
-        if (Math.Max(H, W) > maxSize)
-        {
-            double scale = (double)maxSize / Math.Max(H, W);
-            int nw = (int)(W * scale), nh = (int)(H * scale);
-            img = PilLanczos.Resize(img, W, H, 3, nw, nh);
-            mask = PilLanczos.Resize(mask, W, H, 1, nw, nh);
-            (W, H) = (nw, nh);
-        }
-
-        // Foreground: alpha as 8 bits (truncated) above 204; if there is none, the inverted alpha is tried (and the mask turned around).
-        var alpha = new int[W * H];
-        for (int i = 0; i < alpha.Length; i++) alpha[i] = (byte)(Math.Clamp(mask[i], 0f, 1f) * 255f);
-        Func<int, bool> fg = i => alpha[i] > 204;
-        bool any = Enumerable.Range(0, W * H).Any(fg);
-        if (!any && Enumerable.Range(0, W * H).Any(i => 255 - alpha[i] > 204))
-        {
-            for (int i = 0; i < mask.Length; i++) mask[i] = 1f - mask[i];
-            fg = i => 255 - alpha[i] > 204;
-            any = true;
-        }
-
-        int x1, y1, x2, y2;
-        if (any)
-        {
-            int xMin = int.MaxValue, yMin = int.MaxValue, xMax = int.MinValue, yMax = int.MinValue;
-            for (int y = 0; y < H; y++)
-                for (int x = 0; x < W; x++)
-                    if (fg(y * W + x)) { xMin = Math.Min(xMin, x); xMax = Math.Max(xMax, x); yMin = Math.Min(yMin, y); yMax = Math.Max(yMax, y); }
-            double centerY = (yMin + yMax) / 2.0, centerX = (xMin + xMax) / 2.0;
-            int bw = xMax - xMin + 1, bh = yMax - yMin + 1, cropW, cropH;
-            if (bw / (double)Math.Max(bh, 1) >= aspectRatio) { cropW = (int)(bw * padFactor); cropH = (int)(bw / aspectRatio * padFactor); }
-            else { cropH = (int)(bh * padFactor); cropW = (int)(bh * aspectRatio * padFactor); }
-            int halfW = (int)Math.Ceiling(cropW / 2.0), halfH = (int)Math.Ceiling(cropH / 2.0);
-            x1 = (int)(centerX - halfW); y1 = (int)(centerY - halfH);
-            x2 = x1 + 2 * halfW; y2 = y1 + 2 * halfH;
-        }
-        else (x1, y1, x2, y2) = (0, 0, W, H);
-
-        // Cut the box out; outside the picture the image and the mask are 0 (Pillow crop semantics), so the background shows there.
-        int cw = x2 - x1, ch = y2 - y1;
-        var outImg = new float[cw * ch * 3];
-        for (int y = 0; y < ch; y++)
-            for (int x = 0; x < cw; x++)
+        int batch = parts[0].Batch, h = parts[0].Height, c = parts[0].Channels, width = parts.Sum(p => p.Width);
+        var result = new ImageBatch(batch, h, width, c);
+        for (int b = 0; b < batch; b++)
+            for (int y = 0; y < h; y++)
             {
-                int sx = x1 + x, sy = y1 + y;
-                bool inside = sx >= 0 && sx < W && sy >= 0 && sy < H;
-                float m = inside ? mask[sy * W + sx] : 0f;
-                for (int k = 0; k < 3; k++)
+                long at = (((long)b * h + y) * width) * c;
+                foreach (var p in parts)
                 {
-                    float v = inside ? img[(sy * W + sx) * 3 + k] : 0f;
-                    outImg[(y * cw + x) * 3 + k] = Math.Clamp(v * m + bg[k] * (1f - m), 0f, 1f);
+                    Array.Copy(p.Data, (((long)b * h + y) * p.Width) * c, result.Data, at, (long)p.Width * c);
+                    at += (long)p.Width * c;
                 }
             }
-        return (outImg, cw, ch);
+        return result;
     }
 
-    /// <summary>max_pool2d with a (2r+1) window (outside ignored): grows the mask; a negative offset shrinks it (the same on 1 - mask).</summary>
-    static float[] Grow(float[] mask, int w, int h, int offset)
+    static ImageBatch JoinRows(List<ImageBatch> parts)
     {
-        int r = Math.Abs(offset);
-        bool shrink = offset < 0;
-        float V(int i) => shrink ? 1f - mask[i] : mask[i];
-        var tmp = new float[mask.Length];
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
+        int batch = parts[0].Batch, w = parts[0].Width, c = parts[0].Channels, height = parts.Sum(p => p.Height);
+        var result = new ImageBatch(batch, height, w, c);
+        for (int b = 0; b < batch; b++)
+        {
+            long at = (long)b * height * w * c;
+            foreach (var p in parts)
             {
-                float v = float.NegativeInfinity;
-                for (int k = Math.Max(0, x - r); k <= Math.Min(w - 1, x + r); k++) v = Math.Max(v, V(y * w + k));
-                tmp[y * w + x] = v;
+                long n = (long)p.Height * w * c;
+                Array.Copy(p.Data, b * n, result.Data, at, n);
+                at += n;
             }
-        var dst = new float[mask.Length];
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-            {
-                float v = float.NegativeInfinity;
-                for (int k = Math.Max(0, y - r); k <= Math.Min(h - 1, y + r); k++) v = Math.Max(v, tmp[k * w + x]);
-                dst[y * w + x] = shrink ? 1f - v : v;
-            }
-        return dst;
+        }
+        return result;
     }
 }

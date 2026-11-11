@@ -117,6 +117,14 @@ Documented difference: Convert SDR to HDR follows ComfyUI's measured pipeline ex
 HLG), but ComfyUI's calibrated luminance curve has no published description, so SpawnGen interpolates a table measured from ComfyUI
 (tools/parity/make_sdr_to_hdr_table.py: 101 target luminances by 256 levels). Output values agree to about 2e-5 on the fixture and within about
 2e-4 between table knots (under a tenth of an 8-bit level); target luminances between 0 and 0.001 nits use the 0.001 nit curve (2026-11-11).
+Documented differences, Create Layered Image (ImageCompositor, rebuilt clean-room 2026-11-11): the layer fingerprints the editor matches saved
+compositions by are SpawnGen's own (16 hex digits of SHA-256 over the same inputs ComfyUI's depend on: the 8-bit pixels with the mask applied and the
+initial placement, size, rotation, opacity, blend mode, flips and visibility). ComfyUI's hash could not be derived from its behaviour, so a composition
+saved by ComfyUI's editor reports stale in SpawnGen (and the other way round) and is drawn from the layer stack; one saved in SpawnGen replays. The test maps
+ComfyUI's fingerprints to SpawnGen's position by position and checks that the two tell the same layers apart. The hue, saturation and color blend modes
+convert through HLS / HSV in double precision and agree within 2e-7 (the order of ComfyUI's operations there is not known; the other 23 modes are
+bit-exact). Rotated layers are placed by the reach of their turned corners, which matches every fixture case; a few exact 360-degree turns and
+fractional saved sizes of rotated layers can sit one pixel off ComfyUI's placement.
 Deliberate difference: Save Text writes line breaks as given (`
 `); ComfyUI opens its file in Python's text mode, so on Windows it writes `
 

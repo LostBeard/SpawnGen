@@ -63,7 +63,9 @@ public class CompositorParityTests
         {
             var actual = new float[i.Length];
             for (int p = 0; p < i.Length; p += 3) CompositorBlend.BlendPixel(mode.Name, i.AsSpan(p, 3), l.AsSpan(p, 3), actual.AsSpan(p, 3));
-            Close(actual, BlendTensor(mode.Value).Data, 0, mode.Name); // the same float32 operations in the same order
+            // The same float32 operations in the same order; hue, saturation and color convert through HLS / HSV in double precision, where the order of
+            // ComfyUI's operations is not known: within 2e-7 (PARITY.md).
+            Close(actual, BlendTensor(mode.Value).Data, mode.Name is "hue" or "saturation" or "color" ? 2e-7 : 0, mode.Name);
         }
         Assert.That(b.GetProperty("modes").EnumerateObject().Select(m => m.Name), Is.EquivalentTo(CompositorBlend.ModeNames));
     }
@@ -213,13 +215,54 @@ public class CompositorParityTests
         });
     }
 
+    static Dictionary<string, string>? _fingerprints;
+
+    /// <summary>
+    /// ComfyUI's layer fingerprints to SpawnGen's (ComfyUI's hash is not known; SpawnGen hashes the same inputs its own way, PARITY.md): position by position
+    /// over every composite the fixture reports them for. The same ComfyUI fingerprint always meets the same SpawnGen one, and different ones differ.
+    /// </summary>
+    static Dictionary<string, string> FingerprintMap()
+    {
+        lock (typeof(CompositorParityTests))
+        {
+            if (_fingerprints is not null) return _fingerprints;
+            var map = new Dictionary<string, string>();
+            foreach (var c in Load().Where(c => c.Node == "ImageCompositor" && c.Json.TryGetProperty("ui", out _)))
+            {
+                var ours = ImageCompositor.Fingerprints(Doc(c, c.Json.GetProperty("args").GetProperty("layers")));
+                var theirs = c.Json.GetProperty("ui").GetProperty("compositor_inputs").EnumerateArray().Select(e => e.GetString()!).ToList();
+                Assert.That(ours, Has.Count.EqualTo(theirs.Count), $"{c} fingerprint count");
+                for (int i = 0; i < theirs.Count; i++)
+                {
+                    if (map.TryGetValue(theirs[i], out var known)) Assert.That(ours[i], Is.EqualTo(known), $"{c} fingerprint {i}");
+                    else map[theirs[i]] = (string)ours[i]!;
+                }
+            }
+            Assert.That(map.Values.Distinct().Count(), Is.EqualTo(map.Count), "different ComfyUI fingerprints are different SpawnGen ones");
+            return _fingerprints = map;
+        }
+    }
+
+    /// <summary>The value with ComfyUI's fingerprints replaced by SpawnGen's (inside JSON text too); unknown ones stay, as a stale composition's do.</summary>
+    static object? Mapped(object? v, Dictionary<string, string> map) => v switch
+    {
+        string s => map.Aggregate(s, (t, kv) => t.Replace(kv.Key, kv.Value)),
+        DictValue d => d.Aggregate(new DictValue(), (n, kv) => { n[kv.Key] = Mapped(kv.Value, map); return n; }),
+        ArrayValue a => new ArrayValue(a.Select(i => Mapped(i, map))),
+        _ => v,
+    };
+
+    [Test]
+    public void SpawnGen_fingerprints_tell_apart_what_ComfyUIs_do() => Assert.That(FingerprintMap(), Is.Not.Empty);
+
     [TestCaseSource(nameof(CompositeCases))]
     public void ImageCompositor_matches_ComfyUI(Case c)
     {
         var args = c.Json.GetProperty("args");
+        var map = FingerprintMap();
         Expect(c, () =>
         {
-            var (image, mask, ui) = new ImageCompositor().ExecuteAsync(Doc(c, args.GetProperty("layers"))!, Arg(c, "compositor")).GetAwaiter().GetResult();
+            var (image, mask, ui) = new ImageCompositor().ExecuteAsync(Doc(c, args.GetProperty("layers"))!, Mapped(Arg(c, "compositor"), map)).GetAwaiter().GetResult();
             var o = c.Json.GetProperty("out");
             // numpy's float32 arithmetic in the same order; powf in the sRGB curves can differ in the last bit.
             Same(image, T(c, o[0]), 2e-6, "image");
@@ -228,7 +271,7 @@ public class CompositorParityTests
             foreach (var key in new[] { "compositor_inputs", "compositor_bboxes", "compositor_canvas", "compositor_state_stale" })
             {
                 if (!expectedUi.TryGetProperty(key, out var e)) { Assert.That(ui.ContainsKey(key), Is.False, key); continue; }
-                Assert.That(JsonLiteral.ToJson(ui[key]), Is.EqualTo(JsonLiteral.ToJson(JsonLiteral.FromJson(e))), key);
+                Assert.That(JsonLiteral.ToJson(ui[key]), Is.EqualTo(JsonLiteral.ToJson(Mapped(JsonLiteral.FromJson(e), map))), key);
             }
         });
     }

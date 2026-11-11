@@ -151,6 +151,9 @@ Deliberate difference: Save Text writes line breaks as given (`
 ` (measured, clean-room batch C).
 Deliberate difference (a ComfyUI bug not copied): measured with ComfyUI, its text steps put out each result as a list of one text, ["text"]
 (previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
+Documented difference: the beta scheduler (and Beta Sampling Scheduler) rounds a symmetric shape's median timestep where the median lands exactly on
+a half (0.5 times an odd count); ComfyUI decides that tie by scipy's last-bit error, which SpawnGen reproduces for the measured shapes (alpha = beta =
+0.1, 0.5, 0.6, 1.5, 2.0, and every shape scipy gets exactly); another symmetric shape can land one timestep away from ComfyUI's at that one step.
 
 Still missing, by kind:
 1. **Need the library**: CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use

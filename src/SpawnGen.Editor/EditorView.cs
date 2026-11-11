@@ -907,6 +907,21 @@ public sealed class EditorView
     public void Paste(Point at, bool keepExternalInputs = false)
     {
         if (_clipboard is not { Nodes.Count: > 0 } clip) return;
+        PasteClip(clip, at, keepExternalInputs);
+    }
+
+    /// <summary>Clone (the node menu's): copies of the nodes with the links among them, a step down and right, selected; the clipboard is left alone.</summary>
+    public void Duplicate(IReadOnlyCollection<int> ids)
+    {
+        var set = ids.Where(id => Document.Graph.FindNode(id) is not null).ToHashSet();
+        if (set.Count == 0) return;
+        var nodes = set.Select(Document.Graph.GetNode).Select(n => n.Clone()).ToList();
+        var links = Document.Graph.Links.Where(l => set.Contains(l.FromNode) && set.Contains(l.ToNode)).ToList();
+        PasteClip(new Clipboard(nodes, links, []), new Point(nodes.Min(n => n.X) + 30, nodes.Min(n => n.Y) + 30), keepExternalInputs: false);
+    }
+
+    void PasteClip(Clipboard clip, Point at, bool keepExternalInputs)
+    {
         double minX = clip.Nodes.Min(n => n.X), minY = clip.Nodes.Min(n => n.Y);
         var map = new Dictionary<int, int>();
         var created = new List<int>();

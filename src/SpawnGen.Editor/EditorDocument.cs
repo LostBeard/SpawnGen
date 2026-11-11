@@ -201,6 +201,29 @@ public sealed class EditorDocument(NodeRegistry registry)
         if (Graph.FindLink(linkId) is { } link) Run(new DisconnectCommand(link));
     }
 
+    /// <summary>Takes out every link leaving an output (one undo step); returns how many there were.</summary>
+    public int DisconnectOutput(int nodeId, int output)
+    {
+        var links = Graph.LinksFrom(nodeId, output).ToList();
+        Group(() => { foreach (var l in links) Disconnect(l.Id); });
+        return links.Count;
+    }
+
+    /// <summary>Puts a Reroute node into a link, centred on (<paramref name="x"/>, <paramref name="y"/>): source to reroute to target, one undo step.</summary>
+    public EditorNode? InsertReroute(int linkId, double x, double y)
+    {
+        if (Graph.FindLink(linkId) is not { } link) return null;
+        EditorNode? reroute = null;
+        Group(() =>
+        {
+            reroute = AddNode("Reroute", x - NodeLayout.RerouteWidth / 2, y - NodeLayout.RerouteHeight / 2);
+            Disconnect(link.Id);
+            Connect(link.FromNode, link.FromOutput, reroute.Id, "value", out _);
+            Connect(reroute.Id, 0, link.ToNode, link.ToInput, out _);
+        });
+        return reroute;
+    }
+
     public void SetWidget(int nodeId, string name, object? value)
     {
         var node = Graph.GetNode(nodeId);

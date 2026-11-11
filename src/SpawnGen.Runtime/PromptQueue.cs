@@ -6,7 +6,13 @@ using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Runtime;
 
-public sealed record QueuedPrompt(int Number, string Id, PromptGraph Graph, string? ClientId, IReadOnlyDictionary<string, string>? ExtraPngInfo = null, string? PreviewMethod = null);
+public sealed record QueuedPrompt(int Number, string Id, PromptGraph Graph, string? ClientId, IReadOnlyDictionary<string, string>? ExtraPngInfo = null, string? PreviewMethod = null)
+{
+    /// <summary>The output nodes this run executes (the ones that validated, among the targets when some were given).</summary>
+    public IReadOnlyList<string> Outputs { get; init; } = [];
+    /// <summary>Output nodes left out because what they need does not validate, with their errors (reported as ComfyUI's node_errors).</summary>
+    public IReadOnlyList<OutputFailure> Skipped { get; init; } = [];
+}
 
 /// <summary>One finished (or failed) run, as <c>/history</c> reports it.</summary>
 public sealed class HistoryEntry
@@ -54,16 +60,25 @@ public sealed class PromptQueue : IDisposable
 
     public NodeRegistry Registry { get; }
 
-    /// <summary>Validates and queues the prompt (at the front when <paramref name="front"/>, so it runs next). Throws <see cref="PromptValidationException"/> (nothing is queued) when it cannot run.</summary>
-    public QueuedPrompt Enqueue(PromptGraph graph, string? clientId, IReadOnlyDictionary<string, string>? extraPngInfo = null, bool front = false, string? previewMethod = null)
+    /// <summary>
+    /// Validates and queues the prompt (at the front when <paramref name="front"/>, so it runs next). Each output node is checked on its own: the
+    /// ones that validate run, the others are left out and listed in <see cref="QueuedPrompt.Skipped"/> (as ComfyUI does). <paramref name="targets"/>
+    /// (ComfyUI's partial_execution_targets) runs only those output nodes. Throws <see cref="PromptValidationException"/> (nothing is queued)
+    /// when no output node can run.
+    /// </summary>
+    public QueuedPrompt Enqueue(PromptGraph graph, string? clientId, IReadOnlyDictionary<string, string>? extraPngInfo = null, bool front = false, string? previewMethod = null,
+        IReadOnlyList<string>? targets = null)
     {
-        var validation = _executor.Validate(graph);
-        if (!validation.IsValid) throw new PromptValidationException(validation);
+        var admission = PromptAdmission.Check(Registry, graph, targets);
+        if (admission.Refused) throw PromptAdmission.Refusal(admission);
 
         QueuedPrompt item;
         lock (_gate)
         {
-            item = new QueuedPrompt(++_number, Guid.NewGuid().ToString("D"), graph, clientId, extraPngInfo, previewMethod);
+            item = new QueuedPrompt(++_number, Guid.NewGuid().ToString("D"), graph, clientId, extraPngInfo, previewMethod)
+            {
+                Outputs = admission.Outputs, Skipped = admission.Failures,
+            };
             if (front) _pending.Insert(0, item); else _pending.Add(item);
         }
         _signal.Release();
@@ -168,7 +183,7 @@ public sealed class PromptQueue : IDisposable
         ExecutionResult? result = null;
         try
         {
-            result = await _executor.ExecuteAsync(item.Graph, new ExecutionOptions { PromptId = item.Id, ExtraPngInfo = item.ExtraPngInfo, PreviewMethod = item.PreviewMethod }, observer, ct);
+            result = await _executor.ExecuteAsync(item.Graph, new ExecutionOptions { PromptId = item.Id, ExtraPngInfo = item.ExtraPngInfo, PreviewMethod = item.PreviewMethod, OutputNodeIds = item.Outputs }, observer, ct);
         }
         catch (OperationCanceledException)
         {

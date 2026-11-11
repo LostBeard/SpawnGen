@@ -1311,8 +1311,13 @@
         if (hit.Kind is HitKind.NodeBody or HitKind.TitleBar or HitKind.Widget or HitKind.CollapseButton)
         {
             var node = _doc.Graph.GetNode(hit.NodeId);
+            var chosen = _view.SelectedNodes.Contains(hit.NodeId) ? _view.SelectedNodes.ToList() : [hit.NodeId];
+            var chosenOutputs = chosen.Where(id => _doc.Graph.FindNode(id) is { } n && Registry.GetSchema(n.ClassType)?.IsOutputNode == true).ToList();
+            if (chosenOutputs.Count > 0 && _subgraphStack.Count == 0)
+                items.Add(new(chosenOutputs.Count == 1 ? "Queue Selected Output Node" : $"Queue Selected Output Nodes ({chosenOutputs.Count})", () => _ = QueueAsync(targets: chosenOutputs)));
             items.Add(new("Rename", () => OnTitleEdit(hit.NodeId)));
             items.Add(new("Properties Panel  (I)", () => { _propsOpen = true; InvokeAsync(StateHasChanged); }));
+            items.Add(new(chosen.Count > 1 ? $"Clone ({chosen.Count})" : "Clone", () => _view.Duplicate(chosen)));
             if (SubgraphLibrary.Get(node.ClassType) is not null)
             {
                 items.Add(new("Open Subgraph", () => EnterSubgraph(node)));
@@ -1328,7 +1333,10 @@
             if (node.Color is not null || node.BgColor is not null)
                 items.Add(new("Colour: default", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, null, null); _doc.EndGesture(); }));
             if (node.Previews.Count > 0)
+            {
+                items.Add(new("Open Image", () => { _lightbox = node.Previews[0].Url; InvokeAsync(StateHasChanged); }));
                 items.Add(new("Save picture", () => _ = SavePicturesAsync(node)));
+            }
             if (node.ResultModels.Count > 0)
                 items.Add(new("View 3D model", () => View3D(node.ResultModels[0])));
             if (!node.Pinned) items.Add(new(node.Collapsed ? "Expand" : "Collapse", () => { _doc.SetCollapsed(hit.NodeId, !node.Collapsed); _doc.EndGesture(); }));
@@ -1340,7 +1348,24 @@
         }
         else if (hit.Kind == HitKind.Link)
         {
+            items.Add(new("Add Reroute here", () => { _doc.InsertReroute(hit.LinkId, world.X, world.Y); _doc.EndGesture(); }));
             items.Add(new("Delete link", () => _doc.Disconnect(hit.LinkId)));
+        }
+        else if (hit.Kind == HitKind.InputSlot)
+        {
+            // An input dot: what feeds it can be taken out; an empty one offers the search for a node to feed it.
+            if (hit.Name is { } input && _doc.Graph.LinkInto(hit.NodeId, input) is { } link)
+                items.Add(new("Disconnect", () => { _doc.Disconnect(link.Id); _doc.EndGesture(); }));
+            else
+                items.Add(new("Add node...", () => OpenSearch(world, null)));
+        }
+        else if (hit.Kind == HitKind.OutputSlot)
+        {
+            int count = _doc.Graph.LinksFrom(hit.NodeId, hit.Index).Count();
+            if (count > 0)
+                items.Add(new(count == 1 ? "Disconnect" : $"Disconnect links ({count})", () => { _doc.DisconnectOutput(hit.NodeId, hit.Index); _doc.EndGesture(); }));
+            else
+                items.Add(new("Add node...", () => OpenSearch(world, null)));
         }
         else if (hit.Kind == HitKind.GroupTitle)
         {
@@ -1831,14 +1856,15 @@
 
     bool _queueNoteShown;
 
-    async Task QueueAsync(bool front = false)
+    /// <param name="targets">Run only these output nodes (Queue Selected Output Nodes); null runs every output.</param>
+    async Task QueueAsync(bool front = false, IReadOnlyList<int>? targets = null)
     {
         if (_engine is null) { ShowMessage("There is no engine: this browser has no WebGPU and no SpawnGen server serves this page."); return; }
         int ahead = _pending.Count + (_running ? 1 : 0), queued = 0;
         _queueNoteShown = false;
         for (int run = 0, runs = Math.Clamp(_batchCount, 1, 100); run < runs; run++)
         {
-            if (!await QueueOnceAsync(front)) break;
+            if (!await QueueOnceAsync(front, targets)) break;
             queued++;
         }
         // Say what Queue did, so a second press is a choice and not a guess.
@@ -1851,7 +1877,7 @@
     }
 
     /// <summary>Sends the graph once and then moves every seed on by its control after generate, as ComfyUI does. False when the run could not be queued.</summary>
-    async Task<bool> QueueOnceAsync(bool front = false)
+    async Task<bool> QueueOnceAsync(bool front = false, IReadOnlyList<int>? targets = null)
     {
         // Inside a subgraph the canvas shows only its inside: run the tab's whole workflow, with the edit.
         var runDoc = _doc;
@@ -1866,7 +1892,8 @@
 
         // The workflow travels with the prompt so Save Image can embed it: the picture can then be dropped back on the canvas.
         var workflow = ComfyWorkflow.Save(runDoc, _renderer.MeasureText);
-        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow, front, _settings.PreviewMethod);
+        var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow, front, _settings.PreviewMethod,
+            targets?.Select(id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToList());
         if (!result.Queued)
         {
             foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;
@@ -1874,6 +1901,14 @@
             ShowMessage($"{result.Message}.{detail}");
             _view.Invalidate();
             return false;
+        }
+        if (result.NodeErrors.Count > 0)
+        {
+            // Queued, with the output nodes whose inputs do not validate left out (as ComfyUI does): show where and why.
+            foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;
+            ShowMessage($"Queued without the outputs that need node {string.Join(", ", result.NodeErrors.Keys)}: {result.NodeErrors.First().Value}");
+            _queueNoteShown = true;
+            _view.Invalidate();
         }
         if (result.PromptId is { } queuedId && !_startedIds.Remove(queuedId))
         {

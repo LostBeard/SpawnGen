@@ -115,10 +115,11 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
         };
     }
 
-    public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null)
+    public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null)
     {
         var body = new JsonObject { ["prompt"] = JsonNode.Parse(promptJson), ["client_id"] = ClientId };
         if (front) body["front"] = true;
+        if (targets is not null) body["partial_execution_targets"] = new JsonArray(targets.Select(t => (JsonNode)t).ToArray());
         if (workflowJson is not null)
             body["extra_data"] = new JsonObject { ["extra_pnginfo"] = new JsonObject { ["workflow"] = JsonNode.Parse(workflowJson) } };
         if (previewMethod is not null)
@@ -130,13 +131,12 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
         {
             using var response = await http.PostAsJsonAsync("prompt", body, _stop.Token);
             var json = await response.Content.ReadFromJsonAsync<JsonObject>(_stop.Token);
-            if (response.IsSuccessStatusCode) return new QueueResult(true, (string?)json?["prompt_id"], null, new Dictionary<int, string>());
-
             var errors = new Dictionary<int, string>();
             if (json?["node_errors"] is JsonObject perNode)
                 foreach (var (id, detail) in perNode)
                     if (int.TryParse(id, out var nodeId) && detail?["errors"] is JsonArray list && list.Count > 0)
                         errors[nodeId] = string.Join("; ", list.Select(e => (string?)e?["message"]));
+            if (response.IsSuccessStatusCode) return new QueueResult(true, (string?)json?["prompt_id"], null, errors); // errors: outputs left out
             return new QueueResult(false, null, (string?)json?["error"]?["message"] ?? $"Server said {(int)response.StatusCode}", errors);
         }
         catch (HttpRequestException ex)

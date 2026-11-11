@@ -147,12 +147,18 @@ public static class ServerApp
                     extra = pnginfo.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value is JsonValue v && v.TryGetValue<string>(out var s) ? s : kv.Value!.ToJsonString());
                 // ComfyUI's frontend sends its preview setting as extra_data.preview_method (auto, latent2rgb, taesd, none, default).
                 var item = queue.Enqueue(graph, (string?)body["client_id"], extra, front: (bool?)body["front"] == true,
-                    previewMethod: body["extra_data"]?["preview_method"] is JsonValue pm && pm.TryGetValue<string>(out var method) ? method : null);
-                return Results.Json(new JsonObject { ["prompt_id"] = item.Id, ["number"] = item.Number, ["node_errors"] = new JsonObject() });
+                    previewMethod: body["extra_data"]?["preview_method"] is JsonValue pm && pm.TryGetValue<string>(out var method) ? method : null,
+                    targets: Targets(body["partial_execution_targets"]));
+                // Output nodes left out (what they need does not validate) are reported while the rest runs, as ComfyUI does.
+                return Results.Json(new JsonObject { ["prompt_id"] = item.Id, ["number"] = item.Number, ["node_errors"] = NodeErrors(item.Skipped, graph) });
+            }
+            catch (PromptValidationException ex) when (ex.Result.Errors is [{ Code: PromptAdmission.NoOutputsCode }])
+            {
+                return Results.Json(Error(PromptAdmission.NoOutputsCode, "Prompt has no outputs"), statusCode: 400);
             }
             catch (PromptValidationException ex)
             {
-                return Results.Content(ValidationFailure(ex.Result, graph).ToJsonString(), "application/json", statusCode: 400);
+                return Results.Content(ValidationFailure(ex.Result, graph, ex.Failures).ToJsonString(), "application/json", statusCode: 400);
             }
         });
 
@@ -229,20 +235,50 @@ public static class ServerApp
     static JsonObject Error(string type, string message) =>
         new() { ["error"] = new JsonObject { ["type"] = type, ["message"] = message, ["details"] = "", ["extra_info"] = new JsonObject() }, ["node_errors"] = new JsonObject() };
 
-    static JsonObject ValidationFailure(ValidationResult result, PromptGraph graph)
+    /// <summary>ComfyUI's partial_execution_targets: a list of node ids (a single id is taken as a list of one); null when absent.</summary>
+    static IReadOnlyList<string>? Targets(JsonNode? node) => node switch
     {
-        var nodeErrors = new JsonObject();
-        foreach (var group in result.Errors.GroupBy(e => e.NodeId ?? ""))
+        JsonArray list => list.Select(t => t is JsonValue v && v.TryGetValue<string>(out var id) ? id : t is JsonValue n && n.TryGetValue<long>(out var number) ? number.ToString() : null)
+            .OfType<string>().ToList(),
+        JsonValue v when v.TryGetValue<string>(out var id) => [id],
+        _ => null,
+    };
+
+    /// <summary>
+    /// ComfyUI's node_errors: per node with errors, its errors, the output nodes they stop (dependent_outputs) and its class. Built from each
+    /// failed output's own check, so an error shared by two outputs lists both.
+    /// </summary>
+    static JsonObject NodeErrors(IReadOnlyList<OutputFailure> failures, PromptGraph graph, IReadOnlyList<ValidationError>? errorsWithoutOutputs = null)
+    {
+        var byNode = new Dictionary<string, (List<ValidationError> Errors, List<string> Outputs)>(StringComparer.Ordinal);
+        void Add(ValidationError e, string? output)
         {
-            var errors = new JsonArray();
-            foreach (var e in group)
-                errors.Add(new JsonObject { ["type"] = e.Code, ["message"] = e.Message, ["details"] = e.Input ?? "", ["extra_info"] = new JsonObject { ["input_name"] = e.Input } });
-            nodeErrors[group.Key] = new JsonObject
+            var key = e.NodeId ?? "";
+            if (!byNode.TryGetValue(key, out var entry)) byNode[key] = entry = ([], []);
+            if (!entry.Errors.Contains(e)) entry.Errors.Add(e);
+            if (output is not null && !entry.Outputs.Contains(output)) entry.Outputs.Add(output);
+        }
+        foreach (var f in failures)
+            foreach (var e in f.Result.Errors) Add(e, f.OutputId);
+        foreach (var e in errorsWithoutOutputs ?? []) Add(e, null);
+        var nodeErrors = new JsonObject();
+        foreach (var (key, (errors, outputs)) in byNode)
+        {
+            var list = new JsonArray();
+            foreach (var e in errors)
+                list.Add(new JsonObject { ["type"] = e.Code, ["message"] = e.Message, ["details"] = e.Input ?? "", ["extra_info"] = new JsonObject { ["input_name"] = e.Input } });
+            nodeErrors[key] = new JsonObject
             {
-                ["errors"] = errors, ["dependent_outputs"] = new JsonArray(),
-                ["class_type"] = group.Key.Length > 0 && graph.Nodes.TryGetValue(group.Key, out var n) ? n.ClassType : null,
+                ["errors"] = list, ["dependent_outputs"] = new JsonArray(outputs.Select(o => (JsonNode)o).ToArray()),
+                ["class_type"] = key.Length > 0 && graph.Nodes.TryGetValue(key, out var n) ? n.ClassType : null,
             };
         }
+        return nodeErrors;
+    }
+
+    static JsonObject ValidationFailure(ValidationResult result, PromptGraph graph, IReadOnlyList<OutputFailure>? failures = null)
+    {
+        var nodeErrors = failures is { Count: > 0 } ? NodeErrors(failures, graph) : NodeErrors([], graph, result.Errors);
         var first = result.Errors.FirstOrDefault();
         return new JsonObject
         {

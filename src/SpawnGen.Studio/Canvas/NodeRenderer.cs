@@ -374,6 +374,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         }
         ctx.GlobalAlpha = 1;
 
+        DrawAppPicks(ctx, node, geo, scale, detailed);
+
         // A failed node says why, in a red tag under it.
         if (failed && detailed)
         {
@@ -387,6 +389,62 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.TextBaseline = "middle";
             ctx.FillText(text, b.X + 8, b.Bottom + 17);
         }
+    }
+
+    const string AppPick = "#4aa8ff";
+
+    /// <summary>The App Builder's outlines: pickable widgets / output nodes dashed, picked ones solid with their place in the app.</summary>
+    void DrawAppPicks(CanvasRenderingContext2D ctx, EditorNode node, NodeGeometry geo, double scale, bool detailed)
+    {
+        if (visuals.ShowAppOutputs && visuals.AppOutputCandidates.Contains(node.Id))
+        {
+            int place = visuals.AppOutputs.IndexOf(node.Id);
+            var r = geo.Bounds;
+            RoundRect(ctx, new Rect(r.X - 4, r.Y - 4, r.Width + 8, r.Height + 8), 10);
+            ctx.StrokeStyle = AppPick;
+            ctx.LineWidth = place >= 0 ? 3 : 1.5;
+            if (place < 0) ctx.SetLineDash([6, 4]);
+            ctx.Stroke();
+            ctx.SetLineDash([]);
+            if (place >= 0) Badge(ctx, r.Right - 2, r.Y - 2, place + 1);
+        }
+        if (visuals.ShowAppInputs && detailed && !geo.Collapsed)
+        {
+            foreach (var w in geo.Widgets)
+            {
+                int place = visuals.AppInputs.IndexOf((node.Id, w.Name));
+                var r = w.Bounds;
+                RoundRect(ctx, new Rect(r.X - 2, r.Y - 1, r.Width + 4, r.Height + 2), 6);
+                if (place >= 0)
+                {
+                    ctx.GlobalAlpha = 0.18;
+                    ctx.FillStyle = AppPick;
+                    ctx.Fill();
+                    ctx.GlobalAlpha = 1;
+                }
+                ctx.StrokeStyle = AppPick;
+                ctx.LineWidth = place >= 0 ? 2 : 1;
+                if (place < 0) ctx.SetLineDash([4, 3]);
+                ctx.Stroke();
+                ctx.SetLineDash([]);
+                if (place >= 0) Badge(ctx, r.Right + 2, r.Y + r.Height / 2, place + 1);
+            }
+        }
+    }
+
+    /// <summary>A small numbered disc.</summary>
+    void Badge(CanvasRenderingContext2D ctx, double x, double y, int number)
+    {
+        ctx.BeginPath();
+        ctx.Arc(x, y, 9, 0, Math.PI * 2);
+        ctx.FillStyle = AppPick;
+        ctx.Fill();
+        ctx.Font = Theme.Font;
+        ctx.FillStyle = "#ffffff";
+        ctx.TextAlign = "center";
+        ctx.TextBaseline = "middle";
+        ctx.FillText(number.ToString(System.Globalization.CultureInfo.InvariantCulture), x, y + 0.5);
+        ctx.TextAlign = "left";
     }
 
     /// <summary>The node's result text, one line per row in a dark box; what does not fit is cut off with an ellipsis.</summary>

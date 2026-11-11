@@ -9,6 +9,15 @@ public sealed class RunVisuals
     /// <summary>Node id to the message shown on it (a failed node, or a node the server refused to run).</summary>
     public Dictionary<int, string> Errors { get; } = [];
 
+    /// <summary>App Builder, input step: widgets are outlined as pickable; the picked ones (in app order) carry their number.</summary>
+    public bool ShowAppInputs { get; set; }
+    public List<(int Node, string Widget)> AppInputs { get; } = [];
+
+    /// <summary>App Builder, output step: output nodes are outlined as pickable; the picked ones (in app order) carry their number.</summary>
+    public bool ShowAppOutputs { get; set; }
+    public List<int> AppOutputs { get; } = [];
+    public HashSet<int> AppOutputCandidates { get; } = [];
+
     public double Fraction => ProgressMax > 0 ? Math.Clamp(ProgressValue / ProgressMax, 0, 1) : 0;
 
     public void BeginRun()

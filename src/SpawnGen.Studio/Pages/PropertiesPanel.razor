@@ -210,85 +210,10 @@
 
     RenderFragment Widget(EditorNode node, string name, WidgetSpec spec, bool linked, string? tooltip) => __builder =>
     {
-        var value = node.Widgets.GetValueOrDefault(name) ?? spec.Default;
-        var text = spec.Kind == WidgetKind.Json ? SpawnGen.Engine.Types.JsonLiteral.ToJson(value) : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
-        <label class="@(spec.Multiline ? "multi" : spec.Kind == WidgetKind.Boolean ? "row" : "")" title="@tooltip">
-            @if (spec.Kind == WidgetKind.Boolean)
-            {
-                <input type="checkbox" checked="@(value is true)" disabled="@linked" @onchange="e => Commit(() => Doc.SetWidget(node.Id, name, e.Value is true))" />
-                @name
-            }
-            else
-            {
-                <span>@name@(linked ? " (linked)" : "")</span>
-                @if (linked)
-                {
-                    <span class="dim">set by its link</span>
-                }
-                else if (spec.Kind == WidgetKind.Combo)
-                {
-                    var options = spec.ResolveOptions();
-                    <select @onchange="e => SetText(node.Id, name, e.Value)">
-                        @if (!options.Contains(text))
-                        {
-                            <option value="@text" selected>@text</option>
-                        }
-                        @foreach (var o in options)
-                        {
-                            <option value="@o" selected="@(o == text)">@o</option>
-                        }
-                    </select>
-                }
-                else if (spec.Kind == WidgetKind.Color)
-                {
-                    <input type="color" value="@text" @onchange="e => SetText(node.Id, name, e.Value)" />
-                }
-                else if (spec.Multiline)
-                {
-                    <textarea rows="4" value="@text" @onchange="e => SetText(node.Id, name, e.Value)"></textarea>
-                }
-                else if (spec.Kind is WidgetKind.Int or WidgetKind.Float)
-                {
-                    <input type="number" value="@text" step="@(spec.Step?.ToString(CultureInfo.InvariantCulture) ?? (spec.Kind == WidgetKind.Float ? "any" : "1"))"
-                           min="@spec.Min?.ToString(CultureInfo.InvariantCulture)" max="@spec.Max?.ToString(CultureInfo.InvariantCulture)"
-                           @onchange="e => SetNumber(node.Id, name, spec, e.Value?.ToString())" />
-                }
-                else if (spec.Kind == WidgetKind.Json)
-                {
-                    <input type="text" value="@text" @onchange="e => SetJson(node.Id, name, e.Value?.ToString())" />
-                }
-                else
-                {
-                    <input type="text" value="@text" @onchange="e => SetText(node.Id, name, e.Value)" />
-                }
-            }
-        </label>
+        var nodeId = node.Id;
+        <WidgetField Label="@name" Spec="spec" Value="@node.Widgets.GetValueOrDefault(name)" Linked="linked" Tooltip="@tooltip" Message="Message"
+                     OnSet="v => Commit(() => Doc.SetWidget(nodeId, name, v))" />
     };
-
-    void SetText(int nodeId, string name, object? value) => Commit(() => Doc.SetWidget(nodeId, name, value?.ToString() ?? ""));
-
-    /// <summary>An object-valued widget (a bounding box, ...) edited as its JSON text.</summary>
-    void SetJson(int nodeId, string name, string? text)
-    {
-        if (!SpawnGen.Engine.Types.JsonLiteral.TryParse(text ?? "", out var value) || value is null)
-        {
-            Message?.Invoke($"'{text}' is not valid JSON.");
-            return;
-        }
-        Commit(() => Doc.SetWidget(nodeId, name, value));
-    }
-
-    void SetNumber(int nodeId, string name, WidgetSpec spec, string? text)
-    {
-        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || double.IsNaN(v) || double.IsInfinity(v))
-        {
-            Message?.Invoke($"'{text}' is not a valid number.");
-            return;
-        }
-        if (spec.Min is { } min) v = Math.Max(v, min);
-        if (spec.Max is { } max) v = Math.Min(v, max);
-        Commit(() => Doc.SetWidget(nodeId, name, spec.Kind == WidgetKind.Int ? (object)(long)Math.Round(v) : v));
-    }
 
     string Label(EditorNode n) => $"{n.Title ?? Doc.Registry.GetSchema(n.ClassType)?.DisplayName ?? n.ClassType} #{n.Id}";
 

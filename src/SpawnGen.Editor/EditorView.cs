@@ -93,6 +93,13 @@ public sealed class EditorView
     /// <summary>A short message for a toast (a refused link, a paste problem).</summary>
     public event Action<string>? Message;
 
+    /// <summary>What a click picks instead of editing (the App Builder's input and output steps).</summary>
+    public PickTarget Picking { get; set; }
+    /// <summary>A widget was clicked while <see cref="Picking"/> is <see cref="PickTarget.Widgets"/>.</summary>
+    public event Action<int, string>? WidgetPicked;
+    /// <summary>A node was clicked while <see cref="Picking"/> is <see cref="PickTarget.Nodes"/>.</summary>
+    public event Action<int>? NodePicked;
+
     // ---- selection ----
 
     public void SelectOnly(int nodeId)
@@ -254,6 +261,21 @@ public sealed class EditorView
             return;
         }
         if (button != PointerButton.Left) return;
+        // The App Builder picks with a click: the widget or node is chosen, not edited, moved or selected (panning and the minimap still work).
+        if (Picking == PickTarget.Widgets && hit.Kind == HitKind.Widget && hit.Name is { } pickedWidget)
+        {
+            WidgetPicked?.Invoke(hit.NodeId, pickedWidget);
+            return;
+        }
+        if (Picking == PickTarget.Nodes && hit.Kind is HitKind.NodeBody or HitKind.TitleBar or HitKind.Widget)
+        {
+            NodePicked?.Invoke(hit.NodeId);
+            return;
+        }
+        if (Picking != PickTarget.None && hit.Kind is HitKind.NodeBody or HitKind.TitleBar or HitKind.Widget or HitKind.InputSlot or HitKind.OutputSlot
+            or HitKind.ResizeHandle or HitKind.CollapseButton)
+            return; // nothing else on a node reacts while picking
+
 
         _pressed = hit;
         switch (hit.Kind)
@@ -839,6 +861,17 @@ public sealed class EditorView
         ViewChanged?.Invoke();
     }
 
+    /// <summary>Fits every node into the part of the canvas that panels leave free (insets in screen pixels).</summary>
+    public void FitToView(double left, double top, double right, double bottom)
+    {
+        var full = ScreenSize;
+        ScreenSize = new Point(Math.Max(full.X - left - right, 100), Math.Max(full.Y - top - bottom, 100));
+        try { FitToView(); }
+        finally { ScreenSize = full; }
+        Viewport.Set(Viewport.Scale, Viewport.OffsetX + left, Viewport.OffsetY + top);
+        ViewChanged?.Invoke();
+    }
+
     public void FitToView(bool selectionOnly = false)
     {
         var nodes = selectionOnly ? Document.Graph.Nodes.Where(n => _selected.Contains(n.Id)) : Document.Graph.Nodes;
@@ -911,3 +944,6 @@ public sealed class EditorView
         ViewChanged?.Invoke();
     }
 }
+
+/// <summary>What a click on the canvas picks in the App Builder.</summary>
+public enum PickTarget { None, Widgets, Nodes }

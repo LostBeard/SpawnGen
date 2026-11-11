@@ -305,6 +305,44 @@ public class ComfyUIRenderParityTests
     }
 
     /// <summary>
+    /// The attention-multiply nodes against ComfyUI's renders of the same graph (euler, 10 steps, cfg 7.5; run_comfy.py --patch / --clip-patch):
+    /// self-attention q 1.1, k 1.0, v 1.2, out 0.9; cross-attention q 1.0, k 1.2, v 0.8, out 1.1; CLIP q 1.2, k 1.1, v 0.9, out 1.05.
+    /// </summary>
+    [TestCase("UNetSelfAttentionMultiply", "euler_attn_self", 1.1, 1.0, 1.2, 0.9)]
+    [TestCase("UNetCrossAttentionMultiply", "euler_attn_cross", 1.0, 1.2, 0.8, 1.1)]
+    [TestCase("CLIPAttentionMultiply", "euler_attn_clip", 1.2, 1.1, 0.9, 1.05)]
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
+    public async Task SD15_with_attention_multiply_gives_ComfyUIs_result(string node, string result, double q, double k, double v, double o)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        (string, object)[] factors = [("q", q), ("k", k), ("v", v), ("out", o)];
+        var patch = new[] { (node, factors) };
+        var (diff, scale) = node.StartsWith("CLIP", StringComparison.Ordinal)
+            ? await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: result, clipPatches: patch)
+            : await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: result, patches: patch);
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>Deep shrink resizing with area and with bislerp (both directions) against ComfyUI's renders of the same graph (euler, 10 steps, cfg 7.5).</summary>
+    [TestCase("area")]
+    [TestCase("bislerp")]
+    [Explicit("Needs SPAWNGEN_MODELS_ROOT (checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
+    public async Task SD15_with_deep_shrink_area_and_bislerp_gives_ComfyUIs_result(string method)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        (string, object)[] inputs = [("downscale_method", method), ("upscale_method", method)];
+        var (diff, scale) = await RunAsync(runtime, "v1-5-pruned-emaonly.safetensors", "euler", "comfyui_sd15", 10, 7.5, result: "euler_deepshrink_" + method,
+            patches: [("PatchModelAddDownscale", inputs)]);
+        Assert.That(diff, Is.LessThan(0.03 * scale));
+    }
+
+    /// <summary>
     /// ToMe (TomePatchModel, ratio 0.3) after one euler step (of a 1-step schedule, cfg 7.5), against ComfyUI's render with top-left destinations on both sides
     /// (<see cref="TomePatchModelTopLeft"/> here, and on ComfyUI's side a custom node calling its bipartite_soft_matching_random2d with no_rand=True: its own
     /// destinations come from torch.randint and cannot be repeated). One step, because the merge choices are discrete (argmax, ranking): the plain pipeline's own
@@ -436,7 +474,8 @@ public class ComfyUIRenderParityTests
         string? lora = null, string? result = null, Func<PromptGraph, (PromptInput Model, PromptInput Clip, PromptInput Vae)>? load = null, string? picture = null,
         IReadOnlyList<(string Name, string Hint, double Strength, double Start, double End)>? controlNets = null,
         IReadOnlyList<(string Node, (string Name, object Value)[] Inputs)>? patches = null, (string Unet, string Picture, string Mask)? inpaint = null,
-        (string Unet, string Clip, string Lora, double Ratio)? merge = null)
+        (string Unet, string Clip, string Lora, double Ratio)? merge = null,
+        IReadOnlyList<(string Node, (string Name, object Value)[] Inputs)>? clipPatches = null)
     {
         var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "sampling", fixture);
         var outDir = Path.Combine(Path.GetTempPath(), "spawngen-comfy-parity-" + Guid.NewGuid().ToString("N"));
@@ -471,6 +510,14 @@ public class ComfyUIRenderParityTests
                 g.Add("17", "ModelMergeSimple", ("model1", model), ("model2", PromptInput.Link("16")), ("ratio", m.Ratio));
                 g.Add("18", "CLIPMergeSimple", ("clip1", clip), ("clip2", PromptInput.Link("16", 1)), ("ratio", m.Ratio));
                 (model, clip) = (PromptInput.Link("17"), PromptInput.Link("18"));
+            }
+            // CLIP patch nodes go between the CLIP and both prompts, in order.
+            int clipId = 40;
+            foreach (var (node, inputs) in clipPatches ?? [])
+            {
+                string id = (clipId++).ToString();
+                g.Add(id, node, [("clip", (object)clip), .. inputs]);
+                clip = PromptInput.Link(id);
             }
             g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", clip));
             g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", clip));

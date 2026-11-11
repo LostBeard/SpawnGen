@@ -117,8 +117,8 @@ ComfyUI's do), its PNG text (prompt, then each extra_pnginfo entry) and the prev
 the same five letters, comfy.bboxes.background_temp_ for the first background picture only). Preview Image's files carry the prompt; the previews
 of Compare Images, Preview Mask and the other newer nodes carry no text, as ComfyUI's. Deliberate differences: ComfyUI (PyAV) fails with
 "Invalid argument" on grey, grey + alpha, 1-bit, grey JPEG and 16-bit PNGs; SpawnGen loads them as Pillow does (a 16-bit picture by its high
-bytes); PngReader now reads 1-, 2- and 4-bit grey and palette PNGs (PNG spec 7.2, 13.12). SpawnGen's stores name temporary files by content
-where ComfyUI counts (prefix_00001_.png); the prefix part is ComfyUI's.
+bytes); PngReader now reads 1-, 2- and 4-bit grey and palette PNGs (PNG spec 7.2, 13.12). Temporary files are numbered as ComfyUI numbers them
+(prefix_00001_.png), in both of SpawnGen's stores.
 Deliberate differences (SpawnGen is more forgiving where ComfyUI fails): Convert Image to Mask with channel "alpha" on an image without alpha gives a mask of ones (ComfyUI: IndexError); Image Blur / Image Sharpen with a radius as large as the picture keep mirroring the edges (ComfyUI: PyTorch's reflect-padding error).
 Deliberate difference: Convert Image Color Space computes every pixel in double precision and rounds once, so it gives the exact values where
 ComfyUI's float32 arithmetic differs by up to about 1e-6 of a pixel's largest channel (PQ, LogC3 and ACEScct decoded to large linear values; checked

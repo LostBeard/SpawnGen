@@ -1,17 +1,27 @@
+using System.Buffers.Binary;
+using System.Text.Json;
+using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.StableDiffusion;
 using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Nodes.ML;
 
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries (names, type lists, descriptions), its documented models folder layout
+// (diffusion_models / unet, vae, text_encoders / clip, controlnet / t2i_adapter, vae_approx), ComponentLoaderTests, SpawnDev.ILGPU.ML's loaders
+// (their docs) and the safetensors format (an 8-byte little-endian header length, then a JSON header of tensor shapes).
+
 /// <summary>
-/// The model files of ComfyUI's component folders under the models folder, listed by their path there (sub-folders too) as ComfyUI lists them:
-/// diffusion_models (and the older unet), vae, text_encoders (and the older clip). Each file opens from the model source as repo <c>local/&lt;folder&gt;</c>.
+/// The component files of the models folder, by kind: each kind reads its current folder and ComfyUI's older one, sub-folders included, and lists
+/// the <c>.safetensors</c> files by their path there (with the platform's separator, as ComfyUI lists them).
 /// </summary>
 public static class ModelFolders
 {
-    public const string DiffusionModels = "diffusion_models", Vae = "vae", TextEncoders = "text_encoders", ControlNet = "controlnet", VaeApprox = "vae_approx";
+    public const string DiffusionModels = "diffusion_models";
+    public const string Vae = "vae";
+    public const string TextEncoders = "text_encoders";
+    public const string ControlNet = "controlnet";
+    public const string VaeApprox = "vae_approx";
 
-    /// <summary>ComfyUI's folder names per kind: the current one first, then the older one it still reads.</summary>
     static readonly Dictionary<string, string[]> Folders = new()
     {
         [DiffusionModels] = ["diffusion_models", "unet"],
@@ -21,10 +31,15 @@ public static class ModelFolders
         [VaeApprox] = ["vae_approx"],
     };
 
-    static readonly object Gate = new();
-    static readonly Dictionary<string, SortedDictionary<string, (string Repo, string File)>> Files = new();
+    static readonly Lock Gate = new();
+    static readonly Dictionary<string, SortedDictionary<string, (string Repo, string File)>> Files =
+        Folders.Keys.ToDictionary(k => k, _ => new SortedDictionary<string, (string, string)>(StringComparer.Ordinal));
 
-    /// <summary>Lists every <c>.safetensors</c> file of every component folder. Returns how many were added.</summary>
+    /// <summary>The repo id each folder's files are opened under ("local/vae" for &lt;models&gt;/vae), for the model source.</summary>
+    public static IEnumerable<KeyValuePair<string, string>> RepoFolders =>
+        Folders.Values.SelectMany(f => f).Select(f => new KeyValuePair<string, string>("local/" + f, f));
+
+    /// <summary>Adds the component files under <paramref name="modelsFolder"/> that are not known yet; returns how many were added.</summary>
     public static int Scan(string modelsFolder)
     {
         int added = 0;
@@ -37,181 +52,181 @@ public static class ModelFolders
                 {
                     var name = Path.GetRelativePath(dir, path);
                     lock (Gate)
-                    {
-                        if (!Files.TryGetValue(kind, out var files)) Files[kind] = files = new(StringComparer.Ordinal);
-                        if (files.TryAdd(name, ("local/" + folder, name))) added++;
-                    }
+                        if (Files[kind].TryAdd(name, ("local/" + folder, name))) added++;
                 }
             }
         return added;
     }
 
-    /// <summary>The names a loader offers for a kind.</summary>
-    public static string[] Names(string kind) { lock (Gate) return Files.TryGetValue(kind, out var f) ? [.. f.Keys] : []; }
+    /// <summary>The names of a kind's files, sorted.</summary>
+    public static string[] Names(string kind)
+    {
+        lock (Gate) return [.. Files[kind].Keys];
+    }
 
-    /// <summary>Where a listed file opens from on the model source.</summary>
+    /// <summary>Where a listed file is opened from: its folder's repo id and its path there.</summary>
     public static (string Repo, string File) Locate(string kind, string name)
     {
         lock (Gate)
-            if (Files.TryGetValue(kind, out var f) && f.TryGetValue(name, out var at)) return at;
-        throw new ArgumentException($"'{name}' is not in the models folder's {Folders[kind][0]} folder.");
+            return Files[kind].TryGetValue(name, out var at) ? at
+                : throw new ArgumentException($"'{name}' is not in the {Folders[kind][0]} folder of the models folder.", nameof(name));
     }
-
-    /// <summary>Repo id to folder for the model source (every component folder, whether or not it exists yet).</summary>
-    public static IEnumerable<KeyValuePair<string, string>> RepoFolders => Folders.Values.SelectMany(f => f).Select(f => KeyValuePair.Create("local/" + f, f));
 }
 
-[Node(Category = "model/loaders", DisplayName = "Load Diffusion Model")]
+/// <summary>Reading a .safetensors file's header (the tensor names and shapes) without its data.</summary>
+internal static class SafetensorsHeader
+{
+    /// <summary>Whether any tensor of the file has <paramref name="width"/> as its last dimension.</summary>
+    public static async Task<bool> HasWidthAsync(IModelSource source, string repo, string file, int width)
+    {
+        await using var stream = await source.OpenAsync(repo, file);
+        var lengthBytes = new byte[8];
+        await stream.ReadExactlyAsync(lengthBytes);
+        long length = BinaryPrimitives.ReadInt64LittleEndian(lengthBytes);
+        if (length <= 0 || length > 100_000_000) throw new InvalidDataException($"{file} is not a safetensors file.");
+        var header = new byte[length];
+        await stream.ReadExactlyAsync(header);
+        using var doc = JsonDocument.Parse(header);
+        foreach (var tensor in doc.RootElement.EnumerateObject())
+            if (tensor.Value.ValueKind == JsonValueKind.Object && tensor.Value.TryGetProperty("shape", out var shape)
+                && shape.GetArrayLength() > 0 && shape[shape.GetArrayLength() - 1].GetInt64() == width)
+                return true;
+        return false;
+    }
+}
+
+[Node("UNETLoader", Category = "model/loaders", DisplayName = "Load Diffusion Model")]
 public sealed class UNETLoader
 {
     public static string[] UnetNames() => ModelFolders.Names(ModelFolders.DiffusionModels);
+
     public static string[] WeightDtypes() => ["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"];
 
-    /// <summary>
-    /// A diffusion model (UNet) alone from <c>&lt;models&gt;/diffusion_models</c>: SD 1.x, SD 2.x or SDXL, in LDM names (with or without <c>model.diffusion_model.</c>)
-    /// or diffusers names. The weights are held as fp16; the fp8 choices are not available.
-    /// </summary>
+    /// <summary>A UNet-only file from diffusion_models (or unet), its prediction type read from its tensors. Weights are held as fp16 ("default" only).</summary>
     public async Task<ModelHandle> ExecuteAsync([Input(OptionsProvider = nameof(UnetNames))] string unetName,
         [Input(OptionsProvider = nameof(WeightDtypes))] string weightDtype, NodeContext context, IServiceProvider services)
     {
         if (weightDtype != "default")
-            throw new NotSupportedException($"weight_dtype {weightDtype}: SpawnGen holds diffusion model weights as fp16; choose 'default'.");
+            throw new NotSupportedException($"Weight dtype '{weightDtype}' is not available: SpawnGen holds diffusion model weights as fp16; choose 'default'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var (repo, file) = ModelFolders.Locate(ModelFolders.DiffusionModels, unetName);
-        context.Status($"Loading {unetName}");
-        var model = await runtime.GetOrLoadAsync("unet:" + repo + "/" + file, () => StandaloneDiffusionModel.LoadAsync(runtime, unetName, repo, file));
+        var model = await runtime.GetOrLoadAsync($"unet:{repo}/{file}", () => StandaloneDiffusionModel.LoadAsync(runtime, unetName, repo, file));
         return new ModelHandle(model);
     }
 }
 
-[Node(Category = "model/loaders", DisplayName = "Load VAE")]
-public sealed class VAELoader
-{
-    /// <summary>The tiny VAEs SpawnGen runs (ComfyUI's image TAEs for SD 1.x / 2.x and SDXL) with their families' latent scales.</summary>
-    static readonly Dictionary<string, float> Taes = new() { ["taesd"] = 0.18215f, ["taesdxl"] = 0.13025f };
-
-    /// <summary>The VAE files, then each tiny VAE whose encoder and decoder are both in <c>&lt;models&gt;/vae_approx</c>, then pixel_space, as ComfyUI lists them.</summary>
-    public static string[] VaeNames()
-    {
-        var approx = ModelFolders.Names(ModelFolders.VaeApprox);
-        var taes = Taes.Keys.Where(t => TaeFile(approx, t, "decoder") is not null && TaeFile(approx, t, "encoder") is not null);
-        return [.. ModelFolders.Names(ModelFolders.Vae), .. taes, "pixel_space"];
-    }
-
-    static string? TaeFile(IEnumerable<string> approx, string tae, string part) => approx.FirstOrDefault(n => n.StartsWith($"{tae}_{part}.", StringComparison.Ordinal));
-
-    /// <summary>
-    /// A VAE alone from <c>&lt;models&gt;/vae</c> (e.g. vae-ft-mse-840000-ema-pruned, sdxl_vae): LDM names with or without <c>first_stage_model.</c>, or diffusers names;
-    /// or a tiny VAE (taesd, taesdxl) from <c>&lt;models&gt;/vae_approx</c>, fast and rougher.
-    /// </summary>
-    public async Task<VaeHandle> ExecuteAsync([Input(OptionsProvider = nameof(VaeNames))] string vaeName, NodeContext context, IServiceProvider services)
-    {
-        if (vaeName == "pixel_space") throw new NotSupportedException("pixel_space is for pixel-space models, which SpawnGen does not run yet.");
-        var runtime = await GpuHelpers.RuntimeAsync(services);
-        if (Taes.TryGetValue(vaeName, out var scale))
-        {
-            var approx = ModelFolders.Names(ModelFolders.VaeApprox);
-            var decoder = ModelFolders.Locate(ModelFolders.VaeApprox, TaeFile(approx, vaeName, "decoder") ?? throw new ArgumentException($"No {vaeName}_decoder in vae_approx."));
-            var encoder = ModelFolders.Locate(ModelFolders.VaeApprox, TaeFile(approx, vaeName, "encoder") ?? throw new ArgumentException($"No {vaeName}_encoder in vae_approx."));
-            context.Status($"Loading {vaeName}");
-            var tae = await runtime.GetOrLoadAsync($"tae:{vaeName}:{decoder.Repo}/{decoder.File}", async () =>
-            {
-                await using var dec = await runtime.ModelSource.OpenAsync(decoder.Repo, decoder.File);
-                await using var enc = await runtime.ModelSource.OpenAsync(encoder.Repo, encoder.File);
-                return new StandaloneTaesd(vaeName, await SdTaesd.LoadAsync(runtime.Accelerator, dec, decoder.File, enc, encoder.File, scale));
-            });
-            return new VaeHandle(tae);
-        }
-        var (repo, file) = ModelFolders.Locate(ModelFolders.Vae, vaeName);
-        context.Status($"Loading {vaeName}");
-        var vae = await runtime.GetOrLoadAsync("vae:" + repo + "/" + file, async () =>
-            new StandaloneVae(vaeName, await SdVae.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file)));
-        return new VaeHandle(vae);
-    }
-}
-
-[Node(Category = "model/loaders", DisplayName = "Load CLIP")]
+[Node("CLIPLoader", Category = "model/loaders", DisplayName = "Load CLIP",
+    Description = "Recipes:\nsd: clip-l\nstable cascade: clip-g\nsd3: t5 xxl / clip-g / clip-l\nstable audio: t5 base\nmochi: t5 xxl\ncogvideox: t5 xxl (226-token padding)\ncosmos: old t5 xxl\nlumina2: gemma 2 2B\nwan: umt5 xxl\nhidream: llama-3.1 (Recommend) or t5\nomnigen2: qwen vl 2.5 3B\njoyimage: qwen3-vl 8B\nlens: gpt-oss-20b\npixeldit: gemma 2 2B elm\nminimax: MiniMax H3 Qwen3-VL or Music3 Qwen/RVQ\nflux3: qwen3-vl 4B\nfibo2: qwen3-vl 4B")]
 public sealed class CLIPLoader
 {
     public static string[] ClipNames() => ModelFolders.Names(ModelFolders.TextEncoders);
-    public static string[] Types() => ["stable_diffusion", "stable_cascade", "sd3", "stable_audio", "mochi", "ltxv", "pixart", "cosmos", "lumina2", "wan", "hidream",
-        "chroma", "ace", "omnigen2", "qwen_image", "hunyuan_image", "flux2", "ovis", "longcat_image", "cogvideox", "lens", "pixeldit", "ideogram4", "boogu", "krea2",
-        "joyimage", "mage", "minimax", "yue2", "flux3", "moss_image", "fibo2"];
+
+    /// <summary>ComfyUI's full list, so workflows that name another type open; SpawnGen runs "stable_diffusion".</summary>
+    public static string[] Types() =>
+    [
+        "stable_diffusion", "stable_cascade", "sd3", "stable_audio", "mochi", "ltxv", "pixart", "cosmos", "lumina2", "wan", "hidream", "chroma", "ace",
+        "omnigen2", "qwen_image", "hunyuan_image", "flux2", "ovis", "longcat_image", "cogvideox", "lens", "pixeldit", "ideogram4", "boogu", "krea2",
+        "joyimage", "mage", "minimax", "yue2", "flux3", "moss_image", "fibo2",
+    ];
+
     public static string[] Devices() => ["default", "cpu"];
 
-    /// <summary>
-    /// One text encoder alone from <c>&lt;models&gt;/text_encoders</c>, type stable_diffusion: CLIP ViT-L (SD 1.x) or OpenCLIP ViT-H (SD 2.x), told apart by width,
-    /// in Hugging Face or OpenCLIP names. <c>device</c> is accepted for workflow compatibility; the encoder runs on the GPU either way.
-    /// </summary>
-    public async Task<ClipHandle> ExecuteAsync([Input(OptionsProvider = nameof(ClipNames))] string clipName, [Input(OptionsProvider = nameof(Types))] string type,
-        NodeContext context, IServiceProvider services, [Input(OptionsProvider = nameof(Devices), Optional = true)] string device = "default")
+    /// <summary>One text encoder file (CLIP-L for SD 1.x, OpenCLIP-H for SD 2.x; the family comes from its width), with the CLIP tokenizer.</summary>
+    public async Task<ClipHandle> ExecuteAsync([Input(OptionsProvider = nameof(ClipNames))] string clipName,
+        [Input(OptionsProvider = nameof(Types))] string type, NodeContext context, IServiceProvider services,
+        [Input(OptionsProvider = nameof(Devices), Optional = true)] string device = "default")
     {
-        if (type != "stable_diffusion") throw new NotSupportedException($"Load CLIP type {type}: SpawnGen loads stable_diffusion text encoders (SD 1.x / 2.x).");
+        if (type != "stable_diffusion")
+            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders; choose 'stable_diffusion'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var (repo, file) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
-        context.Status($"Loading {clipName}");
-        var encoder = await runtime.GetOrLoadAsync("clip:" + repo + "/" + file, async () =>
+        var model = await runtime.GetOrLoadAsync($"clip:{repo}/{file}", async () =>
         {
-            var tokenizer = await Checkpoint.LoadClipTokenizerAsync(runtime.ModelSource, Checkpoint.ClipTokenizerRepo, "", null);
-            return new StandaloneTextEncoder(clipName, await SdTextEncoder.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file), tokenizer, runtime.ModelSource);
+            var encoder = await SdTextEncoder.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file);
+            try
+            {
+                var tokenizer = await Checkpoint.LoadClipTokenizerAsync(runtime.ModelSource, Checkpoint.ClipTokenizerRepo, "", null);
+                return new StandaloneTextEncoder(clipName, encoder, tokenizer, runtime.ModelSource);
+            }
+            catch { encoder.Dispose(); throw; }
         });
-        return new ClipHandle(encoder);
+        return new ClipHandle(model);
     }
 }
 
-[Node(Category = "model/loaders", DisplayName = "Load CLIP (Dual)")]
+[Node("DualCLIPLoader", Category = "model/loaders", DisplayName = "Load CLIP (Dual)",
+    Description = "Recipes:\nsdxl: clip-l, clip-g\nsd3: clip-l, clip-g / clip-l, t5 / clip-g, t5\nflux: clip-l, t5\nhidream: at least one of t5 or llama, recommended t5 and llama\nhunyuan_image: qwen2.5vl 7b and byt5 small\nnewbie: gemma-3-4b-it, jina clip v2")]
 public sealed class DualCLIPLoader
 {
     public static string[] ClipNames() => ModelFolders.Names(ModelFolders.TextEncoders);
-    public static string[] Types() => ["sdxl", "sd3", "flux", "hunyuan_video", "hidream", "hunyuan_image", "hunyuan_video_15", "kandinsky5", "kandinsky5_image", "ltxv", "newbie", "ace"];
-    public static string[] Devices() => ["default", "cpu"];
 
-    /// <summary>
-    /// SDXL's two text encoders from two files of <c>&lt;models&gt;/text_encoders</c> (CLIP-L and OpenCLIP bigG, in either order: they are told apart by width).
-    /// <c>device</c> is accepted for workflow compatibility; the encoders run on the GPU either way.
-    /// </summary>
+    public static string[] Types() =>
+        ["sdxl", "sd3", "flux", "hunyuan_video", "hidream", "hunyuan_image", "hunyuan_video_15", "kandinsky5", "kandinsky5_image", "ltxv", "newbie", "ace"];
+
+    public static string[] Devices() => CLIPLoader.Devices();
+
+    /// <summary>SDXL's two text encoders (CLIP-L and OpenCLIP-bigG, in either order: the bigG file is the one with 1280-wide tensors).</summary>
     public async Task<ClipHandle> ExecuteAsync([Input(OptionsProvider = nameof(ClipNames))] string clipName1, [Input(OptionsProvider = nameof(ClipNames))] string clipName2,
         [Input(OptionsProvider = nameof(Types))] string type, NodeContext context, IServiceProvider services,
         [Input(OptionsProvider = nameof(Devices), Optional = true)] string device = "default")
     {
-        if (type != "sdxl") throw new NotSupportedException($"Load CLIP (Dual) type {type}: SpawnGen loads the sdxl pair (CLIP-L + OpenCLIP bigG).");
+        if (type != "sdxl")
+            throw new NotSupportedException($"Dual CLIP type '{type}' is not available: SpawnGen runs SDXL's two text encoders; choose 'sdxl'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var first = ModelFolders.Locate(ModelFolders.TextEncoders, clipName1);
         var second = ModelFolders.Locate(ModelFolders.TextEncoders, clipName2);
-        context.Status($"Loading {clipName1} + {clipName2}");
-        var encoder = await runtime.GetOrLoadAsync($"clip2:{first.Repo}/{first.File}|{second.Repo}/{second.File}", async () =>
+        var model = await runtime.GetOrLoadAsync($"clip2:{first.Repo}/{first.File}|{second.Repo}/{second.File}", async () =>
         {
-            // ComfyUI takes the two files in either order; the bigG one is the second tower.
-            bool firstIsG = await SafetensorsHeader.HasWidthAsync(runtime.ModelSource, first.Repo, first.File, 1280);
-            var (l, g) = firstIsG ? (second, first) : (first, second);
-            var tokenizer = await Checkpoint.LoadClipTokenizerAsync(runtime.ModelSource, Checkpoint.ClipTokenizerRepo, "", null);
-            await using var ls = await runtime.ModelSource.OpenAsync(l.Repo, l.File);
-            await using var gs = await runtime.ModelSource.OpenAsync(g.Repo, g.File);
-            var te = await SdTextEncoder.LoadSdxlAsync(runtime.Accelerator, ls, $"{l.Repo}/{l.File}", gs, $"{g.Repo}/{g.File}");
-            return new StandaloneTextEncoder($"{clipName1} + {clipName2}", te, tokenizer, runtime.ModelSource);
+            var source = runtime.ModelSource;
+            var (l, g) = await SafetensorsHeader.HasWidthAsync(source, first.Repo, first.File, 1280) ? (second, first) : (first, second);
+            SdTextEncoder encoder;
+            await using (var ls = await source.OpenAsync(l.Repo, l.File))
+            await using (var gs = await source.OpenAsync(g.Repo, g.File))
+                encoder = await SdTextEncoder.LoadSdxlAsync(runtime.Accelerator, ls, l.File, gs, g.File);
+            try
+            {
+                var tokenizer = await Checkpoint.LoadClipTokenizerAsync(source, Checkpoint.ClipTokenizerRepo, "", null);
+                return new StandaloneTextEncoder($"{clipName1} + {clipName2}", encoder, tokenizer, source);
+            }
+            catch { encoder.Dispose(); throw; }
         });
-        return new ClipHandle(encoder);
+        return new ClipHandle(model);
     }
 }
 
-/// <summary>Reads only the JSON header of a safetensors file (its tensor names and shapes).</summary>
-internal static class SafetensorsHeader
+[Node("VAELoader", Category = "model/loaders", DisplayName = "Load VAE")]
+public sealed class VAELoader
 {
-    /// <summary>True when the file's final layer norm (CLIP's <c>final_layer_norm</c>, OpenCLIP's <c>ln_final</c>) is <paramref name="width"/> wide.</summary>
-    public static async Task<bool> HasWidthAsync(SpawnDev.ILGPU.ML.Hub.IModelSource source, string repo, string file, int width)
+    /// <summary>The tiny VAEs Load VAE offers when their decoder is in vae_approx: name, decoder file name, latent scale.</summary>
+    static readonly (string Name, string Decoder, string Encoder, float Scale)[] Tiny =
+    [
+        ("taesd", "taesd_decoder", "taesd_encoder", 0.18215f),
+        ("taesdxl", "taesdxl_decoder", "taesdxl_encoder", 0.13025f),
+    ];
+
+    static string? Approx(string stem) =>
+        ModelFolders.Names(ModelFolders.VaeApprox).FirstOrDefault(n => Path.GetFileNameWithoutExtension(n) == stem);
+
+    /// <summary>The vae folder's files, then the tiny VAEs whose decoder is there, then "pixel_space" (as ComfyUI lists them).</summary>
+    public static string[] VaeNames() =>
+        [.. ModelFolders.Names(ModelFolders.Vae), .. Tiny.Where(t => Approx(t.Decoder) is not null).Select(t => t.Name), "pixel_space"];
+
+    public async Task<VaeHandle> ExecuteAsync([Input(OptionsProvider = nameof(VaeNames))] string vaeName, NodeContext context, IServiceProvider services)
     {
-        await using var s = await source.OpenAsync(repo, file);
-        var len = new byte[8];
-        await s.ReadExactlyAsync(len);
-        long n = BitConverter.ToInt64(len);
-        if (n <= 0 || n > 100_000_000) throw new InvalidDataException($"'{file}' is not a safetensors file.");
-        var header = new byte[n];
-        await s.ReadExactlyAsync(header);
-        using var doc = System.Text.Json.JsonDocument.Parse(header);
-        foreach (var t in doc.RootElement.EnumerateObject())
-            if ((t.Name.EndsWith("final_layer_norm.weight", StringComparison.Ordinal) || t.Name.EndsWith("ln_final.weight", StringComparison.Ordinal))
-                && t.Value.TryGetProperty("shape", out var shape) && shape.GetArrayLength() == 1)
-                return shape[0].GetInt32() == width;
-        throw new InvalidDataException($"'{file}' has no CLIP final layer norm: it is not a text encoder.");
+        if (vaeName == "pixel_space") throw new NotSupportedException("'pixel_space' is for pixel-space models, which SpawnGen does not run.");
+        var runtime = await GpuHelpers.RuntimeAsync(services);
+        if (Tiny.FirstOrDefault(t => t.Name == vaeName) is { Name: not null } tiny)
+        {
+            var decoder = Approx(tiny.Decoder) ?? throw new ArgumentException($"There is no {tiny.Decoder} in the vae_approx folder.", nameof(vaeName));
+            var (repo, decoderFile) = ModelFolders.Locate(ModelFolders.VaeApprox, decoder);
+            var encoderFile = Approx(tiny.Encoder) is { } e ? ModelFolders.Locate(ModelFolders.VaeApprox, e).File : null;
+            var tae = await runtime.GetOrLoadAsync($"taesd:{repo}/{decoderFile}|{encoderFile}", async () =>
+                new StandaloneTaesd(vaeName, await SdTaesd.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, decoderFile, encoderFile!, tiny.Scale)));
+            return new VaeHandle(tae);
+        }
+        var (vaeRepo, file) = ModelFolders.Locate(ModelFolders.Vae, vaeName);
+        var vae = await runtime.GetOrLoadAsync($"vae:{vaeRepo}/{file}", async () =>
+            new StandaloneVae(vaeName, await SdVae.LoadAsync(runtime.Accelerator, runtime.ModelSource, vaeRepo, file)));
+        return new VaeHandle(vae);
     }
 }

@@ -1,248 +1,996 @@
 namespace SpawnGen.Nodes.ML;
 
-/// <summary>
-/// The less common k-diffusion samplers ComfyUI ships: DPM-Solver fast / adaptive, DEIS, the CFG++ history sampler, ER-SDE, SEEDS, SA-Solver and UniPC.
-/// Same conventions as <see cref="Samplers"/>.
-/// </summary>
+// Written clean-room (docs/CLEANROOM.md). DPM-Solver fast / adaptive follow k-diffusion (MIT) and Lu et al. 2022; Heun++ (heunpp2) follows
+// Carzit's sd-webui-samplers-scheduler (MIT). The other samplers come from their papers (cited at each), with the details ComfyUI chose fitted
+// to Fixtures/sampling/reference.json and measured by calling ComfyUI's samplers as black boxes.
+
+/// <summary>A sampler's options (what the sampler nodes set).</summary>
+public sealed record SamplerOptions
+{
+    public double? Eta { get; init; }
+    public double? SNoise { get; init; }
+    public double? R { get; init; }
+    public string? SolverType { get; init; }
+    public int? Order { get; init; }
+    public double? Rtol { get; init; }
+    public double? Atol { get; init; }
+    public double? HInit { get; init; }
+    public double? PCoeff { get; init; }
+    public double? ICoeff { get; init; }
+    public double? DCoeff { get; init; }
+    public double? AcceptSafety { get; init; }
+    public int? MaxStage { get; init; }
+    public Func<double, double>? NoiseScaler { get; init; }
+    public Func<double, double>? TauFunc { get; init; }
+    public int? PredictorOrder { get; init; }
+    public int? CorrectorOrder { get; init; }
+    public bool? UsePece { get; init; }
+    public bool? SimpleOrder2 { get; init; }
+    public double? SNoiseEnd { get; init; }
+    public double? NoiseClipStd { get; init; }
+}
+
 public static partial class Samplers
 {
-    /// <summary>
-    /// A Brownian motion W over sigma, built on demand from independent normal draws, standing in for k-diffusion's BrownianTreeNoiseSampler: the noise for
-    /// (sigma, sigma_next) is (W(sigma_next) - W(sigma)) / sqrt(|sigma_next - sigma|). A new point between known ones is drawn from the Brownian bridge, one outside
-    /// them extends the path, so overlapping intervals get correctly correlated noise (dpmpp_sde's two stages share part of their interval).
-    /// </summary>
-    internal sealed class BrownianNoise
+    static Task<float[]> RunAdvanced(string sampler, Run run, float[] x, double[] s) => sampler switch
     {
-        readonly NoiseSource _source;
-        readonly SortedList<double, float[]> _points = [];
+        "heunpp2" => Heunpp2(run, x, s),
+        "euler_cfg_pp" => EulerCfgPP(run, x, s),
+        EulerPP => EulerPPAlternative(run, x, s),
+        "cfgpp_ud10_ab" => CfgPPUd10Ab(run, x, s),
+        "gradient_estimation" => GradientEstimation(run, x, s, cfgPP: false),
+        "gradient_estimation_cfg_pp" => GradientEstimation(run, x, s, cfgPP: true),
+        "res_multistep" => ResMultistep(run, x, s, cfgPP: false),
+        "res_multistep_cfg_pp" => ResMultistep(run, x, s, cfgPP: true),
+        "res_multistep_ancestral" => ResMultistep(run, x, s, cfgPP: false, ancestral: true),
+        "res_multistep_ancestral_cfg_pp" => ResMultistep(run, x, s, cfgPP: true, ancestral: true),
+        "ddpm" => Ddpm(run, x, s),
+        "er_sde" => ErSde(run, x, s),
+        "uni_pc" => UniPc(run, x, s, bh2: false),
+        "sa_solver" => SaSolver(run, x, s, pece: false),
+        "sa_solver_pece" => SaSolver(run, x, s, pece: true),
+        "uni_pc_bh2" => UniPc(run, x, s, bh2: true),
+        "seeds_2" => Seeds(run, x, s, 2, run.Options.SolverType ?? "phi_1", run.Eta(), run.SNoise, run.Options.R ?? 0.5),
+        "seeds_3" => Seeds(run, x, s, 3, "phi_2", run.Eta(), run.SNoise, 1.0 / 3),
+        "exp_heun_2_x0" => Seeds(run, x, s, 2, "phi_2", 0, run.SNoise, 1.0),
+        "exp_heun_2_x0_sde" => Seeds(run, x, s, 2, "phi_2", run.Eta(), run.SNoise, 1.0),
+        "lcm" => Lcm(run, x, s),
+        "ipndm" => Ipndm(run, x, s),
+        "ipndm_v" => IpndmV(run, x, s),
+        "deis" => Deis(run, x, s),
+        _ => throw new NotImplementedException(sampler),
+    };
 
-        public BrownianNoise(NoiseSource source, double sigmaMin, double sigmaMax)
+    // ---- CFG++ (Chung et al. 2024): move to the guided estimate, keep the unconditional estimate's noise ----
+
+    static async Task<float[]> EulerCfgPP(Run run, float[] x, double[] s)
+    {
+        for (int i = 0; i < s.Length - 1; i++)
         {
-            _source = source;
-            var first = source.Next();
-            _points[sigmaMin] = new float[first.Length];
-            if (sigmaMax > sigmaMin)
-            {
-                double scale = Math.Sqrt(sigmaMax - sigmaMin);
-                _points[sigmaMax] = first.Select(v => (float)(v * scale)).ToArray();
-            }
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            var u = run.Uncond(denoised);
+            await run.Callback(denoised);
+            x = Step(denoised, ToD(x, s[i], u), s[i + 1]);
+            run.Step(i);
         }
+        return x;
+    }
 
-        /// <summary>W at <paramref name="tau"/>.</summary>
-        public float[] At(double tau)
+    /// <summary>SamplerEulerCFGpp's "alternative": an Euler step towards 2 D - U, the guided estimate pushed once more away from the unconditional one (measured).</summary>
+    static async Task<float[]> EulerPPAlternative(Run run, float[] x, double[] s)
+    {
+        for (int i = 0; i < s.Length - 1; i++)
         {
-            if (_points.TryGetValue(tau, out var known)) return known;
-            var keys = _points.Keys;
-            int hi = 0;
-            while (hi < keys.Count && keys[hi] < tau) hi++;
-            var z = _source.Next();
-            var w = new float[z.Length];
-            if (hi == 0)
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            var u = run.Uncond(denoised);
+            await run.Callback(denoised);
+            float r = (float)s[i + 1] / (float)s[i];
+            var nx = new float[x.Length];
+            for (int k = 0; k < nx.Length; k++) nx[k] = r * x[k] + (1 - r) * (2 * denoised[k] - u[k]);
+            x = nx;
+            run.Step(i);
+        }
+        return x;
+    }
+
+    /// <summary>
+    /// cfgpp_ud10_ab: a CFG++ multistep on the noise estimates, its weights measured from ComfyUI's sampler (no published description). The first
+    /// step is CFG++ Euler; later steps, with rho = h / h_prev in sigma, weigh the guided noise estimates (1 + rho / 8, -rho^2 / 8 sigma_prev / sigma)
+    /// and the unconditional ones over the last three steps; a step to sigma 0 extrapolates the denoised estimate, D + rho (D - D_prev).
+    /// </summary>
+    static async Task<float[]> CfgPPUd10Ab(Run run, float[] x, double[] s)
+    {
+        var xs = new List<float[]>();
+        var ds = new List<float[]>();
+        var us = new List<float[]>();
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            var u = run.UncondOrDenoised(denoised);
+            await run.Callback(denoised);
+            xs.Add(x); ds.Add(denoised); us.Add(u);
+            double si = (float)s[i], sn = (float)s[i + 1];
+            if (i == 0)
             {
-                // Below every known point: an independent increment downwards.
-                double lo = keys[0], scale = Math.Sqrt(lo - tau);
-                var basis = _points.Values[0];
-                for (int k = 0; k < w.Length; k++) w[k] = (float)(basis[k] + z[k] * scale);
+                x = sn == 0 ? denoised : LinCombine(denoised, 1, Subtract(x, u), sn / si);
+                run.Step(i);
+                continue;
             }
-            else if (hi == keys.Count)
+            double sp = (float)s[i - 1], rho = (sn - si) / (si - sp);
+            if (sn == 0)
             {
-                double top = keys[^1], scale = Math.Sqrt(tau - top);
-                var basis = _points.Values[^1];
-                for (int k = 0; k < w.Length; k++) w[k] = (float)(basis[k] + z[k] * scale);
+                x = LinCombine(denoised, 1 + rho, ds[i - 1], -rho);
+                run.Step(i);
+                continue;
+            }
+            double a = sn * (0.225 * rho + 0.0125 * rho * rho);
+            double c = 0;
+            if (i >= 2)
+            {
+                double spp = (float)s[i - 2], rhoPrev = (si - sp) / (sp - spp);
+                c = si * rho * rho * rhoPrev / 80;
+            }
+            double dSum = -(rho / 8) * si + rho * rho / 8 * sp, bw = -a - c - dSum;
+            var r = new float[x.Length];
+            for (int k = 0; k < r.Length; k++)
+            {
+                double eD = (x[k] - denoised[k]) / si, eDp = (xs[i - 1][k] - ds[i - 1][k]) / sp;
+                double eU = (x[k] - u[k]) / si, eUp = (xs[i - 1][k] - us[i - 1][k]) / sp;
+                double v = x[k] - si * (1 + rho / 8) * eD + rho * rho / 8 * sp * eDp + (sn + a) * eU + bw * eUp;
+                if (i >= 2) v += c * (xs[i - 2][k] - us[i - 2][k]) / (float)s[i - 2];
+                r[k] = (float)v;
+            }
+            x = r;
+            run.Step(i);
+        }
+        return x;
+    }
+
+    /// <summary>DPM-Solver++(2M) with CFG++: the previous step's unconditional estimate in the extrapolation, plus ratio (D - U) (measured).</summary>
+    static Task<float[]> Dpmpp2MCfgPPStep(Run run, float[] x, float[] denoised, float[]? oldUncond, double[] s, int i)
+    {
+        var u = run.Uncond(denoised);
+        float t = -Log(s[i]), tNext = -Log(s[i + 1]), h = tNext - t;
+        float ratio = s[i + 1] == 0 ? 0 : MathF.Exp(-tNext) / MathF.Exp(-t);
+        float[] dd = denoised;
+        if (oldUncond is not null && s[i + 1] != 0)
+        {
+            float hLast = t - -Log(s[i - 1]), r = hLast / h;
+            dd = LinCombine(denoised, 1 + 1 / (2 * r), oldUncond, -(1 / (2 * r)));
+        }
+        float k = s[i + 1] == 0 ? 1 : -ExpM1(-h);
+        var r2 = new float[x.Length];
+        for (int j = 0; j < r2.Length; j++) r2[j] = ratio * x[j] + k * dd[j] + ratio * (denoised[j] - u[j]);
+        return Task.FromResult(r2);
+    }
+
+    // ---- Gradient estimation (Permenter & Yuan 2023): gamma = 2 extrapolation of the derivative ----
+
+    static async Task<float[]> GradientEstimation(Run run, float[] x, double[] s, bool cfgPP)
+    {
+        const float gamma = 2f;
+        float[]? old = null;
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            var u = cfgPP ? run.Uncond(denoised) : denoised;
+            await run.Callback(denoised);
+            var d = ToD(x, s[i], u);
+            float dt = (float)s[i + 1] - (float)s[i];
+            if (s[i + 1] == 0) x = denoised;
+            else if (old is null) x = cfgPP ? Step(denoised, d, s[i + 1]) : Step(x, d, dt);
+            else
+            {
+                var r = new float[x.Length];
+                for (int k = 0; k < r.Length; k++)
+                {
+                    float dBar = gamma * d[k] + (1 - gamma) * old[k];
+                    r[k] = x[k] + dBar * dt + (cfgPP ? denoised[k] - u[k] : 0);
+                }
+                x = r;
+            }
+            old = d;
+            run.Step(i);
+        }
+        return x;
+    }
+
+    // ---- RES multistep (Zhang, Tao & Chen 2023): second-order exponential multistep with phi functions ----
+
+    static async Task<float[]> ResMultistep(Run run, float[] x, double[] s, bool cfgPP, bool ancestral = false)
+    {
+        double eta = ancestral ? run.Eta() : 0;
+        float[]? old = null;
+        double hLast = 0;
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            var u = cfgPP ? run.Uncond(denoised) : denoised;
+            await run.Callback(denoised);
+            var (down, up) = ancestral ? AncestralStep(s[i], s[i + 1], eta) : (s[i + 1], 0.0);
+            float ratio = (float)down / (float)s[i];
+            if (old is null || down == 0)
+            {
+                // First order: x' = ratio x + (1 - ratio) D; CFG++ keeps the unconditional noise.
+                x = cfgPP ? LinCombine(denoised, 1, Subtract(x, u), ratio) : LinCombine(x, ratio, denoised, 1 - ratio);
+                hLast = down == 0 ? 0 : Math.Log((float)s[i] / (float)down);
             }
             else
             {
-                double a = keys[hi - 1], b = keys[hi], frac = (tau - a) / (b - a), std = Math.Sqrt((tau - a) * (b - tau) / (b - a));
-                var wa = _points.Values[hi - 1];
-                var wb = _points.Values[hi];
-                for (int k = 0; k < w.Length; k++) w[k] = (float)(wa[k] + frac * (wb[k] - wa[k]) + std * z[k]);
+                // The previous point is the previous step's own exponential step back (measured for the ancestral form; the same thing without eta).
+                double h = Math.Log((float)s[i] / (float)down), c2 = -hLast / h, z = -h;
+                double phi1 = (Math.Abs(z) < 1e-5 ? z + z * z / 2 : Math.Exp(z) - 1) / z, phi2 = (phi1 - 1) / z;
+                double b1 = phi1 - phi2 / c2, b2 = phi2 / c2;
+                float e = (float)Math.Exp(-h), w1 = (float)(h * b1), w2 = (float)(h * b2);
+                var r = new float[x.Length];
+                for (int k = 0; k < r.Length; k++)
+                    r[k] = e * x[k] + w1 * u[k] + w2 * old[k] + (cfgPP ? ratio * (denoised[k] - u[k]) : 0);
+                x = r;
+                hLast = h;
             }
-            _points[tau] = w;
-            return w;
+            if (up > 0 && s[i + 1] > 0) AddNoise(x, run.Noise.Next(), run.SNoise * up);
+            old = u;
+            run.Step(i);
         }
-
-        /// <summary>The normalised increment from <paramref name="sigma"/> to <paramref name="sigmaNext"/>: a standard normal draw per element.</summary>
-        public float[] Increment(double sigma, double sigmaNext)
-        {
-            var w0 = At(sigma);
-            var w1 = At(sigmaNext);
-            double scale = 1 / Math.Sqrt(Math.Abs(sigmaNext - sigma));
-            var r = new float[w0.Length];
-            for (int k = 0; k < r.Length; k++) r[k] = (float)((w1[k] - w0[k]) * scale);
-            return r;
-        }
+        return x;
     }
 
-    // --- DPM-Solver (fast and adaptive), in t = -log(sigma) and eps space ------------------------------------------------------------------
+    // ---- SEEDS (Gonzalez et al. 2023): exponential SDE stages in data prediction, with Brownian noise shared between the stages ----
 
-    sealed class DpmSolver(Run run)
+    static double Expm1D(double z) => Math.Abs(z) < 1e-5 ? z + z * z / 2 + z * z * z / 6 : Math.Exp(z) - 1;
+
+    static double Phi1(double z) => Math.Abs(z) < 1e-8 ? 1 + z / 2 : Expm1D(z) / z;
+    static double Phi2(double z) => Math.Abs(z) < 1e-5 ? 0.5 + z / 6 : (Phi1(z) - 1) / z;
+
+    /// <summary>
+    /// SEEDS-2 (stages at r) and SEEDS-3 (stages at 1/3, 2/3). With eta the deterministic part decays over h_eta = (1 + eta) h; each stage's
+    /// noise is the Brownian increment of its sub-interval, carried to later stages with the factor e^(-eta (remaining h)). phi_1 uses the last
+    /// stage's estimate alone, phi_2 adds the difference to the first (h_eta phi_2(-h_eta) / r).
+    /// </summary>
+    static async Task<float[]> Seeds(Run run, float[] x, double[] s, int stages, string solver, double eta, double sNoise, double r)
     {
-        public static double T(double sigma) => -Math.Log(sigma);
-        public static double Sigma(double t) => Math.Exp(-t);
+        double[] fr = stages == 2 ? [r, 1] : [1.0 / 3, 2.0 / 3, 1];
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var d0 = await run.Denoise(x, s[i]);
+            await run.Callback(d0);
+            if (s[i + 1] == 0)
+            {
+                x = d0;
+                run.Step(i);
+                continue;
+            }
+            double sig = (float)s[i], lam0 = LamOf(run, sig), h = LamOf(run, (float)s[i + 1]) - lam0, hEta = (1 + eta) * h;
+            var noises = new List<float[]>();
+            var estimates = new List<float[]> { d0 };
+            float[] StageX(double c, bool final)
+            {
+                double sc = c == 1 ? (float)s[i + 1] : SigmaOfLam(run, lam0 + c * h), ac = AlphaOf(run, sc);
+                double keepX = sc / sig * Math.Exp(-eta * c * h), total = ac * -Expm1D(-c * hEta);
+                var dw = new double[estimates.Count];
+                dw[0] = total;
+                if (estimates.Count > 1)
+                {
+                    // Second-order correction from the latest estimate (phi_2 form), or the latest estimate alone (phi_1 form, final only).
+                    int last = estimates.Count - 1;
+                    double cl = fr[last - 1];
+                    if (final && solver == "phi_1") { dw[0] = 0; dw[last] = total; }
+                    else
+                    {
+                        double w = ac * c * hEta * Phi2(-c * hEta) / (cl / c);
+                        dw[0] -= w;
+                        dw[last] += w;
+                    }
+                }
+                var nx = new float[x.Length];
+                for (int k = 0; k < nx.Length; k++)
+                {
+                    double v = keepX * x[k];
+                    for (int j = 0; j < dw.Length; j++) v += dw[j] * estimates[j][k];
+                    nx[k] = (float)v;
+                }
+                if (eta != 0)
+                {
+                    // Noise of each earlier sub-interval, decayed to this stage, plus this stage's own.
+                    double start = 0;
+                    for (int j = 0; j < noises.Count; j++)
+                    {
+                        double end = fr[j], len = end - start;
+                        double coef = sc * Math.Exp(-eta * (c - end) * h) * Math.Sqrt(-Expm1D(-2 * eta * len * h)) * sNoise;
+                        AddNoise(nx, noises[j], coef);
+                        start = end;
+                    }
+                }
+                return nx;
+            }
+            for (int st = 0; st < stages - 1; st++)
+            {
+                if (eta != 0) noises.Add(run.Noise.Next());
+                var xs = StageX(fr[st], final: false);
+                estimates.Add(await run.Denoise(xs, SigmaOfLam(run, lam0 + fr[st] * h)));
+            }
+            if (eta != 0) noises.Add(run.Noise.Next());
+            x = StageX(1, final: true);
+            run.Step(i);
+        }
+        return x;
+    }
+
+    // ---- ER-SDE-Solver (Cui et al. 2023): up to three stages, the integrals by a 200-interval left Riemann sum (measured) ----
+
+    static async Task<float[]> ErSde(Run run, float[] x, double[] s)
+    {
+        var o = run.Options;
+        int maxStage = o.MaxStage ?? 3;
+        double sNoise = run.SNoise;
+        var f = o.NoiseScaler ?? (v => v * (Math.Exp(Math.Pow(v, 0.3)) + 10));
+        const int n = 200;
+        float[]? old = null, oldD1 = null;
+        double lPrev = 0, lPrev2 = 0;
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            await run.Callback(denoised);
+            if (s[i + 1] == 0)
+            {
+                x = denoised;
+                run.Step(i);
+                continue;
+            }
+            // A flow model runs in the equivalent variance-exploding space: lambda = sigma / (1 - sigma), x / (1 - sigma) (measured).
+            bool flow = run.Sampling.IsConst;
+            double sg = (float)s[i], sn = (float)s[i + 1];
+            double ls = flow ? sg / (1 - sg) : sg, lt = flow ? sn / (1 - sn) : sn, r = f(lt) / f(ls);
+            double inA = flow ? 1 - sg : 1, outA = flow ? 1 - sn : 1;
+            var nx = new double[x.Length];
+            for (int k = 0; k < nx.Length; k++) nx[k] = r * x[k] / inA + (1 - r) * denoised[k];
+            int stage = Math.Min(maxStage, i + 1);
+            float[]? d1 = null;
+            if (stage >= 2 && old is not null)
+            {
+                double span = ls - lt, sInt = 0, suInt = 0;
+                for (int m = 0; m < n; m++)
+                {
+                    double tau = lt + span * m / n, ft = f(tau);
+                    sInt += 1 / ft;
+                    suInt += (tau - ls) / ft;
+                }
+                sInt *= span / n;
+                suInt *= span / n;
+                double dl = lt - ls, a = dl + sInt * f(lt);
+                d1 = new float[x.Length];
+                for (int k = 0; k < nx.Length; k++)
+                {
+                    d1[k] = (float)((denoised[k] - old[k]) / (ls - lPrev));
+                    nx[k] += a * d1[k];
+                }
+                if (stage >= 3 && oldD1 is not null)
+                {
+                    double b = dl * dl / 2 + suInt * f(lt), half = (ls - lPrev2) / 2;
+                    for (int k = 0; k < nx.Length; k++) nx[k] += b * ((d1[k] - oldD1[k]) / half);
+                }
+            }
+            if (sNoise != 0)
+            {
+                var z = run.Noise.Next();
+                double c = Math.Sqrt(Math.Max(lt * lt - ls * ls * r * r, 0)) * sNoise;
+                for (int k = 0; k < nx.Length; k++) nx[k] += c * z[k];
+            }
+            x = [.. nx.Select(v => (float)(v * outA))];
+            oldD1 = d1;
+            old = denoised;
+            lPrev2 = lPrev;
+            lPrev = ls;
+            run.Step(i);
+        }
+        return x;
+    }
+
+    // ---- UniPC (Zhao et al. 2023): multistep predictor (UniP) and corrector (UniC), data prediction, in VP form ----
+
+    /// <summary>
+    /// UniPC with B(h) = h (bh1, "uni_pc") or e^h - 1 (bh2). Order min(3, sigmas - 2), warmed up with lower orders, the corrector after every
+    /// step but the last (reusing the step's model call), a lower order near the end; a final sigma of 0 is run to 0.001.
+    /// </summary>
+    static async Task<float[]> UniPc(Run run, float[] x0, double[] sigmas, bool bh2)
+    {
+        var ts = sigmas.Select(v => (double)(float)v).ToArray();
+        if (ts[^1] == 0) ts[^1] = 0.001;
+        static double Alpha(double s) => 1 / Math.Sqrt(1 + s * s);
+        static double SigVp(double s) => s / Math.Sqrt(1 + s * s);
+        static double Lam(double s) => -Math.Log(s);
+        int steps = ts.Length - 1, order = Math.Min(3, ts.Length - 2), callStep = 0;
+        var x = x0.Select(v => (double)v * Alpha(ts[0])).ToArray();
+        async Task<double[]> Model(double[] xv, double t)
+        {
+            run.Check();
+            var input = xv.Select(v => (float)(v / Alpha(t))).ToArray();
+            var d = await run.Denoise(input, t);
+            await run.Callback(d);
+            run.Step(callStep++);
+            return [.. d.Select(v => (double)v)];
+        }
+        var models = new List<double[]> { await Model(x, ts[0]) };
+        var times = new List<double> { ts[0] };
+        if (order < 1) return [.. x.Select(v => (float)(v / Alpha(ts[^1])))];
+
+        async Task<(double[] X, double[]? M)> Update(double[] xs, int ord, double t, bool corrector)
+        {
+            double s0 = times[^1];
+            var m0 = models[^1];
+            double h = Lam(t) - Lam(s0), hh = -h;
+            var rks = new List<double>();
+            var d1s = new List<double[]>();
+            for (int i = 1; i < ord; i++)
+            {
+                double si = times[^(i + 1)];
+                var mi = models[^(i + 1)];
+                double rk = (Lam(si) - Lam(s0)) / h;
+                rks.Add(rk);
+                d1s.Add([.. mi.Select((v, k) => (v - m0[k]) / rk)]);
+            }
+            rks.Add(1.0);
+            double hPhi1 = Expm1D(hh), hPhiK = hPhi1 / hh - 1, fac = 1, bH = bh2 ? Expm1D(hh) : hh;
+            var rMat = new double[ord, ord];
+            var b = new double[ord];
+            for (int i = 1; i <= ord; i++)
+            {
+                for (int k = 0; k < ord; k++) rMat[i - 1, k] = Math.Pow(rks[k], i - 1);
+                b[i - 1] = hPhiK * fac / bH;
+                fac *= i + 1;
+                hPhiK = hPhiK / hh - 1 / fac;
+            }
+            double[] rhosP = d1s.Count == 0 ? [] : ord == 2 ? [0.5] : SolveSub(rMat, b, ord - 1);
+            double st = SigVp(t), at = Alpha(t), ss = SigVp(s0);
+            var xt_ = new double[xs.Length];
+            for (int k = 0; k < xs.Length; k++) xt_[k] = st / ss * xs[k] - at * hPhi1 * m0[k];
+            var xt = new double[xs.Length];
+            for (int k = 0; k < xs.Length; k++)
+            {
+                double pred = 0;
+                for (int j = 0; j < d1s.Count; j++) pred += rhosP[j] * d1s[j][k];
+                xt[k] = xt_[k] - at * bH * pred;
+            }
+            if (!corrector) return (xt, null);
+            double[] rhosC = ord == 1 ? [0.5] : SolveSub(rMat, b, ord);
+            var mt = await Model(xt, t);
+            for (int k = 0; k < xs.Length; k++)
+            {
+                double corr = 0;
+                for (int j = 0; j < d1s.Count; j++) corr += rhosC[j] * d1s[j][k];
+                xt[k] = xt_[k] - at * bH * (corr + rhosC[^1] * (mt[k] - m0[k]));
+            }
+            return (xt, mt);
+        }
+
+        for (int step = 1; step < order; step++)
+        {
+            double t = ts[step];
+            var (nx, mx) = await Update(x, step, t, true);
+            x = nx;
+            mx ??= await Model(x, t);
+            times.Add(t);
+            models.Add(mx);
+        }
+        for (int step = order; step <= steps; step++)
+        {
+            double t = ts[step];
+            int so = Math.Min(order, steps + 1 - step);
+            var (nx, mx) = await Update(x, so, t, step != steps);
+            x = nx;
+            times.Add(t);
+            if (step < steps)
+            {
+                mx ??= await Model(x, t);
+                models.Add(mx);
+            }
+            while (times.Count > order) times.RemoveAt(0);
+            while (models.Count > order) models.RemoveAt(0);
+        }
+        return [.. x.Select(v => (float)(v / Alpha(ts[^1])))];
+    }
+
+    /// <summary>The solution of the leading n x n block of a against b's first n entries.</summary>
+    static double[] SolveSub(double[,] a, double[] b, int n)
+    {
+        var flat = new double[n * n];
+        for (int r = 0; r < n; r++) for (int c = 0; c < n; c++) flat[r * n + c] = a[r, c];
+        return Solve(flat, b[..n]);
+    }
+
+    // ---- SA-Solver (Xue et al. 2023): stochastic Adams predictor and corrector in data prediction, lambda = -log sigma ----
+
+    /// <summary>
+    /// The weights of the estimates at <paramref name="lams"/> (Lagrange basis) in sigma_t (1 + tau^2) integral over [lambda_s, lambda_t] of
+    /// e^(-tau^2 (lambda_t - lambda)) e^lambda L_j(lambda).
+    /// </summary>
+    static double[] SaWeights(double[] lams, double ls, double lt, double sigT, double tau2)
+    {
+        var w = new double[lams.Length];
+        for (int j = 0; j < lams.Length; j++)
+        {
+            int jj = j;
+            w[j] = sigT * (1 + tau2) * GaussLegendre(l =>
+            {
+                double p = 1;
+                for (int k = 0; k < lams.Length; k++) if (k != jj) p *= (l - lams[k]) / (lams[jj] - lams[k]);
+                return Math.Exp(-tau2 * (lt - l) + l) * p;
+            }, ls, lt, 24);
+        }
+        return w;
+    }
+
+    /// <summary>
+    /// SA-Solver: an order-p stochastic Adams predictor, then (except on the last step) an order-c corrector that includes the estimate at the
+    /// predicted point; PECE evaluates the model again at the corrected point. Tau comes from the options (default: eta 1 between 20% and 80%
+    /// of the run); a stochastic step draws one noise shared by predictor and corrector. The step to sigma 0 returns the last estimate.
+    /// </summary>
+    static async Task<float[]> SaSolver(Run run, float[] x0, double[] sigmas, bool pece)
+    {
+        var o = run.Options;
+        int pOrder = o.PredictorOrder ?? 3, cOrder = o.CorrectorOrder ?? 4;
+        bool simple2 = o.SimpleOrder2 ?? false;
+        double sNoise = run.SNoise;
+        var tauFunc = o.TauFunc ?? TauInterval(run.Sampling.PercentToSigma(0.2), run.Sampling.PercentToSigma(0.8), 1.0);
+        var s = sigmas.Select(v => (double)(float)v).ToArray();
+        double Lam(double v) => LamOf(run, v);
+        var x = x0.Select(v => (double)v).ToArray();
+        async Task<double[]> Model(double[] xv, double sigma, bool report = true)
+        {
+            run.Check();
+            var d = await run.Denoise([.. xv.Select(v => (float)v)], sigma);
+            if (report) await run.Callback(d);
+            return [.. d.Select(v => (double)v)];
+        }
+        var ds = new List<double[]> { await Model(x, s[0]) };
+        var lams = new List<double> { Lam(s[0]) };
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            if (s[i + 1] == 0)
+            {
+                x = ds[^1];
+                run.Step(i);
+                break;
+            }
+            double ls = lams[^1], lt = Lam(s[i + 1]), h = lt - ls, tau = tauFunc(s[i + 1]), tau2 = tau * tau;
+            double keep = s[i + 1] / s[i] * Math.Exp(-tau2 * h), noiseScale = s[i + 1] * Math.Sqrt(-Expm1D(-2 * tau2 * h)) * sNoise;
+            float[]? z = tau != 0 ? run.Noise.Next() : null;
+            double[] Combine(double[] w, IList<double[]> est, bool withNoise = true)
+            {
+                var r = new double[x.Length];
+                for (int k = 0; k < r.Length; k++)
+                {
+                    double v = keep * x[k];
+                    for (int j = 0; j < w.Length; j++) v += w[j] * est[j][k];
+                    if (z is not null && withNoise) v += noiseScale * z[k];
+                    r[k] = v;
+                }
+                return r;
+            }
+            // Ending at sigma 0, the orders drop to the steps left before the last (measured).
+            int cap = s[^1] == 0 ? Math.Max(s.Length - 2 - i, 1) : int.MaxValue;
+            int po = Math.Min(Math.Min(ds.Count, pOrder), cap);
+            var pEst = Enumerable.Range(0, po).Select(j => ds[^(j + 1)]).ToList();
+            var pLam = Enumerable.Range(0, po).Select(j => lams[^(j + 1)]).ToArray();
+            bool corrects = i + 2 < s.Length && cOrder > 0;
+            var xp = Combine(SaWeightsFor(pLam, ls, lt, s[i + 1], tau2, simple2), pEst);
+            if (corrects)
+            {
+                var dn = await Model(xp, s[i + 1]);
+                int co = Math.Min(Math.Min(ds.Count + 1, cOrder), cap);
+                var cEst = new List<double[]> { dn };
+                var cLam = new List<double> { lt };
+                for (int j = 0; j < co - 1; j++) { cEst.Add(ds[^(j + 1)]); cLam.Add(lams[^(j + 1)]); }
+                x = Combine(SaWeightsFor([.. cLam], ls, lt, s[i + 1], tau2, simple2), cEst);
+                if (pece) dn = await Model(x, s[i + 1], report: false);
+                ds.Add(dn);
+            }
+            else
+            {
+                x = xp;
+                if (i + 2 < s.Length) ds.Add(await Model(x, s[i + 1]));
+            }
+            lams.Add(lt);
+            run.Step(i);
+        }
+        return [.. x.Select(v => (float)v)];
+    }
+
+    /// <summary>
+    /// The weights for a step; with simple_order_2, two-point steps use UniPC's second-order forms instead (measured): the corrector adds
+    /// h/2 (D_t - D_s), the predictor h/2 (D_prev - D_s) / r with r = (lambda_prev - lambda_s) / h, h taken as (1 + tau^2) h.
+    /// </summary>
+    static double[] SaWeightsFor(double[] lams, double ls, double lt, double sigT, double tau2, bool simple2)
+    {
+        if (!simple2 || lams.Length != 2) return SaWeights(lams, ls, lt, sigT, tau2);
+        double h = lt - ls, hEff = (1 + tau2) * h, total = -Expm1D(-hEff);
+        if (lams[0] == lt) return [0.5 * hEff, total - 0.5 * hEff];
+        double c = 0.5 * hEff / ((lams[1] - ls) / h);
+        return [total - c, c];
+    }
+
+    // ---- DDPM (Ho et al. 2020): the posterior step in sigma form ----
+
+    static async Task<float[]> Ddpm(Run run, float[] x, double[] s)
+    {
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            await run.Callback(denoised);
+            float sig = (float)s[i], next = (float)s[i + 1], keep = next * next / (sig * sig);
+            var r = new float[x.Length];
+            for (int k = 0; k < r.Length; k++) r[k] = denoised[k] + keep * (x[k] - denoised[k]);
+            x = r;
+            if (next > 0) AddNoise(x, run.Noise.Next(), next * MathF.Sqrt(1 - keep));
+            run.Step(i);
+        }
+        return x;
+    }
+
+    // ---- LCM (Luo et al. 2023): the denoised estimate, re-noised to the next sigma ----
+
+    static async Task<float[]> Lcm(Run run, float[] x, double[] s)
+    {
+        var o = run.Options;
+        double start = o.SNoise ?? 1, end = o.SNoiseEnd ?? start, clip = o.NoiseClipStd ?? 0;
+        int steps = s.Length - 1;
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            await run.Callback(denoised);
+            x = denoised;
+            if (s[i + 1] > 0)
+            {
+                var z = run.Noise.Next();
+                double scale = steps <= 1 ? start : start + (end - start) * i / (steps - 1);
+                var n = new float[z.Length];
+                float std = clip > 0 ? Std(z) : 0;
+                for (int k = 0; k < n.Length; k++)
+                {
+                    float v = z[k];
+                    if (clip > 0) v = Math.Clamp(v, (float)(-clip * std), (float)(clip * std));
+                    n[k] = v * (float)scale;
+                }
+                x = run.Sampling.NoiseScaling(s[i + 1], n, x);
+            }
+            run.Step(i);
+        }
+        return x;
+    }
+
+    /// <summary>The sample standard deviation (torch.std's default, n - 1).</summary>
+    static float Std(float[] v)
+    {
+        double mean = v.Average(a => (double)a), sum = 0;
+        foreach (var a in v) sum += (a - mean) * (a - mean);
+        return (float)Math.Sqrt(sum / Math.Max(v.Length - 1, 1));
+    }
+
+    // ---- iPNDM (Zhang & Chen 2022): Adams-Bashforth up to order 4 on the derivative, fixed or step-size-aware coefficients ----
+
+    static async Task<float[]> Ipndm(Run run, float[] x, double[] s)
+    {
+        var ds = new List<float[]>();
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            await run.Callback(denoised);
+            ds.Insert(0, ToD(x, s[i], denoised));
+            if (ds.Count > 4) ds.RemoveAt(4);
+            float dt = (float)s[i + 1] - (float)s[i];
+            if (s[i + 1] == 0)
+            {
+                x = denoised;
+                run.Step(i);
+                continue;
+            }
+            float[] w = ds.Count switch
+            {
+                1 => [1f],
+                2 => [3f / 2, -1f / 2],
+                3 => [23f / 12, -16f / 12, 5f / 12],
+                _ => [55f / 24, -59f / 24, 37f / 24, -9f / 24],
+            };
+            x = Multistep(x, ds, w, dt);
+            run.Step(i);
+        }
+        return x;
+    }
+
+    /// <summary>x + dt sum w_j d_j.</summary>
+    static float[] Multistep(float[] x, List<float[]> ds, float[] w, float dt)
+    {
+        var r = new float[x.Length];
+        for (int k = 0; k < r.Length; k++)
+        {
+            float sum = 0;
+            for (int j = 0; j < w.Length; j++) sum += w[j] * ds[j][k];
+            r[k] = x[k] + dt * sum;
+        }
+        return r;
+    }
+
+    /// <summary>
+    /// iPNDM with variable steps (Zhou et al. 2024): AB2 for the step sizes, then their third- and fourth-order corrections. The weights were
+    /// measured from ComfyUI's sampler; the fourth-order term's oldest derivative carries an extra factor h1 h3 / h2^2 there, kept for parity.
+    /// </summary>
+    static async Task<float[]> IpndmV(Run run, float[] x, double[] s)
+    {
+        var ds = new List<float[]>();
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            await run.Callback(denoised);
+            ds.Insert(0, ToD(x, s[i], denoised));
+            if (ds.Count > 4) ds.RemoveAt(4);
+            double h = (float)s[i + 1] - (float)s[i];
+            if (s[i + 1] == 0)
+            {
+                x = denoised;
+                run.Step(i);
+                continue;
+            }
+            double[] w;
+            if (ds.Count == 1) w = [1];
+            else
+            {
+                double h1 = (float)s[i] - (float)s[i - 1];
+                w = [1 + h / (2 * h1), -h / (2 * h1), 0, 0];
+                if (ds.Count >= 3)
+                {
+                    double h2 = (float)s[i - 1] - (float)s[i - 2];
+                    double t1 = (1 - h / (3 * (h + h1)) * (h * (h + h1)) / (h1 * (h1 + h2))) / 2;
+                    // t1 times (d0 - d1) - (h1 / h2)(d1 - d2)
+                    w[0] += t1; w[1] -= t1 * (1 + h1 / h2); w[2] += t1 * h1 / h2;
+                    if (ds.Count == 4)
+                    {
+                        double h3 = (float)s[i - 2] - (float)s[i - 3];
+                        double t2 = ((1 - h / (3 * (h + h1))) / 2 + (1 - h / (2 * (h + h1))) * h / (6 * (h + h1 + h2)))
+                            * (h * (h + h1) * (h + h1 + h2)) / (h1 * (h1 + h2) * (h1 + h2 + h3));
+                        // The third divided difference over the four nodes, scaled so d0's weight is 1.
+                        double[] node = [0, -h1, -h1 - h2, -h1 - h2 - h3];
+                        var dd = new double[4];
+                        for (int j = 0; j < 4; j++)
+                        {
+                            double p = 1;
+                            for (int k = 0; k < 4; k++) if (k != j) p *= node[j] - node[k];
+                            dd[j] = 1 / p;
+                        }
+                        double norm = dd[0];
+                        for (int j = 0; j < 4; j++) dd[j] /= norm;
+                        dd[3] *= h1 * h3 / (h2 * h2);
+                        for (int j = 0; j < 4; j++) w[j] += t2 * dd[j];
+                    }
+                }
+            }
+            var r = new float[x.Length];
+            for (int k = 0; k < r.Length; k++)
+            {
+                double sum = 0;
+                for (int j = 0; j < ds.Count; j++) sum += w[j] * ds[j][k];
+                r[k] = x[k] + (float)(h * sum);
+            }
+            x = r;
+            run.Step(i);
+        }
+        return x;
+    }
+
+    // ---- DEIS (Zhang & Chen 2022), time-AB form: Lagrange extrapolation of the noise in VP time, integrated over sigma ----
+
+    // EDM's VP parametrization of sigma (Karras et al. 2022, appendix): sigma_min 0.002, sigma_max 80, epsilon_s 1e-3 fix beta_d and beta_min.
+    static readonly double VpBetaD = 2 * (Math.Log(0.002 * 0.002 + 1) / 1e-3 - Math.Log(80.0 * 80 + 1)) / (1e-3 - 1);
+    static readonly double VpBetaMin = Math.Log(80.0 * 80 + 1) - 0.5 * VpBetaD;
+
+    /// <summary>VP time of a sigma: sigma^2 = exp(beta_d t^2 / 2 + beta_min t) - 1.</summary>
+    static double VpTime(double sigma) =>
+        (-VpBetaMin + Math.Sqrt(VpBetaMin * VpBetaMin + 2 * VpBetaD * Math.Log(sigma * sigma + 1))) / VpBetaD;
+
+    /// <summary>d sigma / d t at VP time t.</summary>
+    static double VpSigmaRate(double t)
+    {
+        double e = Math.Exp(0.5 * VpBetaD * t * t + VpBetaMin * t);
+        return (VpBetaD * t + VpBetaMin) * e / (2 * Math.Sqrt(e - 1));
+    }
+
+    /// <summary>
+    /// DEIS's coefficients: for each step, the weights of the last (up to <paramref name="maxOrder"/>) noise estimates, newest first: the Lagrange
+    /// basis over the previous steps' VP times integrated over the step in sigma. The integral is the sum over <paramref name="n"/> evenly spaced
+    /// times (both ends included) times (t_next - t) / n, as ComfyUI evaluates it (measured).
+    /// </summary>
+    public static double[][] DeisCoefficients(double[] sigmas, int maxOrder, int n = 10000)
+    {
+        var r = new double[sigmas.Length - 1][];
+        for (int i = 0; i < r.Length; i++)
+        {
+            int order = Math.Min(i + 1, maxOrder);
+            if (order == 1) { r[i] = [sigmas[i + 1] - sigmas[i]]; continue; }
+            var nodes = Enumerable.Range(0, order).Select(k => VpTime(sigmas[i - k])).ToArray();
+            double t0 = VpTime(sigmas[i]), t1 = VpTime(sigmas[i + 1]), dt = (t1 - t0) / n;
+            r[i] = new double[order];
+            for (int m = 0; m < n; m++)
+            {
+                double tau = t0 + (t1 - t0) * m / (n - 1), rate = VpSigmaRate(tau);
+                for (int j = 0; j < order; j++)
+                {
+                    double p = 1;
+                    for (int k = 0; k < order; k++) if (k != j) p *= (tau - nodes[k]) / (nodes[j] - nodes[k]);
+                    r[i][j] += rate * p;
+                }
+            }
+            for (int j = 0; j < order; j++) r[i][j] *= dt;
+        }
+        return r;
+    }
+
+    static async Task<float[]> Deis(Run run, float[] x, double[] s)
+    {
+        var coeffs = DeisCoefficients(s.Select(v => (double)(float)v).ToArray(), 3);
+        var eps = new List<float[]>();
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            await run.Callback(denoised);
+            eps.Insert(0, ToD(x, s[i], denoised));
+            if (s[i + 1] == 0)
+            {
+                x = denoised;
+                run.Step(i);
+                continue;
+            }
+            var c = coeffs[i];
+            var r = new float[x.Length];
+            for (int k = 0; k < r.Length; k++)
+            {
+                double sum = 0;
+                for (int j = 0; j < c.Length; j++) sum += c[j] * eps[j][k];
+                r[k] = x[k] + (float)sum;
+            }
+            x = r;
+            run.Step(i);
+        }
+        return x;
+    }
+
+    // ---- DPM-Solver (Lu et al. 2022) in k-diffusion's form: t = -log sigma ----
+
+    /// <summary>dpm_fast and dpm_adaptive end at the last sigma above 0.</summary>
+    static double DpmSigmaMin(double[] s) => s[^1] == 0 ? s[^2] : s[^1];
+
+    internal sealed class DpmSolver(Run run)
+    {
+        public static double T(double sigma) => -MathF.Log((float)sigma);
+        public static double Sigma(double t) => MathF.Exp(-(float)t);
+
+        public float[]? LastDenoised;
 
         public async Task<float[]> Eps(Dictionary<string, float[]> cache, string key, float[] x, double t)
         {
-            if (cache.TryGetValue(key, out var hit)) return hit;
-            double sigma = Sigma(t);
-            var denoised = await run.Call(x, sigma);
+            if (cache.TryGetValue(key, out var e)) return e;
+            float sigma = (float)Sigma(t);
+            var denoised = await run.Denoise(x, sigma);
             var eps = new float[x.Length];
-            for (int k = 0; k < eps.Length; k++) eps[k] = (float)((x[k] - denoised[k]) / sigma);
+            for (int i = 0; i < eps.Length; i++) eps[i] = (x[i] - denoised[i]) / sigma;
             cache[key] = eps;
             return eps;
         }
 
+        static float F(double v) => (float)v;
+
         public async Task<float[]> Step1(float[] x, double t, double tNext, Dictionary<string, float[]> cache)
         {
-            double h = tNext - t;
+            float h = F(tNext) - F(t);
             var eps = await Eps(cache, "eps", x, t);
-            return Lin(x, 1, eps, -Sigma(tNext) * Expm1(h));
+            return LinCombine(x, 1, eps, -(float)Sigma(tNext) * ExpM1(h));
         }
 
         public async Task<float[]> Step2(float[] x, double t, double tNext, Dictionary<string, float[]> cache, double r1 = 0.5)
         {
-            double h = tNext - t;
+            float h = F(tNext) - F(t), fr1 = (float)r1;
             var eps = await Eps(cache, "eps", x, t);
-            double s1 = t + r1 * h;
-            var u1 = Lin(x, 1, eps, -Sigma(s1) * Expm1(r1 * h));
+            float s1 = F(t) + fr1 * h;
+            var u1 = LinCombine(x, 1, eps, -(float)Sigma(s1) * ExpM1(fr1 * h));
             var epsR1 = await Eps(cache, "eps_r1", u1, s1);
+            float sn = (float)Sigma(tNext), e = ExpM1(h);
             var r = new float[x.Length];
-            double a = Sigma(tNext) * Expm1(h), b = Sigma(tNext) / (2 * r1) * Expm1(h);
-            for (int k = 0; k < r.Length; k++) r[k] = (float)(x[k] - a * eps[k] - b * (epsR1[k] - eps[k]));
+            for (int i = 0; i < r.Length; i++) r[i] = x[i] - sn * e * eps[i] - sn / (2 * fr1) * e * (epsR1[i] - eps[i]);
             return r;
         }
 
         public async Task<float[]> Step3(float[] x, double t, double tNext, Dictionary<string, float[]> cache, double r1 = 1.0 / 3, double r2 = 2.0 / 3)
         {
-            double h = tNext - t;
+            float h = F(tNext) - F(t), fr1 = (float)r1, fr2 = (float)r2;
             var eps = await Eps(cache, "eps", x, t);
-            double s1 = t + r1 * h, s2 = t + r2 * h;
-            var u1 = Lin(x, 1, eps, -Sigma(s1) * Expm1(r1 * h));
+            float s1 = F(t) + fr1 * h, s2 = F(t) + fr2 * h;
+            var u1 = LinCombine(x, 1, eps, -(float)Sigma(s1) * ExpM1(fr1 * h));
             var epsR1 = await Eps(cache, "eps_r1", u1, s1);
+            float sig2 = (float)Sigma(s2), e2 = ExpM1(fr2 * h), c2 = sig2 * (fr2 / fr1) * (e2 / (fr2 * h) - 1);
             var u2 = new float[x.Length];
-            double c1 = Sigma(s2) * Expm1(r2 * h), c2 = Sigma(s2) * (r2 / r1) * (Expm1(r2 * h) / (r2 * h) - 1);
-            for (int k = 0; k < u2.Length; k++) u2[k] = (float)(x[k] - c1 * eps[k] - c2 * (epsR1[k] - eps[k]));
+            for (int i = 0; i < u2.Length; i++) u2[i] = x[i] - sig2 * e2 * eps[i] - c2 * (epsR1[i] - eps[i]);
             var epsR2 = await Eps(cache, "eps_r2", u2, s2);
+            float sn = (float)Sigma(tNext), e = ExpM1(h), c3 = sn / fr2 * (e / h - 1);
             var r = new float[x.Length];
-            double a = Sigma(tNext) * Expm1(h), b = Sigma(tNext) / r2 * (Expm1(h) / h - 1);
-            for (int k = 0; k < r.Length; k++) r[k] = (float)(x[k] - a * eps[k] - b * (epsR2[k] - eps[k]));
+            for (int i = 0; i < r.Length; i++) r[i] = x[i] - sn * e * eps[i] - c3 * (epsR2[i] - eps[i]);
             return r;
         }
     }
 
-    /// <summary>The lowest sigma dpm_fast / dpm_adaptive aim for: the last one, or the one before when the schedule ends in 0 (ComfyUI's wrappers).</summary>
-    static double DpmSigmaMin(double[] s) => s[^1] == 0 ? s[^2] : s[^1];
-
-    /// <summary>DPM-Solver-Fast: fixed steps in t of orders 3, 3, ... chosen so the model is called as many times as the schedule has steps.</summary>
     static async Task<float[]> DpmFast(Run run, float[] x, double[] s)
     {
-        if (s.Length <= 1) return x;
         double sigmaMin = DpmSigmaMin(s), sigmaMax = s[0];
-        int nfe = s.Length - 1;
-        if (sigmaMin <= 0 || sigmaMax <= 0) throw new ArgumentException("sigma_min and sigma_max must not be 0");
+        int n = s.Length - 1;
+        double eta = run.Options.Eta ?? 0;
         var solver = new DpmSolver(run);
-        double tStart = DpmSolver.T(sigmaMax), tEnd = DpmSolver.T(sigmaMin);
-        int m = nfe / 3 + 1;
-        var ts = ModelSigmas.Linspace(tStart, tEnd, m + 1);
-        var orders = nfe % 3 == 0 ? [.. Enumerable.Repeat(3, m - 2), 2, 1] : Enumerable.Repeat(3, m - 1).Append(nfe % 3).ToArray();
+        float tStart = (float)DpmSolver.T(sigmaMax), tEnd = (float)DpmSolver.T(sigmaMin);
+        int m = n / 3 + 1;
+        var ts = TorchLinspace(tStart, tEnd, m + 1);
+        int[] orders = n % 3 == 0 ? [.. Enumerable.Repeat(3, m - 2), 2, 1] : [.. Enumerable.Repeat(3, m - 1), n % 3];
         for (int i = 0; i < orders.Length; i++)
         {
+            run.Check();
             var cache = new Dictionary<string, float[]>();
-            double t = ts[i], tNext = ts[i + 1];
-            var eps = await solver.Eps(cache, "eps", x, t);
-            await run.CallbackAsync(i, Lin(x, 1, eps, -DpmSolver.Sigma(t)));
-            x = orders[i] switch
-            {
-                1 => await solver.Step1(x, t, tNext, cache),
-                2 => await solver.Step2(x, t, tNext, cache),
-                _ => await solver.Step3(x, t, tNext, cache),
-            };
-            // eta is 0 here, so no fresh noise is added (ComfyUI draws it and multiplies it by 0).
-        }
-        return x;
-    }
-
-    /// <summary>DPM-Solver-12 / 23 with adaptive step size: a PID controller on the difference between an order-(k-1) and an order-k step.</summary>
-    static async Task<float[]> DpmAdaptive(Run run, float[] x, double[] s)
-    {
-        if (s.Length <= 1) return x;
-        var o = run.Options;
-        int order = o.Order ?? 3;
-        double rtol = o.Rtol ?? 0.05, atol = o.Atol ?? 0.0078, hInit = o.HInit ?? 0.05, pcoeff = o.PCoeff ?? 0, icoeff = o.ICoeff ?? 1, dcoeff = o.DCoeff ?? 0;
-        double acceptSafety = o.AcceptSafety ?? 0.81, eta = o.Eta ?? 0, sNoise = o.SNoise ?? 1;
-        double sigmaMin = DpmSigmaMin(s), sigmaMax = s[0];
-        if (sigmaMin <= 0 || sigmaMax <= 0) throw new ArgumentException("sigma_min and sigma_max must not be 0");
-        if (order is not (2 or 3)) throw new ArgumentException("order should be 2 or 3");
-        var solver = new DpmSolver(run);
-        double tStart = DpmSolver.T(sigmaMax), tEnd = DpmSolver.T(sigmaMin);
-        bool forward = tEnd > tStart;
-        if (!forward && eta != 0) throw new ArgumentException("eta must be 0 for reverse sampling");
-        hInit = Math.Abs(hInit) * (forward ? 1 : -1);
-        double sCur = tStart;
-        var xPrev = x;
-        var pid = new PidStepSizeController(hInit, pcoeff, icoeff, dcoeff, eta != 0 ? 1.5 : order, acceptSafety);
-        int steps = 0;
-        while (forward ? sCur < tEnd - 1e-5 : sCur > tEnd + 1e-5)
-        {
-            var cache = new Dictionary<string, float[]>();
-            double t = forward ? Math.Min(tEnd, sCur + pid.H) : Math.Max(tEnd, sCur + pid.H), tUse, su;
+            float t = ts[i], tNext = ts[i + 1], tNext_ = tNext, su = 0;
             if (eta != 0)
             {
-                var (sd, up) = AncestralStep(DpmSolver.Sigma(sCur), DpmSolver.Sigma(t), eta);
-                tUse = Math.Min(tEnd, DpmSolver.T(sd));
-                su = Math.Sqrt(DpmSolver.Sigma(t) * DpmSolver.Sigma(t) - DpmSolver.Sigma(tUse) * DpmSolver.Sigma(tUse));
+                var (sd, up) = AncestralStep(DpmSolver.Sigma(t), DpmSolver.Sigma(tNext), eta);
+                tNext_ = MathF.Min(tEnd, (float)DpmSolver.T(sd));
+                float a = (float)DpmSolver.Sigma(tNext), b = (float)DpmSolver.Sigma(tNext_);
+                su = MathF.Sqrt(a * a - b * b);
             }
-            else (tUse, su) = (t, 0.0);
-
-            var eps = await solver.Eps(cache, "eps", x, sCur);
-            var denoised = Lin(x, 1, eps, -DpmSolver.Sigma(sCur));
-            float[] xLow, xHigh;
-            if (order == 2)
+            var eps = await solver.Eps(cache, "eps", x, t);
+            float sig = (float)DpmSolver.Sigma(t);
+            await run.Callback(LinCombine(x, 1, eps, -sig));
+            x = orders[i] switch
             {
-                xLow = await solver.Step1(x, sCur, tUse, cache);
-                xHigh = await solver.Step2(x, sCur, tUse, cache);
-            }
-            else
-            {
-                xLow = await solver.Step2(x, sCur, tUse, cache, r1: 1.0 / 3);
-                xHigh = await solver.Step3(x, sCur, tUse, cache);
-            }
-            double sum = 0;
-            for (int k = 0; k < x.Length; k++)
-            {
-                double delta = Math.Max(atol, rtol * Math.Max(Math.Abs(xLow[k]), Math.Abs(xPrev[k])));
-                double e = (xLow[k] - xHigh[k]) / delta;
-                sum += e * e;
-            }
-            double error = Math.Sqrt(sum) / Math.Sqrt(x.Length);
-            if (pid.ProposeStep(error))
-            {
-                xPrev = xLow;
-                x = xHigh;
-                if (eta != 0) AddScaled(x, run.NextNoise(), su * sNoise);
-                sCur = t;
-            }
-            steps++;
-            if (run.OnDenoised is { } onDenoised) await onDenoised(denoised);
-            run.OnStep?.Invoke(Math.Min(steps, s.Length - 1));
-            run.Ct.ThrowIfCancellationRequested();
+                1 => await solver.Step1(x, t, tNext_, cache),
+                2 => await solver.Step2(x, t, tNext_, cache),
+                _ => await solver.Step3(x, t, tNext_, cache),
+            };
+            if (eta != 0) AddNoise(x, run.Noise.Next(), su * run.SNoise);
+            run.Step(i);
         }
         return x;
     }
 
-    sealed class PidStepSizeController(double h, double pcoeff, double icoeff, double dcoeff, double order, double acceptSafety, double eps = 1e-8)
+    /// <summary>torch.linspace in float32: from the start for the first half, from the end for the second.</summary>
+    internal static float[] TorchLinspace(float start, float end, int steps)
+    {
+        var r = new float[steps];
+        if (steps == 1) { r[0] = start; return r; }
+        float step = (end - start) / (steps - 1);
+        int half = steps / 2;
+        for (int i = 0; i < steps; i++) r[i] = i < half ? start + i * step : end - (steps - 1 - i) * step;
+        return r;
+    }
+
+    /// <summary>k-diffusion's PID step size controller for the adaptive solver.</summary>
+    internal sealed class PidStepSizeController(double h, double pcoeff, double icoeff, double dcoeff, double order, double acceptSafety, double eps = 1e-8)
     {
         readonly double _b1 = (pcoeff + icoeff + dcoeff) / order, _b2 = -(pcoeff + 2 * dcoeff) / order, _b3 = dcoeff / order;
         double[]? _errs;
-        public double H { get; private set; } = h;
 
-        static double Limiter(double x) => 1 + Math.Atan(x - 1);
+        public double H { get; private set; } = h;
 
         public bool ProposeStep(double error)
         {
-            double inv = 1 / ((float)error + eps);
+            double inv = 1 / (error + eps);
             _errs ??= [inv, inv, inv];
             _errs[0] = inv;
-            double factor = Limiter(Math.Pow(_errs[0], _b1) * Math.Pow(_errs[1], _b2) * Math.Pow(_errs[2], _b3));
+            double factor = Math.Pow(_errs[0], _b1) * Math.Pow(_errs[1], _b2) * Math.Pow(_errs[2], _b3);
+            factor = 1 + Math.Atan(factor - 1);
             bool accept = factor >= acceptSafety;
             if (accept) { _errs[2] = _errs[1]; _errs[1] = _errs[0]; }
             H *= factor;
@@ -250,635 +998,264 @@ public static partial class Samplers
         }
     }
 
-    // --- DEIS ------------------------------------------------------------------------------------------------------------------------------
-
-    /// <summary>DEIS in its 'tab' mode (sample_deis, max order 3): multistep coefficients from integrating the Lagrange basis against the VP integrand.</summary>
-    static async Task<float[]> Deis(Run run, float[] x, double[] s)
+    static async Task<float[]> DpmAdaptive(Run run, float[] x, double[] s)
     {
-        const int maxOrder = 3;
-        var coeffs = DeisCoefficients(s, maxOrder);
-        var buffer = new List<float[]>();
-        for (int i = 0; i < s.Length - 1; i++)
+        var o = run.Options;
+        int order = o.Order ?? 3;
+        if (order is not (2 or 3)) throw new ArgumentException("dpm_adaptive's order must be 2 or 3.");
+        double eta = o.Eta ?? 0, sNoise = run.SNoise;
+        float tStart = (float)DpmSolver.T(s[0]), tEnd = (float)DpmSolver.T(DpmSigmaMin(s));
+        bool forward = tEnd > tStart;
+        double hInit = Math.Abs(o.HInit ?? 0.05) * (forward ? 1 : -1);
+        float atol = (float)(o.Atol ?? 0.0078), rtol = (float)(o.Rtol ?? 0.05);
+        var pid = new PidStepSizeController(hInit, o.PCoeff ?? 0, o.ICoeff ?? 1, o.DCoeff ?? 0, eta != 0 ? 1.5 : order, o.AcceptSafety ?? 0.81);
+        var solver = new DpmSolver(run);
+        float sT = tStart;
+        var xPrev = x;
+        int steps = 0;
+        while (forward ? sT < tEnd - 1e-5f : sT > tEnd + 1e-5f)
         {
-            double tCur = s[i], tNext = s[i + 1];
-            var denoised = await run.Call(x, tCur);
-            await run.CallbackAsync(i, denoised);
-            var d = ToD(x, tCur, denoised);
-            int order = Math.Min(maxOrder, i + 1);
-            if (tNext <= 0) order = 1;
-            if (order == 1) x = Lin(x, 1, d, tNext - tCur);
+            run.Check();
+            var cache = new Dictionary<string, float[]>();
+            float t = forward ? MathF.Min(tEnd, sT + (float)pid.H) : MathF.Max(tEnd, sT + (float)pid.H), t_ = t, su = 0;
+            if (eta != 0)
+            {
+                var (sd, up) = AncestralStep(DpmSolver.Sigma(sT), DpmSolver.Sigma(t), eta);
+                t_ = MathF.Min(tEnd, (float)DpmSolver.T(sd));
+                float a = (float)DpmSolver.Sigma(t), b = (float)DpmSolver.Sigma(t_);
+                su = MathF.Sqrt(a * a - b * b);
+            }
+            var eps = await solver.Eps(cache, "eps", x, sT);
+            var denoised = LinCombine(x, 1, eps, -(float)DpmSolver.Sigma(sT));
+            float[] low, high;
+            if (order == 2)
+            {
+                low = await solver.Step1(x, sT, t_, cache);
+                high = await solver.Step2(x, sT, t_, cache);
+            }
             else
             {
-                var c = coeffs[i];
-                var next = new float[x.Length];
-                for (int k = 0; k < x.Length; k++)
-                {
-                    double v = x[k] + c[0] * d[k];
-                    for (int j = 1; j < order; j++) v += c[j] * buffer[^j][k];
-                    next[k] = (float)v;
-                }
-                x = next;
+                low = await solver.Step2(x, sT, t_, cache, r1: 1.0 / 3);
+                high = await solver.Step3(x, sT, t_, cache);
             }
-            PushHistory(buffer, d, maxOrder - 1);
+            double sum = 0;
+            for (int i = 0; i < x.Length; i++)
+            {
+                float delta = MathF.Max(atol, rtol * MathF.Max(MathF.Abs(low[i]), MathF.Abs(xPrev[i])));
+                float q = (low[i] - high[i]) / delta;
+                sum += (double)q * q;
+            }
+            float error = (float)Math.Sqrt(sum) / MathF.Sqrt(x.Length);
+            bool accept = pid.ProposeStep(error);
+            if (accept)
+            {
+                xPrev = low;
+                x = high;
+                AddNoise(x, run.Noise.Next(), su * sNoise);
+                sT = t;
+            }
+            await run.Callback(denoised);
+            run.Step(steps++);
         }
         return x;
     }
 
-    /// <summary>deis.get_deis_coeff_list in 'tab' mode: EDM sigmas to VP time (sigma range 0.002 to 80, eps_s 1e-3), then a 10000-point Riemann sum per coefficient.</summary>
-    internal static double[][] DeisCoefficients(double[] sigmas, int maxOrder, int n = 10000)
+    // ---- Heun++ (Carzit, MIT): Heun with a third evaluation where two more sigmas remain ----
+
+    static async Task<float[]> Heunpp2(Run run, float[] x, double[] s)
     {
-        const double epsilonS = 1e-3, sigmaMin = 0.002, sigmaMax = 80;
-        double betaD = 2 * (Math.Log(sigmaMin * sigmaMin + 1) / epsilonS - Math.Log(sigmaMax * sigmaMax + 1)) / (epsilonS - 1);
-        double betaMin = Math.Log(sigmaMax * sigmaMax + 1) - 0.5 * betaD;
-        double beta0 = betaMin, beta1 = betaD + betaMin;
-        var t = sigmas.Select(sg => (Math.Sqrt(betaMin * betaMin + 2 * betaD * Math.Log(sg * sg + 1)) - betaMin) / betaD).ToArray();
-        var result = new double[t.Length - 1][];
-        for (int i = 0; i < t.Length - 1; i++)
+        double end = s[^1];
+        for (int i = 0; i < s.Length - 1; i++)
         {
-            int order = Math.Min(i + 1, maxOrder);
-            if (order == 1) { result[i] = []; continue; }
-            double tCur = t[i], tNext = t[i + 1], dtau = (tNext - tCur) / n;
-            var prev = Enumerable.Range(0, order).Select(k => t[i - k]).ToArray();
-            var c = new double[order];
-            for (int q = 0; q < n; q++)
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            var d = ToD(x, s[i], denoised);
+            await run.Callback(denoised);
+            float dt = (float)s[i + 1] - (float)s[i];
+            if (s[i + 1] == end) x = Step(x, d, dt);
+            else if (s[i + 2] == end)
             {
-                double tau = n == 1 ? tCur : tCur + (tNext - tCur) * q / (n - 1);
-                double alpha = Math.Exp(-0.5 * tau * tau * (beta1 - beta0) - tau * beta0);
-                double dLogAlpha = -tau * (beta1 - beta0) - beta0;
-                double integrand = -0.5 * dLogAlpha / Math.Sqrt(alpha * (1 - alpha));
-                for (int j = 0; j < order; j++)
-                {
-                    double poly = 1;
-                    for (int k = 0; k < order; k++)
-                        if (k != j) poly *= (tau - prev[k]) / (prev[j] - prev[k]);
-                    c[j] += integrand * poly;
-                }
+                var x2 = Step(x, d, dt);
+                var d2 = ToD(x2, s[i + 1], await run.Denoise(x2, s[i + 1]));
+                float w = 2 * (float)s[0], w2 = (float)s[i + 1] / w, w1 = 1 - w2;
+                var dp = new float[d.Length];
+                for (int k = 0; k < dp.Length; k++) dp[k] = d[k] * w1 + d2[k] * w2;
+                x = Step(x, dp, dt);
             }
-            for (int j = 0; j < order; j++) c[j] *= dtau;
-            result[i] = c;
+            else
+            {
+                var x2 = Step(x, d, dt);
+                var d2 = ToD(x2, s[i + 1], await run.Denoise(x2, s[i + 1]));
+                var x3 = Step(x2, d2, (float)s[i + 2] - (float)s[i + 1]);
+                var d3 = ToD(x3, s[i + 2], await run.Denoise(x3, s[i + 2]));
+                float w = 3 * (float)s[0], w2 = (float)s[i + 1] / w, w3 = (float)s[i + 2] / w, w1 = 1 - w2 - w3;
+                var dp = new float[d.Length];
+                for (int k = 0; k < dp.Length; k++) dp[k] = w1 * d[k] + w2 * d2[k] + w3 * d3[k];
+                x = Step(x, dp, dt);
+            }
+            run.Step(i);
         }
-        return result;
+        return x;
     }
 
-    // --- CFG++ with history (cfgpp_ud10_ab) ------------------------------------------------------------------------------------------------
+    // ---- CFG++ (Chung et al. 2024) helpers and the flow (rectified-flow) ancestral steps: fitted below ----
+
 
     /// <summary>
-    /// ComfyUI's _sample_cfgpp_history: CFG++ Euler with a variable-step AB2 history of the step, a short history on the unconditional derivative, and an
-    /// extrapolation of the denoised estimate to sigma 0 on the last step.
+    /// The rectified-flow ancestral split (x = (1 - sigma) x0 + sigma noise): step deterministically to sigma_down = sigma' (1 + (sigma'/sigma - 1) eta),
+    /// scale to the next sigma's signal level (1 - sigma') / (1 - sigma_down) and add the noise that makes up sigma' (derived; matches the fixtures).
     /// </summary>
-    static async Task<float[]> CfgppHistory(Run run, float[] x, double[] s, double historyWeight, double? zeroWeight, int zeroOrder, double uncondHistoryWeight)
+    static (double Down, double Scale, double Noise) FlowSplit(double sigma, double sigmaNext, double eta)
     {
-        var derivatives = new List<float[]>();
-        var denoisedHistory = new List<float[]>();
-        float[]? oldUncondD = null;
-        for (int i = 0; i < s.Length - 1; i++)
-        {
-            var denoised = await run.Call(x, s[i]);
-            var uncond = run.UncondOrCond(denoised);
-            await run.CallbackAsync(i, denoised);
-            double alphaS = s[i] * Math.Exp(run.Lambda(s[i])), alphaT = s[i + 1] != 0 ? s[i + 1] * Math.Exp(run.Lambda(s[i + 1])) : 1.0;
-            var currentUncondD = new float[x.Length];
-            for (int k = 0; k < x.Length; k++) currentUncondD[k] = (float)((x[k] - alphaS * uncond[k]) / s[i]);
-            var uncondD = currentUncondD;
-            double dt = s[i + 1] - s[i];
-            if (i > 0 && uncondHistoryWeight != 0)
-            {
-                double stepRatio = dt / (s[i] - s[i - 1]);
-                uncondD = Lin(currentUncondD, 1, Sub(currentUncondD, oldUncondD!), uncondHistoryWeight * stepRatio);
-            }
-            var eulerStep = new float[x.Length];
-            for (int k = 0; k < x.Length; k++) eulerStep[k] = (float)(alphaT * denoised[k] + s[i + 1] * uncondD[k] - x[k]);
-            derivatives.Add(eulerStep.Select(v => (float)(v / dt)).ToArray());
-            if (derivatives.Count > 2) derivatives.RemoveAt(0);
-            float[] step;
-            if (derivatives.Count == 1) step = eulerStep;
-            else
-            {
-                double c0 = LinearMultistepCoeff(2, s, i, 0), c1 = LinearMultistepCoeff(2, s, i, 1);
-                var historyStep = Lin(derivatives[^1], c0, derivatives[^2], c1);
-                step = Lin(eulerStep, 1 - historyWeight, historyStep, historyWeight);
-            }
-            AddScaled(x, step, 1);
-            if (s[i + 1] == 0 && zeroWeight is { } zw && denoisedHistory.Count > 0)
-            {
-                float[] zeroPrediction;
-                if (zeroOrder == 2 && denoisedHistory.Count > 1)
-                {
-                    double s0 = s[i - 2], s1 = s[i - 1], s2 = s[i];
-                    double w0 = s1 * s2 / ((s0 - s1) * (s0 - s2)), w1 = s0 * s2 / ((s1 - s0) * (s1 - s2)), w2 = s0 * s1 / ((s2 - s0) * (s2 - s1));
-                    zeroPrediction = new float[x.Length];
-                    for (int k = 0; k < x.Length; k++) zeroPrediction[k] = (float)(w0 * denoisedHistory[^2][k] + w1 * denoisedHistory[^1][k] + w2 * denoised[k]);
-                }
-                else
-                {
-                    zeroPrediction = new float[x.Length];
-                    for (int k = 0; k < x.Length; k++)
-                    {
-                        double slope = (denoised[k] - denoisedHistory[^1][k]) / (s[i] - s[i - 1]);
-                        zeroPrediction[k] = (float)(denoised[k] - s[i] * slope);
-                    }
-                }
-                x = Lin(x, 1 - zw, zeroPrediction, zw);
-            }
-            denoisedHistory.Add(denoised);
-            if (denoisedHistory.Count > 2) denoisedHistory.RemoveAt(0);
-            oldUncondD = currentUncondD;
-        }
-        return x;
+        float sg = (float)sigma, sn = (float)sigmaNext;
+        double down = sn * (1 + (sn / sg - 1) * eta), scale = (1 - sn) / (1 - down);
+        double noise = Math.Sqrt(Math.Max(sn * sn - down * down * scale * scale, 0));
+        return (down, scale, noise);
     }
 
-    // --- ER-SDE ----------------------------------------------------------------------------------------------------------------------------
-
-    /// <summary>ER-SDE-Solver-3 (sample_er_sde, arXiv 2309.06169): up to three stages of history, with the noise scaler choosing between ER-SDE, reverse-time SDE and ODE.</summary>
-    static async Task<float[]> ErSde(Run run, float[] x, double[] s, double sNoise, Func<double, double>? noiseScaler, int maxStage)
+    static float[] FlowRenoise(Run run, float[] xDown, double sigmaNext, double scale, double noise, double eta)
     {
-        sNoise *= run.Sampling.NoiseScale;
-        noiseScaler ??= v => v * (Math.Exp(Math.Pow(v, 0.3)) + 10.0);
-        const double numPoints = 200.0;
-        s = run.OffsetFirstSigma(s);
-        var erLambdas = s.Select(v => Math.Exp(-run.Lambda(v))).ToArray();
-        float[]? oldDenoised = null, oldDenoisedD = null;
-        for (int i = 0; i < s.Length - 1; i++)
-        {
-            var denoised = await run.Call(x, s[i]);
-            await run.CallbackAsync(i, denoised);
-            int stage = Math.Min(maxStage, i + 1);
-            if (s[i + 1] == 0) x = denoised;
-            else
-            {
-                double ls = erLambdas[i], lt = erLambdas[i + 1];
-                double alphaS = s[i] / ls, alphaT = s[i + 1] / lt, rAlpha = alphaT / alphaS;
-                double r = noiseScaler(lt) / noiseScaler(ls);
-                x = Lin(x, rAlpha * r, denoised, alphaT * (1 - r));
-                if (stage >= 2)
-                {
-                    double dt = lt - ls, stepSize = -dt / numPoints, sum1 = 0, sumU = 0;
-                    for (int p = 0; p < (int)numPoints; p++)
-                    {
-                        // ComfyUI forms these positions in float32.
-                        double pos = (float)(lt + (float)p * (float)stepSize), scaled = noiseScaler(pos);
-                        sum1 += 1 / scaled;
-                        sumU += (pos - ls) / scaled;
-                    }
-                    double sInt = sum1 * stepSize;
-                    var denoisedD = new float[x.Length];
-                    for (int k = 0; k < x.Length; k++) denoisedD[k] = (float)((denoised[k] - oldDenoised![k]) / (ls - erLambdas[i - 1]));
-                    AddScaled(x, denoisedD, alphaT * (dt + sInt * noiseScaler(lt)));
-                    if (stage >= 3)
-                    {
-                        double sU = sumU * stepSize;
-                        var denoisedU = new float[x.Length];
-                        for (int k = 0; k < x.Length; k++) denoisedU[k] = (float)((denoisedD[k] - oldDenoisedD![k]) / ((ls - erLambdas[i - 2]) / 2));
-                        AddScaled(x, denoisedU, alphaT * (dt * dt / 2 + sU * noiseScaler(lt)));
-                    }
-                    oldDenoisedD = denoisedD;
-                }
-                if (sNoise > 0)
-                {
-                    double amount = Math.Sqrt(lt * lt - ls * ls * r * r);
-                    if (double.IsNaN(amount)) amount = 0;
-                    AddScaled(x, run.NextNoise(), alphaT * sNoise * amount);
-                }
-            }
-            oldDenoised = denoised;
-        }
-        return x;
+        var r = Scale(xDown, (float)scale);
+        if (eta > 0 && sigmaNext > 0) AddNoise(r, run.Noise.Next(), noise * run.SNoise);
+        return r;
     }
 
-    // --- SEEDS -----------------------------------------------------------------------------------------------------------------------------
-
-    static double PhiH1(double h) => Expm1(h);
-    static double PhiH2(double h) => (Expm1(h) - h) / h;
-
-    /// <summary>SEEDS-2 (sample_seeds_2, arXiv 2305.14267); exp_heun_2_x0 (_sde) is its r = 1, phi_2 form.</summary>
-    static async Task<float[]> Seeds2(Run run, float[] x, double[] s, double eta, double sNoise, double r, string solverType)
+    static Task<float[]> FlowAncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta, float[]? uncond)
     {
-        if (solverType is not ("phi_1" or "phi_2")) throw new ArgumentException("solver_type must be 'phi_1' or 'phi_2'");
-        sNoise *= run.Sampling.NoiseScale;
-        bool injectNoise = eta > 0 && sNoise > 0;
-        s = run.OffsetFirstSigma(s);
-        double fac = 1 / (2 * r);
-        for (int i = 0; i < s.Length - 1; i++)
-        {
-            var denoised = await run.Call(x, s[i]);
-            await run.CallbackAsync(i, denoised);
-            if (s[i + 1] == 0) { x = denoised; continue; }
-            double lambdaS = run.Lambda(s[i]), lambdaT = run.Lambda(s[i + 1]), h = lambdaT - lambdaS, hEta = h * (eta + 1);
-            double lambdaS1 = lambdaS + r * (lambdaT - lambdaS), sigmaS1 = run.SigmaOfLambda(lambdaS1);
-            double alphaS1 = sigmaS1 * Math.Exp(lambdaS1), alphaT = s[i + 1] * Math.Exp(lambdaT);
-
-            // Step 1
-            var x2 = Lin(x, sigmaS1 / s[i] * Math.Exp(-r * h * eta), denoised, -alphaS1 * PhiH1(-r * hEta));
-            float[]? sdeNoise = null;
-            if (injectNoise)
-            {
-                sdeNoise = run.NextNoise().Select(v => (float)(Math.Sqrt(-Expm1(-2 * r * h * eta)) * v)).ToArray();
-                AddScaled(x2, sdeNoise, sigmaS1 * sNoise);
-            }
-            var denoised2 = await run.Call(x2, sigmaS1);
-
-            // Step 2
-            if (solverType == "phi_1")
-            {
-                var denoisedD = Lin(denoised, 1 - fac, denoised2, fac);
-                x = Lin(x, s[i + 1] / s[i] * Math.Exp(-h * eta), denoisedD, -alphaT * PhiH1(-hEta));
-            }
-            else
-            {
-                double b2 = PhiH2(-hEta) / r, b1 = PhiH1(-hEta) - b2;
-                var next = new float[x.Length];
-                double keep = s[i + 1] / s[i] * Math.Exp(-h * eta);
-                for (int k = 0; k < x.Length; k++) next[k] = (float)(keep * x[k] - alphaT * (b1 * denoised[k] + b2 * denoised2[k]));
-                x = next;
-            }
-            if (injectNoise)
-            {
-                double segment = (r - 1) * h * eta;
-                var fresh = run.NextNoise();
-                for (int k = 0; k < x.Length; k++) sdeNoise![k] = (float)(sdeNoise[k] * Math.Exp(segment) + Math.Sqrt(-Expm1(2 * segment)) * fresh[k]);
-                AddScaled(x, sdeNoise!, s[i + 1] * sNoise);
-            }
-        }
-        return x;
+        var (down, scale, noise) = FlowSplit(sigma, sigmaNext, eta);
+        float k = (float)(down / (float)sigma);
+        var xd = uncond is null ? LinCombine(x, k, denoised, 1 - k) : LinCombine(denoised, 1, Subtract(x, uncond), k);
+        return Task.FromResult(FlowRenoise(run, xd, sigmaNext, scale, noise, eta));
     }
 
-    /// <summary>SEEDS-3 (sample_seeds_3): three stages at r_1 = 1/3 and r_2 = 2/3 of the step in logSNR.</summary>
-    static async Task<float[]> Seeds3(Run run, float[] x, double[] s, double eta, double sNoise, double r1 = 1.0 / 3, double r2 = 2.0 / 3)
+    /// <summary>
+    /// Euler ancestral CFG++ on a flow model (measured): the ancestral split of the equivalent variance-exploding sigmas sigma / (1 - sigma), the
+    /// step to the guided estimate with the unconditional estimate's flow noise (x - (1 - sigma) U) / sigma, then the flow renoising.
+    /// </summary>
+    static float[] FlowCfgPPAncestralStep(Run run, float[] x, float[] denoised, float[] uncond, double sigma, double sigmaNext, double eta)
     {
-        sNoise *= run.Sampling.NoiseScale;
-        bool injectNoise = eta > 0 && sNoise > 0;
-        s = run.OffsetFirstSigma(s);
-        for (int i = 0; i < s.Length - 1; i++)
-        {
-            var denoised = await run.Call(x, s[i]);
-            await run.CallbackAsync(i, denoised);
-            if (s[i + 1] == 0) { x = denoised; continue; }
-            double lambdaS = run.Lambda(s[i]), lambdaT = run.Lambda(s[i + 1]), h = lambdaT - lambdaS, hEta = h * (eta + 1);
-            double lambdaS1 = lambdaS + r1 * (lambdaT - lambdaS), lambdaS2 = lambdaS + r2 * (lambdaT - lambdaS);
-            double sigmaS1 = run.SigmaOfLambda(lambdaS1), sigmaS2 = run.SigmaOfLambda(lambdaS2);
-            double alphaS1 = sigmaS1 * Math.Exp(lambdaS1), alphaS2 = sigmaS2 * Math.Exp(lambdaS2), alphaT = s[i + 1] * Math.Exp(lambdaT);
-
-            // Step 1
-            var x2 = Lin(x, sigmaS1 / s[i] * Math.Exp(-r1 * h * eta), denoised, -alphaS1 * PhiH1(-r1 * hEta));
-            float[]? sdeNoise = null;
-            if (injectNoise)
-            {
-                sdeNoise = run.NextNoise().Select(v => (float)(Math.Sqrt(-Expm1(-2 * r1 * h * eta)) * v)).ToArray();
-                AddScaled(x2, sdeNoise, sigmaS1 * sNoise);
-            }
-            var denoised2 = await run.Call(x2, sigmaS1);
-
-            // Step 2
-            double a32 = r2 / r1 * PhiH2(-r2 * hEta), a31 = PhiH1(-r2 * hEta) - a32;
-            var x3 = new float[x.Length];
-            double keep3 = sigmaS2 / s[i] * Math.Exp(-r2 * h * eta);
-            for (int k = 0; k < x.Length; k++) x3[k] = (float)(keep3 * x[k] - alphaS2 * (a31 * denoised[k] + a32 * denoised2[k]));
-            if (injectNoise)
-            {
-                double segment = (r1 - r2) * h * eta;
-                var fresh = run.NextNoise();
-                for (int k = 0; k < x.Length; k++) sdeNoise![k] = (float)(sdeNoise[k] * Math.Exp(segment) + Math.Sqrt(-Expm1(2 * segment)) * fresh[k]);
-                AddScaled(x3, sdeNoise!, sigmaS2 * sNoise);
-            }
-            var denoised3 = await run.Call(x3, sigmaS2);
-
-            // Step 3
-            double b3 = PhiH2(-hEta) / r2, b1 = PhiH1(-hEta) - b3;
-            var next = new float[x.Length];
-            double keep = s[i + 1] / s[i] * Math.Exp(-h * eta);
-            for (int k = 0; k < x.Length; k++) next[k] = (float)(keep * x[k] - alphaT * (b1 * denoised[k] + b3 * denoised3[k]));
-            x = next;
-            if (injectNoise)
-            {
-                double segment = (r2 - 1) * h * eta;
-                var fresh = run.NextNoise();
-                for (int k = 0; k < x.Length; k++) sdeNoise![k] = (float)(sdeNoise[k] * Math.Exp(segment) + Math.Sqrt(-Expm1(2 * segment)) * fresh[k]);
-                AddScaled(x, sdeNoise!, s[i + 1] * sNoise);
-            }
-        }
-        return x;
+        double sg = (float)sigma, sn = (float)sigmaNext;
+        var (downVe, _) = AncestralStep(sg / (1 - sg), sn / (1 - sn), eta);
+        double down = downVe / (1 + downVe), scale = (1 - sn) / (1 - down);
+        double noise = Math.Sqrt(Math.Max(sn * sn - down * down * scale * scale, 0));
+        var xd = new float[x.Length];
+        for (int k = 0; k < xd.Length; k++)
+            xd[k] = (float)(down * (x[k] - (1 - sg) * uncond[k]) / sg + (1 - down) * denoised[k]);
+        return FlowRenoise(run, xd, sigmaNext, scale, noise, eta);
     }
 
-    // --- SA-Solver -------------------------------------------------------------------------------------------------------------------------
+    static async Task<float[]> FlowDpm2AncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta)
+    {
+        var (down, scale, noise) = FlowSplit(sigma, sigmaNext, eta);
+        var d = ToD(x, sigma, denoised);
+        float[] xd;
+        if (down == 0) xd = Step(x, d, -(float)sigma);
+        else
+        {
+            float mid = MathF.Exp(Lerp(Log(sigma), Log(down), 0.5f));
+            var x2 = Step(x, d, mid - (float)sigma);
+            var d2 = ToD(x2, mid, await run.Denoise(x2, mid));
+            xd = Step(x, d2, (float)down - (float)sigma);
+        }
+        return FlowRenoise(run, xd, sigmaNext, scale, noise, eta);
+    }
 
-    /// <summary>sa_solver.get_tau_interval_func: the stochasticity is <paramref name="eta"/> while sigma is within [end, start], else 0 (an ODE step).</summary>
+    static async Task<float[]> FlowDpmpp2SAncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta)
+    {
+        var (down, scale, noise) = FlowSplit(sigma, sigmaNext, eta);
+        float[] xd;
+        if (down == 0) xd = denoised;
+        else
+        {
+            double t = LamOf(run, sigma), h = LamOf(run, down) - t, sigS = SigmaOfLam(run, t + 0.5 * h);
+            var x2 = LinCombine(x, sigS / sigma, denoised, AlphaOf(run, sigS) * -Expm1D(-h * 0.5));
+            var denoised2 = await run.Denoise(x2, sigS);
+            xd = LinCombine(x, down / sigma, denoised2, AlphaOf(run, down) * -Expm1D(-h));
+        }
+        return FlowRenoise(run, xd, sigmaNext, scale, noise, eta);
+    }
+
+    // ---- flow (rectified flow, x = (1 - sigma) x0 + sigma noise) forms of the exponential samplers ----
+
+    /// <summary>The half-log-SNR: -log sigma, or log((1 - sigma) / sigma) for a flow model.</summary>
+    internal static double LamOf(Run run, double sigma) => run.Sampling.IsConst ? Math.Log((1 - sigma) / sigma) : -Math.Log(sigma);
+
+    internal static double SigmaOfLam(Run run, double lam) => run.Sampling.IsConst ? 1 / (1 + Math.Exp(lam)) : Math.Exp(-lam);
+
+    /// <summary>The signal scale: 1, or 1 - sigma for a flow model.</summary>
+    internal static double AlphaOf(Run run, double sigma) => run.Sampling.IsConst ? 1 - sigma : 1;
+
+    /// <summary>The exponential SDE step in data prediction: (sigma'/sigma) e^(-eta h) x + alpha' (1 - e^(-(1 + eta) h)) D + sigma' sqrt(1 - e^(-2 eta h)) z.</summary>
+    static double[] ExpSdeWeights(Run run, double sigma, double sigmaNext, double eta)
+    {
+        double h = LamOf(run, sigmaNext) - LamOf(run, sigma);
+        return [sigmaNext / sigma * Math.Exp(-eta * h), AlphaOf(run, sigmaNext) * -Expm1D(-(1 + eta) * h), sigmaNext * Math.Sqrt(-Expm1D(-2 * eta * h)), h];
+    }
+
+    static async Task<float[]> FlowDpmppSdeStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta, double r, BrownianNoise brownian)
+    {
+        double lam = LamOf(run, sigma), h = LamOf(run, sigmaNext) - lam, sMid = SigmaOfLam(run, lam + h * r), fac = 1 / (2 * r);
+        var w1 = ExpSdeWeights(run, sigma, sMid, eta);
+        var x2 = LinCombine(x, w1[0], denoised, w1[1]);
+        AddNoise(x2, brownian.Increment(sigma, sMid), w1[2] * run.SNoise);
+        var denoised2 = await run.Denoise(x2, sMid);
+        var w2 = ExpSdeWeights(run, sigma, sigmaNext, eta);
+        var dd = LinCombine(denoised, 1 - fac, denoised2, fac);
+        var r2 = LinCombine(x, w2[0], dd, w2[1]);
+        AddNoise(r2, brownian.Increment(sigma, sigmaNext), w2[2] * run.SNoise);
+        return r2;
+    }
+
+    static Task<(float[], float)> FlowDpmpp2MSdeStep(Run run, float[] x, float[] denoised, float[]? old, float hLast, double sigma, double sigmaNext, double eta,
+        string solverType)
+    {
+        var w = ExpSdeWeights(run, sigma, sigmaNext, eta);
+        double h = w[3], a = AlphaOf(run, sigmaNext), e = -Expm1D(-h - eta * h);
+        var r = LinCombine(x, w[0], denoised, w[1]);
+        if (old is not null)
+        {
+            double inv = 1 / (hLast / h);
+            double c = solverType == "heun" ? a * (e / (-h - eta * h) + 1) * inv : a * 0.5 * e * inv;
+            var diff = Subtract(denoised, old);
+            for (int k = 0; k < r.Length; k++) r[k] += (float)c * diff[k];
+        }
+        if (eta != 0) AddNoise(r, run.Noise.Next(), w[2] * run.SNoise);
+        return Task.FromResult((r, (float)h));
+    }
+
+    /// <summary>SA-Solver's stochasticity: eta between the two sigmas (inclusive), 0 elsewhere.</summary>
     public static Func<double, double> TauInterval(double startSigma, double endSigma, double eta = 1.0) =>
-        sigma => eta <= 0 ? 0.0 : (startSigma >= sigma && sigma >= endSigma ? eta : 0.0);
+        sigma => sigma <= startSigma && sigma >= endSigma ? eta : 0;
 
-    /// <summary>Stochastic Adams solver with predictor and corrector (sample_sa_solver, NeurIPS 2023); PECE re-evaluates the corrected state.</summary>
-    static async Task<float[]> SaSolver(Run run, float[] x, double[] s, bool usePece)
-    {
-        if (s.Length <= 1) return x;
-        var o = run.Options;
-        double sNoise = (o.SNoise ?? 1) * run.Sampling.NoiseScale;
-        int predictorOrder = o.PredictorOrder ?? 3, correctorOrder = o.CorrectorOrder ?? 4;
-        bool simpleOrder2 = o.SimpleOrder2 ?? false;
-        s = run.OffsetFirstSigma(s);
-        var lambdas = s.Select(run.Lambda).ToArray();
-        var tauFunc = o.TauFunc ?? TauInterval(run.Sampling.PercentToSigma(0.2), run.Sampling.PercentToSigma(0.8), 1.0);
-        int maxUsedOrder = Math.Max(predictorOrder, correctorOrder);
-        var xPred = x;
-        double h = 0, tauT = 0;
-        float[]? noise = null;
-        var predList = new List<float[]>();
-        bool lowerOrderToEnd = s[^1] == 0;
-
-        for (int i = 0; i < s.Length - 1; i++)
-        {
-            var denoised = await run.Call(xPred, s[i]);
-            await run.CallbackAsync(i, denoised);
-            predList.Add(denoised);
-            if (predList.Count > maxUsedOrder) predList.RemoveRange(0, predList.Count - maxUsedOrder);
-
-            int predictorUsed = Math.Min(predictorOrder, predList.Count);
-            int correctorUsed = i == 0 || (s[i + 1] == 0 && !usePece) ? 0 : Math.Min(correctorOrder, predList.Count);
-            if (lowerOrderToEnd)
-            {
-                predictorUsed = Math.Min(predictorUsed, s.Length - 2 - i);
-                correctorUsed = Math.Min(correctorUsed, s.Length - 1 - i);
-            }
-
-            // Corrector
-            if (correctorUsed == 0) x = xPred;
-            else
-            {
-                var currLambdas = lambdas[(i - correctorUsed + 1)..(i + 1)];
-                var b = StochasticAdamsCoefficients(s[i], currLambdas, lambdas[i - 1], lambdas[i], tauT, simpleOrder2, isCorrector: true);
-                var corr = Combine(predList, correctorUsed, b);
-                x = Lin(x, s[i] / s[i - 1] * Math.Exp(-(tauT * tauT) * h), corr, 1);
-                if (tauT > 0 && sNoise > 0) AddScaled(x, noise!, 1);
-                if (usePece)
-                {
-                    denoised = await run.Call(x, s[i]);
-                    predList[^1] = denoised;
-                }
-            }
-
-            // Predictor
-            if (s[i + 1] == 0) xPred = denoised;
-            else
-            {
-                tauT = tauFunc(s[i + 1]);
-                var currLambdas = lambdas[(i - predictorUsed + 1)..(i + 1)];
-                var b = StochasticAdamsCoefficients(s[i + 1], currLambdas, lambdas[i], lambdas[i + 1], tauT, simpleOrder2, isCorrector: false);
-                var pred = Combine(predList, predictorUsed, b);
-                h = lambdas[i + 1] - lambdas[i];
-                xPred = Lin(x, s[i + 1] / s[i] * Math.Exp(-(tauT * tauT) * h), pred, 1);
-                if (tauT > 0 && sNoise > 0)
-                {
-                    double amount = s[i + 1] * Math.Sqrt(-Expm1(-2 * tauT * tauT * h)) * sNoise;
-                    noise = run.NextNoise().Select(v => (float)(v * amount)).ToArray();
-                    AddScaled(xPred, noise, 1);
-                }
-            }
-        }
-        return xPred;
-    }
-
-    /// <summary>sum_k b[k] * pred[^count + k]: the last <paramref name="count"/> predictions, oldest first, against the coefficients.</summary>
-    static float[] Combine(List<float[]> preds, int count, double[] b)
-    {
-        var r = new float[preds[0].Length];
-        for (int k = 0; k < r.Length; k++)
-        {
-            double v = 0;
-            for (int j = 0; j < count; j++) v += preds[preds.Count - count + j][k] * b[j];
-            r[k] = (float)v;
-        }
-        return r;
-    }
-
-    /// <summary>sa_solver.compute_exponential_coeffs: (1 + tau^2) * the integral of exp((1 + tau^2) x) x^p from s to t, with exp((1 + tau^2) t) factored out, p = 0 .. order - 1.</summary>
-    static double[] ExponentialCoefficients(double s, double t, int order, double tau)
-    {
-        double tauMul = 1 + tau * tau, h = t - s;
-        var product = new double[order];
-        var logFactorial = new double[order];
-        for (int p = 0; p < order; p++)
-        {
-            product[p] = Math.Pow(t, p) - Math.Pow(s, p) * Math.Exp(-tauMul * h);
-            logFactorial[p] = LogGamma(p + 1);
-        }
-        var r = new double[order];
-        for (int a = 0; a < order; a++)
-            for (int b = 0; b <= a; b++)
-            {
-                int depth = a - b;
-                double c = logFactorial[a] - logFactorial[b];
-                if (tau > 0) c -= depth * Math.Log(tauMul);
-                r[a] += Math.Exp(c) * (depth % 2 == 0 ? 1 : -1) * product[b];
-            }
-        return r;
-    }
-
-    static double LogGamma(double x)
-    {
-        // ln((x - 1)!) for the small whole numbers the solver orders need.
-        double r = 0;
-        for (int k = 2; k < (int)Math.Round(x); k++) r += Math.Log(k);
-        return r;
-    }
-
-    /// <summary>sa_solver.compute_stochastic_adams_b_coeffs: the b_i of eqs. 15 and 18, from a Vandermonde solve (or the simple order-2 forms).</summary>
-    static double[] StochasticAdamsCoefficients(double sigmaNext, double[] currLambdas, double lambdaS, double lambdaT, double tau, bool simpleOrder2, bool isCorrector)
-    {
-        int n = currLambdas.Length;
-        double alphaT = sigmaNext * Math.Exp(lambdaT);
-        if (simpleOrder2 && n == 2)
-        {
-            double tauMul = 1 + tau * tau, h = lambdaT - lambdaS;
-            double b1, b2;
-            if (isCorrector)
-            {
-                b1 = alphaT * (0.5 * tauMul * h);
-                b2 = alphaT * -Expm1(-h * tauMul) - b1;
-            }
-            else
-            {
-                b2 = alphaT * (0.5 * tauMul * h * h) / (currLambdas[^2] - lambdaS);
-                b1 = alphaT * -Expm1(-h * tauMul) - b2;
-            }
-            return [b2, b1];
-        }
-        var rhs = ExponentialCoefficients(lambdaS, lambdaT, n, tau);
-        // vander(curr_lambdas, n, increasing=True).T: row p holds lambda_k^p.
-        var m = new double[n, n];
-        for (int p = 0; p < n; p++)
-            for (int k = 0; k < n; k++) m[p, k] = Math.Pow(currLambdas[k], p);
-        var sol = Solve(m, rhs);
-        return sol.Select(v => alphaT * v).ToArray();
-    }
-
-    /// <summary>Gaussian elimination with partial pivoting (torch.linalg.solve's LU).</summary>
-    internal static double[] Solve(double[,] a, double[] b)
+    /// <summary>The solution of a x = b for a square a (row-major), by Gaussian elimination with partial pivoting.</summary>
+    public static double[] Solve(double[] a, double[] b)
     {
         int n = b.Length;
-        var m = (double[,])a.Clone();
-        var x = (double[])b.Clone();
-        for (int col = 0; col < n; col++)
+        var m = (double[])a.Clone();
+        var v = (double[])b.Clone();
+        for (int c = 0; c < n; c++)
         {
-            int pivot = col;
-            for (int r = col + 1; r < n; r++) if (Math.Abs(m[r, col]) > Math.Abs(m[pivot, col])) pivot = r;
-            if (pivot != col)
+            int p = c;
+            for (int r = c + 1; r < n; r++) if (Math.Abs(m[r * n + c]) > Math.Abs(m[p * n + c])) p = r;
+            if (p != c)
             {
-                for (int c = 0; c < n; c++) (m[col, c], m[pivot, c]) = (m[pivot, c], m[col, c]);
-                (x[col], x[pivot]) = (x[pivot], x[col]);
+                for (int k = 0; k < n; k++) (m[c * n + k], m[p * n + k]) = (m[p * n + k], m[c * n + k]);
+                (v[c], v[p]) = (v[p], v[c]);
             }
-            for (int r = col + 1; r < n; r++)
+            for (int r = c + 1; r < n; r++)
             {
-                double f = m[r, col] / m[col, col];
-                if (f == 0) continue;
-                for (int c = col; c < n; c++) m[r, c] -= f * m[col, c];
-                x[r] -= f * x[col];
+                double f = m[r * n + c] / m[c * n + c];
+                for (int k = c; k < n; k++) m[r * n + k] -= f * m[c * n + k];
+                v[r] -= f * v[c];
             }
         }
+        var xs = new double[n];
         for (int r = n - 1; r >= 0; r--)
         {
-            double v = x[r];
-            for (int c = r + 1; c < n; c++) v -= m[r, c] * x[c];
-            x[r] = v / m[r, r];
+            double sum = v[r];
+            for (int k = r + 1; k < n; k++) sum -= m[r * n + k] * xs[k];
+            xs[r] = sum / m[r * n + r];
         }
-        return x;
-    }
-
-    // --- UniPC -----------------------------------------------------------------------------------------------------------------------------
-
-    /// <summary>
-    /// UniPC (multistep, data prediction, order up to 3, lower order at the end; variant bh1 or bh2), as ComfyUI's sample_unipc runs it: in the variance-preserving
-    /// space with sigma as its time, the last sigma 0 replaced by 0.001 (so the result keeps that much noise), and no corrector on the final step.
-    /// </summary>
-    static async Task<float[]> UniPC(Run run, float[] x, double[] sigmas, string variant)
-    {
-        var ts = (double[])sigmas.Clone();
-        if (ts[^1] == 0) ts[^1] = 0.001;
-        static double LogMean(double t) => 0.5 * Math.Log(1 / (t * t + 1));
-        static double Alpha(double t) => Math.Exp(LogMean(t));
-        static double Std(double t) => Math.Sqrt(1.0 - Math.Exp(2.0 * LogMean(t)));
-        static double Lambda(double t) { double lm = LogMean(t); return lm - 0.5 * Math.Log(1.0 - Math.Exp(2.0 * lm)); }
-
-        // The data prediction: back to k-diffusion space for the model, then x0 from the noise prediction.
-        async Task<float[]> ModelFn(float[] xv, double t)
-        {
-            double up = Math.Sqrt(t * t + 1.0);
-            var input = xv.Select(v => (float)(v * up)).ToArray();
-            var denoised = await run.Call(input, t);
-            double a = Alpha(t), sd = Std(t);
-            var x0 = new float[xv.Length];
-            for (int k = 0; k < x0.Length; k++)
-            {
-                double eps = (input[k] - denoised[k]) / t;
-                x0[k] = (float)((xv[k] - sd * eps) / a);
-            }
-            return x0;
-        }
-
-        async Task<(float[] X, float[]? Model)> Update(float[] xv, List<float[]> modelPrev, List<double> tPrev, double t, int order, bool useCorrector)
-        {
-            double tPrev0 = tPrev[^1], lambdaPrev0 = Lambda(tPrev0), lambdaT = Lambda(t);
-            var modelPrev0 = modelPrev[^1];
-            double sigmaPrev0 = Std(tPrev0), sigmaT = Std(t), alphaT = Math.Exp(LogMean(t));
-            double h = lambdaT - lambdaPrev0;
-            var rks = new List<double>();
-            var d1s = new List<float[]>();
-            for (int i = 1; i < order; i++)
-            {
-                double rk = (Lambda(tPrev[^(i + 1)]) - lambdaPrev0) / h;
-                rks.Add(rk);
-                var mi = modelPrev[^(i + 1)];
-                d1s.Add(mi.Select((v, k) => (float)((v - modelPrev0[k]) / rk)).ToArray());
-            }
-            rks.Add(1.0);
-            double hh = -h, hPhi1 = Expm1(hh), hPhiK = hPhi1 / hh - 1, factorial = 1;
-            double bH = variant == "bh1" ? hh : Expm1(hh);
-            var rMat = new double[order, order];
-            var b = new double[order];
-            for (int i = 1; i <= order; i++)
-            {
-                for (int k = 0; k < order; k++) rMat[i - 1, k] = Math.Pow(rks[k], i - 1);
-                b[i - 1] = hPhiK * factorial / bH;
-                factorial *= i + 1;
-                hPhiK = hPhiK / hh - 1 / factorial;
-            }
-            double[]? rhosP = null;
-            if (d1s.Count > 0)
-            {
-                if (order == 2) rhosP = [0.5];
-                else
-                {
-                    var sub = new double[order - 1, order - 1];
-                    for (int r = 0; r < order - 1; r++) for (int c = 0; c < order - 1; c++) sub[r, c] = rMat[r, c];
-                    rhosP = Solve(sub, b[..(order - 1)]);
-                }
-            }
-            double[]? rhosC = null;
-            if (useCorrector) rhosC = order == 1 ? [0.5] : Solve(rMat, b);
-
-            var xT_ = new float[xv.Length];
-            for (int k = 0; k < xv.Length; k++) xT_[k] = (float)(sigmaT / sigmaPrev0 * xv[k] - alphaT * hPhi1 * modelPrev0[k]);
-            var xT = (float[])xT_.Clone();
-            if (d1s.Count > 0)
-                for (int k = 0; k < xv.Length; k++)
-                {
-                    double pred = 0;
-                    for (int j = 0; j < d1s.Count; j++) pred += d1s[j][k] * rhosP![j];
-                    xT[k] = (float)(xT_[k] - alphaT * bH * pred);
-                }
-            float[]? modelT = null;
-            if (useCorrector)
-            {
-                modelT = await ModelFn(xT, t);
-                for (int k = 0; k < xv.Length; k++)
-                {
-                    double corr = 0;
-                    for (int j = 0; j < d1s.Count; j++) corr += d1s[j][k] * rhosC![j];
-                    double d1t = modelT[k] - modelPrev0[k];
-                    xT[k] = (float)(xT_[k] - alphaT * bH * (corr + rhosC![^1] * d1t));
-                }
-            }
-            return (xT, modelT);
-        }
-
-        int steps = ts.Length - 1;
-        int uniOrder = Math.Min(3, ts.Length - 2);
-        var xs = x.Select(v => (float)(v / Math.Sqrt(1.0 + ts[0] * ts[0]))).ToArray();
-        var modelPrevList = new List<float[]>();
-        var tPrevList = new List<double>();
-        for (int stepIndex = 0; stepIndex < steps; stepIndex++)
-        {
-            if (stepIndex == 0)
-            {
-                modelPrevList.Add(await ModelFn(xs, ts[0]));
-                tPrevList.Add(ts[0]);
-            }
-            else if (stepIndex < uniOrder)
-            {
-                int initOrder = stepIndex;
-                var (nx, mx) = await Update(xs, modelPrevList, tPrevList, ts[initOrder], initOrder, useCorrector: true);
-                xs = nx;
-                modelPrevList.Add(mx ?? await ModelFn(xs, ts[initOrder]));
-                tPrevList.Add(ts[initOrder]);
-            }
-            else
-            {
-                int extra = stepIndex == steps - 1 ? 1 : 0;
-                for (int step = stepIndex; step <= stepIndex + extra; step++)
-                {
-                    int stepOrder = Math.Min(uniOrder, steps + 1 - step);
-                    bool useCorrector = step != steps;
-                    var (nx, mx) = await Update(xs, modelPrevList, tPrevList, ts[step], stepOrder, useCorrector);
-                    xs = nx;
-                    for (int i = 0; i < uniOrder - 1; i++)
-                    {
-                        tPrevList[i] = tPrevList[i + 1];
-                        modelPrevList[i] = modelPrevList[i + 1];
-                    }
-                    tPrevList[^1] = ts[step];
-                    if (step < steps) modelPrevList[^1] = mx ?? await ModelFn(xs, ts[step]);
-                }
-            }
-            await run.CallbackAsync(stepIndex, modelPrevList[^1]);
-        }
-        double last = Alpha(ts[^1]);
-        return xs.Select(v => (float)(v / last)).ToArray();
+        return xs;
     }
 }

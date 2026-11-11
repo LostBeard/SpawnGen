@@ -3,107 +3,106 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.ML;
 
-[Node(Category = "model/sampling", DisplayName = "KSampler")]
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries, Fixtures/sampling/reference.json (the KSampler sigmas: denoise and the
+// samplers that take one step more and drop the penultimate sigma, whose list was read from a running ComfyUI) and SamplingSetupTests (the
+// advanced sampler's slicing).
+
+[Node("KSampler", Category = "model/sampling", DisplayName = "KSampler",
+    Description = "Uses the provided model, positive and negative conditioning to denoise the latent image.")]
 public sealed class KSampler
 {
-    public static string[] SamplerNames() => Samplers.Names;
+    /// <summary>Samplers that run one step more and drop the penultimate sigma (measured).</summary>
+    static readonly HashSet<string> DropPenultimate = ["dpm_2", "dpm_2_ancestral", "uni_pc", "uni_pc_bh2"];
+
+    public static string[] SamplerNames() => [.. Samplers.Names];
+
     public static string[] SchedulerNames() => ModelSigmas.SchedulerNames;
 
-    // Socket inputs first, then the widgets in ComfyUI's order with its defaults (so a new node is runnable as dropped on the canvas).
     public async Task<LatentBatch> ExecuteAsync(
-        ModelHandle model, Conditioning positive, Conditioning negative, LatentBatch latentImage,
+        [Input(Tooltip = "The model used for denoising the input latent.")] ModelHandle model,
+        [Input(Tooltip = "The conditioning describing the attributes you want to include in the image.")] Conditioning positive,
+        [Input(Tooltip = "The conditioning describing the attributes you want to exclude from the image.")] Conditioning negative,
+        [Input(Tooltip = "The latent image to denoise.")] LatentBatch latentImage,
         NodeContext context, IServiceProvider services,
-        [Input(Min = 0, Max = 18446744073709551615d)] long seed = 0,
-        [Input(Min = 1, Max = 10000)] int steps = 20,
-        [Input(Min = 0, Max = 100, Step = 0.1)] double cfg = 8.0,
-        [Input(OptionsProvider = nameof(SamplerNames))] string samplerName = "euler",
-        [Input(OptionsProvider = nameof(SchedulerNames))] string scheduler = "simple",
-        [Input(Min = 0, Max = 1, Step = 0.01)] double denoise = 1.0)
+        [Input(Min = 0, Max = 18446744073709551615d, Tooltip = "The random seed used for creating the noise.")] long seed = 0,
+        [Input(Min = 1, Max = 10000, Tooltip = "The number of steps used in the denoising process.")] int steps = 20,
+        [Input(Min = 0.0, Max = 100.0, Step = 0.1, Tooltip = "The Classifier-Free Guidance scale balances creativity and adherence to the prompt. Higher values result in images more closely matching the prompt however too high values will negatively impact quality.")] double cfg = 8.0,
+        [Input(OptionsProvider = nameof(SamplerNames), Tooltip = "The algorithm used when sampling, this can affect the quality, speed, and style of the generated output.")] string samplerName = "euler",
+        [Input(OptionsProvider = nameof(SchedulerNames), Tooltip = "The scheduler controls how noise is gradually removed to form the image.")] string scheduler = "simple",
+        [Input(Min = 0.0, Max = 1.0, Step = 0.01, Tooltip = "The amount of denoising applied, lower values will maintain the structure of the initial image allowing for image to image sampling.")] double denoise = 1.0)
     {
         var sigmas = Sigmas(model.Sampling.Sigmas, samplerName, scheduler, steps, denoise);
-        if (sigmas.Length == 0) return latentImage; // nothing to denoise: the input passes through
-        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
-        return await SamplingCore.RunAsync(acc, new CfgGuider(model, positive, negative, cfg), latentImage, sigmas, new SamplingSettings(seed, samplerName), context);
+        return await Run(model, positive, negative, latentImage, context, services, cfg, sigmas, new SamplingSettings(seed, samplerName));
+    }
+
+    internal static async Task<LatentBatch> Run(ModelHandle model, Conditioning positive, Conditioning negative, LatentBatch latent, NodeContext context,
+        IServiceProvider services, double cfg, float[] sigmas, SamplingSettings settings)
+    {
+        if (model.Model is { } m) await m.UseWeightsAsync(model.Weights, context.CancellationToken);
+        var runtime = await GpuHelpers.RuntimeAsync(services);
+        return await SamplingCore.RunAsync(runtime.Accelerator, new CfgGuider(model, positive, negative, cfg), latent, sigmas, settings, context);
+    }
+
+    /// <summary>The scheduler's sigmas for the sampler: one step more with the penultimate sigma dropped for the samplers that need it.</summary>
+    public static float[] Schedule(ModelSigmas model, string sampler, string scheduler, int steps)
+    {
+        if (!DropPenultimate.Contains(sampler)) return model.Schedule(scheduler, steps);
+        var s = model.Schedule(scheduler, steps + 1);
+        return [.. s[..^2], s[^1]];
     }
 
     /// <summary>
-    /// ComfyUI's KSampler.calculate_sigmas: the scheduler's sigmas, computed one step longer with the second to last dropped for dpm_2, dpm_2_ancestral and uni_pc.
+    /// The sigmas a run uses: the whole schedule when denoise is above 0.9999, none at 0 or below, otherwise the last steps + 1 sigmas of the
+    /// schedule for int(steps / denoise) steps.
     /// </summary>
-    internal static float[] Schedule(ModelSigmas model, string sampler, string scheduler, int steps)
-    {
-        if (!Samplers.DiscardsPenultimateSigma(sampler)) return model.Schedule(scheduler, steps);
-        var s = model.Schedule(scheduler, steps + 1);
-        return s.Length < 2 ? s : [.. s[..^2], s[^1]];
-    }
-
-    /// <summary>KSampler.set_steps: the full schedule above denoise 0.9999, none at 0, else the last steps + 1 sigmas of an int(steps / denoise) step schedule.</summary>
-    internal static float[] Sigmas(ModelSigmas model, string sampler, string scheduler, int steps, double denoise)
+    public static float[] Sigmas(ModelSigmas model, string sampler, string scheduler, int steps, double denoise)
     {
         if (denoise > 0.9999) return Schedule(model, sampler, scheduler, steps);
-        if (denoise <= 0.0) return [];
+        if (denoise <= 0) return [];
         var full = Schedule(model, sampler, scheduler, (int)(steps / denoise));
         return full[Math.Max(0, full.Length - (steps + 1))..];
     }
 }
 
-[Node(Category = "model/patch", DisplayName = "RescaleCFG")]
-public sealed class RescaleCFG
-{
-    /// <summary>
-    /// Lets a high cfg keep colours and contrast: the guided prediction is rescaled towards the spread of the prompt's own prediction. <c>multiplier</c> 0 does nothing,
-    /// 1 rescales fully; ComfyUI's default is 0.7. Connect it between the checkpoint and the sampler.
-    /// </summary>
-    public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 1, Step = 0.01)] double multiplier = 0.7)
-    {
-        bool isFlow = model.Sampling.IsConst;
-        return model.WithPatches(p => p.WithCfgFunction(ModelPatches.Stateless<Func<CfgFunctionArgs, Task<float[]>>>(
-            a => Task.FromResult(GuidancePatches.RescaleCfg(a, multiplier, isFlow)))));
-    }
-}
-
-[Node(Category = "model/sampling", DisplayName = "KSampler (Advanced)")]
+[Node("KSamplerAdvanced", Category = "model/sampling", DisplayName = "KSampler (Advanced)")]
 public sealed class KSamplerAdvanced
 {
     public static string[] Toggle() => ["enable", "disable"];
-    public static string[] Leftover() => ["disable", "enable"];
-    public static string[] SamplerNames() => Samplers.Names;
-    public static string[] SchedulerNames() => ModelSigmas.SchedulerNames;
 
-    /// <summary>
-    /// Like KSampler, but you choose whether noise is added, which steps of the schedule to run (<c>start_at_step</c> to <c>end_at_step</c>), and whether the
-    /// last step cleans the picture completely or leaves its remaining noise for the next sampler (<c>return_with_leftover_noise</c>).
-    /// </summary>
-    public async Task<LatentBatch> ExecuteAsync(
-        ModelHandle model, Conditioning positive, Conditioning negative, LatentBatch latentImage,
+    public static string[] Leftover() => ["disable", "enable"];
+
+    public static string[] SamplerNames() => KSampler.SamplerNames();
+
+    public static string[] SchedulerNames() => KSampler.SchedulerNames();
+
+    public async Task<LatentBatch> ExecuteAsync(ModelHandle model, Conditioning positive, Conditioning negative, LatentBatch latentImage,
         NodeContext context, IServiceProvider services,
         [Input(OptionsProvider = nameof(Toggle))] string addNoise = "enable",
         [Input(Min = 0, Max = 18446744073709551615d)] long noiseSeed = 0,
         [Input(Min = 1, Max = 10000)] int steps = 20,
-        [Input(Min = 0, Max = 100, Step = 0.1)] double cfg = 8.0,
+        [Input(Min = 0.0, Max = 100.0, Step = 0.1)] double cfg = 8.0,
         [Input(OptionsProvider = nameof(SamplerNames))] string samplerName = "euler",
         [Input(OptionsProvider = nameof(SchedulerNames))] string scheduler = "simple",
         [Input(Min = 0, Max = 10000)] int startAtStep = 0,
         [Input(Min = 0, Max = 10000)] int endAtStep = 10000,
         [Input(OptionsProvider = nameof(Leftover))] string returnWithLeftoverNoise = "disable")
     {
-        var sigmas = Slice(KSampler.Schedule(model.Sampling.Sigmas, samplerName, scheduler, steps), startAtStep, endAtStep, returnWithLeftoverNoise == "disable");
-        if (sigmas.Length == 0) return latentImage; // the start step is past the end of the schedule
-        var acc = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
-        return await SamplingCore.RunAsync(acc, new CfgGuider(model, positive, negative, cfg), latentImage, sigmas,
-            new SamplingSettings(noiseSeed, samplerName, AddNoise: addNoise == "enable"), context);
+        var sigmas = Slice(KSampler.Schedule(model.Sampling.Sigmas, samplerName, scheduler, steps), startAtStep, endAtStep, returnWithLeftoverNoise != "enable");
+        return await KSampler.Run(model, positive, negative, latentImage, context, services, cfg, sigmas,
+            new SamplingSettings(noiseSeed, samplerName, AddNoise: addNoise == "enable"));
     }
 
     /// <summary>
-    /// ComfyUI's KSampler.sample slicing: an end step before the last cuts the schedule at sigma[end] (set to 0 unless leftover noise is wanted), then the run starts at
-    /// sigma[start]; a start at or past the end of what remains means nothing runs.
+    /// The steps from <paramref name="start"/> to <paramref name="end"/>: cut after sigma[end] (its last sigma set to 0 when the run must end clean),
+    /// then from sigma[start]; nothing when the start is at or past the last step. The input is not changed.
     /// </summary>
-    internal static float[] Slice(float[] sigmas, int start, int end, bool forceFullDenoise)
+    public static float[] Slice(float[] sigmas, int start, int end, bool forceFullDenoise)
     {
         var s = (float[])sigmas.Clone();
         if (end < s.Length - 1)
         {
             s = s[..(end + 1)];
-            if (forceFullDenoise) s[^1] = 0f;
+            if (forceFullDenoise) s[^1] = 0;
         }
         return start < s.Length - 1 ? s[start..] : [];
     }

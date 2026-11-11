@@ -28,6 +28,7 @@ public static class BetaMath
         if (double.IsNaN(q) || q < 0 || q > 1) return double.NaN;
         if (q == 0) return 0;
         if (q == 1) return 1;
+        if (a == b && q == 0.5) return 0.5; // a symmetric distribution's median, exactly (scipy rounds it up by an ulp; the bisection lands an ulp below)
         double lo = 0, hi = 1;
         while (true)
         {

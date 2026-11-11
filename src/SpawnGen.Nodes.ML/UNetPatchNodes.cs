@@ -3,45 +3,46 @@ using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Nodes.ML;
 
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries and the papers the patches come from: FreeU (Si et al. 2023), HyperTile,
+// Kohya's deep shrink, ToMe for SD (Bolya and Hoffman 2023), Perturbed-Attention Guidance (Ahn et al. 2024) and Self-Attention Guidance (Hong et al.
+// 2023). The UNet work is SpawnDev.ILGPU.ML's (SdFreeU, SdHyperTile, SdDeepShrink, SdTokenMerge, SdGuidance.SagBlur, as its docs describe them);
+// ComfyUIRenderParityTests compares each patch's render with ComfyUI's.
+
+static class UNetPatch
+{
+    /// <summary>A copy of the model with its UNet options changed.</summary>
+    public static ModelHandle With(ModelHandle model, Func<UNetOptions, UNetOptions> change) =>
+        model.WithPatches(p => p with { UNet = change(p.UNet ?? UNetOptions.None) });
+}
+
 [Node("FreeU", Category = "model/patch/unet", DisplayName = "FreeU")]
 public sealed class FreeU
 {
-    /// <summary>
-    /// FreeU (arXiv 2309.11497) as ComfyUI does it: the decoder's backbone features at 4x and 2x the model's channel count are scaled by b1 / b2 (half of their
-    /// channels) and the skip features by s1 / s2 (their low frequencies, via an FFT).
-    /// </summary>
+    /// <summary>FreeU: the backbone features of the output blocks scaled by b1 / b2 and the skip features' low frequencies by s1 / s2.</summary>
     public ModelHandle Execute(ModelHandle model,
-        [Input(Min = 0, Max = 10, Step = 0.01)] double b1 = 1.1, [Input(Min = 0, Max = 10, Step = 0.01)] double b2 = 1.2,
-        [Input(Min = 0, Max = 10, Step = 0.01)] double s1 = 0.9, [Input(Min = 0, Max = 10, Step = 0.01)] double s2 = 0.2) =>
-        model.WithPatches(p => p with { UNet = p.UNet with { FreeU = new SdFreeU((float)b1, (float)b2, (float)s1, (float)s2, false) } });
+        [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double b1 = 1.1, [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double b2 = 1.2,
+        [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double s1 = 0.9, [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double s2 = 0.2) =>
+        UNetPatch.With(model, o => o with { FreeU = new SdFreeU((float)b1, (float)b2, (float)s1, (float)s2) });
 }
 
 [Node("FreeU_V2", Category = "model/patch/unet", DisplayName = "FreeU_V2")]
 public sealed class FreeUV2
 {
-    /// <summary>FreeU v2: the backbone scale follows each picture's mean feature map (scaled to [0, 1]) instead of applying evenly.</summary>
+    /// <summary>FreeU's second version: the backbone scale follows each pixel's feature mean.</summary>
     public ModelHandle Execute(ModelHandle model,
-        [Input(Min = 0, Max = 10, Step = 0.01)] double b1 = 1.3, [Input(Min = 0, Max = 10, Step = 0.01)] double b2 = 1.4,
-        [Input(Min = 0, Max = 10, Step = 0.01)] double s1 = 0.9, [Input(Min = 0, Max = 10, Step = 0.01)] double s2 = 0.2) =>
-        model.WithPatches(p => p with { UNet = p.UNet with { FreeU = new SdFreeU((float)b1, (float)b2, (float)s1, (float)s2, true) } });
+        [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double b1 = 1.3, [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double b2 = 1.4,
+        [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double s1 = 0.9, [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double s2 = 0.2) =>
+        UNetPatch.With(model, o => o with { FreeU = new SdFreeU((float)b1, (float)b2, (float)s1, (float)s2, V2: true) });
 }
 
-[Node("PerturbedAttentionGuidance", Category = "model/patch/unet", DisplayName = "PerturbedAttentionGuidance")]
-public sealed class PerturbedAttentionGuidance
+[Node("HyperTile", Category = "model/patch/unet", DisplayName = "HyperTile")]
+public sealed class HyperTile
 {
-    /// <summary>
-    /// Perturbed-Attention Guidance (arXiv 2403.17377), ComfyUI's version: after cfg the prompt is evaluated again with the middle block's self-attention returning its
-    /// values, and the guided estimate moves away from that perturbed estimate by <c>scale</c>.
-    /// </summary>
-    public ModelHandle Execute(ModelHandle model, [Input(Min = 0, Max = 100, Step = 0.01)] double scale = 3.0) =>
-        model.WithPatches(p => p.WithPostCfgAsync(ModelPatches.Stateless<Func<PostCfgArgs, Task<float[]>>>(async a =>
-        {
-            if (scale == 0 || a.Cond is not { } cond) return a.Denoised;
-            var perturbed = await a.Context.EvaluateWith(cond, a.Context.UNet with { PerturbMiddleSelfAttention = true });
-            var r = new float[a.Denoised.Length];
-            for (int i = 0; i < r.Length; i++) r[i] = (float)(a.Denoised[i] + (a.CondDenoised[i] - perturbed[i]) * scale);
-            return r;
-        })));
+    /// <summary>Self-attention computed in tiles of about <paramref name="tile_size"/> pixels at the outer levels.</summary>
+    public ModelHandle Execute(ModelHandle model,
+        [Input(Min = 1, Max = 2048)] int tile_size = 256, [Input(Min = 1, Max = 128)] int swap_size = 2,
+        [Input(Min = 0, Max = 10)] int max_depth = 0, bool scale_depth = false) =>
+        UNetPatch.With(model, o => o with { HyperTile = new SdHyperTile(tile_size, swap_size, max_depth, scale_depth) });
 }
 
 [Node("PatchModelAddDownscale", Category = "model/patch/unet", DisplayName = "PatchModelAddDownscale (Kohya Deep Shrink)")]
@@ -49,84 +50,85 @@ public sealed class PatchModelAddDownscale
 {
     public static string[] Methods() => ["bicubic", "nearest-exact", "bilinear", "area", "bislerp"];
 
-    /// <summary>
-    /// Kohya's deep shrink: while the step's sigma is inside [sigma(end_percent), sigma(start_percent)], the features after input block <c>block_number</c> are
-    /// shrunk by <c>downscale_factor</c> (after its skip connection is kept, unless <c>downscale_after_skip</c> is off), and an output block whose features no
-    /// longer meet their skip connection's size grows them back. It lets a model trained at 512 compose a larger picture.
-    /// </summary>
+    static SdResize Resize(string method) => method switch
+    {
+        "bicubic" => SdResize.Bicubic,
+        "nearest-exact" => SdResize.NearestExact,
+        "bilinear" => SdResize.Bilinear,
+        "area" => SdResize.Area,
+        "bislerp" => SdResize.Bislerp,
+        _ => throw new ArgumentException($"Unknown resize method '{method}'.", nameof(method)),
+    };
+
+    /// <summary>Deep shrink: the features after input block <paramref name="block_number"/> shrunk by the factor while sigma is in the window, grown back after.</summary>
     public ModelHandle Execute(ModelHandle model,
         [Input(Min = 1, Max = 32, Step = 1)] int block_number = 3,
         [Input(Min = 0.1, Max = 9.0, Step = 0.001)] double downscale_factor = 2.0,
-        [Input(Min = 0, Max = 1, Step = 0.001)] double start_percent = 0.0,
-        [Input(Min = 0, Max = 1, Step = 0.001)] double end_percent = 0.35,
+        [Input(Min = 0.0, Max = 1.0, Step = 0.001)] double start_percent = 0.0,
+        [Input(Min = 0.0, Max = 1.0, Step = 0.001)] double end_percent = 0.35,
         bool downscale_after_skip = true,
         [Input(OptionsProvider = nameof(Methods))] string downscale_method = "bicubic",
         [Input(OptionsProvider = nameof(Methods))] string upscale_method = "bicubic")
     {
         var shrink = new SdDeepShrink(block_number, downscale_factor, downscale_after_skip, Resize(downscale_method), Resize(upscale_method));
         var window = new DeepShrinkWindow(shrink, model.Sampling.PercentToSigma(start_percent), model.Sampling.PercentToSigma(end_percent));
-        return model.WithPatches(p => p with { UNet = p.UNet with { DeepShrink = window } });
+        return UNetPatch.With(model, o => o with { DeepShrink = window });
     }
-
-    static SdResize Resize(string method) => method switch
-    {
-        "bicubic" => SdResize.Bicubic,
-        "bilinear" => SdResize.Bilinear,
-        "nearest-exact" => SdResize.NearestExact,
-        _ => throw new NotSupportedException($"Deep shrink resizes the UNet's features on the GPU with bicubic, bilinear or nearest-exact; \"{method}\" is not available there yet."),
-    };
-}
-
-[Node("HyperTile", Category = "model/patch/unet", DisplayName = "HyperTile")]
-public sealed class HyperTile
-{
-    /// <summary>
-    /// HyperTile: the self-attention of the first <c>max_depth</c> + 1 resolutions runs inside tiles of about <c>tile_size</c> pixels (doubled per depth with
-    /// <c>scale_depth</c>), which speeds up large pictures. The tile counts are picked at random among the first <c>swap_size</c> - 1 candidates, as ComfyUI does,
-    /// so 1 or 2 is deterministic.
-    /// </summary>
-    public ModelHandle Execute(ModelHandle model,
-        [Input(Min = 1, Max = 2048)] int tile_size = 256,
-        [Input(Min = 1, Max = 128)] int swap_size = 2,
-        [Input(Min = 0, Max = 10)] int max_depth = 0,
-        bool scale_depth = false) =>
-        model.WithPatches(p => p with { UNet = p.UNet with { HyperTile = new SdHyperTile(tile_size, swap_size, max_depth, scale_depth) } });
 }
 
 [Node("TomePatchModel", Category = "model/patch/unet", DisplayName = "TomePatchModel")]
 public sealed class TomePatchModel
 {
-    /// <summary>
-    /// ToMe for SD (token merging), ComfyUI's version: in the self-attention of the full-resolution layers, <c>ratio</c> of the queries are averaged into their most
-    /// similar neighbour (one destination drawn at random in each 2x2 window) and the attention's output is copied back to them. Faster on large pictures, at some cost
-    /// in detail. HyperTile, when also applied, takes the layers it tiles.
-    /// </summary>
+    /// <summary>Token merging in the self-attention: <paramref name="ratio"/> of the tokens merged (random destinations, drawn per run).</summary>
     public ModelHandle Execute(ModelHandle model, [Input(Min = 0.0, Max = 1.0, Step = 0.01)] double ratio = 0.3) =>
-        model.WithPatches(p => p with { UNet = p.UNet with { TokenMerge = ratio <= 0 ? null : new SdTokenMerge((float)ratio) } });
+        UNetPatch.With(model, o => o with { TokenMerge = new SdTokenMerge((float)ratio) });
+}
+
+[Node("PerturbedAttentionGuidance", Category = "model/patch/unet", DisplayName = "PerturbedAttentionGuidance")]
+public sealed class PerturbedAttentionGuidance
+{
+    /// <summary>
+    /// After guidance, the prompt is evaluated once more with the middle block's self-attention replaced by the identity, and the result moves by
+    /// (prompt's estimate - perturbed estimate) * scale.
+    /// </summary>
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0.0, Max = 100.0, Step = 0.01)] double scale = 3.0) =>
+        model.WithPatches(p => p.WithPostCfgAsync(ModelPatches.Stateless<Func<PostCfgArgs, Task<float[]>>>(async a =>
+        {
+            if (scale == 0 || a.Cond is null || a.CondDenoised is null) return a.Denoised;
+            var perturbed = await a.Context.EvaluateWith(a.Cond, (a.Context.UNet ?? UNetOptions.None) with { PerturbMiddleSelfAttention = true });
+            var r = new float[a.Denoised.Length];
+            for (int i = 0; i < r.Length; i++) r[i] = a.Denoised[i] + (a.CondDenoised[i] - perturbed[i]) * (float)scale;
+            return r;
+        }), disableCfg1: true));
 }
 
 [Node("SelfAttentionGuidance", Category = "experimental", DisplayName = "Self-Attention Guidance")]
 public sealed class SelfAttentionGuidance
 {
     /// <summary>
-    /// Self-Attention Guidance (arXiv 2210.00939), ComfyUI's version: the unconditional estimate is blurred where the middle block's self-attention is strongest,
-    /// the model is asked about that degraded picture without the prompt, and the guided estimate moves away from its answer by <c>scale</c>.
+    /// Self-Attention Guidance: the negative's estimate is blurred where the middle block's self-attention concentrates (SdGuidance.SagBlur), noised
+    /// back to the current sigma with the negative's own noise, and evaluated again; the result moves by (blurred estimate - that) * scale.
     /// </summary>
-    public ModelHandle Execute(ModelHandle model,
-        [Input(Min = -2.0, Max = 5.0, Step = 0.01)] double scale = 0.5,
+    public ModelHandle Execute(ModelHandle model, [Input(Min = -2.0, Max = 5.0, Step = 0.01)] double scale = 0.5,
         [Input(Min = 0.0, Max = 10.0, Step = 0.1)] double blur_sigma = 2.0) =>
         model.WithPatches(p => p.WithPostCfgAsync(ModelPatches.Stateless<Func<PostCfgArgs, Task<float[]>>>(async a =>
         {
+            if (!a.HasUncond || a.Uncond is null || a.UncondDenoised is null || a.Context.ReadMiddleAttention is null) return a.Denoised;
+            var mass = await a.Context.ReadMiddleAttention();
+            if (mass is null) return a.Denoised;
             var ctx = a.Context;
-            if (Math.Min(ctx.Height, ctx.Width) <= 4 || a.Uncond is not { } uncond) return a.Denoised; // too small to pad (ComfyUI skips it too)
-            var mass = await ctx.ReadMiddleAttention()
-                ?? throw new InvalidOperationException("Self-Attention Guidance found no attention from the unconditional pass; it needs a negative prompt and a single-file checkpoint.");
-            var degraded = SdGuidance.SagBlur(a.UncondDenoised, ctx.Channels, ctx.Height, ctx.Width, mass, (float)blur_sigma, 1f);
-            var noised = new float[degraded.Length];
-            for (int i = 0; i < noised.Length; i++) noised[i] = degraded[i] + a.Input[i] - a.UncondDenoised[i];
-            var sag = await ctx.EvaluateAt(uncond, noised);
+            int frame = ctx.Channels * ctx.Height * ctx.Width, pictures = a.UncondDenoised.Length / frame, massPer = mass.Length / Math.Max(pictures, 1);
+            var degraded = new float[a.UncondDenoised.Length];
+            var blurredAll = new float[a.UncondDenoised.Length];
+            for (int b = 0; b < pictures; b++)
+            {
+                var x0 = a.UncondDenoised.AsSpan(b * frame, frame).ToArray();
+                var blurred = SdGuidance.SagBlur(x0, ctx.Channels, ctx.Height, ctx.Width, mass.AsSpan(b * massPer, massPer).ToArray(), (float)blur_sigma);
+                for (int i = 0; i < frame; i++) { blurredAll[b * frame + i] = blurred[i]; degraded[b * frame + i] = blurred[i] + a.Input[b * frame + i] - x0[i]; }
+            }
+            var sag = await ctx.EvaluateAt(a.Uncond, degraded);
             var r = new float[a.Denoised.Length];
-            for (int i = 0; i < r.Length; i++) r[i] = (float)(a.Denoised[i] + (degraded[i] - sag[i]) * scale);
+            for (int i = 0; i < r.Length; i++) r[i] = a.Denoised[i] + (blurredAll[i] - sag[i]) * (float)scale;
             return r;
         }), disableCfg1: true) with { RecordUncondMiddleAttention = true });
 }

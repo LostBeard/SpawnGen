@@ -1,142 +1,162 @@
+using System.Globalization;
+using System.Text;
+
 namespace SpawnGen.Nodes.ML;
 
-/// <summary>
-/// ComfyUI's prompt emphasis: <c>(text:1.3)</c> weights the text, <c>(text)</c> is 1.1, each extra level of parentheses multiplies by 1.1 again, and
-/// <c>\(</c> <c>\)</c> are literal brackets. Parsing follows ComfyUI's <c>token_weights</c> so a prompt means the same thing here and there.
-/// </summary>
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's documented prompt syntax ("(text)" emphasis, "(text:1.2)" weights, a backslash before a
+// bracket for a literal one), SpawnGen's PromptWeightsTests (ComfyUI's results for the same strings) and CLIP's token layout (start 49406,
+// end and padding 49407).
+
+/// <summary>Prompt emphasis: splitting a prompt into weighted pieces, laying their tokens out in CLIP chunks, and weighting the encoder's rows.</summary>
 public static class PromptWeights
 {
-    /// <summary>Splits the prompt into pieces of text with their weight (unescaped; brackets that do not pair up stay text).</summary>
-    public static List<(string Text, float Weight)> Parse(string prompt)
+    public const int StartToken = 49406, EndToken = 49407;
+
+    /// <summary>Pieces of 8 tokens or more are split at a chunk's end; shorter ones move whole to the next chunk.</summary>
+    public const int MaxWordLength = 8;
+
+    public readonly record struct Piece(string Text, float Weight);
+
+    public sealed record Chunk(int[] Ids, float[] Weights);
+
+    static bool IsEscape(string s, int i, int end) => s[i] == '\\' && i + 1 < end && s[i + 1] is '(' or ')';
+
+    /// <summary>
+    /// The prompt's pieces in order. "(text)" multiplies the weight around it by 1.1; "(text:w)" gives its text the weight w (the text after the
+    /// group's last colon, read as a number; otherwise the colon is text and the group is a bare one); a backslash makes the bracket after it
+    /// literal; a bracket without a partner is text. Empty pieces are left out.
+    /// </summary>
+    public static List<Piece> Parse(string prompt)
     {
-        var escaped = prompt.Replace("\\)", "\0\u0001").Replace("\\(", "\0\u0002");
-        var result = new List<(string, float)>();
-        foreach (var (text, weight) in Weigh(escaped, 1f))
+        var partner = new Dictionary<int, int>();
+        var open = new Stack<int>();
+        for (int i = 0; i < prompt.Length; i++)
         {
-            var plain = text.Replace("\0\u0001", ")").Replace("\0\u0002", "(");
-            if (plain.Length > 0) result.Add((plain, weight));
+            if (IsEscape(prompt, i, prompt.Length)) { i++; continue; }
+            if (prompt[i] == '(') open.Push(i);
+            else if (prompt[i] == ')' && open.Count > 0) partner[open.Pop()] = i;
         }
-        return result;
+        var pieces = new List<Piece>();
+        Walk(prompt, 0, prompt.Length, 1f, partner, pieces);
+        return pieces;
     }
 
-    /// <summary>True when the prompt has any emphasis, so the plain (cheaper, exact) path can be used when it has not.</summary>
+    static void Walk(string s, int start, int end, float weight, Dictionary<int, int> partner, List<Piece> pieces)
+    {
+        var text = new StringBuilder();
+        void Flush()
+        {
+            if (text.Length > 0) pieces.Add(new Piece(text.ToString(), weight));
+            text.Clear();
+        }
+        for (int i = start; i < end; i++)
+        {
+            if (IsEscape(s, i, end)) { text.Append(s[++i]); continue; }
+            if (s[i] == '(' && partner.TryGetValue(i, out int close) && close < end)
+            {
+                Flush();
+                int colon = LastTopLevelColon(s, i + 1, close, partner);
+                if (colon >= 0 && ParseFloat(s[(colon + 1)..close]) is float w) Walk(s, i + 1, colon, w, partner, pieces);
+                else Walk(s, i + 1, close, weight * 1.1f, partner, pieces);
+                i = close;
+                continue;
+            }
+            text.Append(s[i]);
+        }
+        Flush();
+    }
+
+    static int LastTopLevelColon(string s, int start, int end, Dictionary<int, int> partner)
+    {
+        int last = -1;
+        for (int i = start; i < end; i++)
+        {
+            if (IsEscape(s, i, end)) { i++; continue; }
+            if (s[i] == '(' && partner.TryGetValue(i, out int close) && close < end) { i = close; continue; }
+            if (s[i] == ':') last = i;
+        }
+        return last;
+    }
+
+    /// <summary>Python's float(text) for what a weight can be: surrounding whitespace, a sign, digits with a point and an exponent, inf and nan.</summary>
+    static float? ParseFloat(string text)
+    {
+        var t = text.Trim().ToLowerInvariant();
+        if (t.Length == 0) return null;
+        string body = t.TrimStart('+', '-');
+        if (body is "inf" or "infinity") return t.StartsWith('-') ? float.NegativeInfinity : float.PositiveInfinity;
+        if (body == "nan") return float.NaN;
+        if (body.Length == 0 || !char.IsAsciiDigit(body[0]) && body[0] != '.') return null;
+        if (body.Any(ch => !(char.IsAsciiDigit(ch) || ch is '.' or 'e' or '+' or '-'))) return null;
+        return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? (float)v : null;
+    }
+
+    /// <summary>Whether any piece has a weight other than 1.</summary>
     public static bool HasEmphasis(string prompt) => Parse(prompt).Any(p => p.Weight != 1f);
 
-    static List<string> SplitParentheses(string text)
-    {
-        var result = new List<string>();
-        var current = new System.Text.StringBuilder();
-        int level = 0;
-        foreach (char c in text)
-        {
-            if (c == '(')
-            {
-                if (level == 0)
-                {
-                    if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); }
-                    current.Append('(');
-                }
-                else current.Append(c);
-                level++;
-            }
-            else if (c == ')')
-            {
-                level--;
-                if (level == 0) { result.Add(current.ToString() + ")"); current.Clear(); }
-                else current.Append(c);
-            }
-            else current.Append(c);
-        }
-        if (current.Length > 0) result.Add(current.ToString());
-        return result;
-    }
-
-    static IEnumerable<(string, float)> Weigh(string text, float current)
-    {
-        foreach (var piece in SplitParentheses(text))
-        {
-            if (piece.Length >= 2 && piece[0] == '(' && piece[^1] == ')')
-            {
-                var inner = piece[1..^1];
-                float weight = current * 1.1f;
-                int colon = inner.LastIndexOf(':');
-                if (colon > 0 && float.TryParse(inner[(colon + 1)..], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var explicitWeight))
-                {
-                    weight = explicitWeight; // an explicit weight replaces the one inherited from outside, as in ComfyUI
-                    inner = inner[..colon];
-                }
-                foreach (var part in Weigh(inner, weight)) yield return part;
-            }
-            else yield return (piece, current);
-        }
-    }
-
     /// <summary>
-    /// A whole prompt as CLIP chunks of <paramref name="length"/> tokens (start, tokens, end, padding with the end token), each with a weight per position (1 for the
-    /// special tokens), ComfyUI's <c>tokenize_with_weights</c>: each weighted piece is tokenised whole; a piece that does not fit the current chunk moves to the next one,
-    /// unless it is <paramref name="maxWordLength"/> tokens or longer, then it is split at the chunk's end. <paramref name="tokenize"/> gives the plain tokens of a piece
-    /// (no start/end). A prompt longer than one chunk gives several; the text encoder encodes each and the UNet reads their rows one after another.
+    /// The prompt as CLIP chunks of <paramref name="length"/> ids: start token, up to length - 2 prompt tokens, end token, then padding, each id
+    /// with its piece's weight (1 for the special tokens). A piece that does not fit the current chunk starts the next one, unless it has
+    /// <see cref="MaxWordLength"/> tokens or more: then it fills the chunk and goes on in the next.
     /// </summary>
-    public static List<(int[] Ids, float[] Weights)> Chunks(string prompt, Func<string, int[]> tokenize, int length = 77, int start = 49406, int end = 49407,
-        int maxWordLength = 8)
+    public static List<Chunk> Chunks(string prompt, Func<string, int[]> tokenize, int length = 77, int padToken = EndToken)
     {
-        var chunks = new List<(List<int> Ids, List<float> Weights)>();
-        (List<int> Ids, List<float> Weights) batch = ([start], [1f]);
-        chunks.Add(batch);
-        void Close(int pad)
+        int room = length - 2;
+        var chunks = new List<Chunk>();
+        var ids = new List<int>();
+        var weights = new List<float>();
+        void Close()
         {
-            batch.Ids.Add(end); batch.Weights.Add(1f);
-            for (int i = 0; i < pad; i++) { batch.Ids.Add(end); batch.Weights.Add(1f); }
+            var i = new List<int> { StartToken };
+            var w = new List<float> { 1f };
+            i.AddRange(ids);
+            w.AddRange(weights);
+            i.Add(EndToken);
+            w.Add(1f);
+            while (i.Count < length) { i.Add(padToken); w.Add(1f); }
+            chunks.Add(new Chunk([.. i], [.. w]));
+            ids.Clear();
+            weights.Clear();
         }
-        foreach (var (text, weight) in Parse(prompt))
+        void Take(int[] tokens, int from, int count, float weight)
         {
-            var group = tokenize(text);
-            bool large = group.Length >= maxWordLength;
+            ids.AddRange(tokens[from..(from + count)]);
+            weights.AddRange(Enumerable.Repeat(weight, count));
+        }
+        foreach (var piece in Parse(prompt))
+        {
+            var tokens = tokenize(piece.Text);
             int at = 0;
-            while (at < group.Length)
+            while (at < tokens.Length)
             {
-                int left = group.Length - at;
-                if (left + batch.Ids.Count > length - 1)
-                {
-                    int room = length - batch.Ids.Count - 1;
-                    if (large)
-                    {
-                        for (int i = 0; i < room; i++) { batch.Ids.Add(group[at + i]); batch.Weights.Add(weight); }
-                        at += room;
-                        Close(0);
-                    }
-                    else Close(room);
-                    batch = ([start], [1f]);
-                    chunks.Add(batch);
-                }
-                else
-                {
-                    for (; at < group.Length; at++) { batch.Ids.Add(group[at]); batch.Weights.Add(weight); }
-                }
+                int left = tokens.Length - at, free = room - ids.Count;
+                if (left <= free) { Take(tokens, at, left, piece.Weight); at = tokens.Length; }
+                else if (tokens.Length >= MaxWordLength || ids.Count == 0) { Take(tokens, at, free, piece.Weight); at += free; Close(); }
+                else Close();
             }
         }
-        Close(Math.Max(0, length - batch.Ids.Count - 1));
-        return [.. chunks.Select(c => (c.Ids.ToArray(), c.Weights.ToArray()))];
+        if (ids.Count > 0 || chunks.Count == 0) Close();
+        return chunks;
     }
 
     /// <summary>
-    /// Applies the weights to the encoder's output rows <paramref name="z"/> (tokens x width): each weighted row is moved away from the same row of the
-    /// empty prompt's encoding by its weight, <c>(z - empty) * w + empty</c> (ComfyUI's rule), so weight 1 leaves it alone and weight 0 gives the empty prompt's row.
+    /// Weights the encoder's output rows (one per token position, <paramref name="width"/> values each): a row with weight w becomes
+    /// (row - emptyRow) * w + emptyRow, where emptyRow is the empty prompt's row at that position; weight 1 leaves it as it is.
     /// </summary>
     public static void Apply(float[] z, float[] empty, float[] weights, int width) => Apply(z, empty, weights, width, 0, width);
 
-    /// <summary>Like <see cref="Apply(float[], float[], float[], int)"/> on columns <paramref name="start"/> .. start + count of each row (one tower of SDXL's two).</summary>
-    public static void Apply(float[] z, float[] empty, float[] weights, int width, int start, int count)
+    /// <summary>
+    /// <see cref="Apply(float[], float[], float[], int)"/> on the columns <paramref name="column"/> to column + <paramref name="count"/> of each row only
+    /// (one text tower's part of a joined output, such as SDXL's CLIP-L and CLIP-G halves); rows are <paramref name="width"/> values apart.
+    /// </summary>
+    public static void Apply(float[] z, float[] empty, float[] weights, int width, int column, int count)
     {
-        for (int t = 0; t < weights.Length; t++)
+        for (int r = 0; r < weights.Length; r++)
         {
-            float w = weights[t];
+            float w = weights[r];
             if (w == 1f) continue;
-            for (int c = start; c < start + count; c++)
-            {
-                int i = t * width + c;
-                z[i] = (z[i] - empty[i]) * w + empty[i];
-            }
+            int start = r * width + column;
+            for (int k = start; k < start + count; k++) z[k] = (z[k] - empty[k]) * w + empty[k];
         }
     }
 }

@@ -7,6 +7,7 @@ namespace SpawnGen.Nodes.Tests;
 /// <summary>
 /// ComfyUI's model-free audio nodes and comfy/audio.py's resampler and biquads. Expected numbers come from a by-hand port of the Python with float32
 /// rounding emulated step by step, plus filter responses that follow from the formulas (shelf gain at DC and Nyquist, peak gain at the centre).
+/// The same behaviour is checked black-box against ComfyUI itself in <see cref="AudioParityTests"/>.
 /// </summary>
 public class AudioOpsTests
 {
@@ -101,8 +102,8 @@ public class AudioOpsTests
         Assert.That(new TrimAudioDuration().Execute(clip, 0.25, 0.35)!.Channels[0], Is.EqualTo(new[] { 2f, 3f, 4f, 5f }));
         // A start before the beginning is clamped to 0; past the end is an error, as is a zero duration.
         Assert.That(new TrimAudioDuration().Execute(clip, -100, 0.3)!.Channels[0], Is.EqualTo(new[] { 0f, 1f, 2f }));
-        Assert.That(() => new TrimAudioDuration().Execute(clip, 5, 1), Throws.ArgumentException);
-        Assert.That(() => new TrimAudioDuration().Execute(clip, 0, 0), Throws.ArgumentException);
+        Assert.That(() => new TrimAudioDuration().Execute(clip, 5, 1), Throws.InstanceOf<PyException>());
+        Assert.That(() => new TrimAudioDuration().Execute(clip, 0, 0), Throws.InstanceOf<PyException>());
         var empty = Clip(10, new float[0]);
         Assert.That(new TrimAudioDuration().Execute(empty, 1, 1), Is.SameAs(empty));
         Assert.That(new TrimAudioDuration().Execute(null), Is.Null);
@@ -114,7 +115,7 @@ public class AudioOpsTests
         float[] l = [1, 2, 3], r = [4, 5, 6];
         var (left, right) = new SplitAudioChannels().Execute(Clip(8000, l, r));
         Assert.That((left!.ChannelCount, left.Channels[0], right!.Channels[0], right.SampleRate), Is.EqualTo((1, l, r, 8000)));
-        Assert.That(() => new SplitAudioChannels().Execute(Clip(8000, l)), Throws.ArgumentException.With.Message.Contains("got 1 channel(s)"));
+        Assert.That(() => new SplitAudioChannels().Execute(Clip(8000, l)), Throws.InstanceOf<PyException>().With.Message.Contains("got 1 channel(s)"));
         Assert.That(new SplitAudioChannels().Execute(null), Is.EqualTo(((AudioClip?)null, (AudioClip?)null)));
 
         // Join trims to the shorter channel.
@@ -124,7 +125,7 @@ public class AudioOpsTests
         var mixed = new JoinAudioChannels().Execute(Clip(8000, Five[..3]), Clip(12000, Five))!;
         Assert.That((mixed.SampleRate, mixed.Length), Is.EqualTo((12000, 5)));
         Assert.That(mixed.Channels[0], Is.EqualTo(AudioDsp.Resample(Five[..3], 8000, 12000)));
-        Assert.That(() => new JoinAudioChannels().Execute(Clip(8000, l, r), Clip(8000, l)), Throws.ArgumentException);
+        Assert.That(() => new JoinAudioChannels().Execute(Clip(8000, l, r), Clip(8000, l)), Throws.InstanceOf<PyException>());
         var only = Clip(8000, l);
         Assert.That(new JoinAudioChannels().Execute(null, only), Is.SameAs(only));
     }

@@ -2,134 +2,132 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>
-/// ComfyUI's <c>comfy/audio.py</c> (adapted from TorchAudio, BSD-2-Clause): band-limited sinc resampling and the bass, peaking and treble biquads.
-/// The arithmetic is float32 in the same order as torch and scipy's <c>lfilter</c>, so results match to rounding.
-/// </summary>
+// Written clean-room (docs/CLEANROOM.md). The resampler and the biquads are ported from torchaudio 2.11.1 (BSD-2-Clause, see THIRD-PARTY-NOTICES.md):
+// torchaudio.functional.resample (_get_sinc_resample_kernel, _apply_sinc_resample_kernel) and bass_biquad / equalizer_biquad / treble_biquad with
+// lfilter, in float32 as torchaudio computes them for a float32 waveform. ComfyUI's audio nodes were measured against them black-box
+// (tools/parity/make_audio_fixtures.py).
+
+/// <summary>Sample-rate conversion and tone filters for <see cref="AudioClip"/> channels (float32 samples).</summary>
 public static class AudioDsp
 {
     /// <summary>
-    /// <c>comfy.audio.resample</c> with its defaults (Hann-windowed sinc, 6 zero crossings, rolloff 0.99): the rates are reduced by their gcd, each output
-    /// phase gets its own kernel, and the result has <c>ceil(float32(new * length / orig))</c> samples.
+    /// torchaudio's band-limited sinc resampling with a Hann window (lowpass_filter_width zero crossings, rolloff of the lower Nyquist): the rates are
+    /// reduced by their gcd, the kernel is computed in float32, and the result has ceil(float32(new * length / orig)) samples. The same rate gives the
+    /// same array.
     /// </summary>
     public static float[] Resample(float[] waveform, int origFreq, int newFreq, int lowpassFilterWidth = 6, double rolloff = 0.99)
     {
-        if (origFreq <= 0 || newFreq <= 0) throw new ArgumentException("Sample rates must be positive");
+        if (origFreq <= 0 || newFreq <= 0) throw new ArgumentException("Original frequency and desired frequency should be positive.");
         if (origFreq == newFreq) return waveform;
-        int divisor = Gcd(origFreq, newFreq), orig = origFreq / divisor, next = newFreq / divisor;
+        int gcd = Gcd(origFreq, newFreq), orig = origFreq / gcd, next = newFreq / gcd;
         double baseFreq = Math.Min(orig, next) * rolloff;
         int width = (int)Math.Ceiling(lowpassFilterWidth * orig / baseFreq);
         int taps = 2 * width + orig;
-
-        // kernel[phase][tap]: torch builds it in the waveform's dtype (float32), every Python float cast to float32 first.
-        float baseF = (float)baseFreq, scale = (float)(baseFreq / orig), pi = (float)Math.PI, lw = lowpassFilterWidth;
-        var kernel = new float[next][];
+        float fBase = (float)baseFreq, fPi = MathF.PI, fWidth = lowpassFilterWidth, scale = (float)(baseFreq / orig);
+        var kernel = new float[next * taps];
         for (int j = 0; j < next; j++)
-        {
-            var row = kernel[j] = new float[taps];
-            for (int i = 0; i < taps; i++)
+            for (int k = 0; k < taps; k++)
             {
-                float t = (float)-j / next + (float)(i - width) / orig;
-                t = Math.Clamp(t * baseF, -lw, lw);
-                float window = MathF.Cos(t * pi / lw / 2);
-                window *= window;
-                t *= pi;
-                row[i] = (t == 0 ? 1f : MathF.Sin(t) / t) * (window * scale);
+                float t = (float)-j / next + (float)(k - width) / orig;
+                t *= fBase;
+                t = Math.Clamp(t, -fWidth, fWidth);
+                float c = MathF.Cos(t * fPi / fWidth / 2f);
+                float window = c * c;
+                t *= fPi;
+                float sinc = t == 0f ? 1f : MathF.Sin(t) / t;
+                kernel[j * taps + k] = sinc * (window * scale);
             }
-        }
 
-        // conv1d with stride orig over the signal padded by width zeros in front and width + orig behind; phases interleave.
-        int length = waveform.Length, frames = length / orig + 1;
-        int target = (int)Math.Ceiling((float)((double)next * length / orig));
+        int length = waveform.Length;
+        int target = (int)MathF.Ceiling((float)((double)next * length / orig));
         var output = new float[target];
-        for (int l = 0; l < frames; l++)
-            for (int j = 0; j < next; j++)
+        for (int i = 0; i < target; i++)
+        {
+            int frame = i / next, phase = i % next, start = frame * orig - width; // padded index frame * orig is sample frame * orig - width
+            double sum = 0;
+            for (int k = 0; k < taps; k++)
             {
-                int o = l * next + j;
-                if (o >= target) return output;
-                var row = kernel[j];
-                double sum = 0;
-                for (int i = 0; i < taps; i++)
-                {
-                    int s = l * orig + i - width;
-                    if ((uint)s < (uint)length) sum += waveform[s] * row[i];
-                }
-                output[o] = (float)sum;
+                int s = start + k;
+                if ((uint)s < (uint)length) sum += waveform[s] * kernel[phase * taps + k];
             }
+            output[i] = (float)sum;
+        }
         return output;
     }
 
-    /// <summary>Every channel of <paramref name="clip"/> resampled to <paramref name="newRate"/> (the clip itself when the rate is already that).</summary>
+    /// <summary>Every channel resampled to <paramref name="newRate"/>.</summary>
     public static AudioClip Resample(AudioClip clip, int newRate) =>
         clip.SampleRate == newRate ? clip : new AudioClip([.. clip.Channels.Select(c => Resample(c, clip.SampleRate, newRate))], newRate);
 
-    /// <summary>
-    /// ComfyUI's <c>match_audio_sample_rates</c>: the clip with the lower rate is resampled up to the higher one.
-    /// </summary>
+    /// <summary>The clip at the lower rate resampled up to the higher one.</summary>
     public static (AudioClip First, AudioClip Second, int SampleRate) MatchSampleRates(AudioClip first, AudioClip second)
     {
         int rate = Math.Max(first.SampleRate, second.SampleRate);
         return (Resample(first, rate), Resample(second, rate), rate);
     }
 
-    /// <summary><c>bass_biquad</c>: a low shelf at <paramref name="centralFreq"/> boosting or cutting by <paramref name="gain"/> dB.</summary>
+    static int Gcd(int a, int b)
+    {
+        while (b != 0) (a, b) = (b, a % b);
+        return a;
+    }
+
+    /// <summary>The angular frequency, sin(w0) and cos(w0) torchaudio's biquads use, in float32.</summary>
+    static (float Alpha, float Cos) Angle(double freq, int sampleRate, double q)
+    {
+        float w0 = (float)(2 * Math.PI) * (float)freq / sampleRate;
+        return (MathF.Sin(w0) / 2f / (float)q, MathF.Cos(w0));
+    }
+
+    static float Amplitude(double gain) => MathF.Exp((float)gain / 40f * (float)Math.Log(10));
+
+    /// <summary>torchaudio's bass_biquad: a low shelf of <paramref name="gain"/> dB below <paramref name="centralFreq"/> (Audio EQ Cookbook / SoX).</summary>
     public static float[] Bass(float[] waveform, int sampleRate, double gain, double centralFreq = 100, double q = 0.707)
     {
-        float cf = (float)centralFreq, qf = (float)q, g = (float)gain;
-        float w0 = 2f * MathF.PI * cf / sampleRate;
-        float alpha = MathF.Sin(w0) / 2f / qf;
-        float a = MathF.Exp(g / 40f * (float)Math.Log(10));
-        float temp1 = 2f * MathF.Sqrt(a) * alpha, temp2 = (a - 1f) * MathF.Cos(w0), temp3 = (a + 1f) * MathF.Cos(w0);
-        float b0 = a * (a + 1f - temp2 + temp1), b1 = 2f * a * (a - 1f - temp3), b2 = a * (a + 1f - temp2 - temp1);
-        float a0 = a + 1f + temp2 + temp1, a1 = -2f * (a - 1f + temp3), a2 = a + 1f + temp2 - temp1;
-        // ComfyUI normalises these by a0 itself (lfilter then divides by a0 / a0 = 1).
+        var (alpha, cos) = Angle(centralFreq, sampleRate, q);
+        float a = Amplitude(gain);
+        float temp1 = 2f * MathF.Sqrt(a) * alpha, temp2 = (a - 1f) * cos, temp3 = (a + 1f) * cos;
+        float b0 = a * ((a + 1f) - temp2 + temp1), b1 = 2f * a * ((a - 1f) - temp3), b2 = a * ((a + 1f) - temp2 - temp1);
+        float a0 = (a + 1f) + temp2 + temp1, a1 = -2f * ((a - 1f) + temp3), a2 = (a + 1f) + temp2 - temp1;
         return Biquad(waveform, b0 / a0, b1 / a0, b2 / a0, a0 / a0, a1 / a0, a2 / a0);
     }
 
-    /// <summary><c>equalizer_biquad</c>: a peaking filter at <paramref name="centerFreq"/> with bandwidth <paramref name="q"/>.</summary>
+    /// <summary>torchaudio's equalizer_biquad: a peaking filter of <paramref name="gain"/> dB at <paramref name="centerFreq"/>.</summary>
     public static float[] Equalizer(float[] waveform, int sampleRate, double centerFreq, double gain, double q = 0.707)
     {
-        float cf = (float)centerFreq, qf = (float)q, g = (float)gain;
-        float w0 = 2f * MathF.PI * cf / sampleRate;
-        float a = MathF.Exp(g / 40f * (float)Math.Log(10));
-        float alpha = MathF.Sin(w0) / 2f / qf;
-        return Biquad(waveform, 1f + alpha * a, -2f * MathF.Cos(w0), 1f - alpha * a, 1f + alpha / a, -2f * MathF.Cos(w0), 1f - alpha / a);
+        var (alpha, cos) = Angle(centerFreq, sampleRate, q);
+        float a = MathF.Exp((float)gain / 40f * (float)Math.Log(10));
+        return Biquad(waveform, 1f + alpha * a, -2f * cos, 1f - alpha * a, 1f + alpha / a, -2f * cos, 1f - alpha / a);
     }
 
-    /// <summary><c>treble_biquad</c>: a high shelf at <paramref name="centralFreq"/>.</summary>
+    /// <summary>torchaudio's treble_biquad: a high shelf of <paramref name="gain"/> dB above <paramref name="centralFreq"/>.</summary>
     public static float[] Treble(float[] waveform, int sampleRate, double gain, double centralFreq = 3000, double q = 0.707)
     {
-        float cf = (float)centralFreq, qf = (float)q, g = (float)gain;
-        float w0 = 2f * MathF.PI * cf / sampleRate;
-        float alpha = MathF.Sin(w0) / 2f / qf;
-        float a = MathF.Exp(g / 40f * (float)Math.Log(10));
-        float temp1 = 2f * MathF.Sqrt(a) * alpha, temp2 = (a - 1f) * MathF.Cos(w0), temp3 = (a + 1f) * MathF.Cos(w0);
-        float b0 = a * (a + 1f + temp2 + temp1), b1 = -2f * a * (a - 1f + temp3), b2 = a * (a + 1f + temp2 - temp1);
-        float a0 = a + 1f - temp2 + temp1, a1 = 2f * (a - 1f - temp3), a2 = a + 1f - temp2 - temp1;
-        return Biquad(waveform, b0, b1, b2, a0, a1, a2);
+        var (alpha, cos) = Angle(centralFreq, sampleRate, q);
+        float a = Amplitude(gain);
+        float temp1 = 2f * MathF.Sqrt(a) * alpha, temp2 = (a - 1f) * cos, temp3 = (a + 1f) * cos;
+        float b0 = a * ((a + 1f) + temp2 + temp1), b1 = -2f * a * ((a - 1f) + temp3), b2 = a * ((a + 1f) + temp2 - temp1);
+        float a0 = (a + 1f) - temp2 + temp1, a1 = 2f * ((a - 1f) - temp3), a2 = (a + 1f) - temp2 - temp1;
+        return Biquad(waveform, b0 / a0, b1 / a0, b2 / a0, a0 / a0, a1 / a0, a2 / a0);
     }
 
     /// <summary>
-    /// <c>_biquad</c>: scipy's float32 <c>lfilter</c> (coefficients divided by a0 once, direct form II transposed, zero initial state), then clamped to -1..1.
+    /// A biquad with zero initial state, as measured from ComfyUI: the coefficients divided by a0, then scipy.signal.lfilter's float32 direct form II
+    /// transposed recursion (y = z0 + b0 x; z0 = (z1 + b1 x) - a1 y; z1 = b2 x - a2 y; scipy is BSD-3-Clause), the result clamped to -1..1.
     /// </summary>
     public static float[] Biquad(float[] x, float b0, float b1, float b2, float a0, float a1, float a2)
     {
-        b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+        (b0, b1, b2, a1, a2) = (b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
         var y = new float[x.Length];
         float z0 = 0, z1 = 0;
         for (int n = 0; n < x.Length; n++)
         {
             float xn = x[n], yn = z0 + b0 * xn;
-            z0 = z1 + xn * b1 - yn * a1;
-            z1 = xn * b2 - yn * a2;
-            y[n] = Math.Clamp(yn, -1f, 1f);
+            z0 = z1 + b1 * xn - a1 * yn;
+            z1 = b2 * xn - a2 * yn;
+            y[n] = yn;
         }
+        for (int n = 0; n < y.Length; n++) y[n] = Math.Clamp(y[n], -1f, 1f);
         return y;
-    }
-
-    static int Gcd(int a, int b)
-    {
-        while (b != 0) (a, b) = (b, a % b);
-        return a;
     }
 }

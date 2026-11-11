@@ -125,6 +125,10 @@ ComfyUI's fingerprints to SpawnGen's position by position and checks that the tw
 convert through HLS / HSV in double precision and agree within 2e-7 (the order of ComfyUI's operations there is not known; the other 23 modes are
 bit-exact). Rotated layers are placed by the reach of their turned corners, which matches every fixture case; a few exact 360-degree turns and
 fractional saved sizes of rotated layers can sit one pixel off ComfyUI's placement.
+The model-free audio nodes (Trim Audio Duration, Split / Join Audio Channels, Concatenate Audio, Merge Audio, Adjust Audio Volume, Empty Audio, Audio
+Equalizer (3-Band)) are checked against ComfyUI's node classes (Fixtures/comfy/comfy_audio_nodes.json.gz): the equalizer and the sample-exact nodes bit for
+bit, resampling (torchaudio's sinc kernel) within 2e-6. Differences: SpawnGen's AUDIO is one clip without a batch dimension; a missing input passes the
+other one on; Save Audio writes 16-bit WAV (ComfyUI: FLAC); an unknown merge method is a clear error where ComfyUI fails with UnboundLocalError.
 Deliberate difference: Save Text writes line breaks as given (`
 `); ComfyUI opens its file in Python's text mode, so on Windows it writes `
 

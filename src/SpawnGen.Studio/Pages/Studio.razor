@@ -1500,14 +1500,12 @@
     /// <summary>The picture names and input folders of a remote engine, shown in Load Image's and Load Image (from Folder)'s combos (the files are read on that engine).</summary>
     sealed class ListedInputStore(IReadOnlyList<string> names, IReadOnlyList<string> folders) : IInputStore
     {
-        public IReadOnlyList<string> List() => names;
-        public IReadOnlyList<string> List(Func<string, bool> filter) => names.Where(filter).ToList();
+        public IReadOnlyList<string> List(Func<string, bool>? filter = null) => filter is null ? names : names.Where(filter).ToList();
         public IReadOnlyList<string> Folders() => folders;
-        public Task<byte[]> ReadAsync(string name) => throw new InvalidOperationException("Pictures are read by the engine that runs the graph.");
+        public Task<byte[]> ReadAsync(string name) => throw new InvalidOperationException("Files are read by the engine that runs the graph.");
         public Task<string> SaveAsync(string name, byte[] bytes) => throw new InvalidOperationException("Upload goes through the engine.");
-        public IReadOnlyList<(string Name, bool IsFolder)> Entries(string folder) => throw new InvalidOperationException("Folders are read by the engine that runs the graph.");
+        public IReadOnlyList<StoreEntry> Entries(string folder) => throw new InvalidOperationException("Folders are read by the engine that runs the graph.");
         public bool Exists(string path) => throw new InvalidOperationException("Files are read by the engine that runs the graph.");
-        public Task<byte[]> ReadFileAsync(string path) => throw new InvalidOperationException("Files are read by the engine that runs the graph.");
     }
 
     string RunStatus()

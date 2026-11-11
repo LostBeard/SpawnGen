@@ -187,7 +187,6 @@ public class ImageNodeParityTests
     {
         // Measured with ComfyUI's server: Preview Image -> ComfyUI_temp_{5 letters}_00001_.png .. with tEXt prompt and workflow; Compare Images ->
         // comfy.compare.a_temp_{letters}_... and comfy.compare.b_temp_{same letters}_..., Preview Mask -> ComfyUI_temp_..., both without text.
-        // A folder store: the memory store names its temporary files its own way (by content).
         var root = Path.Combine(Path.GetTempPath(), "spawngen-previews-" + Guid.NewGuid().ToString("N"));
         var store = new DiskResultStore(new OutputOptions { Directory = Path.Combine(root, "output"), TempDirectory = Path.Combine(root, "temp") });
         var services = new StoreServices(store);
@@ -195,27 +194,27 @@ public class ImageNodeParityTests
         var (_, ui) = await new PreviewImage().ExecuteAsync(Frames(2), Context(services), services);
         var previews = ((List<object>)ui["images"]!).Cast<ResultFile>().ToArray();
         Assert.That(previews.Select(f => f.Type), Is.All.EqualTo("temp"));
-        // The part after the prefix is the store's: ComfyUI counts (_00001_.png), SpawnGen's stores name temporary files by content (see Stores).
-        var m = Regex.Match(previews[0].Filename, "^ComfyUI_temp_([a-z]{5})_");
+        // Measured with ComfyUI: temporary files are numbered with the counter, as SpawnGen's stores number them.
+        var m = Regex.Match(previews[0].Filename, "^ComfyUI_temp_([a-z]{5})_00001_\\.png$");
         Assert.That(m.Success, Is.True, previews[0].Filename);
-        Assert.That(previews[1].Filename, Does.StartWith($"ComfyUI_temp_{m.Groups[1].Value}_"));
+        Assert.That(previews[1].Filename, Is.EqualTo($"ComfyUI_temp_{m.Groups[1].Value}_00002_.png"));
         ChunkTypes(Get(previews[0]), out var text);
         Assert.That(text.Keys, Is.EqualTo(new[] { "prompt", "workflow" }));
 
         var compare = await new ImageCompare().ExecuteAsync(Context(services), services, null, Frames(2), Frames(1));
         var a = ((List<object>)compare["a_images"]!).Cast<ResultFile>().ToArray();
         var b = ((List<object>)compare["b_images"]!).Cast<ResultFile>().ToArray();
-        var letters = Regex.Match(a[0].Filename, "^comfy\\.compare\\.a_temp_([a-z]{5})_").Groups[1].Value;
+        var letters = Regex.Match(a[0].Filename, "^comfy\\.compare\\.a_temp_([a-z]{5})_00001_\\.png$").Groups[1].Value;
         Assert.That(letters, Has.Length.EqualTo(5), a[0].Filename);
         Assert.That(a, Has.Length.EqualTo(2));
-        Assert.That(a[1].Filename, Does.StartWith($"comfy.compare.a_temp_{letters}_"));
-        Assert.That(b.Single().Filename, Does.StartWith($"comfy.compare.b_temp_{letters}_"));
+        Assert.That(a[1].Filename, Is.EqualTo($"comfy.compare.a_temp_{letters}_00002_.png"));
+        Assert.That(b.Single().Filename, Is.EqualTo($"comfy.compare.b_temp_{letters}_00001_.png"));
         Assert.That(ChunkTypes(Get(b[0]), out _), Does.Not.Contain("tEXt"));
 
         var (_, maskUi) = await new MaskPreview().ExecuteAsync(new MaskBatch(2, 2, 3), Context(services), services);
         var masks = ((List<object>)maskUi["images"]!).Cast<ResultFile>().ToArray();
         Assert.That(masks, Has.Length.EqualTo(2));
-        Assert.That(masks[0].Filename, Does.Match("^ComfyUI_temp_[a-z]{5}_"));
+        Assert.That(masks[0].Filename, Does.Match("^ComfyUI_temp_[a-z]{5}_00001_\\.png$"));
         Assert.That(ChunkTypes(Get(masks[0]), out _), Does.Not.Contain("tEXt"));
     }
 
@@ -235,6 +234,6 @@ public class ImageNodeParityTests
         }
         """));
         var files = ((List<object>)result.Outputs["2"].Ui!["background_images"]!).Cast<ResultFile>().ToArray();
-        Assert.That(files.Single().Filename, Does.Match("^comfy\\.bboxes\\.background_temp_[a-z]{5}_"));
+        Assert.That(files.Single().Filename, Does.Match("^comfy\\.bboxes\\.background_temp_[a-z]{5}_00001_\\.png$"));
     }
 }

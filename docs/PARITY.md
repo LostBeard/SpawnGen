@@ -149,8 +149,8 @@ Deliberate difference: Save Text writes line breaks as given (`
 
 `), on Linux `
 ` (measured, clean-room batch C).
-Deliberate difference (a ComfyUI bug not copied): ComfyUI's TextProcessingNode.execute wraps a text step's result in a list on its non-list output,
-so its text steps put out ["text"] (previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
+Deliberate difference (a ComfyUI bug not copied): measured with ComfyUI, its text steps put out each result as a list of one text, ["text"]
+(previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
 
 Still missing, by kind:
 1. **Need the library**: CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use

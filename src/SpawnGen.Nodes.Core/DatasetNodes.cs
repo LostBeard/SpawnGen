@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Numerics;
 using System.Text;
 using SpawnGen.Engine.Nodes;
@@ -5,688 +6,588 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-// ComfyUI's dataset nodes (comfy_extras/nodes_dataset.py): folders of pictures and captions in and out, and the picture and text steps between.
-// What the family shares, as ComfyUI does it:
-// - Picture steps that go through Pillow quantise first (tensor_to_pil: np.clip(x * 255, 0, 255).astype(uint8), truncated) and come back as k / 255.
-// - A node that is not a list node runs once per list item; given a batch it runs frame by frame and joins the frames (per_frame_process), except
-//   the tensor maths (Normalize, Brightness, Contrast), which take the batch whole.
-// - The list nodes (Shuffle Images List, Deduplicate Images, Make Image Grid, Merge Image Lists) first split every batch into single frames.
-// - Seeds go through numpy's legacy generator: np.random.seed(seed % (2**32 - 1)).
-// - A text node puts out its text. ComfyUI's TextProcessingNode.execute has a bug here: on an output that is not a list output it passes
-//   [result] as the one output value, so the text arrives wrapped in a list (Preview as Text shows ["text"], another text node refuses it, Save
-//   Image-Text fails on it). SpawnGen does not copy that: the text steps put out the plain text, Merge Text Lists the list of texts as one value.
-//   The rest is ComfyUI's: an extra input (prefix, suffix, find, replace) that brings a list of one is that one item, and Truncate Text slices a
-//   list as Python does.
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries, SpawnGen's dataset tests and fixtures (Fixtures/dataset, outputs of
+// ComfyUI), and black-box measurements of ComfyUI's server (2026-11-11): folder walk and repeat counts, captions, the contrast pivot, batches in
+// Deduplicate Images and Make Image Grid, and the saving rules. Pillow (MIT-CMU) behavior comes from PilLanczos; numpy's legacy generator (BSD)
+// from NumpyRandom.
 
-/// <summary>Helpers the dataset nodes share.</summary>
-internal static class Dataset
+/// <summary>Reading and writing the dataset folders, and the picture conversions the dataset nodes share.</summary>
+static class Dataset
 {
-    /// <summary>
-    /// tensor_to_pil's <c>Image.fromarray</c>: 2 channels become an LA picture, 3 RGB, 4 RGBA; anything else is refused with Pillow's TypeError.
-    /// </summary>
-    public static void CheckPillowChannels(int channels)
+    /// <summary>The pictures a dataset folder offers (measured: PNG, JPG, JPEG and WEBP in any case; GIF and BMP are left out).</summary>
+    public static bool IsPicture(string name) =>
+        Path.GetExtension(name).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp";
+
+    public static string[] Folders() => [.. InputFiles.Store.Folders()];
+
+    /// <summary>The folder as a path in the input store; it must be inside the input folder and exist.</summary>
+    public static string InputFolder(string folder)
     {
-        if (channels is < 2 or > 4) throw new ArgumentException($"Cannot handle this data type: (1, 1, {channels}), |u1");
-    }
-
-    /// <summary>ImageProcessingNode._ensure_image_list: every frame of every list item as a picture of its own, in order.</summary>
-    public static List<ImageBatch> Frames(IReadOnlyList<ImageBatch> images)
-    {
-        var frames = new List<ImageBatch>();
-        foreach (var item in images)
-            for (int b = 0; b < item.Batch; b++)
-                frames.Add(item.Batch == 1 ? item : new ImageBatch(1, item.Height, item.Width, item.Channels, Pixels.Frame(item, b)));
-        return frames;
-    }
-
-    /// <summary>
-    /// An individual picture node on a batch: the step runs on each frame (with the frame's width and height) and the frames are joined again
-    /// (torch.cat), which needs every result to be the same size, as the steps here make them.
-    /// </summary>
-    public static ImageBatch EachFrame(ImageBatch images, Func<float[], (float[] Pixels, int Width, int Height)> step)
-    {
-        var frames = new List<float[]>(images.Batch);
-        int w = 0, h = 0;
-        for (int b = 0; b < images.Batch; b++)
-        {
-            var (px, fw, fh) = step(Pixels.Frame(images, b));
-            if (b > 0 && (fw != w || fh != h)) throw new InvalidOperationException("Sizes of tensors must match to join the frames again.");
-            (w, h) = (fw, fh);
-            frames.Add(px);
-        }
-        return Pixels.From(frames, h, w, images.Channels);
-    }
-
-    /// <summary>The base classes' scalar extraction for a list node's extra inputs: a list of one is its value; a longer list stays a list and Python's maths on it fails.</summary>
-    public static T One<T>(IReadOnlyList<T> values, string input) =>
-        values.Count == 1 ? values[0] : throw new ArgumentException($"Input '{input}' got a list of {values.Count} values; this node takes one (Python: unsupported operand type(s) for 'list').");
-
-    /// <summary>The same extraction for a node that runs per item: an extra input that brings a list of one (a text node's output) is its one item.</summary>
-    public static object? Unwrap(object? value) => value is IReadOnlyList<object?> { Count: 1 } list ? list[0] : value;
-
-    /// <summary>Python's name for a value's type, for the TypeErrors Python would raise.</summary>
-    public static string PyTypeName(object? value) => value switch
-    {
-        null => "NoneType",
-        string => "str",
-        bool => "bool",
-        long or int or BigInteger => "int",
-        double or float => "float",
-        System.Collections.IList => "list",
-        _ => value.GetType().Name,
-    };
-
-    /// <summary><c>np.random.seed(seed % (2**32 - 1))</c>.</summary>
-    public static NumpyRandom Seeded(long seed) => new(seed % 4294967295L);
-}
-
-// ---- picture steps, one list item at a time --------------------------------------------------------------------------------------------------------
-
-[Node("ResizeImagesByShorterEdge", Category = "image/transform", DisplayName = "Resize Images by Shorter Edge (DEPRECATED)",
-    Description = "Resize images so that the shorter edge matches the specified dimension while preserving aspect ratio.", OutputNames = ["images"])]
-public sealed class ResizeImagesByShorterEdge
-{
-    /// <summary>Pillow's LANCZOS to the new size; the other edge is <c>int(edge * (shorter_edge / this edge))</c>, truncated. Ties count as wide.</summary>
-    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
-        [Input(Min = 1, Max = 8192, Tooltip = "Target dimension for the shorter edge.")] long shorterEdge = 512)
-    {
-        Dataset.CheckPillowChannels(images.Channels);
-        int w = images.Width, h = images.Height;
-        var (newW, newH) = w < h ? ((int)shorterEdge, (int)(h * ((double)shorterEdge / w))) : ((int)(w * ((double)shorterEdge / h)), (int)shorterEdge);
-        return Dataset.EachFrame(images, f => (DatasetPictures.Resize(f, w, h, images.Channels, newW, newH), newW, newH));
-    }
-}
-
-[Node("ResizeImagesByLongerEdge", Category = "image/transform", DisplayName = "Resize Images by Longer Edge (DEPRECATED)",
-    Description = "Resize images so that the longer edge matches the specified dimension while preserving aspect ratio.", OutputNames = ["images"])]
-public sealed class ResizeImagesByLongerEdge
-{
-    /// <summary>Pillow's LANCZOS to the new size; the other edge is <c>int(edge * (longer_edge / this edge))</c>, truncated. Ties count as tall.</summary>
-    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
-        [Input(Min = 1, Max = 8192, Tooltip = "Target dimension for the longer edge.")] long longerEdge = 1024)
-    {
-        Dataset.CheckPillowChannels(images.Channels);
-        int w = images.Width, h = images.Height;
-        var (newW, newH) = w > h ? ((int)longerEdge, (int)(h * ((double)longerEdge / w))) : ((int)(w * ((double)longerEdge / h)), (int)longerEdge);
-        return Dataset.EachFrame(images, f => (DatasetPictures.Resize(f, w, h, images.Channels, newW, newH), newW, newH));
-    }
-}
-
-[Node("CenterCropImages", Category = "image/transform", DisplayName = "Crop Image (Center)", Description = "Center crop an image to the specified dimensions.",
-    OutputNames = ["images"])]
-public sealed class CenterCropImages
-{
-    /// <summary>The middle part (left and top rounded down); a crop larger than the picture keeps the whole of that edge. 8-bit like every Pillow step.</summary>
-    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
-        [Input(Min = 1, Max = 8192, Tooltip = "Crop width.")] long width = 512, [Input(Min = 1, Max = 8192, Tooltip = "Crop height.")] long height = 512)
-    {
-        Dataset.CheckPillowChannels(images.Channels);
-        int w = images.Width, h = images.Height;
-        int left = (int)Math.Max(0, (w - width) / 2), top = (int)Math.Max(0, (h - height) / 2); // only a positive difference is halved, so / floors here
-        int right = (int)Math.Min(w, left + width), bottom = (int)Math.Min(h, top + height);
-        return Dataset.EachFrame(images, f => (DatasetPictures.Crop(f, w, images.Channels, left, top, right, bottom), right - left, bottom - top));
-    }
-}
-
-[Node("RandomCropImages", Category = "image/transform", DisplayName = "Crop Image (Random)", Description = "Randomly crop an image to the specified dimensions.",
-    OutputNames = ["images"])]
-public sealed class RandomCropImages
-{
-    /// <summary>
-    /// numpy seeded with <c>seed % (2**32 - 1)</c>, then <c>randint(0, max_left + 1)</c> for the left edge and the same for the top (each drawn only
-    /// when there is room to move). The generator is seeded again for every frame, so every frame of a batch gets the same crop.
-    /// </summary>
-    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
-        [Input(Min = 1, Max = 8192, Tooltip = "Crop width.")] long width = 512, [Input(Min = 1, Max = 8192, Tooltip = "Crop height.")] long height = 512,
-        [Input(Min = 0, Max = 18446744073709551615d, Tooltip = "Random seed.")] long seed = 0)
-    {
-        Dataset.CheckPillowChannels(images.Channels);
-        int w = images.Width, h = images.Height;
-        var rng = Dataset.Seeded(seed);
-        long maxLeft = Math.Max(0, w - width), maxTop = Math.Max(0, h - height);
-        int left = maxLeft > 0 ? (int)rng.RandInt(0, maxLeft + 1) : 0;
-        int top = maxTop > 0 ? (int)rng.RandInt(0, maxTop + 1) : 0;
-        int right = (int)Math.Min(w, left + width), bottom = (int)Math.Min(h, top + height);
-        return Dataset.EachFrame(images, f => (DatasetPictures.Crop(f, w, images.Channels, left, top, right, bottom), right - left, bottom - top));
-    }
-}
-
-[Node("NormalizeImages", Category = "image/color", DisplayName = "Normalize Image Colors", Description = "Normalize images using mean and standard deviation.",
-    OutputNames = ["images"])]
-public sealed class NormalizeImages
-{
-    /// <summary><c>(image - mean) / std</c> in float32 over the whole batch, not clamped; a fourth channel (alpha) is kept as it was.</summary>
-    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
-        [Input(Min = 0.0, Max = 1.0, Tooltip = "Mean value for normalization.")] double mean = 0.5,
-        [Input(Min = 0.001, Max = 1.0, Tooltip = "Standard deviation for normalization.")] double std = 0.5)
-    {
-        float m = (float)mean, s = (float)std; // torch takes the Python floats into the float32 maths as float32
-        return DatasetPictures.Elementwise(images, x => (x - m) / s);
-    }
-}
-
-[Node("AdjustBrightness", Category = "image/adjustments", DisplayName = "Adjust Brightness", Description = "Adjust the brightness of an image.", OutputNames = ["images"])]
-public sealed class AdjustBrightness
-{
-    /// <summary><c>(image * factor).clamp(0, 1)</c> in float32; a fourth channel (alpha) is kept as it was.</summary>
-    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
-        [Input(Min = 0.0, Max = 2.0, Tooltip = "Brightness factor. 1.0 = no change, <1.0 = darker, >1.0 = brighter.")] double factor = 1.0)
-    {
-        float f = (float)factor;
-        return DatasetPictures.Elementwise(images, x => Math.Clamp(x * f, 0f, 1f));
-    }
-}
-
-[Node("AdjustContrast", Category = "image/adjustments", DisplayName = "Adjust Contrast", Description = "Adjust the contrast of an image.", OutputNames = ["images"])]
-public sealed class AdjustContrast
-{
-    /// <summary><c>((image - 0.5) * factor + 0.5).clamp(0, 1)</c> in float32, one rounding per step; a fourth channel (alpha) is kept as it was.</summary>
-    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
-        [Input(Min = 0.0, Max = 2.0, Tooltip = "Contrast factor. 1.0 = no change, <1.0 = less contrast, >1.0 = more contrast.")] double factor = 1.0)
-    {
-        float f = (float)factor;
-        return DatasetPictures.Elementwise(images, x => Math.Clamp((x - 0.5f) * f + 0.5f, 0f, 1f));
-    }
-}
-
-/// <summary>The picture steps the nodes above share.</summary>
-internal static class DatasetPictures
-{
-    /// <summary>tensor_to_pil, Pillow's resize to (newW, newH) with LANCZOS, pil_to_tensor. Pillow refuses a size of 0.</summary>
-    public static float[] Resize(float[] frame, int w, int h, int c, int newW, int newH)
-    {
-        if (newW <= 0 || newH <= 0) throw new ArgumentException("height and width must be > 0");
-        return PilLanczos.Resize(frame, w, h, c, newW, newH);
-    }
-
-    /// <summary>tensor_to_pil, Pillow's crop of the box (left, top, right, bottom), pil_to_tensor.</summary>
-    public static float[] Crop(float[] frame, int w, int c, int left, int top, int right, int bottom)
-    {
-        var px = PilLanczos.ToBytes(frame);
-        int cw = right - left, ch = bottom - top;
-        var cut = new byte[cw * ch * c];
-        for (int y = 0; y < ch; y++) Array.Copy(px, ((top + y) * w + left) * c, cut, y * cw * c, cw * c);
-        return PilLanczos.FromBytes(cut);
-    }
-
-    /// <summary>A float32 step on every value of the batch; with 4 channels the alpha values are put back afterwards.</summary>
-    public static ImageBatch Elementwise(ImageBatch images, Func<float, float> step)
-    {
-        var result = new ImageBatch(images.Batch, images.Height, images.Width, images.Channels);
-        var src = images.Data;
-        var dst = result.Data;
-        for (int i = 0; i < src.Length; i++) dst[i] = step(src[i]);
-        if (images.Channels == 4)
-            for (int i = 3; i < src.Length; i += 4) dst[i] = src[i];
-        return result;
-    }
-
-    /// <summary>The picture as Pillow pixels at a new size (tensor_to_pil then resize with LANCZOS).</summary>
-    public static byte[] PillowResized(ImageBatch frame, int newW, int newH)
-    {
-        CheckSize(newW, newH);
-        return PilLanczos.Resize(PilLanczos.ToBytes(frame.Data), frame.Width, frame.Height, frame.Channels, newW, newH);
-    }
-
-    static void CheckSize(int w, int h)
-    {
-        if (w <= 0 || h <= 0) throw new ArgumentException("height and width must be > 0");
-    }
-}
-
-// ---- picture lists ---------------------------------------------------------------------------------------------------------------------------------
-
-[Node("ShuffleDataset", Category = "image/batch", DisplayName = "Shuffle Images List", Description = "Randomly shuffle the order of images in a list.",
-    InputIsList = true, OutputIsList = [true], OutputNames = ["images"])]
-public sealed class ShuffleDataset
-{
-    /// <summary>Every frame of the list (batches split) in numpy's <c>permutation(n)</c> order for <c>seed % (2**32 - 1)</c>.</summary>
-    public IReadOnlyList<ImageBatch> Execute([Input(Tooltip = "List of images to process.")] IReadOnlyList<ImageBatch> images,
-        [Input(Min = 0, Max = 18446744073709551615d, Default = 0L, Tooltip = "Random seed.")] IReadOnlyList<long> seed)
-    {
-        var frames = Dataset.Frames(images);
-        var order = Dataset.Seeded(Dataset.One(seed, "seed")).Permutation(frames.Count);
-        return [.. order.Select(i => frames[i])];
-    }
-}
-
-[Node("ShuffleImageTextDataset", Category = "image/batch", DisplayName = "Shuffle Pairs of Image-Text", Description = "Randomly shuffle the order of pairs of image-text in a list.",
-    InputIsList = true, OutputIsList = [true, true], OutputNames = ["images", "texts"], OutputTypes = [null, "STRING"])]
-public sealed class ShuffleImageTextDataset
-{
-    /// <summary>
-    /// The list items (a batch stays one item here) and the texts in the same numpy <c>permutation(len(images))</c> order; a text list shorter than
-    /// the pictures fails as Python's indexing does, a longer one loses its extra texts.
-    /// </summary>
-    public (IReadOnlyList<ImageBatch> Images, IReadOnlyList<object?> Texts) Execute([Input(Tooltip = "List of images to shuffle.")] IReadOnlyList<ImageBatch> images,
-        [Input(Type = "STRING", ForceInput = true, Tooltip = "List of texts to shuffle.")] IReadOnlyList<object?> texts,
-        [Input(Min = 0, Max = 18446744073709551615d, Default = 0L, Tooltip = "Random seed.")] IReadOnlyList<long> seed)
-    {
-        var order = Dataset.Seeded(seed[0]).Permutation(images.Count);
-        if (order.Length > 0 && texts.Count < images.Count) throw new ArgumentException($"list index out of range: {images.Count} pictures but {texts.Count} texts.", nameof(texts));
-        return ([.. order.Select(i => images[i])], [.. order.Select(i => texts[i])]);
-    }
-}
-
-[Node("ImageDeduplication", Category = "image/batch", DisplayName = "Deduplicate Images", Description = "Remove duplicate or very similar images from a list.",
-    InputIsList = true, OutputIsList = [true], OutputNames = ["images"])]
-public sealed class ImageDeduplication
-{
-    /// <summary>
-    /// ComfyUI's average hash: each frame through Pillow at 8x8 (LANCZOS), to grey (Pillow's L: (19595 R + 38470 G + 7471 B + 0x8000) >> 16), one
-    /// bit per pixel above the mean. Frames are kept in order unless one already kept is at least <c>similarity_threshold</c> alike
-    /// (1 - differing bits / 64).
-    /// </summary>
-    public IReadOnlyList<ImageBatch> Execute([Input(Tooltip = "List of images to process.")] IReadOnlyList<ImageBatch> images,
-        [Input(Min = 0.0, Max = 1.0, Default = 0.95, Tooltip = "Similarity threshold (0-1). Higher means more similar. Images above this threshold are considered duplicates.")]
-        IReadOnlyList<double> similarityThreshold)
-    {
-        var frames = Dataset.Frames(images);
-        double threshold = Dataset.One(similarityThreshold, "similarity_threshold");
-        if (frames.Count == 0) return [];
-        var hashes = frames.Select(Hash).ToList();
-        var keep = new List<int>();
-        for (int i = 0; i < frames.Count; i++)
-        {
-            bool duplicate = false;
-            foreach (int j in keep)
-            {
-                double similarity = 1.0 - BitOperations.PopCount(hashes[i] ^ hashes[j]) / 64.0;
-                if (similarity >= threshold) { duplicate = true; break; }
-            }
-            if (!duplicate) keep.Add(i);
-        }
-        return [.. keep.Select(i => frames[i])];
-    }
-
-    /// <summary>The 64 bits of the hash, the first pixel in the top bit (only the count of differing bits matters).</summary>
-    public static ulong Hash(ImageBatch frame)
-    {
-        Dataset.CheckPillowChannels(frame.Channels);
-        int c = frame.Channels;
-        var small = DatasetPictures.PillowResized(frame, 8, 8);
-        var grey = new int[64];
-        for (int p = 0; p < 64; p++)
-            grey[p] = c == 2 ? small[p * 2] : (small[p * c] * 19595 + small[p * c + 1] * 38470 + small[p * c + 2] * 7471 + 0x8000) >> 16; // LA keeps L
-        double average = grey.Sum() / 64.0;
-        ulong bits = 0;
-        for (int p = 0; p < 64; p++) bits = bits << 1 | (grey[p] > average ? 1UL : 0UL);
-        return bits;
-    }
-}
-
-[Node("ImageGrid", Category = "image/batch", DisplayName = "Make Image Grid", Description = "Arrange multiple images into a grid layout.",
-    InputIsList = true, OutputNames = ["images"])]
-public sealed class ImageGrid
-{
-    /// <summary>
-    /// One RGB picture on black: every frame resized to the cell with Pillow's LANCZOS and pasted row by row, <c>padding</c> pixels apart. Pasting
-    /// keeps a picture's colour channels (an RGBA picture's alpha is dropped, an LA picture becomes grey).
-    /// </summary>
-    public ImageBatch Execute([Input(Tooltip = "List of images to process.")] IReadOnlyList<ImageBatch> images,
-        [Input(Min = 1, Max = 20, Default = 4L, Tooltip = "Number of columns in the grid.")] IReadOnlyList<long> columns,
-        [Input(Min = 32, Max = 2048, Default = 256L, Tooltip = "Width of each cell in the grid.")] IReadOnlyList<long> cellWidth,
-        [Input(Min = 32, Max = 2048, Default = 256L, Tooltip = "Height of each cell in the grid.")] IReadOnlyList<long> cellHeight,
-        [Input(Min = 0, Max = 50, Default = 4L, Tooltip = "Padding between images.")] IReadOnlyList<long> padding)
-    {
-        var frames = Dataset.Frames(images);
-        int cols = (int)Dataset.One(columns, "columns"), cw = (int)Dataset.One(cellWidth, "cell_width"), ch = (int)Dataset.One(cellHeight, "cell_height");
-        int pad = (int)Dataset.One(padding, "padding");
-        if (frames.Count == 0) throw new ArgumentException("Cannot create grid from empty image list");
-        int rows = (frames.Count + cols - 1) / cols;
-        int gw = cols * cw + (cols - 1) * pad, gh = rows * ch + (rows - 1) * pad;
-        var grid = new byte[gw * gh * 3];
-        for (int i = 0; i < frames.Count; i++)
-        {
-            var frame = frames[i];
-            Dataset.CheckPillowChannels(frame.Channels);
-            int c = frame.Channels;
-            var cell = DatasetPictures.PillowResized(frame, cw, ch);
-            int x0 = i % cols * (cw + pad), y0 = i / cols * (ch + pad);
-            for (int y = 0; y < ch; y++)
-                for (int x = 0; x < cw; x++)
-                {
-                    int s = (y * cw + x) * c, d = ((y0 + y) * gw + x0 + x) * 3;
-                    grid[d] = cell[s];
-                    grid[d + 1] = c == 2 ? cell[s] : cell[s + 1];
-                    grid[d + 2] = c == 2 ? cell[s] : cell[s + 2];
-                }
-        }
-        return new ImageBatch(1, gh, gw, 3, PilLanczos.FromBytes(grid));
-    }
-}
-
-[Node("MergeImageLists", Category = "image/batch", DisplayName = "Merge Image Lists (DEPRECATED)", Description = "Concatenate multiple image lists into one.",
-    InputIsList = true, OutputIsList = [true], OutputNames = ["images"])]
-public sealed class MergeImageLists
-{
-    /// <summary>The list it is given, with every batch split into frames.</summary>
-    public IReadOnlyList<ImageBatch> Execute([Input(Tooltip = "List of images to process.")] IReadOnlyList<ImageBatch> images) => Dataset.Frames(images);
-}
-
-// ---- text steps --------------------------------------------------------------------------------------------------------------------------------------
-
-[Node("TextToLowercase", Category = "text", DisplayName = "Convert Text to Lowercase (DEPRECATED)", Description = "Convert text to lowercase.",
-    OutputNames = ["texts"])]
-public sealed class TextToLowercase
-{
-    /// <summary>Python's <c>str.lower</c> (full Unicode mappings).</summary>
-    public string Execute([Input(Tooltip = "Text to process.")] string texts) => PyText.Lower(texts);
-}
-
-[Node("TextToUppercase", Category = "text", DisplayName = "Convert Text to Uppercase (DEPRECATED)", Description = "Convert text to uppercase.",
-    OutputNames = ["texts"])]
-public sealed class TextToUppercase
-{
-    /// <summary>Python's <c>str.upper</c> (the German sharp s becomes "SS").</summary>
-    public string Execute([Input(Tooltip = "Text to process.")] string texts) => PyText.Upper(texts);
-}
-
-[Node("TruncateText", Category = "text", DisplayName = "Truncate Text", Description = "Truncate text to a maximum length.", OutputNames = ["texts"], OutputTypes = ["STRING"])]
-public sealed class TruncateText
-{
-    /// <summary>
-    /// <c>texts[:max_length]</c>, in code points. Python slices a list the same way, so a list that reaches it (Merge Text Lists' output) comes
-    /// out as its first items.
-    /// </summary>
-    public object Execute([Input(Type = "STRING", Tooltip = "Text to process.")] object texts,
-        [Input(Min = 1, Max = 10000, Tooltip = "Maximum text length.")] long maxLength = 77) => texts switch
-    {
-        string s => PyText.Slice(s, null, maxLength),
-        IReadOnlyList<object?> list => PyText.SliceItems(list, null, maxLength, null).ToArray(),
-        _ => throw new ArgumentException($"'{Dataset.PyTypeName(texts)}' object is not subscriptable", nameof(texts)),
-    };
-}
-
-[Node("AddTextPrefix", Category = "text", DisplayName = "Add Text Prefix (DEPRECATED)", Description = "Add a prefix to all texts.", OutputNames = ["texts"])]
-public sealed class AddTextPrefix
-{
-    /// <summary><c>prefix + texts</c>; a prefix that comes as a list of one text is that text.</summary>
-    public string Execute([Input(Tooltip = "Text to process.")] string texts,
-        [Input(Type = "STRING", Default = "", Tooltip = "Prefix to add.")] object prefix) =>
-        Dataset.Unwrap(prefix) is string p ? p + texts
-            : throw new ArgumentException($"can only concatenate {Dataset.PyTypeName(Dataset.Unwrap(prefix))} (not \"str\") to {Dataset.PyTypeName(Dataset.Unwrap(prefix))}", nameof(prefix));
-}
-
-[Node("AddTextSuffix", Category = "text", DisplayName = "Add Text Suffix (DEPRECATED)", Description = "Add a suffix to all texts.", OutputNames = ["texts"])]
-public sealed class AddTextSuffix
-{
-    /// <summary><c>texts + suffix</c>; a suffix that comes as a list of one text is that text.</summary>
-    public string Execute([Input(Tooltip = "Text to process.")] string texts,
-        [Input(Type = "STRING", Default = "", Tooltip = "Suffix to add.")] object suffix) =>
-        Dataset.Unwrap(suffix) is string s ? texts + s
-            : throw new ArgumentException($"can only concatenate str (not \"{Dataset.PyTypeName(Dataset.Unwrap(suffix))}\") to str", nameof(suffix));
-}
-
-[Node("ReplaceText", Category = "text", DisplayName = "Replace Text (DEPRECATED)", Description = "Replace text in all texts.", OutputNames = ["texts"])]
-public sealed class ReplaceText
-{
-    /// <summary>Python's <c>str.replace</c> (an empty find puts the replacement around every character).</summary>
-    public string Execute([Input(Tooltip = "Text to process.")] string texts,
-        [Input(Type = "STRING", Default = "", Tooltip = "Text to find.")] object find,
-        [Input(Type = "STRING", Default = "", Tooltip = "Text to replace with.")] object replace)
-    {
-        if (Dataset.Unwrap(find) is not string f) throw new ArgumentException($"replace() argument 1 must be str, not {Dataset.PyTypeName(Dataset.Unwrap(find))}", nameof(find));
-        if (Dataset.Unwrap(replace) is not string r) throw new ArgumentException($"replace() argument 2 must be str, not {Dataset.PyTypeName(Dataset.Unwrap(replace))}", nameof(replace));
-        return PyText.Replace(texts, f, r);
-    }
-}
-
-[Node("StripWhitespace", Category = "text", DisplayName = "Strip Whitespace (DEPRECATED)", Description = "Strip leading and trailing whitespace from all texts.",
-    OutputNames = ["texts"])]
-public sealed class StripWhitespace
-{
-    /// <summary>Python's <c>str.strip()</c> (Python's whitespace, not .NET's).</summary>
-    public string Execute([Input(Tooltip = "Text to process.")] string texts) => PyText.Strip(texts);
-}
-
-[Node("MergeTextLists", Category = "text", DisplayName = "Merge Text Lists (DEPRECATED)", Description = "Concatenate multiple text lists into one.",
-    InputIsList = true, OutputNames = ["texts"], OutputTypes = ["STRING"])]
-public sealed class MergeTextLists
-{
-    /// <summary>The whole list it is given, as one value (the output is not a list output; ComfyUI wraps it in one more list, see the top of this file).</summary>
-    public IReadOnlyList<object?> Execute([Input(Type = "STRING", Default = "", Tooltip = "List of texts to process.")] IReadOnlyList<object?> texts) => texts.ToArray();
-}
-
-// ---- folders -------------------------------------------------------------------------------------------------------------------------------------------
-
-/// <summary>Reading and writing dataset folders as ComfyUI's dataset nodes do.</summary>
-internal static class DatasetFiles
-{
-    static readonly string[] PictureEndings = [".png", ".jpg", ".jpeg", ".webp"];
-
-    /// <summary><c>any(f.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"])</c>.</summary>
-    public static bool IsPicture(string name)
-    {
-        var lower = PyText.Lower(name);
-        return PictureEndings.Any(e => lower.EndsWith(e, StringComparison.Ordinal));
-    }
-
-    /// <summary>The input folder a node names, checked to stay inside the input folder (ComfyUI's secure_subfolder_path).</summary>
-    public static string InputFolder(string folder) => StorePaths.Normalize(folder, "folder name");
-
-    /// <summary>
-    /// load_and_process_images: each file through Pillow (<c>Image.open(...).convert("RGB")</c>, no EXIF rotation), one list item each. WebP files
-    /// are decoded on the GPU (SpawnDev.Codecs, through ImageDecoder.Codecs): the first frame, as Pillow's convert("RGB") gives it.
-    /// </summary>
-    public static async Task<IReadOnlyList<ImageBatch>> LoadAsync(IReadOnlyList<string> paths)
-    {
-        if (paths.Count == 0) throw new ArgumentException("No valid images found in input");
-        var images = new List<ImageBatch>(paths.Count);
-        foreach (var path in paths) images.Add(await ImageDecoder.DecodePillowRgbAsync(await InputFiles.Store.ReadFileAsync(path)));
-        return images;
-    }
-
-    /// <summary>A caption file read as Python's <c>open(path, "r", encoding="utf-8").read().strip()</c>: strict UTF-8 (a BOM stays), newlines made "\n".</summary>
-    public static string Caption(byte[] bytes)
-    {
-        var text = new UTF8Encoding(false, true).GetString(bytes);
-        return PyText.Strip(text.Replace("\r\n", "\n").Replace('\r', '\n'));
-    }
-
-    /// <summary>Python's <c>os.path.splitext(path)[1]</c>: from the last dot of the last part, unless that part is only dots before it.</summary>
-    public static string Extension(string path)
-    {
-        int sep = path.LastIndexOf('/'), dot = path.LastIndexOf('.');
-        if (dot <= sep) return "";
-        for (int i = sep + 1; i < dot; i++) if (path[i] != '.') return path[dot..];
-        return "";
-    }
-
-    /// <summary>
-    /// save_images_to_folder: every list item (one picture each; Pillow cannot take a batch of more) as a PNG with no text chunks, named
-    /// <c>prefix_00000.png</c> by its place in the list (overwrite), or <c>prefix_CCCCC_00000.png</c> with the counter of ComfyUI's
-    /// get_save_image_path worked out again before every picture (increment), so the counter rises with each one. Returns the names (relative to
-    /// <paramref name="folder"/>) in order.
-    /// </summary>
-    public static async Task<List<string>> SaveImagesAsync(IResultStore store, IReadOnlyList<ImageBatch> images, string folder, string prefix, bool overwrite)
-    {
-        store.CreateFolder("output", folder);
-        var saved = new List<string>(images.Count);
-        for (int idx = 0; idx < images.Count; idx++)
-        {
-            var image = images[idx];
-            if (image.Batch != 1)
-                throw new ArgumentException($"Cannot handle this data type: list item {idx} is a batch of {image.Batch} pictures; Save Image (to Folder) saves one picture per list item.");
-            Dataset.CheckPillowChannels(image.Channels);
-            string filename;
-            if (overwrite) filename = $"{prefix}_{idx:D5}.png";
-            else
-            {
-                var (counter, resolved) = Counter(store, folder, prefix);
-                filename = $"{resolved}_{counter.ToString("D5", System.Globalization.CultureInfo.InvariantCulture)}_{idx:D5}.png";
-            }
-            var (dir, name) = StorePaths.Split(Within(folder, filename));
-            await store.WriteAsync("output", dir, name, PngWriter.Encode(image));
-            saved.Add(filename);
-        }
-        return saved;
-    }
-
-    /// <summary>
-    /// Captions next to the pictures: <c>name.replace(".png", ".txt")</c> holding the text, UTF-8, "\n" written as the platform's line end (Python's
-    /// text mode). Pairs up to the shorter list. A caption that is not text fails after its file has been created empty, as Python's open + write does.
-    /// </summary>
-    public static async Task SaveCaptionsAsync(IResultStore store, string folder, IReadOnlyList<string> saved, IReadOnlyList<object?> texts)
-    {
-        for (int i = 0; i < Math.Min(saved.Count, texts.Count); i++)
-        {
-            var (dir, name) = StorePaths.Split(Within(folder, PyText.Replace(saved[i], ".png", ".txt")));
-            if (texts[i] is not string caption)
-            {
-                await store.WriteAsync("output", dir, name, []);
-                throw new ArgumentException($"write() argument must be str, not {Dataset.PyTypeName(texts[i])}");
-            }
-            await store.WriteAsync("output", dir, name, new UTF8Encoding(false, true).GetBytes(caption.Replace("\n", Environment.NewLine)));
-        }
-    }
-
-    /// <summary>
-    /// A path under the dataset folder, which it must not leave. ComfyUI checks that only in increment mode (for the prefix's folder), and in overwrite
-    /// mode would even follow an absolute prefix; SpawnGen never writes outside the folder a node was given.
-    /// </summary>
-    static string Within(string folder, string relative)
-    {
-        var rooted = relative.StartsWith('/') || OperatingSystem.IsWindows() && (relative.StartsWith('\\') || relative.Contains(':'));
-        var path = rooted ? null : StorePaths.Normalize(StorePaths.Join(folder, relative), "file name");
-        if (path is null || folder.Length > 0 && path != folder && !path.StartsWith(folder + "/", StringComparison.Ordinal))
-            throw new ArgumentException("Saving image outside the output folder is not allowed.");
+        var path = StorePaths.Normalize(folder) ?? throw new ArgumentException($"The folder '{folder}' is outside the input folder.", nameof(folder));
+        if (path.Length == 0 || !InputFiles.Store.Exists(path)) throw new ArgumentException($"There is no folder '{folder}' in the input folder.", nameof(folder));
         return path;
     }
 
+    static string Join(string folder, string name) => folder.Length == 0 ? name : $"{folder}/{name}";
+
+    /// <summary>A picture as Pillow's <c>convert("RGB")</c> gives it, one frame.</summary>
+    public static async Task<ImageBatch> LoadPictureAsync(string path) => await ImageDecoder.DecodePillowRgbAsync(await InputFiles.Store.ReadAsync(path));
+
     /// <summary>
-    /// get_save_image_path(prefix, folder): %year% and the like filled in (width and height 0), then 1 + the highest number among the names in the
-    /// prefix's folder that start with the prefix's last part and "_" (compared as os.path.normcase does) and have a number up to the next "_" or
-    /// ".", or 1. Returns the counter and the filled-in prefix.
+    /// The pictures directly in a folder, in listing order, each with the path its caption would have (same name, ".txt").
     /// </summary>
-    static (BigInteger Counter, string Prefix) Counter(IResultStore store, string folder, string prefix)
+    public static IEnumerable<(string Picture, string Caption)> Pictures(string folder) =>
+        InputFiles.Store.Entries(folder).Where(e => !e.IsFolder && IsPicture(e.Name))
+            .Select(e => (Join(folder, e.Name), Join(folder, SavePrefix.WithoutExtension(e.Name) + ".txt")));
+
+    /// <summary>
+    /// How often a subfolder's pictures are loaded (measured): the part of its name before the first "_" (the whole name without one) when that
+    /// is all digits ("3_kohya", "3", "007_x" give 3, 3, 7; "0_x" gives none); otherwise once ("-1_x", "+2_x", "2 _x", "x_y").
+    /// </summary>
+    public static int Repeats(string name)
     {
-        if (prefix.Contains('%')) prefix = SavePrefix.ComputeVars(prefix, 0, 0, DateTime.Now);
-        var norm = NormPath(prefix);
-        int slash = norm.LastIndexOf('/');
-        string sub = slash < 0 ? "" : slash == 0 ? "/" : norm[..slash], filename = norm[(slash + 1)..];
-        var outputFolder = Within(folder, sub);
-        var names = store.List("output", outputFolder);
-        if (names is null) { store.CreateFolder("output", outputFolder); return (1, prefix); }
-        return (SavePrefix.NextCounter(names, filename, PyText.Length(BaseName(prefix))), prefix);
+        int end = name.IndexOf('_');
+        var head = end < 0 ? name : name[..end];
+        if (head.Length == 0 || !head.All(char.IsDigit)) return 1;
+        var n = BigInteger.Zero;
+        foreach (var c in head) n = n * 10 + (int)char.GetNumericValue(c);
+        return n > int.MaxValue ? int.MaxValue : (int)n;
     }
 
-    static string BaseName(string path)
+    /// <summary>A caption file's text: UTF-8 (a byte order mark stays a character), line ends read as "\n", whitespace stripped at both ends.</summary>
+    public static string Caption(byte[] bytes) =>
+        PyText.Strip(Encoding.UTF8.GetString(bytes).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n'));
+
+    public static ArgumentException NoPictures() => new("No valid images found in input");
+
+    /// <summary>Each picture of every batch, one by one.</summary>
+    public static List<ImageBatch> Frames(IEnumerable<ImageBatch> batches)
     {
-        int cut = Math.Max(path.LastIndexOf('/'), OperatingSystem.IsWindows() ? path.LastIndexOf('\\') : -1);
-        return path[(cut + 1)..];
+        var frames = new List<ImageBatch>();
+        foreach (var batch in batches)
+            for (int b = 0; b < batch.Batch; b++) frames.Add(Frame(batch, b));
+        return frames;
     }
 
-
-    /// <summary>Python's <c>os.path.normpath</c> with "/" between parts: "." parts dropped, "a/.." folded, leading ".." kept, "" becomes ".".</summary>
-    static string NormPath(string path)
+    public static ImageBatch Frame(ImageBatch batch, int b)
     {
-        var p = OperatingSystem.IsWindows() ? path.Replace('\\', '/') : path;
-        bool rooted = p.StartsWith('/');
-        var parts = new List<string>();
-        foreach (var part in p.Split('/'))
+        int size = batch.Height * batch.Width * batch.Channels;
+        return new ImageBatch(1, batch.Height, batch.Width, batch.Channels, batch.Data.AsSpan(b * size, size).ToArray());
+    }
+
+    /// <summary>The picture as Pillow sees it after the 8-bit conversion (255 * v, clamped, truncated) and back: values k / 255.</summary>
+    public static ImageBatch EightBit(ImageBatch image) =>
+        new(image.Batch, image.Height, image.Width, image.Channels, PilLanczos.FromBytes(PilLanczos.ToBytes(image.Data)));
+
+    /// <summary>Every picture of the batch resized with Pillow's LANCZOS (RGBA premultiplied, as Pillow does).</summary>
+    public static ImageBatch Resize(ImageBatch image, int width, int height)
+    {
+        var output = new ImageBatch(image.Batch, height, width, image.Channels);
+        int src = image.Height * image.Width * image.Channels, dst = height * width * image.Channels;
+        for (int b = 0; b < image.Batch; b++)
         {
-            if (part is "" or ".") continue;
-            if (part == ".." && parts.Count > 0 && parts[^1] != "..") parts.RemoveAt(parts.Count - 1);
-            else if (part != ".." || !rooted) parts.Add(part);
+            var frame = PilLanczos.Resize(image.Data.AsSpan(b * src, src).ToArray(), image.Width, image.Height, image.Channels, width, height);
+            Array.Copy(frame, 0, output.Data, b * dst, dst);
         }
-        var joined = (rooted ? "/" : "") + string.Join('/', parts);
-        return joined.Length == 0 ? "." : joined;
+        return output;
+    }
+
+    /// <summary>The pixels of the rectangle (clipped to the picture) of every picture of the batch.</summary>
+    public static ImageBatch Crop(ImageBatch image, int left, int top, int width, int height)
+    {
+        width = Math.Max(0, Math.Min(width, image.Width - left));
+        height = Math.Max(0, Math.Min(height, image.Height - top));
+        int c = image.Channels;
+        var output = new ImageBatch(image.Batch, height, width, c);
+        for (int b = 0; b < image.Batch; b++)
+            for (int y = 0; y < height; y++)
+                Array.Copy(image.Data, ((b * image.Height + top + y) * image.Width + left) * c, output.Data, ((b * height + y) * width) * c, width * c);
+        return output;
+    }
+
+    /// <summary>numpy's legacy generator for a seed of the dataset nodes (0 to 2^64 - 1): seeded with seed % (2^32 - 1), which numpy accepts.</summary>
+    public static NumpyRandom Random(long seed) => new((long)((ulong)seed % 4294967295UL));
+
+    /// <summary>The first value of a widget input of a list node (all of them when it is linked to a list).</summary>
+    public static T First<T>(IReadOnlyList<T> values, string name) =>
+        values.Count > 0 ? values[0] : throw new ArgumentException($"The input '{name}' has no value.", name);
+
+    /// <summary>
+    /// Writes the pictures to the dataset folder (inside the output folder, created) as PNGs without text: <c>{prefix}_{i:05}.png</c> in "overwrite"
+    /// mode, <c>{prefix}_{counter:05}_{i:05}.png</c> in "increment" mode, where the counter is counted again before every picture from the names
+    /// already in the folder (measured). Returns the folder written to and each picture's name without ".png".
+    /// </summary>
+    public static async Task<(string Folder, List<string> Names)> SaveAsync(IServiceProvider services, IReadOnlyList<ImageBatch> images, string folderName, string prefix, string mode)
+    {
+        var store = Results.For(services);
+        var folder = StorePaths.Normalize(folderName) ?? throw new ArgumentException($"The folder '{folderName}' is outside the output folder.", nameof(folderName));
+        var (nameFolder, name) = NameIn(folder, prefix);
+        store.CreateFolder("output", nameFolder);
+        var names = new List<string>();
+        for (int i = 0; i < images.Count; i++)
+        {
+            var image = images[i];
+            if (image.Batch != 1)
+                throw new ArgumentException($"Cannot save a batch of {image.Batch} pictures as one PNG; each picture of a dataset must be a single image.", nameof(images));
+            var stem = mode == "increment"
+                ? $"{name}_{SavePrefix.Number5(SavePrefix.NextCounter(store.List("output", nameFolder) ?? [], name))}_{SavePrefix.Number5(i)}"
+                : $"{name}_{SavePrefix.Number5(i)}";
+            await store.WriteAsync("output", nameFolder, stem + ".png", PngWriter.Encode(image));
+            names.Add(stem);
+        }
+        return (nameFolder, names);
+    }
+
+    /// <summary>The folder a file of <paramref name="prefix"/> lands in and its name: the prefix may not lead out of the dataset folder.</summary>
+    static (string Folder, string Name) NameIn(string folder, string prefix)
+    {
+        var p = prefix.Replace('\\', '/');
+        var joined = p.StartsWith('/') || (p.Length >= 2 && p[1] == ':') ? null : StorePaths.Normalize(folder.Length == 0 ? p : $"{folder}/{p}");
+        if (joined is null || p.EndsWith('/') || (folder.Length > 0 && !joined.StartsWith(folder + "/", StringComparison.Ordinal)))
+            throw new ArgumentException($"The file name prefix '{prefix}' leads outside the dataset folder.", nameof(prefix));
+        int slash = joined.LastIndexOf('/');
+        return (slash < 0 ? "" : joined[..slash], joined[(slash + 1)..]);
     }
 }
 
-[Node("LoadImageDataSetFromFolder", Category = "image", DisplayName = "Load Image (from Folder)",
-    Description = "Load a dataset of images from a specified folder and return a list of images. Supported formats: PNG, JPG, JPEG, WEBP.",
-    OutputIsList = [true], OutputNames = ["images"])]
+[Node("LoadImageDataSetFromFolder", Category = "image", DisplayName = "Load Image (from Folder)", OutputIsList = [true], OutputNames = ["images"],
+    Description = "Load a dataset of images from a specified folder and return a list of images. Supported formats: PNG, JPG, JPEG, WEBP.")]
 public sealed class LoadImageDataSetFromFolder
 {
-    /// <summary>Every folder in the input folder, at any depth.</summary>
-    public static string[] Folders() => [.. InputFiles.Store.Folders()];
+    public static string[] Folders() => Dataset.Folders();
 
-    /// <summary>The pictures directly in the folder (.png, .jpg, .jpeg, .webp in any case), in the order the file system lists them; one list item each.</summary>
+    /// <summary>The pictures directly in the folder, in listing order (measured: subfolders are not read).</summary>
     public async Task<IReadOnlyList<ImageBatch>> ExecuteAsync([Input(OptionsProvider = nameof(Folders), Tooltip = "The folder to load images from.")] string folder)
     {
-        var dir = DatasetFiles.InputFolder(folder);
-        return await DatasetFiles.LoadAsync([.. InputFiles.Store.Entries(dir).Where(e => DatasetFiles.IsPicture(e.Name)).Select(e => StorePaths.Join(dir, e.Name))]);
+        var path = Dataset.InputFolder(folder);
+        var images = new List<ImageBatch>();
+        foreach (var (picture, _) in Dataset.Pictures(path)) images.Add(await Dataset.LoadPictureAsync(picture));
+        return images.Count > 0 ? images : throw Dataset.NoPictures();
     }
 }
 
-[Node("LoadImageTextDataSetFromFolder", Category = "image", DisplayName = "Load Image-Text (from Folder)",
-    Description = "Load a dataset of pairs of images and text captions from a specified folder and return them as a list. Supported formats: PNG, JPG, JPEG, WEBP.",
-    OutputIsList = [true, true], OutputNames = ["images", "texts"])]
+[Node("LoadImageTextDataSetFromFolder", Category = "image", DisplayName = "Load Image-Text (from Folder)", OutputIsList = [true, true], OutputNames = ["images", "texts"],
+    Description = "Load a dataset of pairs of images and text captions from a specified folder and return them as a list. Supported formats: PNG, JPG, JPEG, WEBP.")]
 public sealed class LoadImageTextDataSetFromFolder
 {
-    public static string[] Folders() => [.. InputFiles.Store.Folders()];
+    public static string[] Folders() => Dataset.Folders();
 
     /// <summary>
-    /// The pictures in the folder in file system order, and from each folder inside it its pictures, all of them repeated N times when the folder's
-    /// name starts with digits and "_" (kohya-ss "N_name", N = 0 leaves them out). Each picture's caption is the file named like it with the
-    /// extension replaced by ".txt" (Python's str.replace, so every occurrence of the extension in the path), stripped, or "" when there is none.
+    /// Measured with ComfyUI: the folder is read in listing order; a picture comes with the text of the ".txt" file of the same name ("" without
+    /// one), and a subfolder (one level down) is read in its place, its pictures repeated as <see cref="Dataset.Repeats"/> says, the whole
+    /// subfolder at a time (a, b, a, b).
     /// </summary>
     public async Task<(IReadOnlyList<ImageBatch> Images, IReadOnlyList<string> Texts)> ExecuteAsync(
         [Input(OptionsProvider = nameof(Folders), Tooltip = "The folder to load images and text captions from.")] string folder)
     {
-        var store = InputFiles.Store;
-        var dir = DatasetFiles.InputFolder(folder);
-        var files = new List<string>();
-        foreach (var (name, isFolder) in store.Entries(dir))
+        var path = Dataset.InputFolder(folder);
+        var images = new List<ImageBatch>();
+        var texts = new List<string>();
+        async Task AddAsync(IEnumerable<(string Picture, string Caption)> pictures, int times)
         {
-            var path = StorePaths.Join(dir, name);
-            if (DatasetFiles.IsPicture(name)) files.Add(path);
-            else if (isFolder)
-            {
-                long repeat = 1;
-                var head = name.Split('_')[0];
-                if (PyExpression.StrPredicate(head, "isdigit"))
-                {
-                    var n = PyNumber.TryParseInt(head) ?? throw new ArgumentException($"invalid literal for int() with base 10: {PyText.ReprString(head)}");
-                    repeat = n > int.MaxValue ? throw new OverflowException("cannot fit 'int' into an index-sized integer") : (long)n;
-                }
-                var inner = store.Entries(path).Where(e => DatasetFiles.IsPicture(e.Name)).Select(e => StorePaths.Join(path, e.Name)).ToList();
-                for (long r = 0; r < repeat; r++) files.AddRange(inner);
-            }
+            var loaded = new List<(ImageBatch, string)>();
+            foreach (var (picture, caption) in pictures)
+                loaded.Add((await Dataset.LoadPictureAsync(picture),
+                    InputFiles.Store.Exists(caption) ? Dataset.Caption(await InputFiles.Store.ReadAsync(caption)) : ""));
+            for (int t = 0; t < times; t++)
+                foreach (var (image, text) in loaded) { images.Add(image); texts.Add(text); }
         }
-
-        var captions = new List<string>(files.Count);
-        foreach (var file in files)
+        foreach (var entry in InputFiles.Store.Entries(path))
         {
-            var captionPath = PyText.Replace(file, DatasetFiles.Extension(file), ".txt");
-            captions.Add(store.Exists(captionPath) ? DatasetFiles.Caption(await store.ReadFileAsync(captionPath)) : "");
+            if (entry.IsFolder) await AddAsync(Dataset.Pictures($"{path}/{entry.Name}"), Dataset.Repeats(entry.Name));
+            else if (Dataset.IsPicture(entry.Name))
+                await AddAsync([($"{path}/{entry.Name}", $"{path}/{SavePrefix.WithoutExtension(entry.Name)}.txt")], 1);
         }
-        return (await DatasetFiles.LoadAsync(files), captions);
+        return images.Count > 0 ? (images, texts) : throw Dataset.NoPictures();
     }
 }
 
-[Node("SaveImageDataSetToFolder", Category = "image", DisplayName = "Save Image (to Folder) (DEPRECATED)",
-    Description = "Save a dataset of images to a specified folder. Supported formats: PNG.", IsOutput = true, InputIsList = true)]
+[Node("SaveImageDataSetToFolder", Category = "image", DisplayName = "Save Image (to Folder) (DEPRECATED)", IsOutput = true, InputIsList = true,
+    Description = "Save a dataset of images to a specified folder. Supported formats: PNG.")]
 public sealed class SaveImageDataSetToFolder
 {
-    /// <summary>Writes every list item as a PNG into the folder inside the output folder (see <see cref="DatasetFiles.SaveImagesAsync"/>).</summary>
-    public async Task ExecuteAsync(IServiceProvider services, [Input(Tooltip = "List of images to save.")] IReadOnlyList<ImageBatch> images,
+    public async Task ExecuteAsync(IServiceProvider services,
+        [Input(Tooltip = "List of images to save.")] IReadOnlyList<ImageBatch> images,
         [Input(Default = "dataset", Tooltip = "Name of the folder to save images to (inside output directory).")] IReadOnlyList<string> folderName,
         [Input(Default = "image", Tooltip = "Prefix for saved image filenames.")] IReadOnlyList<string> filenamePrefix,
-        [Input(Options = ["overwrite", "increment"], Tooltip = "Whether to overwrite existing files or increment filenames to avoid overwriting.")] IReadOnlyList<string> mode)
+        [Input(Default = "overwrite", Options = ["overwrite", "increment"], Tooltip = "Whether to overwrite existing files or increment filenames to avoid overwriting.")]
+        IReadOnlyList<string> mode) =>
+        await Dataset.SaveAsync(services, images, Dataset.First(folderName, "folder_name"), Dataset.First(filenamePrefix, "filename_prefix"), Dataset.First(mode, "mode"));
+}
+
+[Node("SaveImageTextDataSetToFolder", Category = "image", DisplayName = "Save Image-Text (to Folder)", IsOutput = true, InputIsList = true,
+    Description = "Save a dataset of pairs of images and text captions to a specified folder. Images are saved as PNG files and captions are saved as TXT files with the same filename_prefix.")]
+public sealed class SaveImageTextDataSetToFolder
+{
+    /// <summary>
+    /// The pictures as Save Image (to Folder) writes them, then picture i's caption as "{its name}.txt" for each text given (measured: fewer texts
+    /// than pictures leave the rest without one), UTF-8 with the platform's line ends, as Python's text mode writes.
+    /// </summary>
+    public async Task ExecuteAsync(IServiceProvider services,
+        [Input(Tooltip = "List of images to save.")] IReadOnlyList<ImageBatch> images,
+        [Input(Default = "dataset", Tooltip = "Name of the folder to save images to (inside output directory).")] IReadOnlyList<string> folderName,
+        [Input(Default = "image", Tooltip = "Prefix for saved image filenames.")] IReadOnlyList<string> filenamePrefix,
+        [Input(Default = "overwrite", Options = ["overwrite", "increment"], Tooltip = "Whether to overwrite existing files or increment filenames to avoid overwriting.")]
+        IReadOnlyList<string> mode,
+        [Input(Type = "STRING", ForceInput = true, Optional = true, Tooltip = "List of text captions to save.")] IReadOnlyList<object?>? texts = null)
     {
-        var folder = StorePaths.Normalize(folderName[0], "folder name");
-        await DatasetFiles.SaveImagesAsync(Results.For(services), images, folder, filenamePrefix[0], mode[0] == "overwrite");
+        var (subfolder, names) = await Dataset.SaveAsync(services, images, Dataset.First(folderName, "folder_name"),
+            Dataset.First(filenamePrefix, "filename_prefix"), Dataset.First(mode, "mode"));
+        if (texts is null) return;
+        var store = Results.For(services);
+        for (int i = 0; i < Math.Min(names.Count, texts.Count); i++)
+        {
+            if (texts[i] is not string text)
+                throw new ArgumentException($"write() argument must be str, not {TextSteps.TypeName(texts[i])}", nameof(texts));
+            await store.WriteAsync("output", subfolder, names[i] + ".txt", new UTF8Encoding(false).GetBytes(text.Replace("\n", Environment.NewLine, StringComparison.Ordinal)));
+        }
     }
 }
 
-[Node("SaveImageTextDataSetToFolder", Category = "image", DisplayName = "Save Image-Text (to Folder)",
-    Description = "Save a dataset of pairs of images and text captions to a specified folder. Images are saved as PNG files and captions are saved as TXT files with the same filename_prefix.",
-    IsOutput = true, InputIsList = true)]
-public sealed class SaveImageTextDataSetToFolder
+[Node("ResizeImagesByShorterEdge", Category = "image/transform", DisplayName = "Resize Images by Shorter Edge (DEPRECATED)", OutputNames = ["images"],
+    Description = "Resize images so that the shorter edge matches the specified dimension while preserving aspect ratio.")]
+public sealed class ResizeImagesByShorterEdge
 {
-    /// <summary>The pictures as Save Image (to Folder) writes them, then a caption file next to each picture that has a text.</summary>
-    public async Task ExecuteAsync(IServiceProvider services, [Input(Tooltip = "List of images to save.")] IReadOnlyList<ImageBatch> images,
-        [Input(Default = "dataset", Tooltip = "Name of the folder to save images to (inside output directory).")] IReadOnlyList<string> folderName,
-        [Input(Default = "image", Tooltip = "Prefix for saved image filenames.")] IReadOnlyList<string> filenamePrefix,
-        [Input(Options = ["overwrite", "increment"], Tooltip = "Whether to overwrite existing files or increment filenames to avoid overwriting.")] IReadOnlyList<string> mode,
-        [Input(Type = "STRING", ForceInput = true, Optional = true, Tooltip = "List of text captions to save.")] IReadOnlyList<object?>? texts = null)
+    /// <summary>Measured: the other edge is <c>int(other * edge / shorter)</c> (truncated), resized with Pillow's LANCZOS from the 8-bit picture.</summary>
+    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
+        [Input(Min = 1, Max = 8192, Tooltip = "Target dimension for the shorter edge.")] long shorterEdge = 512)
     {
-        var store = Results.For(services);
-        var folder = StorePaths.Normalize(folderName[0], "folder name");
-        var saved = await DatasetFiles.SaveImagesAsync(store, images, folder, filenamePrefix[0], mode[0] == "overwrite");
-        if (texts is { Count: > 0 }) await DatasetFiles.SaveCaptionsAsync(store, folder, saved, texts);
+        int w = images.Width, h = images.Height, e = (int)shorterEdge;
+        return w < h ? Dataset.Resize(images, e, (int)((double)h * e / w)) : Dataset.Resize(images, (int)((double)w * e / h), e);
     }
+}
+
+[Node("ResizeImagesByLongerEdge", Category = "image/transform", DisplayName = "Resize Images by Longer Edge (DEPRECATED)", OutputNames = ["images"],
+    Description = "Resize images so that the longer edge matches the specified dimension while preserving aspect ratio.")]
+public sealed class ResizeImagesByLongerEdge
+{
+    /// <summary>As <see cref="ResizeImagesByShorterEdge"/>, the longer edge (the height of a square) set to <paramref name="longerEdge"/>.</summary>
+    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
+        [Input(Min = 1, Max = 8192, Tooltip = "Target dimension for the longer edge.")] long longerEdge = 1024)
+    {
+        int w = images.Width, h = images.Height, e = (int)longerEdge;
+        return w > h ? Dataset.Resize(images, e, (int)((double)h * e / w)) : Dataset.Resize(images, (int)((double)w * e / h), e);
+    }
+}
+
+[Node("CenterCropImages", Category = "image/transform", DisplayName = "Crop Image (Center)", OutputNames = ["images"],
+    Description = "Center crop an image to the specified dimensions.")]
+public sealed class CenterCropImages
+{
+    /// <summary>Measured: the 8-bit picture's pixels from ((W - width) // 2, (H - height) // 2), at least 0; a crop larger than the picture keeps what there is.</summary>
+    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
+        [Input(Min = 1, Max = 8192, Tooltip = "Crop width.")] long width = 512,
+        [Input(Min = 1, Max = 8192, Tooltip = "Crop height.")] long height = 512)
+    {
+        int left = (int)Math.Max(0, Math.Floor((images.Width - width) / 2.0)), top = (int)Math.Max(0, Math.Floor((images.Height - height) / 2.0));
+        return Dataset.Crop(Dataset.EightBit(images), left, top, (int)width, (int)height);
+    }
+}
+
+[Node("RandomCropImages", Category = "image/transform", DisplayName = "Crop Image (Random)", OutputNames = ["images"],
+    Description = "Randomly crop an image to the specified dimensions.")]
+public sealed class RandomCropImages
+{
+    /// <summary>Measured: numpy's legacy generator draws the left edge from 0..max(0, W - width), then the top edge likewise; one rectangle for the batch.</summary>
+    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
+        [Input(Min = 1, Max = 8192, Tooltip = "Crop width.")] long width = 512,
+        [Input(Min = 1, Max = 8192, Tooltip = "Crop height.")] long height = 512,
+        [Input(Min = 0, Max = 18446744073709551615d, Tooltip = "Random seed.")] long seed = 0)
+    {
+        var random = Dataset.Random(seed);
+        long left = random.RandInt(0, Math.Max(0, images.Width - width) + 1);
+        long top = random.RandInt(0, Math.Max(0, images.Height - height) + 1);
+        return Dataset.Crop(Dataset.EightBit(images), (int)left, (int)top, (int)width, (int)height);
+    }
+}
+
+/// <summary>The float32 colour steps: the first three channels change, a fourth (alpha) is kept (measured).</summary>
+static class ColorSteps
+{
+    public static ImageBatch Map(ImageBatch images, Func<float, float> f)
+    {
+        var output = new ImageBatch(images.Batch, images.Height, images.Width, images.Channels, (float[])images.Data.Clone());
+        int c = images.Channels, colors = Math.Min(3, c);
+        for (int p = 0; p < output.Data.Length; p += c)
+            for (int k = 0; k < colors; k++) output.Data[p + k] = f(output.Data[p + k]);
+        return output;
+    }
+
+    public static float Clip(float v) => v < 0f ? 0f : v > 1f ? 1f : v;
+}
+
+[Node("NormalizeImages", Category = "image/color", DisplayName = "Normalize Image Colors", OutputNames = ["images"],
+    Description = "Normalize images using mean and standard deviation.")]
+public sealed class NormalizeImages
+{
+    /// <summary>(v - mean) / std in float32, not clamped.</summary>
+    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
+        [Input(Min = 0.0, Max = 1.0, Tooltip = "Mean value for normalization.")] double mean = 0.5,
+        [Input(Min = 0.001, Max = 1.0, Tooltip = "Standard deviation for normalization.")] double std = 0.5)
+    {
+        float m = (float)mean, s = (float)std;
+        return ColorSteps.Map(images, v => (v - m) / s);
+    }
+}
+
+[Node("AdjustBrightness", Category = "image/adjustments", DisplayName = "Adjust Brightness", OutputNames = ["images"],
+    Description = "Adjust the brightness of an image.")]
+public sealed class AdjustBrightness
+{
+    /// <summary>v * factor in float32, clamped to 0..1.</summary>
+    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
+        [Input(Min = 0.0, Max = 2.0, Tooltip = "Brightness factor. 1.0 = no change, <1.0 = darker, >1.0 = brighter.")] double factor = 1.0)
+    {
+        float k = (float)factor;
+        return ColorSteps.Map(images, v => ColorSteps.Clip(v * k));
+    }
+}
+
+[Node("AdjustContrast", Category = "image/adjustments", DisplayName = "Adjust Contrast", OutputNames = ["images"],
+    Description = "Adjust the contrast of an image.")]
+public sealed class AdjustContrast
+{
+    /// <summary>(v - 0.5) * factor + 0.5 in float32, clamped to 0..1 (measured: the pivot is 0.5, not the picture's mean).</summary>
+    public ImageBatch Execute([Input(Tooltip = "Image to process.")] ImageBatch images,
+        [Input(Min = 0.0, Max = 2.0, Tooltip = "Contrast factor. 1.0 = no change, <1.0 = less contrast, >1.0 = more contrast.")] double factor = 1.0)
+    {
+        float k = (float)factor;
+        return ColorSteps.Map(images, v => ColorSteps.Clip((v - 0.5f) * k + 0.5f));
+    }
+}
+
+[Node("ShuffleDataset", Category = "image/batch", DisplayName = "Shuffle Images List", InputIsList = true, OutputIsList = [true], OutputNames = ["images"],
+    Description = "Randomly shuffle the order of images in a list.")]
+public sealed class ShuffleDataset
+{
+    /// <summary>Every picture of every batch, one by one, in the order of numpy's <c>permutation</c> for the seed.</summary>
+    public IReadOnlyList<ImageBatch> Execute([Input(Tooltip = "List of images to process.")] IReadOnlyList<ImageBatch> images,
+        [Input(Default = 0L, Min = 0, Max = 18446744073709551615d, Tooltip = "Random seed.")] IReadOnlyList<long> seed)
+    {
+        var frames = Dataset.Frames(images);
+        return [.. Dataset.Random(Dataset.First(seed, "seed")).Permutation(frames.Count).Select(i => frames[i])];
+    }
+}
+
+[Node("ShuffleImageTextDataset", Category = "image/batch", DisplayName = "Shuffle Pairs of Image-Text", InputIsList = true, OutputIsList = [true, true],
+    OutputNames = ["images", "texts"], OutputTypes = [null, "STRING"], Description = "Randomly shuffle the order of pairs of image-text in a list.")]
+public sealed class ShuffleImageTextDataset
+{
+    /// <summary>The pairs in the order of numpy's <c>permutation</c>; a batch stays one item. The lists must be as long as each other.</summary>
+    public (IReadOnlyList<ImageBatch> Images, IReadOnlyList<object?> Texts) Execute(
+        [Input(Tooltip = "List of images to shuffle.")] IReadOnlyList<ImageBatch> images,
+        [Input(Type = "STRING", ForceInput = true, Tooltip = "List of texts to shuffle.")] IReadOnlyList<object?> texts,
+        [Input(Default = 0L, Min = 0, Max = 18446744073709551615d, Tooltip = "Random seed.")] IReadOnlyList<long> seed)
+    {
+        if (texts.Count != images.Count) throw new ArgumentException($"There are {images.Count} images but {texts.Count} texts; each image needs its text.", nameof(texts));
+        var order = Dataset.Random(Dataset.First(seed, "seed")).Permutation(images.Count);
+        return ([.. order.Select(i => images[i])], [.. order.Select(i => texts[i])]);
+    }
+}
+
+[Node("ImageDeduplication", Category = "image/batch", DisplayName = "Deduplicate Images", InputIsList = true, OutputIsList = [true], OutputNames = ["images"],
+    Description = "Remove duplicate or very similar images from a list.")]
+public sealed class ImageDeduplication
+{
+    /// <summary>
+    /// Every picture (batches split, measured), in order, unless it is as similar as the threshold or more to a picture already kept; similarity
+    /// is 1 - (differing bits of the two <see cref="Hash"/>es) / 64.
+    /// </summary>
+    public IReadOnlyList<ImageBatch> Execute([Input(Tooltip = "List of images to process.")] IReadOnlyList<ImageBatch> images,
+        [Input(Default = 0.95, Min = 0.0, Max = 1.0, Tooltip = "Similarity threshold (0-1). Higher means more similar. Images above this threshold are considered duplicates.")]
+        IReadOnlyList<double> similarityThreshold)
+    {
+        double threshold = Dataset.First(similarityThreshold, "similarity_threshold");
+        var kept = new List<(ImageBatch Image, ulong Hash)>();
+        foreach (var frame in Dataset.Frames(images))
+        {
+            var hash = Hash(frame);
+            if (kept.Any(k => 1.0 - BitOperations.PopCount(k.Hash ^ hash) / 64.0 >= threshold)) continue;
+            kept.Add((frame, hash));
+        }
+        return [.. kept.Select(k => k.Image)];
+    }
+
+    /// <summary>
+    /// The average hash, measured against ComfyUI's: the 8-bit picture resized to 8 x 8 with Pillow's LANCZOS, made grey with Pillow's L conversion
+    /// (ITU-R 601-2 luma in 16-bit fixed point, rounded), then one bit per pixel, row by row from the top bit: brighter than the mean.
+    /// </summary>
+    public static ulong Hash(ImageBatch frame)
+    {
+        int c = frame.Channels;
+        var small = PilLanczos.Resize(PilLanczos.ToBytes(frame.Data.AsSpan(0, frame.Height * frame.Width * c).ToArray()), frame.Width, frame.Height, c, 8, 8);
+        var grey = new int[64];
+        for (int p = 0; p < 64; p++)
+            grey[p] = c >= 3 ? (small[p * c] * 19595 + small[p * c + 1] * 38470 + small[p * c + 2] * 7471 + 0x8000) >> 16 : small[p * c];
+        double mean = grey.Sum() / 64.0;
+        ulong hash = 0;
+        for (int p = 0; p < 64; p++) hash = (hash << 1) | (grey[p] > mean ? 1UL : 0UL);
+        return hash;
+    }
+}
+
+[Node("ImageGrid", Category = "image/batch", DisplayName = "Make Image Grid", InputIsList = true, OutputNames = ["images"],
+    Description = "Arrange multiple images into a grid layout.")]
+public sealed class ImageGrid
+{
+    /// <summary>
+    /// Measured: every picture (batches split) stretched to the cell with Pillow's LANCZOS (an RGBA picture resized as RGBA, then its colour kept),
+    /// row by row on a black RGB canvas of <c>columns</c> cells across (also when there are fewer pictures) and as many rows as needed, with
+    /// <c>padding</c> pixels between cells.
+    /// </summary>
+    public ImageBatch Execute([Input(Tooltip = "List of images to process.")] IReadOnlyList<ImageBatch> images,
+        [Input(Default = 4L, Min = 1, Max = 20, Tooltip = "Number of columns in the grid.")] IReadOnlyList<long> columns,
+        [Input(Default = 256L, Min = 32, Max = 2048, Tooltip = "Width of each cell in the grid.")] IReadOnlyList<long> cellWidth,
+        [Input(Default = 256L, Min = 32, Max = 2048, Tooltip = "Height of each cell in the grid.")] IReadOnlyList<long> cellHeight,
+        [Input(Default = 4L, Min = 0, Max = 50, Tooltip = "Padding between images.")] IReadOnlyList<long> padding)
+    {
+        var frames = Dataset.Frames(images);
+        if (frames.Count == 0) throw new ArgumentException("Cannot create grid from empty image list");
+        int cols = (int)Dataset.First(columns, "columns"), cw = (int)Dataset.First(cellWidth, "cell_width"), ch = (int)Dataset.First(cellHeight, "cell_height");
+        int pad = (int)Dataset.First(padding, "padding");
+        int rows = (frames.Count + cols - 1) / cols;
+        int width = cols * cw + (cols - 1) * pad, height = rows * ch + (rows - 1) * pad;
+        var grid = new ImageBatch(1, height, width, 3);
+        for (int i = 0; i < frames.Count; i++)
+        {
+            var f = frames[i];
+            var cell = PilLanczos.Resize(PilLanczos.ToBytes(f.Data), f.Width, f.Height, f.Channels, cw, ch);
+            int x0 = i % cols * (cw + pad), y0 = i / cols * (ch + pad);
+            for (int y = 0; y < ch; y++)
+                for (int x = 0; x < cw; x++)
+                {
+                    int s = (y * cw + x) * f.Channels, d = ((y0 + y) * width + x0 + x) * 3;
+                    for (int k = 0; k < 3; k++) grid.Data[d + k] = cell[s + (f.Channels < 3 ? 0 : k)] / 255f;
+                }
+        }
+        return grid;
+    }
+}
+
+[Node("MergeImageLists", Category = "image/batch", DisplayName = "Merge Image Lists (DEPRECATED)", InputIsList = true, OutputIsList = [true], OutputNames = ["images"],
+    Description = "Concatenate multiple image lists into one.")]
+public sealed class MergeImageLists
+{
+    public IReadOnlyList<ImageBatch> Execute([Input(Tooltip = "List of images to process.")] IReadOnlyList<ImageBatch> images) => [.. images];
+}
+
+[Node("MergeTextLists", Category = "text", DisplayName = "Merge Text Lists (DEPRECATED)", InputIsList = true, OutputNames = ["texts"], OutputTypes = ["STRING"],
+    Description = "Concatenate multiple text lists into one.")]
+public sealed class MergeTextLists
+{
+    /// <summary>The texts as one value: a list (shown by Preview as Text as a JSON list).</summary>
+    public object Execute([Input(Type = "STRING", Tooltip = "List of texts to process.")] IReadOnlyList<object?> texts)
+    {
+        var list = new ArrayValue();
+        list.AddRange(texts);
+        return list;
+    }
+}
+
+/// <summary>The text steps: Python's string operations on the text, which may also be a list value (as Merge Text Lists puts out).</summary>
+static class TextSteps
+{
+    public static string TypeName(object? value) => value switch
+    {
+        string => "str",
+        null => "NoneType",
+        IList => "list",
+        _ => PyValues.TypeName(value),
+    };
+
+    /// <summary>A text, or a list of exactly one text, as the text (what an extra input brings); anything else stays as it is.</summary>
+    public static object? Scalar(object? value) => value is IList { Count: 1 } list && list[0] is string s ? s : value;
+
+    public static string Text(object? texts, string operation) =>
+        texts as string ?? throw new ArgumentException($"'{TypeName(texts)}' object has no attribute '{operation}'", nameof(texts));
+
+    /// <summary>Python's <c>a + b</c> for texts and lists.</summary>
+    public static object Add(object? a, object? b)
+    {
+        if (a is string s && b is string t) return s + t;
+        if (a is IList x && b is IList y)
+        {
+            var list = new ArrayValue();
+            foreach (var v in x) list.Add(v);
+            foreach (var v in y) list.Add(v);
+            return list;
+        }
+        var kind = TypeName(a);
+        throw new ArgumentException(kind is "str" or "list"
+            ? $"can only concatenate {kind} (not \"{TypeName(b)}\") to {kind}"
+            : $"unsupported operand type(s) for +: '{kind}' and '{TypeName(b)}'");
+    }
+
+    public const string Tooltip = "Text to process.";
+    public const string Description = "Processed texts";
+}
+
+[Node("TextToLowercase", Category = "text", DisplayName = "Convert Text to Lowercase (DEPRECATED)", OutputNames = ["texts"], OutputTypes = ["STRING"],
+    Description = "Convert text to lowercase.")]
+public sealed class TextToLowercase
+{
+    public object Execute([Input(Type = "STRING", Tooltip = TextSteps.Tooltip)] object texts) => PyText.Lower(TextSteps.Text(texts, "lower"));
+}
+
+[Node("TextToUppercase", Category = "text", DisplayName = "Convert Text to Uppercase (DEPRECATED)", OutputNames = ["texts"], OutputTypes = ["STRING"],
+    Description = "Convert text to uppercase.")]
+public sealed class TextToUppercase
+{
+    public object Execute([Input(Type = "STRING", Tooltip = TextSteps.Tooltip)] object texts) => PyText.Upper(TextSteps.Text(texts, "upper"));
+}
+
+[Node("TruncateText", Category = "text", DisplayName = "Truncate Text", OutputNames = ["texts"], OutputTypes = ["STRING"],
+    Description = "Truncate text to a maximum length.")]
+public sealed class TruncateText
+{
+    /// <summary>The first <paramref name="maxLength"/> characters (code points) of a text, or items of a list.</summary>
+    public object Execute([Input(Type = "STRING", Tooltip = TextSteps.Tooltip)] object texts,
+        [Input(Min = 1, Max = 10000, Tooltip = "Maximum text length.")] long maxLength = 77)
+    {
+        if (texts is IList list)
+        {
+            var cut = new ArrayValue();
+            for (int i = 0; i < Math.Min(list.Count, maxLength); i++) cut.Add(list[i]);
+            return cut;
+        }
+        return PyText.Slice(TextSteps.Text(texts, "__getitem__"), null, maxLength);
+    }
+}
+
+[Node("AddTextPrefix", Category = "text", DisplayName = "Add Text Prefix (DEPRECATED)", OutputNames = ["texts"], OutputTypes = ["STRING"],
+    Description = "Add a prefix to all texts.")]
+public sealed class AddTextPrefix
+{
+    public object Execute([Input(Type = "STRING", Tooltip = TextSteps.Tooltip)] object texts,
+        [Input(Type = "STRING", Default = "", Tooltip = "Prefix to add.")] object? prefix = null) => TextSteps.Add(TextSteps.Scalar(prefix ?? ""), texts);
+}
+
+[Node("AddTextSuffix", Category = "text", DisplayName = "Add Text Suffix (DEPRECATED)", OutputNames = ["texts"], OutputTypes = ["STRING"],
+    Description = "Add a suffix to all texts.")]
+public sealed class AddTextSuffix
+{
+    public object Execute([Input(Type = "STRING", Tooltip = TextSteps.Tooltip)] object texts,
+        [Input(Type = "STRING", Default = "", Tooltip = "Suffix to add.")] object? suffix = null) => TextSteps.Add(texts, TextSteps.Scalar(suffix ?? ""));
+}
+
+[Node("ReplaceText", Category = "text", DisplayName = "Replace Text (DEPRECATED)", OutputNames = ["texts"], OutputTypes = ["STRING"],
+    Description = "Replace text in all texts.")]
+public sealed class ReplaceText
+{
+    /// <summary>Python's <c>str.replace</c>: an empty find puts the replacement between every character and at both ends.</summary>
+    public object Execute([Input(Type = "STRING", Tooltip = TextSteps.Tooltip)] object texts,
+        [Input(Type = "STRING", Default = "", Tooltip = "Text to find.")] object? find = null,
+        [Input(Type = "STRING", Default = "", Tooltip = "Text to replace with.")] object? replace = null)
+    {
+        var f = TextSteps.Scalar(find ?? "") as string ?? throw new ArgumentException($"replace() argument 1 must be str, not {TextSteps.TypeName(find)}", nameof(find));
+        var r = TextSteps.Scalar(replace ?? "") as string ?? throw new ArgumentException($"replace() argument 2 must be str, not {TextSteps.TypeName(replace)}", nameof(replace));
+        return PyText.Replace(TextSteps.Text(texts, "replace"), f, r);
+    }
+}
+
+[Node("StripWhitespace", Category = "text", DisplayName = "Strip Whitespace (DEPRECATED)", OutputNames = ["texts"], OutputTypes = ["STRING"],
+    Description = "Strip leading and trailing whitespace from all texts.")]
+public sealed class StripWhitespace
+{
+    public object Execute([Input(Type = "STRING", Tooltip = TextSteps.Tooltip)] object texts) => PyText.Strip(TextSteps.Text(texts, "strip"));
 }

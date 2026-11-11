@@ -94,6 +94,7 @@ internal static class Results
             return files;
         }
         var (folder, name) = SavePrefix.Split(prefix);
+        store.CreateFolder(type, folder);
         var counter = SavePrefix.NextCounter(store.List(type, folder) ?? [], name);
         for (int i = 0; i < images.Batch; i++)
         {

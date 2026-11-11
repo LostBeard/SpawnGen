@@ -5,7 +5,7 @@ using SpawnGen.Engine.Types;
 namespace SpawnGen.Nodes.Core;
 
 /// <summary>
-/// Minimal PNG decoder (non-interlaced; grayscale, grayscale+alpha, RGB, RGBA and palette; 8 and 16 bit) so loading an image needs no imaging
+/// Minimal PNG decoder (non-interlaced; grayscale, grayscale+alpha, RGB, RGBA and palette; 1, 2, 4 (grey and palette), 8 and 16 bit) so loading an image needs no imaging
 /// dependency. The result is an RGB <see cref="ImageBatch"/> in 0..1, like ComfyUI's LoadImage IMAGE output; the alpha comes back separately (it becomes the MASK output).
 /// </summary>
 public static partial class PngReader
@@ -117,17 +117,34 @@ public static partial class PngReader
 
         if (width <= 0 || height <= 0 || colorType < 0) throw new InvalidDataException("PNG has no valid IHDR.");
         if (interlace != 0) throw new NotSupportedException("Interlaced PNG is not supported.");
-        if (depth is not (8 or 16)) throw new NotSupportedException($"PNG bit depth {depth} is not supported (8 and 16 are).");
+        bool packed = depth is 1 or 2 or 4;
+        if (!packed && depth is not (8 or 16)) throw new NotSupportedException($"PNG bit depth {depth} is not supported (1, 2, 4, 8 and 16 are).");
+        if (packed && colorType is not (0 or 3)) throw new InvalidDataException($"Bad PNG: bit depth {depth} with color type {colorType}.");
         int samples = colorType switch { 0 => 1, 2 => 3, 3 => 1, 4 => 2, 6 => 4, _ => throw new InvalidDataException($"Bad PNG color type {colorType}.") };
-        if (colorType == 3 && (depth != 8 || palette is null)) throw new NotSupportedException("Only 8-bit palette PNGs with a PLTE chunk are supported.");
+        if (colorType == 3 && palette is null) throw new InvalidDataException("Bad PNG: a palette picture without a PLTE chunk.");
 
-        int bytesPerPixel = samples * depth / 8, stride = width * bytesPerPixel;
+        // PNG spec 7.2 / 9.2: samples below 8 bits are packed into bytes, leftmost pixel in the high bits, each row starting on a byte; filters work
+        // on whole bytes (bpp 1). They are spread to one byte per pixel here: a palette index as it is, a grey level scaled to 0..255 (spec 13.12).
+        int bytesPerPixel = packed ? 1 : samples * depth / 8, stride = packed ? (width * depth + 7) / 8 : width * bytesPerPixel;
         var raw = new byte[height * (stride + 1)];
         idat.Position = 0;
         using (var z = new ZLibStream(idat, CompressionMode.Decompress))
             z.ReadExactly(raw);
 
         var px = Unfilter(raw, height, stride, bytesPerPixel);
+        if (packed)
+        {
+            var spread = new byte[width * height];
+            int mask = (1 << depth) - 1, scale = colorType == 0 ? 255 / mask : 1;
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    int bit = x * depth;
+                    spread[y * width + x] = (byte)((px[y * stride + bit / 8] >> (8 - depth - bit % 8) & mask) * scale);
+                }
+            px = spread;
+            depth = 8;
+        }
 
         var img = new ImageBatch(1, height, width, 3);
         alpha = colorType is 4 or 6 || (colorType == 3 && paletteAlpha is not null) ? new float[width * height] : null;

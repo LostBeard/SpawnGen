@@ -109,6 +109,16 @@ Pillow's. Deliberate difference: since ComfyUI #13594 (2026-04-28) its Load Imag
 through swscale to float: WebP and BMP colours come out 1 to 2.4 / 255 off the decoded values, fully opaque WebP / GIF pixels get a mask of 1/255
 instead of 0, and JPEGs are upsampled by ffmpeg instead of libjpeg (4:2:0 pictures: mean 5/255, up to 68/255 off Pillow's). SpawnGen keeps the
 reference decoders' values (what Pillow, libwebp and the browsers show).
+Load Image, Load Image (as Mask), Save Image, Preview Image and Compare Images were rebuilt clean-room (2026-11-11) and checked against ComfyUI's
+nodes and server (Fixtures/image_nodes, tools/parity/make_image_node_fixtures.py; ImageNodeParityTests): RGB, RGBA and palette PNGs (with and without
+tRNS: a palette picture always gets a full-size mask) and an EXIF-rotated JPEG exactly / within 3/255; Load Image (as Mask) gives every frame; Save
+Image's names (`%batch_num%` is the picture's index while the counter is the one for the prefix as written, so those names start at 00001 each run, as
+ComfyUI's do), its PNG text (prompt, then each extra_pnginfo entry) and the preview prefixes (ComfyUI_temp_ / comfy.compare.a_temp_ / b_temp_ with
+the same five letters, comfy.bboxes.background_temp_ for the first background picture only). Preview Image's files carry the prompt; the previews
+of Compare Images, Preview Mask and the other newer nodes carry no text, as ComfyUI's. Deliberate differences: ComfyUI (PyAV) fails with
+"Invalid argument" on grey, grey + alpha, 1-bit, grey JPEG and 16-bit PNGs; SpawnGen loads them as Pillow does (a 16-bit picture by its high
+bytes); PngReader now reads 1-, 2- and 4-bit grey and palette PNGs (PNG spec 7.2, 13.12). SpawnGen's stores name temporary files by content
+where ComfyUI counts (prefix_00001_.png); the prefix part is ComfyUI's.
 Deliberate differences (SpawnGen is more forgiving where ComfyUI fails): Convert Image to Mask with channel "alpha" on an image without alpha gives a mask of ones (ComfyUI: IndexError); Image Blur / Image Sharpen with a radius as large as the picture keep mirroring the edges (ComfyUI: PyTorch's reflect-padding error).
 Deliberate difference: Convert Image Color Space computes every pixel in double precision and rounds once, so it gives the exact values where
 ComfyUI's float32 arithmetic differs by up to about 1e-6 of a pixel's largest channel (PQ, LogC3 and ACEScct decoded to large linear values; checked

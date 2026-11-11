@@ -161,7 +161,7 @@ public sealed class CreateBoundingBoxes
         var preview = new ImageBatch(1, ph, pw, 3, PilLanczos.FromBytes(px));
         var ui = new UiOutput("dims", new ArrayValue { width, height });
         if (incoming.Count > 0) ui["input_bboxes"] = incoming;
-        if (background is not null && context is not null) ui["background_images"] = await Results.PreviewAsync(background, context, context.Services, 1);
+        if (background is not null && context is not null) ui["background_images"] = await Results.PreviewAsync(background, context, context.Services, 1, "comfy.bboxes.background");
         return (preview, pixels.Count > 0 ? new ArrayValue { pixels } : new ArrayValue(), elements, ui);
     }
 

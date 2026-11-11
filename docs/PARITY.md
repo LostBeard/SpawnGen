@@ -151,6 +151,8 @@ Deliberate difference: Save Text writes line breaks as given (`
 ` (measured, clean-room batch C).
 Deliberate difference (a ComfyUI bug not copied): measured with ComfyUI, its text steps put out each result as a list of one text, ["text"]
 (previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
+Documented difference: VAE Decode (Tiled) and VAE Encode (Tiled) blend their tiles with SpawnGen's own linear ramps over the overlaps, so the
+seams can differ slightly from ComfyUI's tiling; the temporal settings are accepted and unused (SpawnGen's VAEs are image VAEs).
 Documented difference: Save Checkpoint, ModelSave and VAESave write the prompt and the workflow into the file's metadata; ComfyUI also writes
 Stability's modelspec keys (architecture, title and so on), which SpawnGen leaves out.
 Documented difference: the beta scheduler (and Beta Sampling Scheduler) rounds a symmetric shape's median timestep where the median lands exactly on

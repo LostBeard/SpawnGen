@@ -171,7 +171,7 @@ internal sealed class EmptyPromptCache
         async Task<TextEncoding> MakeAsync()
         {
             await encoder.UseWeightsAsync(weights, CancellationToken.None);
-            var ids = PromptWeights.Chunks("", _ => [], Checkpoint.TokenCount).Single().Ids;
+            var ids = ClipPadding.Pad(PromptWeights.Chunks("", _ => [], Checkpoint.TokenCount).Single().Ids, ClipPadding.ForTextWidth(encoder.FirstTowerWidth));
             // SDXL's second tower pads with 0 instead of the end token.
             var ids2 = encoder.Family == SdFamily.SDXL ? PromptWeights.Chunks("", _ => [], Checkpoint.TokenCount, padToken: 0).Single().Ids : null;
             return await encoder.EncodeAsync(ids, ids2, layer);

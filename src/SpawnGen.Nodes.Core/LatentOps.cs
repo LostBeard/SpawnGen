@@ -3,116 +3,127 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-internal static class Latents
+// The latent nodes. Behavior measured with ComfyUI (2026-11-08) by running each node on chosen and random latents. Unless a node says otherwise,
+// its result keeps the first latent's noise mask and batch index unchanged (measured: every node here returns the first input's noise_mask and
+// batch_index as they were, even where the samples change size).
+
+/// <summary>Helpers the latent nodes share.</summary>
+public static class Latents
 {
-    public static float[] Frame(LatentBatch l, int index)
+    /// <summary>A latent with new samples that keeps <paramref name="template"/>'s noise mask and batch index.</summary>
+    public static LatentBatch Like(LatentBatch template, int batch, int channels, int height, int width, float[] data) =>
+        new(batch, channels, height, width, data) { NoiseMask = template.NoiseMask, BatchIndex = template.BatchIndex };
+
+    /// <summary>
+    /// The samples with <paramref name="batch"/> pictures: picture i is picture i mod n of the source (a longer batch is cut, a shorter one read around).
+    /// Only the samples: no noise mask or batch index. The latent itself when the count already matches.
+    /// </summary>
+    public static LatentBatch RepeatToBatch(LatentBatch latent, int batch)
     {
-        int n = l.Channels * l.Height * l.Width;
-        var f = new float[n];
-        Array.Copy(l.Data, index * n, f, 0, n);
-        return f;
+        if (latent.Batch == batch) return latent;
+        return new LatentBatch(batch, latent.Channels, latent.Height, latent.Width, Repeat(latent.Data, latent.Batch, batch));
     }
 
-    public static LatentBatch From(IReadOnlyList<float[]> frames, int c, int h, int w, MaskBatch? mask = null, int[]? batchIndex = null)
+    /// <summary>The masks with <paramref name="batch"/> entries, read around as <see cref="RepeatToBatch(LatentBatch, int)"/> does.</summary>
+    public static MaskBatch RepeatToBatch(MaskBatch mask, int batch)
     {
-        var l = new LatentBatch(frames.Count, c, h, w) { NoiseMask = mask, BatchIndex = batchIndex };
-        for (int i = 0; i < frames.Count; i++) Array.Copy(frames[i], 0, l.Data, i * c * h * w, c * h * w);
-        return l;
+        if (mask.Batch == batch) return mask;
+        return new MaskBatch(batch, mask.Height, mask.Width, Repeat(mask.Data, mask.Batch, batch));
+    }
+
+    static float[] Repeat(float[] data, int count, int batch)
+    {
+        if (count == 0) throw new ArgumentException("Cannot repeat an empty batch.");
+        int size = data.Length / count;
+        var r = new float[batch * size];
+        for (int i = 0; i < batch; i++) Array.Copy(data, i % count * size, r, i * size, size);
+        return r;
+    }
+
+    /// <summary>Python's <c>seq[start:stop]</c> on a sequence of <paramref name="length"/>: negative ends count from the end, both are clamped.</summary>
+    internal static (int Start, int Count) Slice(int start, int stop, int length)
+    {
+        static int Fix(int i, int n) => i < 0 ? Math.Max(0, i + n) : Math.Min(i, n);
+        int a = Fix(start, length), b = Fix(stop, length);
+        return (a, Math.Max(0, b - a));
     }
 
     /// <summary>
-    /// A new latent that keeps <paramref name="like"/>'s noise mask and batch index: what ComfyUI's <c>samples.copy()</c> followed by a new <c>"samples"</c> does
-    /// (the mask is not resized or cut with the samples, exactly as there; the sampler fits it to the latent).
+    /// The second latent brought to the first one's shape for the latent arithmetic nodes (Add, Subtract, Interpolate). Measured: another height or
+    /// width is cut to the first's aspect ratio around its centre and resized bilinearly to the first's size (a stretch without the cut differs by
+    /// whole values on random latents); then the batch is read around or cut to the first's.
     /// </summary>
-    public static LatentBatch Like(LatentBatch like, int b, int c, int h, int w, float[] data) =>
-        new(b, c, h, w, data) { NoiseMask = like.NoiseMask, BatchIndex = like.BatchIndex };
-
-    /// <summary><c>comfy.utils.common_upscale</c> of a latent to (width, height) in latent cells; the noise mask and batch index come along unchanged.</summary>
-    public static LatentBatch Upscale(LatentBatch s, int width, int height, string method, string crop)
+    internal static LatentBatch ShapedLike(LatentBatch second, LatentBatch first)
     {
-        var (data, h, w) = TorchInterpolate.CommonUpscale(s.Data, s.Batch, s.Channels, s.Height, s.Width, width, height, method, crop);
-        return Like(s, s.Batch, s.Channels, h, w, data);
-    }
-
-    /// <summary><c>comfy.utils.repeat_to_batch_size</c>: picture i of the result is picture i mod n of the latent (cut short when it has more).</summary>
-    public static LatentBatch RepeatToBatch(LatentBatch l, int batch)
-    {
-        if (l.Batch == batch) return l;
-        int per = l.Channels * l.Height * l.Width;
-        var data = new float[batch * per];
-        for (int i = 0; i < batch; i++) Array.Copy(l.Data, (i % l.Batch) * per, data, i * per, per);
-        return Like(l, batch, l.Channels, l.Height, l.Width, data);
+        if (second.Height != first.Height || second.Width != first.Width)
+        {
+            var (data, h, w) = TorchInterpolate.CommonUpscale(second.Data, second.Batch, second.Channels, second.Height, second.Width, first.Width, first.Height, "bilinear", "center");
+            second = new LatentBatch(second.Batch, second.Channels, h, w, data);
+        }
+        return RepeatToBatch(second, first.Batch);
     }
 
     /// <summary>
-    /// ComfyUI's <c>reshape_latent_to</c>: a latent whose channels, height or width differ from the target's is resized to the target's size (bilinear,
-    /// centre crop), then (unless told not to) repeated or cut to the target's batch size.
+    /// PyTorch broadcasting of two sizes along one dimension: equal, or one of them 1. Otherwise PyTorch's error for an element-wise operation
+    /// (measured message).
     /// </summary>
-    public static LatentBatch ReshapeTo(LatentBatch target, LatentBatch latent, bool repeatBatch = true)
+    internal static int Broadcast(int a, int b, int dim) =>
+        a == b || b == 1 ? a : a == 1 ? b : throw new ArgumentException($"The size of tensor a ({a}) must match the size of tensor b ({b}) at non-singleton dimension {dim}");
+
+    /// <summary>
+    /// <paramref name="f"/> applied element by element to two latents of the same height and width, broadcasting batch and channels as PyTorch does.
+    /// </summary>
+    internal static (float[] Data, int Batch, int Channels) Combine(LatentBatch a, LatentBatch b, Func<float, float, float> f)
     {
-        if (latent.Channels != target.Channels || latent.Height != target.Height || latent.Width != target.Width)
-            latent = Upscale(latent, target.Width, target.Height, "bilinear", "center");
-        return repeatBatch ? RepeatToBatch(latent, target.Batch) : latent;
+        int n = Broadcast(a.Batch, b.Batch, 0), c = Broadcast(a.Channels, b.Channels, 1), plane = a.Height * a.Width;
+        var r = new float[n * c * plane];
+        for (int i = 0; i < n; i++)
+            for (int k = 0; k < c; k++)
+            {
+                int ia = ((a.Batch == 1 ? 0 : i) * a.Channels + (a.Channels == 1 ? 0 : k)) * plane;
+                int ib = ((b.Batch == 1 ? 0 : i) * b.Channels + (b.Channels == 1 ? 0 : k)) * plane;
+                int o = (i * c + k) * plane;
+                for (int p = 0; p < plane; p++) r[o + p] = f(a.Data[ia + p], b.Data[ib + p]);
+            }
+        return (r, n, c);
     }
 
-    /// <summary>Python's <c>a[start:stop]</c> along an axis of <paramref name="length"/>: negative indices count from the end and both ends are clamped.</summary>
-    public static (int Start, int Count) PySlice(int length, int start, int stop)
+    /// <summary>
+    /// The check made when a block of samples is written into another latent: each of its sizes must equal the target's or be 1 (then it is spread).
+    /// The message is PyTorch's (measured); like PyTorch it lists the block's sizes without its leading 1s.
+    /// </summary>
+    internal static void CheckPaste(int[] target, int[] block)
     {
-        static int Norm(int i, int len) => i < 0 ? Math.Max(0, i + len) : Math.Min(i, len);
-        int s = Norm(start, length), e = Norm(stop, length);
-        return (s, Math.Max(0, e - s));
-    }
-
-    /// <summary>Python's <c>a // b</c> (rounds towards minus infinity).</summary>
-    public static int FloorDiv(int a, int b) => (int)Math.Floor((double)a / b);
-
-    /// <summary>PyTorch broadcasting of one dimension: equal sizes, or a size 1 stretched to the other; anything else is the error PyTorch raises.</summary>
-    public static int Broadcast(int a, int b, int dim) =>
-        a == b || b == 1 ? a : a == 1 ? b
-            : throw new ArgumentException($"The size of tensor a ({a}) must match the size of tensor b ({b}) at non-singleton dimension {dim}.");
-
-    /// <summary>An element-wise operation with PyTorch broadcasting over (batch, channels, height, width).</summary>
-    public static (int B, int C, int H, int W, float[] Data) Elementwise(LatentBatch a, LatentBatch b, Func<float, float, float> f)
-    {
-        int nb = Broadcast(a.Batch, b.Batch, 0), nc = Broadcast(a.Channels, b.Channels, 1), nh = Broadcast(a.Height, b.Height, 2), nw = Broadcast(a.Width, b.Width, 3);
-        static int At(LatentBatch t, int n, int c, int y, int x) =>
-            (((t.Batch == 1 ? 0 : n) * t.Channels + (t.Channels == 1 ? 0 : c)) * t.Height + (t.Height == 1 ? 0 : y)) * t.Width + (t.Width == 1 ? 0 : x);
-        var r = new float[nb * nc * nh * nw];
-        int i = 0;
-        for (int n = 0; n < nb; n++)
-            for (int c = 0; c < nc; c++)
-                for (int y = 0; y < nh; y++)
-                    for (int x = 0; x < nw; x++)
-                        r[i++] = f(a.Data[At(a, n, c, y, x)], b.Data[At(b, n, c, y, x)]);
-        return (nb, nc, nh, nw, r);
-    }
-
-    /// <summary><c>torch.nan_to_num</c>: NaN to 0, infinities to the largest finite float.</summary>
-    public static float NanToNum(float v) => float.IsNaN(v) ? 0f : float.IsPositiveInfinity(v) ? float.MaxValue : float.IsNegativeInfinity(v) ? float.MinValue : v;
-
-    /// <summary>A mask batch's picture <paramref name="index"/> as its own array.</summary>
-    public static float[] MaskFrame(MaskBatch m, int index)
-    {
-        var one = new float[m.Height * m.Width];
-        Array.Copy(m.Data, index * one.Length, one, 0, one.Length);
-        return one;
+        for (int d = 0; d < target.Length; d++)
+            if (block[d] != target[d] && block[d] != 1)
+            {
+                int lead = 0;
+                while (lead < block.Length - 1 && block[lead] == 1) lead++;
+                throw new ArgumentException($"The expanded size of the tensor ({target[d]}) must match the existing size ({block[d]}) at non-singleton dimension {d}.  " +
+                    $"Target sizes: [{string.Join(", ", target)}].  Tensor sizes: [{string.Join(", ", block.Skip(lead))}]");
+            }
     }
 }
 
-/// <summary>Latent sizes are given in pixels in the node widgets and are 1/8 of that in the latent, like ComfyUI.</summary>
 [Node(Category = "model/latent", DisplayName = "Upscale Latent")]
 public sealed class LatentUpscale
 {
     public static string[] Methods() => TorchInterpolate.LatentMethods;
-    public static string[] Crops() => ["disabled", "center"];
 
     /// <summary>
-    /// Resizes to (width, height) pixels, at least 64 each; a 0 side follows the aspect ratio and both 0 leave the latent alone. "center" crops the middle part
-    /// with the new aspect ratio before resizing. A noise mask is kept as it is (the sampler fits it to the new size), as in ComfyUI.
+    /// Resizes the latent to <paramref name="width"/> x <paramref name="height"/> pixels (an eighth of that in cells, rounded down). Measured with ComfyUI:
+    /// <list type="bullet">
+    /// <item>Both 0: the latent is returned as it is.</item>
+    /// <item>Each given side is raised to at least 64 pixels.</item>
+    /// <item>One side 0: it follows the latent's aspect ratio from the other side after that side was raised to 64, as
+    /// <c>round(cells_w * height / cells_h)</c> in double precision, rounded half to even, then also raised to 64 (latent 7 x 14 at height 495 gives 31 cells
+    /// wide, which other orders of that arithmetic do not).</item>
+    /// <item>The noise mask is not resized.</item>
+    /// </list>
     /// </summary>
     public LatentBatch Execute(LatentBatch samples, [Input(OptionsProvider = nameof(Methods))] string upscaleMethod = "nearest-exact",
         [Input(Min = 0, Max = 16384, Step = 8)] int width = 512, [Input(Min = 0, Max = 16384, Step = 8)] int height = 512,
-        [Input(OptionsProvider = nameof(Crops))] string crop = "disabled")
+        [Input(Options = ["disabled", "center"])] string crop = "disabled")
     {
         if (width == 0 && height == 0) return samples;
         if (width == 0)
@@ -130,7 +141,23 @@ public sealed class LatentUpscale
             width = Math.Max(64, width);
             height = Math.Max(64, height);
         }
-        return Latents.Upscale(samples, width / 8, height / 8, upscaleMethod, crop);
+        return Resized(samples, width / 8, height / 8, upscaleMethod, crop);
+    }
+
+    /// <summary>The samples resized to <paramref name="w"/> x <paramref name="h"/> cells; the noise mask and batch index are kept.</summary>
+    internal static LatentBatch Resized(LatentBatch samples, int w, int h, string method, string crop)
+    {
+        if (w <= 0 || h <= 0)
+        {
+            // Measured: "area" gives an empty latent; the other methods fail with PyTorch's message (bislerp resizes a one-row strip first).
+            if (method == "area") return Latents.Like(samples, samples.Batch, samples.Channels, Math.Max(0, h), Math.Max(0, w), []);
+            // bislerp resizes along the width, then along the height, each as a one-row strip.
+            var (inH, inW, outH, outW) = method != "bislerp" ? (samples.Height, samples.Width, h, w)
+                : w <= 0 ? (1, samples.Width, 1, w) : (1, samples.Height, 1, h);
+            throw new ArgumentException($"Input and output sizes should be greater than 0, but got input (H: {inH}, W: {inW}) output (H: {outH}, W: {outW})");
+        }
+        var (data, height, width) = TorchInterpolate.CommonUpscale(samples.Data, samples.Batch, samples.Channels, samples.Height, samples.Width, w, h, method, crop);
+        return Latents.Like(samples, samples.Batch, samples.Channels, height, width, data);
     }
 }
 
@@ -139,63 +166,79 @@ public sealed class LatentUpscaleBy
 {
     public static string[] Methods() => TorchInterpolate.LatentMethods;
 
-    /// <summary>Scales the latent's own size by <c>scale_by</c> (Python rounding, no minimum), without cropping.</summary>
+    /// <summary>
+    /// Resizes the latent by <paramref name="scaleBy"/>. Measured with ComfyUI: each side is <c>round(cells * scale_by)</c> (double precision, half to even:
+    /// 3 x 1.5 = 4.5 gives 4, 5 x 1.5 = 7.5 gives 8), with no minimum; the noise mask is not resized.
+    /// </summary>
     public LatentBatch Execute(LatentBatch samples, [Input(OptionsProvider = nameof(Methods))] string upscaleMethod = "nearest-exact",
-        [Input(Min = 0.01, Max = 8, Step = 0.01)] double scaleBy = 1.5) =>
-        Latents.Upscale(samples, (int)Math.Round(samples.Width * scaleBy, MidpointRounding.ToEven), (int)Math.Round(samples.Height * scaleBy, MidpointRounding.ToEven),
-            upscaleMethod, "disabled");
+        [Input(Min = 0.01, Max = 8.0, Step = 0.01)] double scaleBy = 1.5)
+    {
+        int w = (int)Math.Round(samples.Width * scaleBy, MidpointRounding.ToEven), h = (int)Math.Round(samples.Height * scaleBy, MidpointRounding.ToEven);
+        return LatentUpscale.Resized(samples, w, h, upscaleMethod, "disabled");
+    }
 }
 
 [Node(Category = "model/latent/batch", DisplayName = "Get Latent From Batch")]
 public sealed class LatentFromBatch
 {
     /// <summary>
-    /// <c>length</c> pictures from <c>batch_index</c> on (negative counts from the end; both are clamped to the batch). The pictures keep their place in the
-    /// batch as their batch index, so a sampler gives them the same noise they would have had in the whole batch.
+    /// <paramref name="length"/> pictures from <paramref name="batchIndex"/> on. Measured with ComfyUI:
+    /// <list type="bullet">
+    /// <item>A negative index counts from the end; the start is clamped to the batch (-10 of 4 is 0, 10 of 4 is 3), the length to what is left.</item>
+    /// <item>The batch index is the latent's own (or 0, 1, ...), cut the same way, so each picture keeps its noise.</item>
+    /// <item>A noise mask of one picture is kept whole; otherwise the masks are read around (or cut) to the batch size and cut the same way.</item>
+    /// </list>
     /// </summary>
     public LatentBatch Execute(LatentBatch samples, [Input(Min = -16384, Max = 16384)] int batchIndex = 0, [Input(Min = 1, Max = 64)] int length = 1)
     {
         int count = samples.Batch;
-        if (batchIndex < 0) batchIndex += count;
-        batchIndex = Math.Max(0, Math.Min(count - 1, batchIndex));
-        length = Math.Min(count - batchIndex, length);
+        int start = batchIndex < 0 ? Math.Max(0, count + batchIndex) : Math.Min(count - 1, batchIndex);
+        int take = Math.Min(count - start, length);
+        int size = samples.Channels * samples.Height * samples.Width;
+        var data = new float[take * size];
+        Array.Copy(samples.Data, start * size, data, 0, take * size);
 
-        MaskBatch? mask = samples.NoiseMask;
-        if (mask is { Batch: > 1 } m)
+        var mask = samples.NoiseMask;
+        if (mask is not null && mask.Batch != 1)
         {
-            // A mask batch shorter than the latent's is repeated to its length first, then the same pictures are taken.
-            int available = Math.Max(m.Batch, count);
-            var (start, take) = Latents.PySlice(available, batchIndex, batchIndex + length);
-            mask = new MaskBatch(take, m.Height, m.Width,
-                Enumerable.Range(start, take).SelectMany(i => Latents.MaskFrame(m, i % m.Batch)).ToArray());
+            var all = Latents.RepeatToBatch(mask, count);
+            int plane = mask.Height * mask.Width;
+            var cut = new float[take * plane];
+            Array.Copy(all.Data, start * plane, cut, 0, take * plane);
+            mask = new MaskBatch(take, mask.Height, mask.Width, cut);
         }
-        int[] batch;
-        if (samples.BatchIndex is { } existing)
-        {
-            var (start, take) = Latents.PySlice(existing.Length, batchIndex, batchIndex + length);
-            batch = existing.Skip(start).Take(take).ToArray();
-        }
-        else batch = Enumerable.Range(batchIndex, length).ToArray();
-        return Latents.From(Enumerable.Range(batchIndex, length).Select(i => Latents.Frame(samples, i)).ToList(), samples.Channels, samples.Height, samples.Width, mask, batch);
+        int[] index = (samples.BatchIndex ?? Enumerable.Range(0, count).ToArray()).Skip(start).Take(take).ToArray();
+        return new LatentBatch(take, samples.Channels, samples.Height, samples.Width, data) { NoiseMask = mask, BatchIndex = index };
     }
 }
 
 [Node(Category = "model/latent/batch", DisplayName = "Repeat Latent Batch")]
 public sealed class RepeatLatentBatch
 {
-    /// <summary>The whole batch <c>amount</c> times over. A batch index is continued past its range for every copy, so each copy gets new noise.</summary>
+    /// <summary>
+    /// The whole batch <paramref name="amount"/> times over. Measured with ComfyUI: a noise mask of more than one picture is repeated the same number of
+    /// times (whatever its count), a single one is kept; a batch index continues, each copy shifted by (largest - smallest + 1) of the original
+    /// (<c>[4, 1, 2]</c> twice is <c>[4, 1, 2, 8, 5, 6]</c>); without one none is made.
+    /// </summary>
     public LatentBatch Execute(LatentBatch samples, [Input(Min = 1, Max = 64)] int amount = 1)
     {
+        var data = new float[samples.Data.Length * amount];
+        for (int k = 0; k < amount; k++) Array.Copy(samples.Data, 0, data, k * samples.Data.Length, samples.Data.Length);
+
         var mask = samples.NoiseMask;
-        if (mask is { Batch: > 1 } m) mask = new MaskBatch(m.Batch * amount, m.Height, m.Width, Enumerable.Range(0, amount).SelectMany(_ => m.Data).ToArray());
-        int[]? batch = samples.BatchIndex;
-        if (batch is { Length: > 0 } bi)
+        if (mask is not null && mask.Batch > 1)
         {
-            int offset = bi.Max() - bi.Min() + 1;
-            batch = [.. bi, .. Enumerable.Range(1, Math.Max(0, amount - 1)).SelectMany(i => bi.Select(x => x + i * offset))];
+            var m = new float[mask.Data.Length * amount];
+            for (int k = 0; k < amount; k++) Array.Copy(mask.Data, 0, m, k * mask.Data.Length, mask.Data.Length);
+            mask = new MaskBatch(mask.Batch * amount, mask.Height, mask.Width, m);
         }
-        return Latents.From(Enumerable.Range(0, amount).SelectMany(_ => Enumerable.Range(0, samples.Batch).Select(i => Latents.Frame(samples, i))).ToList(),
-            samples.Channels, samples.Height, samples.Width, mask, batch);
+        int[]? index = samples.BatchIndex;
+        if (index is { Length: > 0 } && amount > 1)
+        {
+            int offset = index.Max() - index.Min() + 1;
+            index = Enumerable.Range(0, amount).SelectMany(k => index.Select(i => i + k * offset)).ToArray();
+        }
+        return new LatentBatch(samples.Batch * amount, samples.Channels, samples.Height, samples.Width, data) { NoiseMask = mask, BatchIndex = index };
     }
 }
 
@@ -203,158 +246,280 @@ public sealed class RepeatLatentBatch
 public sealed class LatentComposite
 {
     /// <summary>
-    /// Pastes <c>samples_from</c> into <c>samples_to</c> at (x, y) pixels (cut to what fits). With <c>feather</c> the pasted part fades in over that many pixels
-    /// from each of its edges that is not on the border of the target.
+    /// Pastes <paramref name="samplesFrom"/> into <paramref name="samplesTo"/> at (x, y) pixels (x / 8, y / 8 cells, rounded down). Measured with ComfyUI:
+    /// <list type="bullet">
+    /// <item>The target area is the target's rows and columns from (y, x) on, as many as the pasted latent has and the target still has; the pasted
+    /// latent is cut to <c>[:height - y, :width - x]</c> as a Python slice cuts (a negative end counts from its end). The cut is then written into the
+    /// area, spread where it has size 1 (a batch or channel count of 1 is used for all; one leftover row or column beyond the target is spread over an
+    /// empty area, changing nothing); other sizes that differ fail with PyTorch's message.</item>
+    /// <item>With <paramref name="feather"/> (f = feather / 8 cells) a weight the size of the cut fades the edges that lie inside the target
+    /// (top when y &gt; 0, bottom when y + its height &lt; the target's height, and so for left and right): for t = 0 .. f - 1, row or column t from
+    /// such an edge is multiplied by (t + 1) / f (single precision, edges in the order top, bottom, left, right for each t). The far edges are counted
+    /// the way a Python slice <c>[h - 1 - t : h - t]</c> counts, so when f is larger than the paste a weight can land near the other edge (f = 4 over 2
+    /// rows weights both rows .25 x .5). The area becomes from x weight + to x (1 - weight). A paste that starts beyond the target and leaves a cut of
+    /// two or more rows or columns fails (with or without feather; ComfyUI's feathered message is not always reproduced).</item>
+    /// </list>
     /// </summary>
     public LatentBatch Execute(LatentBatch samplesTo, LatentBatch samplesFrom, [Input(Min = 0, Max = 16384, Step = 8)] int x = 0,
         [Input(Min = 0, Max = 16384, Step = 8)] int y = 0, [Input(Min = 0, Max = 16384, Step = 8)] int feather = 0)
     {
-        x = Latents.FloorDiv(x, 8); y = Latents.FloorDiv(y, 8); feather = Latents.FloorDiv(feather, 8);
-        int b = samplesTo.Batch, c = samplesTo.Channels, h = samplesTo.Height, w = samplesTo.Width;
-        var result = Latents.Like(samplesTo, b, c, h, w, (float[])samplesTo.Data.Clone());
+        x /= 8;
+        y /= 8;
+        int f = feather / 8;
+        var to = samplesTo;
+        var from = samplesFrom;
+        int H = to.Height, W = to.Width, fh = from.Height, fw = from.Width;
+        int[] target = [to.Batch, to.Channels, Latents.Slice(y, y + fh, H).Count, Latents.Slice(x, x + fw, W).Count];
+        int[] cut = [from.Batch, from.Channels, Latents.Slice(0, H - y, fh).Count, Latents.Slice(0, W - x, fw).Count];
+        int ch = cut[2], cw = cut[3];
+        int[] weightShape = [1, 1, ch, cw];
 
-        // samples_from[:, :, :H - y, :W - x], pasted at s[:, :, y:y + rows, x:x + cols].
-        var (_, fh) = Latents.PySlice(samplesFrom.Height, 0, h - y);
-        var (_, fw) = Latents.PySlice(samplesFrom.Width, 0, w - x);
-        var (ty, th) = Latents.PySlice(h, y, y + (feather == 0 ? samplesFrom.Height : fh));
-        var (tx, tw) = Latents.PySlice(w, x, x + (feather == 0 ? samplesFrom.Width : fw));
-        if (th != fh || tw != fw)
-            throw new ArgumentException($"Latent Composite: the part of samples_from that fits ({fw}x{fh}) does not match the place it goes ({tw}x{th}).");
-        // The pasted values broadcast into the target: a batch or channel count of 1 is stretched, any other must match.
-        if (samplesFrom.Batch != b && samplesFrom.Batch != 1) throw new ArgumentException($"Latent Composite: samples_from has {samplesFrom.Batch} pictures and samples_to {b}.");
-        if (samplesFrom.Channels != c && samplesFrom.Channels != 1) throw new ArgumentException($"Latent Composite: samples_from has {samplesFrom.Channels} channels and samples_to {c}.");
-        if (fh == 0 || fw == 0) return result;
-
-        float[]? mask = null;
-        if (feather != 0)
+        // Shapes of from x weight (a), to x (1 - weight) (b) and their sum (r), checked in that order as PyTorch checks them.
+        int[] a = cut, b = target, r = cut;
+        if (f > 0)
         {
-            mask = new float[fh * fw];
-            Array.Fill(mask, 1f);
-            void Rows(int start, int stop, float f)
+            a = Shape(cut, weightShape);
+            b = Shape(target, weightShape);
+            r = Shape(a, b);
+        }
+        Latents.CheckPaste(target, r);
+
+        float[]? weight = null;
+        if (f > 0)
+        {
+            weight = new float[ch * cw];
+            Array.Fill(weight, 1f);
+            for (int t = 0; t < f; t++)
             {
-                var (s, n) = Latents.PySlice(fh, start, stop);
-                for (int r = s; r < s + n; r++) for (int col = 0; col < fw; col++) mask[r * fw + col] *= f;
-            }
-            void Cols(int start, int stop, float f)
-            {
-                var (s, n) = Latents.PySlice(fw, start, stop);
-                for (int col = s; col < s + n; col++) for (int r = 0; r < fh; r++) mask[r * fw + col] *= f;
-            }
-            for (int t = 0; t < feather; t++)
-            {
-                float f = (float)(1.0 / feather * (t + 1));
-                if (y != 0) Rows(t, 1 + t, f);
-                if (y + fh < h) Rows(fh - 1 - t, fh - t, f);
-                if (x != 0) Cols(t, 1 + t, f);
-                if (x + fw < w) Cols(fw - 1 - t, fw - t, f);
+                float factor = (float)((1.0 + t) / f);
+                if (y != 0) Rows(weight, ch, cw, t, t + 1, factor);
+                if (y + ch < H) Rows(weight, ch, cw, ch - 1 - t, ch - t, factor);
+                if (x != 0) Columns(weight, ch, cw, t, t + 1, factor);
+                if (x + cw < W) Columns(weight, ch, cw, cw - 1 - t, cw - t, factor);
             }
         }
-        for (int n = 0; n < b; n++)
+
+        // Per axis and output position: where it reads the cut (F), the weight for from (M1), the target (T) and the weight for to (M2).
+        var maps = new (int[] F, int[] M1, int[] T, int[] M2)[4];
+        for (int d = 0; d < 4; d++)
         {
-            int fb = samplesFrom.Batch == 1 ? 0 : n;
-            for (int ch = 0; ch < c; ch++)
+            int n = target[d];
+            var map = (F: new int[n], M1: new int[n], T: new int[n], M2: new int[n]);
+            for (int i = 0; i < n; i++)
             {
-                int fc = samplesFrom.Channels == 1 ? 0 : ch;
-                for (int r = 0; r < fh; r++)
-                    for (int col = 0; col < fw; col++)
+                int ir = r[d] == 1 ? 0 : i;
+                int ia = a[d] == 1 ? 0 : ir, ib = b[d] == 1 ? 0 : ir;
+                map.F[i] = cut[d] == 1 ? 0 : ia;
+                map.M1[i] = weightShape[d] == 1 ? 0 : ia;
+                map.T[i] = target[d] == 1 ? 0 : ib;
+                map.M2[i] = weightShape[d] == 1 ? 0 : ib;
+            }
+            maps[d] = map;
+        }
+
+        var data = (float[])to.Data.Clone();
+        for (int n = 0; n < target[0]; n++)
+            for (int c = 0; c < target[1]; c++)
+            {
+                int dst = (n * to.Channels + c) * H * W;
+                int src = (maps[0].F[n] * from.Channels + maps[1].F[c]) * fh * fw;
+                int old = (maps[0].T[n] * to.Channels + maps[1].T[c]) * H * W;
+                for (int row = 0; row < target[2]; row++)
+                    for (int col = 0; col < target[3]; col++)
                     {
-                        float s = samplesFrom.Data[((fb * samplesFrom.Channels + fc) * samplesFrom.Height + r) * samplesFrom.Width + col];
-                        int ti = ((n * c + ch) * h + ty + r) * w + tx + col;
-                        if (mask is null) result.Data[ti] = s;
-                        else
+                        float v = from.Data[src + maps[2].F[row] * fw + maps[3].F[col]];
+                        if (weight is not null)
                         {
-                            float m = mask[r * fw + col];
-                            result.Data[ti] = s * m + result.Data[ti] * (1f - m);
+                            float m1 = weight[maps[2].M1[row] * cw + maps[3].M1[col]], m2 = weight[maps[2].M2[row] * cw + maps[3].M2[col]];
+                            v = v * m1 + to.Data[old + (y + maps[2].T[row]) * W + x + maps[3].T[col]] * (1f - m2);
                         }
+                        data[dst + (y + row) * W + x + col] = v;
                     }
             }
+        return Latents.Like(to, to.Batch, to.Channels, H, W, data);
+    }
+
+    /// <summary>The broadcast shape of two 4-D shapes, the last dimension checked first (PyTorch's order and message).</summary>
+    static int[] Shape(int[] a, int[] b)
+    {
+        var r = new int[4];
+        for (int d = 3; d >= 0; d--) r[d] = Latents.Broadcast(a[d], b[d], d);
+        return r;
+    }
+
+    static void Rows(float[] weight, int h, int w, int start, int stop, float factor)
+    {
+        var (s, n) = Latents.Slice(start, stop, h);
+        for (int r = s; r < s + n; r++)
+            for (int q = 0; q < w; q++) weight[r * w + q] *= factor;
+    }
+
+    static void Columns(float[] weight, int h, int w, int start, int stop, float factor)
+    {
+        var (s, n) = Latents.Slice(start, stop, w);
+        for (int r = 0; r < h; r++)
+            for (int q = s; q < s + n; q++) weight[r * w + q] *= factor;
+    }
+}
+
+[Node(Category = "model/latent", DisplayName = "Latent Composite Masked")]
+public sealed class LatentCompositeMasked
+{
+    /// <summary>
+    /// Pastes <paramref name="source"/> into <paramref name="destination"/> at (x, y) pixels (x / 8, y / 8 cells), through <paramref name="mask"/>.
+    /// Measured with ComfyUI:
+    /// <list type="bullet">
+    /// <item><paramref name="resizeSource"/>: the source is first stretched bilinearly to the destination's size (no cropping).</item>
+    /// <item>The source batch is read around or cut to the destination's; its channels must equal the destination's or be 1.</item>
+    /// <item>The mask is resized bilinearly to the source's size, read around or cut to the destination's batch, and cut with the source to what
+    /// fits. Its values are used as they are (not clamped): result = source x mask + destination x (1 - mask). No mask is a mask of 1 (measured: an infinite destination value still turns into NaN, inf x 0).</item>
+    /// </list>
+    /// </summary>
+    public LatentBatch Execute(LatentBatch destination, LatentBatch source, [Input(Min = 0, Max = 16384, Step = 8)] int x = 0,
+        [Input(Min = 0, Max = 16384, Step = 8)] int y = 0, bool resizeSource = false, MaskBatch? mask = null)
+    {
+        x /= 8;
+        y /= 8;
+        var dst = destination;
+        var src = source;
+        if (resizeSource && (src.Height != dst.Height || src.Width != dst.Width))
+            src = new LatentBatch(src.Batch, src.Channels, dst.Height, dst.Width,
+                TorchInterpolate.Resize(src.Data, src.Batch * src.Channels, src.Height, src.Width, dst.Height, dst.Width, "bilinear"));
+        src = Latents.RepeatToBatch(src, dst.Batch);
+
+        var data = (float[])dst.Data.Clone();
+        int rh = Math.Max(0, Math.Min(src.Height, dst.Height - y)), rw = Math.Max(0, Math.Min(src.Width, dst.Width - x));
+        if (rh == 0 || rw == 0) return Latents.Like(dst, dst.Batch, dst.Channels, dst.Height, dst.Width, data);
+        Latents.CheckPaste([dst.Batch, dst.Channels, rh, rw], [src.Batch, src.Channels, rh, rw]);
+
+        MaskBatch? m = null;
+        if (mask is not null)
+        {
+            m = mask;
+            if (m.Height != src.Height || m.Width != src.Width)
+                m = new MaskBatch(m.Batch, src.Height, src.Width, TorchInterpolate.Resize(m.Data, m.Batch, m.Height, m.Width, src.Height, src.Width, "bilinear"));
+            m = Latents.RepeatToBatch(m, dst.Batch);
         }
-        return result;
+
+        int plane = dst.Height * dst.Width, srcPlane = src.Height * src.Width;
+        for (int n = 0; n < dst.Batch; n++)
+            for (int c = 0; c < dst.Channels; c++)
+            {
+                int to = (n * dst.Channels + c) * plane, from = (n * src.Channels + (src.Channels == 1 ? 0 : c)) * srcPlane;
+                for (int r = 0; r < rh; r++)
+                    for (int q = 0; q < rw; q++)
+                    {
+                        int o = to + (y + r) * dst.Width + x + q;
+                        float v = src.Data[from + r * src.Width + q];
+                        float w = m is null ? 1f : m.Data[n * srcPlane + r * src.Width + q];
+                        data[o] = v * w + data[o] * (1f - w);
+                    }
+            }
+        return Latents.Like(dst, dst.Batch, dst.Channels, dst.Height, dst.Width, data);
     }
 }
 
 [Node(Category = "model/latent/transform", DisplayName = "Flip Latent")]
 public sealed class LatentFlip
 {
-    public static string[] Methods() => ["x-axis: vertically", "y-axis: horizontally"];
-
-    public LatentBatch Execute(LatentBatch samples, [Input(OptionsProvider = nameof(Methods))] string flipMethod = "x-axis: vertically")
+    /// <summary>"x-axis: vertically" turns the rows upside down, "y-axis: horizontally" mirrors left and right (measured with ComfyUI).</summary>
+    public LatentBatch Execute(LatentBatch samples, [Input(Options = ["x-axis: vertically", "y-axis: horizontally"])] string flipMethod = "x-axis: vertically")
     {
-        bool vertical = flipMethod.StartsWith('x');
-        if (!vertical && !flipMethod.StartsWith('y')) return samples;
-        var r = Latents.Like(samples, samples.Batch, samples.Channels, samples.Height, samples.Width, new float[samples.Data.Length]);
-        int w = samples.Width, h = samples.Height;
-        for (int plane = 0; plane < samples.Batch * samples.Channels; plane++)
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                    r.Data[(plane * h + y) * w + x] = samples.Data[(plane * h + (vertical ? h - 1 - y : y)) * w + (vertical ? x : w - 1 - x)];
-        return r;
+        bool vertical = flipMethod == "x-axis: vertically";
+        if (!vertical && flipMethod != "y-axis: horizontally") return samples; // measured: another value leaves the latent as it is
+        int h = samples.Height, w = samples.Width, planes = samples.Batch * samples.Channels;
+        var data = new float[samples.Data.Length];
+        for (int p = 0; p < planes; p++)
+            for (int r = 0; r < h; r++)
+                for (int q = 0; q < w; q++)
+                    data[(p * h + r) * w + q] = samples.Data[(p * h + (vertical ? h - 1 - r : r)) * w + (vertical ? q : w - 1 - q)];
+        return Latents.Like(samples, samples.Batch, samples.Channels, h, w, data);
     }
 }
 
 [Node(Category = "model/latent/transform", DisplayName = "Rotate Latent")]
 public sealed class LatentRotate
 {
-    public static string[] Rotations() => ["none", "90 degrees", "180 degrees", "270 degrees"];
-
-    /// <summary>Rotates clockwise (<c>torch.rot90(dims=[3, 2])</c>). 90 and 270 swap width and height; the noise mask is left as it is, as in ComfyUI.</summary>
-    public LatentBatch Execute(LatentBatch samples, [Input(OptionsProvider = nameof(Rotations))] string rotation = "none")
+    /// <summary>Rotates clockwise by the chosen angle (measured with ComfyUI: 90 degrees turns [[0, 1, 2], [3, 4, 5]] into [[3, 0], [4, 1], [5, 2]]).</summary>
+    public LatentBatch Execute(LatentBatch samples, [Input(Options = ["none", "90 degrees", "180 degrees", "270 degrees"])] string rotation = "none")
     {
-        int quarter = rotation.StartsWith("90") ? 1 : rotation.StartsWith("180") ? 2 : rotation.StartsWith("270") ? 3 : 0;
-        if (quarter == 0) return samples;
-        int h = samples.Height, w = samples.Width;
-        int nh = quarter % 2 == 1 ? w : h, nw = quarter % 2 == 1 ? h : w;
-        var r = Latents.Like(samples, samples.Batch, samples.Channels, nh, nw, new float[samples.Data.Length]);
-        for (int plane = 0; plane < samples.Batch * samples.Channels; plane++)
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
+        int turns = rotation switch { "90 degrees" => 1, "180 degrees" => 2, "270 degrees" => 3, _ => 0 };
+        if (turns == 0) return samples; // measured: "none" (or another value) leaves the samples as they are
+        int h = samples.Height, w = samples.Width, planes = samples.Batch * samples.Channels;
+        int nh = turns == 2 ? h : w, nw = turns == 2 ? w : h;
+        var data = new float[samples.Data.Length];
+        for (int p = 0; p < planes; p++)
+            for (int r = 0; r < nh; r++)
+                for (int q = 0; q < nw; q++)
                 {
-                    // Clockwise: (x, y) -> (h-1-y, x) for 90, (w-1-x, h-1-y) for 180, (y, w-1-x) for 270.
-                    var (ny, nx) = quarter switch { 1 => (x, h - 1 - y), 2 => (h - 1 - y, w - 1 - x), _ => (w - 1 - x, y) };
-                    r.Data[(plane * nh + ny) * nw + nx] = samples.Data[(plane * h + y) * w + x];
+                    // Output (r, q) comes from source (sr, sq).
+                    var (sr, sq) = turns switch
+                    {
+                        1 => (h - 1 - q, r),
+                        2 => (h - 1 - r, w - 1 - q),
+                        _ => (q, w - 1 - r),
+                    };
+                    data[(p * nh + r) * nw + q] = samples.Data[(p * h + sr) * w + sq];
                 }
-        return r;
+        return Latents.Like(samples, samples.Batch, samples.Channels, nh, nw, data);
     }
 }
 
 [Node(Category = "model/latent/transform", DisplayName = "Crop Latent")]
 public sealed class LatentCrop
 {
-    /// <summary>The (width, height) pixel part at (x, y). The start is pulled back so at least 8 latent cells (64 pixels) remain; the size is cut to what is there.</summary>
+    /// <summary>
+    /// The width x height pixel area at (x, y), all divided by 8 (rounded down). Measured with ComfyUI: a start beyond (size - 8) cells is pulled back
+    /// to size - 8, and the rows and columns are then taken as a Python slice <c>[start : start + size]</c> takes them, so a start that became negative
+    /// counts from the end (a 4-cell latent cropped at 1 keeps all 4). The noise mask is kept as it is (not cropped).
+    /// </summary>
     public LatentBatch Execute(LatentBatch samples, [Input(Min = 64, Max = 16384, Step = 8)] int width = 512, [Input(Min = 64, Max = 16384, Step = 8)] int height = 512,
         [Input(Min = 0, Max = 16384, Step = 8)] int x = 0, [Input(Min = 0, Max = 16384, Step = 8)] int y = 0)
     {
-        x = Latents.FloorDiv(x, 8); y = Latents.FloorDiv(y, 8);
-        if (x > samples.Width - 8) x = samples.Width - 8;
-        if (y > samples.Height - 8) y = samples.Height - 8;
-        var (sx, cw) = Latents.PySlice(samples.Width, x, x + Latents.FloorDiv(width, 8));
-        var (sy, ch) = Latents.PySlice(samples.Height, y, y + Latents.FloorDiv(height, 8));
-        var r = Latents.Like(samples, samples.Batch, samples.Channels, ch, cw, new float[samples.Batch * samples.Channels * ch * cw]);
-        for (int plane = 0; plane < samples.Batch * samples.Channels; plane++)
-            for (int row = 0; row < ch; row++)
-                Array.Copy(samples.Data, (plane * samples.Height + sy + row) * samples.Width + sx, r.Data, (plane * ch + row) * cw, cw);
-        return r;
+        int h = samples.Height, w = samples.Width;
+        int cx = x / 8, cy = y / 8, cw = width / 8, ch = height / 8;
+        if (cx > w - 8) cx = w - 8;
+        if (cy > h - 8) cy = h - 8;
+        var (r0, rows) = Latents.Slice(cy, cy + ch, h);
+        var (q0, cols) = Latents.Slice(cx, cx + cw, w);
+        int planes = samples.Batch * samples.Channels;
+        var data = new float[planes * rows * cols];
+        for (int p = 0; p < planes; p++)
+            for (int r = 0; r < rows; r++)
+                Array.Copy(samples.Data, (p * h + r0 + r) * w + q0, data, (p * rows + r) * cols, cols);
+        return Latents.Like(samples, samples.Batch, samples.Channels, rows, cols, data);
     }
 }
 
 [Node(Category = "experimental", DisplayName = "Latent Blend")]
 public sealed class LatentBlend
 {
-    /// <summary><c>samples1 * blend_factor + samples2 * (1 - blend_factor)</c>; a second latent of another shape is first resized to the first's size (bicubic, centre crop).</summary>
+    /// <summary>
+    /// samples1 x blend_factor + samples2 x (1 - blend_factor). Measured with ComfyUI: when the shapes differ at all, samples2 is first brought to samples1's
+    /// height and width (cut to its aspect ratio around the centre, bicubic; the same size is left as it is); batch and channels then broadcast as
+    /// PyTorch does (one picture is used for all). The arithmetic is single precision.
+    /// </summary>
     public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2, [Input(Min = 0, Max = 1, Step = 0.01)] double blendFactor = 0.5)
     {
-        if (samples1.Batch != samples2.Batch || samples1.Channels != samples2.Channels || samples1.Height != samples2.Height || samples1.Width != samples2.Width)
-            samples2 = Latents.Upscale(samples2, samples1.Width, samples1.Height, "bicubic", "center");
-        float f1 = (float)blendFactor, f2 = (float)(1 - blendFactor);
-        var (b, c, h, w, data) = Latents.Elementwise(samples1, samples2, (a, s) => a * f1 + s * f2);
-        return Latents.Like(samples1, b, c, h, w, data);
+        var s2 = samples2;
+        if (s2.Height != samples1.Height || s2.Width != samples1.Width)
+        {
+            var (resized, h, w) = TorchInterpolate.CommonUpscale(s2.Data, s2.Batch, s2.Channels, s2.Height, s2.Width, samples1.Width, samples1.Height, "bicubic", "center");
+            s2 = new LatentBatch(s2.Batch, s2.Channels, h, w, resized);
+        }
+        float a = (float)blendFactor, b = (float)(1 - blendFactor);
+        var (data, n, c) = Latents.Combine(samples1, s2, (p, q) => p * a + q * b);
+        return Latents.Like(samples1, n, c, samples1.Height, samples1.Width, data);
     }
 }
 
 [Node(Category = "model/latent", DisplayName = "Set Latent Noise Mask")]
 public sealed class SetLatentNoiseMask
 {
-    /// <summary>Marks the part of the latent that sampling may change (mask = 1); the rest is held at the original. The mask may be any size: the sampler resizes it to the latent.</summary>
+    /// <summary>
+    /// The latent with <paramref name="mask"/> as its noise mask (1 = regenerate, 0 = keep), at the mask's own size and batch (measured with ComfyUI: the mask is
+    /// stored as given; the sampler fits it to the latent). The batch index is kept.
+    /// </summary>
     public LatentBatch Execute(LatentBatch samples, MaskBatch mask) =>
         new(samples.Batch, samples.Channels, samples.Height, samples.Width, (float[])samples.Data.Clone()) { NoiseMask = mask, BatchIndex = samples.BatchIndex };
 }
@@ -362,33 +527,35 @@ public sealed class SetLatentNoiseMask
 [Node(Category = "model/latent/advanced", DisplayName = "LatentAdd")]
 public sealed class LatentAdd
 {
-    /// <summary>The second latent is brought to the first one's shape (bilinear resize with centre crop, then repeated or cut to its batch size) and added.</summary>
+    /// <summary>samples1 + samples2, samples2 first brought to samples1's shape (centre cut and bilinear resize, batch read around or cut).</summary>
     public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2)
     {
-        var (b, c, h, w, data) = Latents.Elementwise(samples1, Latents.ReshapeTo(samples1, samples2), (x, y) => x + y);
-        return Latents.Like(samples1, b, c, h, w, data);
+        var (data, n, c) = Latents.Combine(samples1, Latents.ShapedLike(samples2, samples1), (a, b) => a + b);
+        return Latents.Like(samples1, n, c, samples1.Height, samples1.Width, data);
     }
 }
 
 [Node(Category = "model/latent/advanced", DisplayName = "LatentSubtract")]
 public sealed class LatentSubtract
 {
+    /// <summary>samples1 - samples2, samples2 first brought to samples1's shape (centre cut and bilinear resize, batch read around or cut).</summary>
     public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2)
     {
-        var (b, c, h, w, data) = Latents.Elementwise(samples1, Latents.ReshapeTo(samples1, samples2), (x, y) => x - y);
-        return Latents.Like(samples1, b, c, h, w, data);
+        var (data, n, c) = Latents.Combine(samples1, Latents.ShapedLike(samples2, samples1), (a, b) => a - b);
+        return Latents.Like(samples1, n, c, samples1.Height, samples1.Width, data);
     }
 }
 
 [Node(Category = "model/latent/advanced", DisplayName = "LatentMultiply")]
 public sealed class LatentMultiply
 {
-    public LatentBatch Execute(LatentBatch samples, [Input(Min = -10, Max = 10, Step = 0.01)] double multiplier = 1.0)
+    /// <summary>Every value times <paramref name="multiplier"/> (single precision).</summary>
+    public LatentBatch Execute(LatentBatch samples, [Input(Min = -10.0, Max = 10.0, Step = 0.01)] double multiplier = 1.0)
     {
         float m = (float)multiplier;
-        var r = Latents.Like(samples, samples.Batch, samples.Channels, samples.Height, samples.Width, new float[samples.Data.Length]);
-        for (int i = 0; i < r.Data.Length; i++) r.Data[i] = samples.Data[i] * m;
-        return r;
+        var data = new float[samples.Data.Length];
+        for (int i = 0; i < data.Length; i++) data[i] = samples.Data[i] * m;
+        return Latents.Like(samples, samples.Batch, samples.Channels, samples.Height, samples.Width, data);
     }
 }
 
@@ -396,55 +563,69 @@ public sealed class LatentMultiply
 public sealed class LatentInterpolate
 {
     /// <summary>
-    /// Mixes two latents by <c>ratio</c> (1 = all of the first) while keeping the strength: at every position the direction over the channels is interpolated and the length
-    /// (the norm over the channels) is interpolated separately, so a half-way mix is not washed out like a plain average.
-    /// ComfyUI divides by the per-position norms without keeping their dimension, so PyTorch broadcasting lines them up with the channels: with a batch of one this
-    /// is the norm of the same picture, with a batch as large as the channel count picture <i>c</i>'s norm scales channel <i>c</i>, and any other batch size is an
-    /// error there. All three are reproduced.
+    /// Interpolates direction and length separately: at each position the channel vectors are normalised, mixed with <paramref name="ratio"/> (1 = samples1),
+    /// normalised again, and given the mixed length. samples2 is first brought to samples1's shape (centre cut and bilinear resize, batch read around or cut).
+    /// Measured with ComfyUI: the per-position lengths have the shape (batch, height, width) and are broadcast against (batch, channels, height, width)
+    /// as PyTorch broadcasts, so in a batch of several pictures channel k is divided by picture k's length; batch and channel counts that are neither
+    /// equal nor 1 fail. After each division by a length, NaN becomes 0 and an infinity the largest finite float (a zero vector mixes as 0).
     /// </summary>
-    public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2, [Input(Min = 0, Max = 1, Step = 0.01)] double ratio = 1.0)
+    public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2, [Input(Min = 0.0, Max = 1.0, Step = 0.01)] double ratio = 1.0)
     {
-        var s2 = Latents.ReshapeTo(samples1, samples2);
-        int nb = samples1.Batch, c = samples1.Channels, h = samples1.Height, w = samples1.Width, plane = h * w, per = c * plane;
-        if (s2.Channels != c) throw new ArgumentException($"The latents have {c} and {s2.Channels} channels and cannot be interpolated.");
-        if (nb != 1 && nb != c)
-            throw new ArgumentException($"The size of tensor a ({c}) must match the size of tensor b ({nb}) at non-singleton dimension 1 (ComfyUI's LatentInterpolate only handles a batch of 1 or of {c}).");
+        var s1 = samples1;
+        var s2 = Latents.ShapedLike(samples2, samples1);
+        int b = s1.Batch, c = s1.Channels, c2 = s2.Channels, plane = s1.Height * s1.Width;
+        // The lengths (b, plane) line up with the channel axis: channel k uses length row (b == 1 ? 0 : k).
+        int k = Latents.Broadcast(Latents.Broadcast(c, b, 1), Latents.Broadcast(c2, b, 1), 1);
+        float r = (float)ratio, q = (float)(1 - ratio);
+        var m1 = Norms(s1.Data, b, c, plane);
+        var m2 = Norms(s2.Data, b, c2, plane);
 
-        static float[] Norms(float[] data, int nb, int c, int plane)
-        {
-            var m = new float[nb * plane];
-            for (int n = 0; n < nb; n++)
+        var t = new float[b * k * plane];
+        for (int n = 0; n < b; n++)
+            for (int ch = 0; ch < k; ch++)
+            {
+                int i1 = (n * c + (c == 1 ? 0 : ch)) * plane, i2 = (n * c2 + (c2 == 1 ? 0 : ch)) * plane;
+                int len = (b == 1 ? 0 : ch) * plane, o = (n * k + ch) * plane;
                 for (int p = 0; p < plane; p++)
                 {
-                    double sum = 0;
-                    for (int ch = 0; ch < c; ch++) { double v = data[(n * c + ch) * plane + p]; sum += v * v; }
-                    m[n * plane + p] = (float)Math.Sqrt(sum);
+                    float a = Finite(s1.Data[i1 + p] / m1[len + p]), d = Finite(s2.Data[i2 + p] / m2[len + p]);
+                    t[o + p] = a * r + d * q;
                 }
-            return m;
-        }
-        int K(int n, int ch) => nb == 1 ? 0 : ch; // which norm divides element (n, ch): the broadcast described above
+            }
+        var mt = Norms(t, b, k, plane);
+        var result = new float[t.Length];
+        for (int n = 0; n < b; n++)
+            for (int ch = 0; ch < k; ch++)
+            {
+                int len = (b == 1 ? 0 : ch) * plane, o = (n * k + ch) * plane;
+                for (int p = 0; p < plane; p++)
+                {
+                    float mixed = m1[len + p] * r + m2[len + p] * q;
+                    result[o + p] = Finite(t[o + p] / mt[len + p]) * mixed;
+                }
+            }
+        return Latents.Like(samples1, b, k, s1.Height, s1.Width, result);
+    }
 
-        var m1 = Norms(samples1.Data, nb, c, plane);
-        var m2 = Norms(s2.Data, nb, c, plane);
-        float r1 = (float)ratio, r2 = (float)(1.0 - ratio);
-        var t = new float[samples1.Data.Length];
-        for (int n = 0; n < nb; n++)
-            for (int ch = 0; ch < c; ch++)
-                for (int p = 0; p < plane; p++)
+    /// <summary>torch.nan_to_num: NaN (0 / 0) becomes 0, an infinity (x / 0) the largest finite float of its sign (measured).</summary>
+    static float Finite(float v) => float.IsNaN(v) ? 0f : float.IsPositiveInfinity(v) ? float.MaxValue : float.IsNegativeInfinity(v) ? float.MinValue : v;
+
+    /// <summary>The length of the channel vector at each position, per picture: (b, plane).</summary>
+    static float[] Norms(float[] data, int b, int c, int plane)
+    {
+        var r = new float[b * plane];
+        for (int n = 0; n < b; n++)
+            for (int p = 0; p < plane; p++)
+            {
+                float sum = 0;
+                for (int ch = 0; ch < c; ch++)
                 {
-                    int i = n * per + ch * plane + p, k = K(n, ch) * plane + p;
-                    t[i] = Latents.NanToNum(samples1.Data[i] / m1[k]) * r1 + Latents.NanToNum(s2.Data[i] / m2[k]) * r2;
+                    float v = data[(n * c + ch) * plane + p];
+                    sum += v * v;
                 }
-        var mt = Norms(t, nb, c, plane);
-        var result = Latents.Like(samples1, nb, c, h, w, new float[t.Length]);
-        for (int n = 0; n < nb; n++)
-            for (int ch = 0; ch < c; ch++)
-                for (int p = 0; p < plane; p++)
-                {
-                    int i = n * per + ch * plane + p, k = K(n, ch) * plane + p;
-                    result.Data[i] = Latents.NanToNum(t[i] / mt[k]) * (m1[k] * r1 + m2[k] * r2);
-                }
-        return result;
+                r[n * plane + p] = MathF.Sqrt(sum);
+            }
+        return r;
     }
 }
 
@@ -452,8 +633,8 @@ public sealed class LatentInterpolate
 public sealed class LatentBatchNode
 {
     /// <summary>
-    /// Stacks two latents into one batch; a second latent of another size is resized (bilinear, centre crop) to the first's. The batch indexes are joined, so
-    /// the second latent's pictures keep their own noise (index 0 on); the first latent's noise mask is kept.
+    /// Both latents in one batch, measured to behave as Batch Latents (<see cref="Batching.Latents"/>): samples2 brought to samples1's size, the noise mask
+    /// of samples1, the batch indexes of both one after the other.
     /// </summary>
     public LatentBatch Execute(LatentBatch samples1, LatentBatch samples2) => Batching.Latents([samples1, samples2]);
 }
@@ -461,72 +642,22 @@ public sealed class LatentBatchNode
 [Node(Category = "model/latent/advanced", DisplayName = "LatentBatchSeedBehavior")]
 public sealed class LatentBatchSeedBehavior
 {
-    public static string[] Behaviors() => ["random", "fixed"];
-
-    /// <summary>"fixed" gives every picture the noise of the first one (so the batch varies only by prompt or settings); "random" gives each its own.</summary>
-    public LatentBatch Execute(LatentBatch samples, [Input(OptionsProvider = nameof(Behaviors))] string seedBehavior = "fixed") => seedBehavior switch
-    {
-        "random" => new(samples.Batch, samples.Channels, samples.Height, samples.Width, samples.Data) { NoiseMask = samples.NoiseMask },
-        "fixed" => new(samples.Batch, samples.Channels, samples.Height, samples.Width, samples.Data)
-        {
-            NoiseMask = samples.NoiseMask, BatchIndex = Enumerable.Repeat(samples.BatchIndex is { Length: > 0 } bi ? bi[0] : 0, samples.Batch).ToArray(),
-        },
-        _ => samples,
-    };
-}
-
-[Node(Category = "model/latent", DisplayName = "Latent Composite Masked")]
-public sealed class LatentCompositeMasked
-{
     /// <summary>
-    /// Pastes <c>source</c> into <c>destination</c> at (x, y) pixels through an optional mask (resized bilinearly to the source); with <c>resize_source</c> the source is
-    /// first stretched to the destination's size. A source batch or mask batch that is shorter than the destination's is repeated.
+    /// "fixed": every picture gets the first picture's noise (batch index = the first entry of the latent's own, or 0, for every picture); "random": the
+    /// batch index is removed, so picture i gets noise i. The noise mask is kept (measured with ComfyUI).
     /// </summary>
-    public LatentBatch Execute(LatentBatch destination, LatentBatch source, [Input(Min = 0, Max = 16384, Step = 8)] int x = 0, [Input(Min = 0, Max = 16384, Step = 8)] int y = 0,
-        bool resizeSource = false, MaskBatch? mask = null)
+    public LatentBatch Execute(LatentBatch samples, [Input(Options = ["random", "fixed"])] string seedBehavior = "fixed")
     {
-        int db = destination.Batch, c = destination.Channels, dh = destination.Height, dw = destination.Width;
-        if (resizeSource)
-            source = Latents.Like(source, source.Batch, source.Channels, dh, dw,
-                TorchInterpolate.Resize(source.Data, source.Batch * source.Channels, source.Height, source.Width, dh, dw, "bilinear"));
-        source = Latents.RepeatToBatch(source, db);
-        if (source.Channels != c && source.Channels != 1) throw new ArgumentException($"The latents have {c} and {source.Channels} channels and cannot be composited.");
-        int sh = source.Height, sw = source.Width;
-
-        x = Math.Max(-sw * 8, Math.Min(x, dw * 8));
-        y = Math.Max(-sh * 8, Math.Min(y, dh * 8));
-        int left = Latents.FloorDiv(x, 8), top = Latents.FloorDiv(y, 8), right = left + sw, bottom = top + sh;
-
-        float[]? m = null; // (batch, sh, sw), already repeated to the destination's batch
-        if (mask is not null)
+        int[]? index = seedBehavior switch
         {
-            var resized = TorchInterpolate.Resize(mask.Data, mask.Batch, mask.Height, mask.Width, sh, sw, "bilinear");
-            m = new float[db * sh * sw];
-            for (int b = 0; b < db; b++) Array.Copy(resized, (b % mask.Batch) * sh * sw, m, b * sh * sw, sh * sw);
-        }
-
-        // Only the part of the source that lands on the destination is used.
-        int visibleW = dw - left + Math.Min(0, x), visibleH = dh - top + Math.Min(0, y);
-        var (_, vh) = Latents.PySlice(sh, 0, visibleH);
-        var (_, vw) = Latents.PySlice(sw, 0, visibleW);
-        var (ty, th) = Latents.PySlice(dh, top, bottom);
-        var (tx, tw) = Latents.PySlice(dw, left, right);
-        if (th != vh || tw != vw)
-            throw new ArgumentException($"Latent Composite Masked: the visible part of the source ({vw}x{vh}) does not match the place it goes ({tw}x{th}).");
-
-        var result = Latents.Like(destination, db, c, dh, dw, (float[])destination.Data.Clone());
-        for (int b = 0; b < db; b++)
-            for (int ch = 0; ch < c; ch++)
-            {
-                int sc = source.Channels == 1 ? 0 : ch;
-                for (int yy = 0; yy < vh; yy++)
-                    for (int xx = 0; xx < vw; xx++)
-                    {
-                        float wgt = m is null ? 1f : m[(b * sh + yy) * sw + xx];
-                        int di = ((b * c + ch) * dh + ty + yy) * dw + tx + xx;
-                        result.Data[di] = wgt * source.Data[((b * source.Channels + sc) * sh + yy) * sw + xx] + (1f - wgt) * result.Data[di];
-                    }
-            }
-        return result;
+            "random" => null,
+            "fixed" => Enumerable.Repeat(samples.BatchIndex is { Length: > 0 } own ? own[0] : 0, samples.Batch).ToArray(),
+            _ => samples.BatchIndex,
+        };
+        return new LatentBatch(samples.Batch, samples.Channels, samples.Height, samples.Width, (float[])samples.Data.Clone())
+        {
+            NoiseMask = samples.NoiseMask,
+            BatchIndex = index,
+        };
     }
 }

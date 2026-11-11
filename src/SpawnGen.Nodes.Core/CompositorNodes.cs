@@ -1,26 +1,27 @@
 using System.Security.Cryptography;
-using System.Text;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>
-/// ComfyUI's LAYERS value (comfy_api Layers.Document): a stack of raster layers with an optional document canvas. Add Layer and Layers From Bounding
-/// Boxes build it; Create Layered Image composites it.
-/// </summary>
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries and their tooltips, SpawnGen's tests and fixture
+// (Fixtures/bbox/compositor.json.gz) and black-box probes of ComfyUI (2026-11-11). Pillow's resize and rotation come from PilLanczos / PilTransform,
+// PyTorch's bilinear resize from TorchInterpolate, Python's semantics from the Py* helpers. ComfyUI's layer fingerprint could not be derived from its
+// behaviour; SpawnGen hashes the same inputs its own way (a documented difference, PARITY.md).
+
+/// <summary>ComfyUI's LAYERS: a layer stack built by Add Layer / Layers From Bounding Boxes for Create Layered Image.</summary>
 [Socket("LAYERS")]
 public sealed class LayerDocument
 {
     public int Version { get; init; } = 1;
-    /// <summary>The document canvas (width, height), when one was given.</summary>
-    public (int W, int H)? Canvas { get; init; }
-    public IReadOnlyList<LayerItem> Layers { get; init; } = [];
+    /// <summary>The document canvas (width, height); null derives it from the placed layers.</summary>
+    public (int, int)? Canvas { get; init; }
+    public List<LayerItem> Layers { get; init; } = [];
 }
 
 /// <summary>
-/// One layer item (Layers.LayerItem): the picture (a batch expands to consecutive layers), its placement and look. Null fields are absent in ComfyUI's
-/// dict and take its defaults (opacity 1, blend "normal", visible, no rotation, the picture's own size).
+/// One item of a LAYERS document: a picture (a batch expands to consecutive layers) and the keys ComfyUI stores when they are set: placement,
+/// stacking, a transparency mask (1 = transparent), name, opacity, blend mode, visibility, flips, rotation (radians, clockwise) and display size.
 /// </summary>
 public sealed record LayerItem(ImageBatch Image)
 {
@@ -35,419 +36,33 @@ public sealed record LayerItem(ImageBatch Image)
     public bool? Visible { get; init; }
     public bool FlipH { get; init; }
     public bool FlipV { get; init; }
-    /// <summary>Clockwise, in radians.</summary>
     public double? Rotation { get; init; }
     public long? W { get; init; }
     public long? H { get; init; }
 }
 
-/// <summary>ComfyUI's compositor (comfy_extras/nodes_compositor.py): the layer stack expanded to frames, placed, blended and flattened.</summary>
-public static class Compositor
-{
-    public const int MaxLayers = 50;
-    public const int MaxResolution = 16384;
-    const float OpaqueEpsilon = 1e-3f;
-
-    /// <summary>One frame of a layer item, as expand_item_frames makes it.</summary>
-    public sealed record Frame(float[] Pixels, int Height, int Width, int Channels, float[]? Mask, int MaskHeight, int MaskWidth, string? Name, long X, long Y,
-        long W, long H, double Rotation, double Opacity, string Blend, bool Visible, bool FlipH, bool FlipV);
-
-    /// <summary>document_items: the raster items, checked (version 1, known blend modes) and stably sorted by z_index.</summary>
-    public static List<LayerItem> DocumentItems(LayerDocument? doc)
-    {
-        if (doc is null) return [];
-        if (doc.Version != 1) throw new PyException("ValueError", $"LAYERS document version {doc.Version} is not supported");
-        var items = new List<LayerItem>();
-        foreach (var item in doc.Layers)
-        {
-            if (item.Type != "raster") throw new PyException("ValueError", $"LAYERS item type {PyText.Repr(item.Type)} is not supported yet");
-            if (item.BlendMode is { } blend && !CompositorBlend.ModeNames.Contains(blend))
-                throw new PyException("ValueError", $"LAYERS item blend_mode {PyText.Repr(blend)} is not a known blend mode");
-            items.Add(item);
-        }
-        return [.. items.OrderBy(i => i.ZIndex)];
-    }
-
-    /// <summary>_item_mask_frame: a one-frame mask serves every frame, else the frame's own (none past the mask's batch).</summary>
-    public static MaskBatch? MaskFrame(MaskBatch? mask, int index) =>
-        mask is null ? null : mask.Batch == 1 ? Slice(mask, 0) : index < mask.Batch ? Slice(mask, index) : null;
-
-    static MaskBatch Slice(MaskBatch m, int index)
-    {
-        int plane = m.Height * m.Width;
-        return new MaskBatch(1, m.Height, m.Width, m.Data[(index * plane)..((index + 1) * plane)]);
-    }
-
-    public static List<Frame> ExpandItemFrames(IEnumerable<LayerItem> items)
-    {
-        var frames = new List<Frame>();
-        foreach (var item in items)
-        {
-            var image = item.Image;
-            int plane = image.Height * image.Width * image.Channels;
-            for (int index = 0; index < image.Batch; index++)
-            {
-                var mask = MaskFrame(item.Mask, index);
-                long w = item.W ?? 0, h = item.H ?? 0;
-                frames.Add(new Frame(image.Data[(index * plane)..((index + 1) * plane)], image.Height, image.Width, image.Channels,
-                    mask?.Data, mask?.Height ?? 0, mask?.Width ?? 0, item.Name, item.X, item.Y, w > 0 ? w : image.Width, h > 0 ? h : image.Height,
-                    item.Rotation ?? 0.0, item.Opacity ?? 1.0, item.BlendMode ?? "normal", item.Visible ?? true, item.FlipH, item.FlipV));
-            }
-        }
-        if (frames.Count > MaxLayers) throw new PyException("ValueError", $"Compositor supports at most {MaxLayers} layers, got {frames.Count}");
-        return frames;
-    }
-
-    /// <summary>frame_alpha: the picture's alpha channel times (1 - mask), the mask resized bilinearly to the picture when its size differs; null without either.</summary>
-    public static float[]? FrameAlpha(Frame f)
-    {
-        float[]? alpha = null;
-        int n = f.Height * f.Width;
-        if (f.Channels == 4)
-        {
-            alpha = new float[n];
-            for (int p = 0; p < n; p++) alpha[p] = f.Pixels[p * 4 + 3];
-        }
-        if (f.Mask is null) return alpha;
-        var m = f.MaskHeight != f.Height || f.MaskWidth != f.Width
-            ? TorchInterpolate.Resize(f.Mask, 1, f.MaskHeight, f.MaskWidth, f.Height, f.Width, "bilinear")
-            : f.Mask;
-        var inv = new float[n];
-        for (int p = 0; p < n; p++) inv[p] = Math.Clamp(1f - m[p], 0f, 1f);
-        if (alpha is null) return inv;
-        for (int p = 0; p < n; p++) alpha[p] *= inv[p];
-        return alpha;
-    }
-
-    static byte ToByte(float v) => (byte)Math.Clamp(MathF.Round(v * 255f, MidpointRounding.ToEven), 0f, 255f); // np.clip(np.rint(v * 255.0), 0, 255)
-
-    /// <summary>input_fingerprints: what a saved composition remembers of each layer (picture, alpha and placement), the first 16 hex digits of a SHA-256.</summary>
-    public static List<string> Fingerprints(IReadOnlyList<Frame> frames, IReadOnlyList<float[]?> alphas)
-    {
-        var result = new List<string>();
-        for (int i = 0; i < frames.Count; i++)
-        {
-            var f = frames[i];
-            using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            sha.AppendData(Encoding.UTF8.GetBytes($"(1, {f.Height}, {f.Width}, {f.Channels})"));
-            int n = f.Height * f.Width;
-            var rgb8 = new byte[n * 3];
-            for (int p = 0; p < n; p++) for (int k = 0; k < 3; k++) rgb8[p * 3 + k] = ToByte(f.Pixels[p * f.Channels + k]);
-            sha.AppendData(rgb8);
-            if (alphas[i] is { } alpha) sha.AppendData(alpha.Select(ToByte).ToArray());
-            var placement = string.Join(", ", f.X.ToString(System.Globalization.CultureInfo.InvariantCulture), f.Y.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                f.W.ToString(System.Globalization.CultureInfo.InvariantCulture), f.H.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                PyNumber.FloatRepr(f.Rotation), PyNumber.FloatRepr(f.Opacity), PyText.Repr(f.Blend), f.Visible ? "True" : "False", f.FlipH ? "True" : "False",
-                f.FlipV ? "True" : "False");
-            sha.AppendData(Encoding.UTF8.GetBytes($"({placement})"));
-            result.Add(Convert.ToHexStringLower(sha.GetHashAndReset())[..16]);
-        }
-        return result;
-    }
-
-    /// <summary>A composition to render: the canvas size, one entry per layer (JSON-like, as the editor saves them), the background and the stacking order.</summary>
-    public sealed record State((int W, int H) Canvas, ArrayValue Layers, ArrayValue? Inputs, Background? Background, IReadOnlyList<int>? Order);
-
-    public sealed record Background(string Color, double Opacity, bool Visible);
-
-    static readonly HashSet<char> HexDigits = [.. "0123456789abcdef"];
-
-    static string NormalizeHexColor(object? value)
-    {
-        if (value is string s)
-        {
-            var text = PyText.Strip(s).ToLowerInvariant();
-            if (text.StartsWith('#'))
-            {
-                var digits = text[1..];
-                if (digits.Length == 3 && digits.All(HexDigits.Contains)) digits = string.Concat(digits.Select(ch => new string(ch, 2)));
-                if (digits.Length == 6 && digits.All(HexDigits.Contains)) return "#" + digits;
-            }
-        }
-        return "#ffffff";
-    }
-
-    /// <summary>_number: a finite int or float as a double, else the default.</summary>
-    static double Number(DictValue source, string key, double fallback)
-    {
-        var value = source.TryGetValue(key, out var v) ? v : fallback;
-        if (!PyValues.IsNumber(value)) return fallback;
-        double d = PyValues.Float(value);
-        return double.IsFinite(d) ? d : fallback;
-    }
-
-    static double Clamp01(double v) => Math.Min(Math.Max(v, 0.0), 1.0);
-
-    static Background? ParseBackground(object? entry) => entry is DictValue d
-        ? new Background(NormalizeHexColor(PyValues.Get(d, "color")), Clamp01(Number(d, "opacity", 1.0)), PyValues.Truthy(PyValues.Get(d, "visible", true)))
-        : null;
-
-    static List<int>? ParseOrder(object? value, int layerCount)
-    {
-        if (value is not ArrayValue { Count: > 0 } list || !list.All(v => v is long or int || v is System.Numerics.BigInteger)) return null;
-        var ints = list.Select(PyValues.Int).ToList();
-        if (!ints.OrderBy(v => v).SequenceEqual(Enumerable.Range(0, layerCount).Select(v => (System.Numerics.BigInteger)v))) return null;
-        return ints.Select(v => (int)v).ToList();
-    }
-
-    /// <summary>layer_state_provided: a non-empty dict, or text other than "" and "{}".</summary>
-    public static bool StateProvided(object? raw) => raw switch
-    {
-        DictValue d => d.Count > 0,
-        string s => s is not ("" or "{}"),
-        _ => false,
-    };
-
-    /// <summary>parse_layer_state: the editor's saved composition (a dict or its JSON text), or null when it is not a usable one.</summary>
-    public static State? ParseState(object? raw)
-    {
-        if (raw is string s)
-        {
-            if (PyText.Strip(s).Length == 0) return null;
-            try { raw = PyJson.Loads(s); }
-            catch (PyException) { return null; }
-        }
-        if (raw is not DictValue state) return null;
-        var version = PyValues.Get(state, "version");
-        if (version is not null && !PyValues.Equal(version, 1L)) return null;
-        if (PyValues.Get(state, "canvas") is not DictValue canvas || PyValues.Get(state, "layers") is not ArrayValue { Count: > 0 } layers) return null;
-        long w, h;
-        try
-        {
-            w = PyValues.Round(PyValues.ToFloat(PyValues.Get(canvas, "w")));
-            h = PyValues.Round(PyValues.ToFloat(PyValues.Get(canvas, "h")));
-        }
-        catch (PyException e) when (e.PyType is "TypeError" or "ValueError" or "OverflowError") { return null; }
-        if (w <= 0 || h <= 0) return null;
-        var inputs = PyValues.Get(state, "inputs") is ArrayValue given && given.Count == layers.Count && given.All(v => v is string) ? given : null;
-        return new State(((int)Math.Min(w, int.MaxValue), (int)Math.Min(h, int.MaxValue)), layers, inputs, ParseBackground(PyValues.Get(state, "background")),
-            ParseOrder(PyValues.Get(state, "order"), layers.Count));
-    }
-
-    /// <summary>state_from_items: the composition the layer items describe (no saved editing): placement, look, a hidden white background.</summary>
-    public static State StateFromItems(IReadOnlyList<Frame> frames, (int W, int H) canvas)
-    {
-        var layers = new ArrayValue();
-        foreach (var f in frames)
-            layers.Add(new DictValue
-            {
-                ["name"] = f.Name, ["visible"] = f.Visible, ["opacity"] = f.Opacity, ["blend"] = f.Blend, ["flipH"] = f.FlipH, ["flipV"] = f.FlipV,
-                ["transform"] = new DictValue { ["x"] = f.X, ["y"] = f.Y, ["w"] = f.W, ["h"] = f.H, ["rotation"] = f.Rotation },
-            });
-        return new State(canvas, layers, null, new Background("#ffffff", 1.0, false), null);
-    }
-
-    /// <summary>canvas_extent: the right and bottom edge every placed layer reaches (at least 1 x 1).</summary>
-    public static (int W, int H) CanvasExtent(IEnumerable<Frame> frames)
-    {
-        long right = 1, bottom = 1;
-        foreach (var f in frames)
-        {
-            var (bx, by, bw, bh) = CompositorBlend.PlacedBounds(f.X, f.Y, f.W, f.H, f.Rotation);
-            right = Math.Max(right, (long)bx + bw);
-            bottom = Math.Max(bottom, (long)by + bh);
-        }
-        return ((int)right, (int)bottom);
-    }
-
-    sealed record LayerParams(bool Visible, double Opacity, string Blend, double X, double Y, double W, double H, double Rotation, bool FlipH, bool FlipV);
-
-    static LayerParams ParamsOf(object? entry, int naturalW, int naturalH)
-    {
-        var e = entry as DictValue ?? [];
-        var t = PyValues.Get(e, "transform") as DictValue ?? [];
-        static double Size(double value, int natural) => value <= 0 ? natural : Math.Min(value, MaxResolution);
-        return new LayerParams(
-            PyValues.Truthy(PyValues.Get(e, "visible", true)),
-            // The state is untrusted (saved in the workflow, or posted to /prompt): opacity is clamped as the background's is.
-            Clamp01(Number(e, "opacity", 1.0)),
-            PyValues.Get(e, "blend") as string ?? "normal",
-            Math.Min(Math.Max(Number(t, "x", 0.0), -MaxResolution), MaxResolution),
-            Math.Min(Math.Max(Number(t, "y", 0.0), -MaxResolution), MaxResolution),
-            Size(Number(t, "w", naturalW), naturalW),
-            Size(Number(t, "h", naturalH), naturalH),
-            Number(t, "rotation", 0.0),
-            PyValues.Truthy(PyValues.Get(e, "flipH", false)),
-            PyValues.Truthy(PyValues.Get(e, "flipV", false)));
-    }
-
-    /// <summary>_prepare_layer_bitmap: the layer as 8-bit RGBA, flipped, resized (Lanczos) and turned (bicubic, canvas grown) as Pillow does it.</summary>
-    static (byte[] Px, int W, int H) PrepareBitmap(Frame f, LayerParams p, float[]? alpha)
-    {
-        int w = f.Width, h = f.Height, n = w * h;
-        var px = new byte[n * 4];
-        for (int i = 0; i < n; i++)
-        {
-            for (int k = 0; k < 3; k++) px[i * 4 + k] = ToByte(f.Pixels[i * f.Channels + k]);
-            px[i * 4 + 3] = alpha is null ? (byte)255 : ToByte(alpha[i]);
-        }
-        if (p.FlipH) px = PilTransform.FlipLeftRight(px, w, h, 4);
-        if (p.FlipV) px = PilTransform.FlipTopBottom(px, w, h, 4);
-        int tw = (int)Math.Max(1, PyValues.Round(p.W)), th = (int)Math.Max(1, PyValues.Round(p.H));
-        if (tw != w || th != h)
-        {
-            px = PilLanczos.Resize(px, w, h, 4, tw, th);
-            (w, h) = (tw, th);
-        }
-        if (p.Rotation != 0) (px, w, h) = PilTransform.RotateExpand(px, w, h, -(p.Rotation * PilTransform.RadToDeg));
-        return (px, w, h);
-    }
-
-    static long FloorDiv(long a, long b) => (long)Math.Floor((double)a / b);
-
-    /// <summary>_place_in_bounds: the bitmap centred in a bw x bh buffer of straight linear-light RGBA (0 outside it).</summary>
-    static float[] PlaceInBounds(byte[] px, int aw, int ah, int bw, int bh)
-    {
-        var buf = new float[(long)bh * bw * 4];
-        long ox = FloorDiv(bw - aw, 2), oy = FloorDiv(bh - ah, 2);
-        long dx0 = Math.Max(ox, 0), dy0 = Math.Max(oy, 0), dx1 = Math.Min(ox + aw, bw), dy1 = Math.Min(oy + ah, bh);
-        for (long y = dy0; y < dy1; y++)
-            for (long x = dx0; x < dx1; x++)
-            {
-                long s = ((y - oy) * aw + (x - ox)) * 4, d = (y * bw + x) * 4;
-                for (int k = 0; k < 3; k++) buf[d + k] = CompositorBlend.SrgbToLinear(px[s + k] / 255f);
-                buf[d + 3] = px[s + 3] / 255f;
-            }
-        return buf;
-    }
-
-    /// <summary>composite_from_state: the layers in order over the (optional) background on the state's canvas; straight RGBA in sRGB, 0..1.</summary>
-    public static ImageBatch CompositeFromState(IReadOnlyList<Frame> frames, State state, IReadOnlyList<float[]?> alphas)
-    {
-        var (cw, ch) = state.Canvas;
-        if (cw > MaxResolution || ch > MaxResolution)
-            throw new PyException("ValueError", $"Compositor canvas {cw}x{ch} exceeds the maximum supported size of {MaxResolution}x{MaxResolution}");
-        var canvas = new float[(long)ch * cw * 4];
-        if (state.Background is { Visible: true, Opacity: > 0 } bg)
-        {
-            var (r, g, b) = BoundingBoxes.HexToRgb(bg.Color);
-            float lr = CompositorBlend.SrgbToLinear(r / 255f), lg = CompositorBlend.SrgbToLinear(g / 255f), lb = CompositorBlend.SrgbToLinear(b / 255f);
-            var layer = new float[canvas.Length];
-            for (long i = 0; i < layer.Length; i += 4) { layer[i] = lr; layer[i + 1] = lg; layer[i + 2] = lb; layer[i + 3] = 1f; }
-            CompositorBlend.Composite("normal", canvas, 0, cw * 4, layer, 0, cw * 4, cw, ch, bg.Opacity);
-        }
-        var order = state.Order ?? Enumerable.Range(0, frames.Count).ToList();
-        foreach (var index in order)
-        {
-            if (index < 0 || index >= frames.Count) continue;
-            var f = frames[index];
-            var p = ParamsOf(index < state.Layers.Count ? state.Layers[index] : null, f.Width, f.Height);
-            if (!p.Visible) continue;
-            var (px, aw, ah) = PrepareBitmap(f, p, index < alphas.Count ? alphas[index] : null);
-            var (bx, by, bw, bh) = CompositorBlend.PlacedBounds(p.X, p.Y, p.W, p.H, p.Rotation);
-            var buf = PlaceInBounds(px, aw, ah, bw, bh);
-            int x0 = Math.Max(bx, 0), y0 = Math.Max(by, 0), x1 = Math.Min(bx + bw, cw), y1 = Math.Min(by + bh, ch);
-            if (x0 >= x1 || y0 >= y1) continue;
-            CompositorBlend.Composite(p.Blend, canvas, (y0 * cw + x0) * 4, cw * 4, buf, ((y0 - by) * bw + (x0 - bx)) * 4, bw * 4, x1 - x0, y1 - y0, p.Opacity);
-        }
-        var result = new ImageBatch(1, ch, cw, 4);
-        for (long i = 0; i < canvas.Length; i += 4)
-        {
-            for (int k = 0; k < 3; k++) result.Data[i + k] = CompositorBlend.LinearToSrgb(Math.Clamp(canvas[i + k], 0f, 1f));
-            result.Data[i + 3] = Math.Clamp(canvas[i + 3], 0f, 1f);
-        }
-        return result;
-    }
-
-    /// <summary>composite_outputs: an opaque composite as RGB with an all-zero mask, else RGBA with mask = 1 - alpha.</summary>
-    public static (ImageBatch Image, MaskBatch Mask) Outputs(ImageBatch rgba)
-    {
-        int n = rgba.Height * rgba.Width;
-        var mask = new MaskBatch(1, rgba.Height, rgba.Width);
-        bool opaque = true;
-        for (int p = 0; p < n; p++) if (!(rgba.Data[p * 4 + 3] >= 1f - OpaqueEpsilon)) { opaque = false; break; }
-        if (opaque)
-        {
-            var rgb = new ImageBatch(1, rgba.Height, rgba.Width, 3);
-            for (int p = 0; p < n; p++) for (int k = 0; k < 3; k++) rgb.Data[p * 3 + k] = rgba.Data[p * 4 + k];
-            return (rgb, mask);
-        }
-        for (int p = 0; p < n; p++) mask.Data[p] = Math.Clamp(1f - rgba.Data[p * 4 + 3], 0f, 1f);
-        return (rgba, mask);
-    }
-
-    /// <summary>layer_preview_tensor: the layer's RGB with its alpha (when it has one) as a picture.</summary>
-    public static ImageBatch LayerPreview(Frame f, float[]? alpha)
-    {
-        int n = f.Height * f.Width, c = alpha is null ? 3 : 4;
-        var img = new ImageBatch(1, f.Height, f.Width, c);
-        for (int p = 0; p < n; p++)
-        {
-            for (int k = 0; k < 3; k++) img.Data[p * c + k] = f.Pixels[p * f.Channels + k];
-            if (alpha is not null) img.Data[p * 4 + 3] = alpha[p];
-        }
-        return img;
-    }
-}
-
-[Node(Category = "image", DisplayName = "Create Layered Image", IsOutput = true, HasIntermediateOutput = true, OutputNames = ["IMAGE", "MASK"])]
-public sealed class ImageCompositor
-{
-    /// <summary>
-    /// ComfyUI's Create Layered Image: the stack composited on its document canvas (else the extent of the placed layers); a saved composition from the
-    /// compositor editor takes over while its layer fingerprints match the inputs. Outputs the picture (RGBA when it has transparent areas) and its
-    /// transparency mask; the editor gets the layer previews, fingerprints, boxes and canvas. With no layers: 64 x 64 black.
-    /// </summary>
-    public async Task<(ImageBatch Image, MaskBatch Mask, UiOutput Ui)> ExecuteAsync(
-        [Input(Tooltip = "Layer stack to composite; build it with Add Layer. Items are stacked by z_index, batch frames inside an item expand to consecutive layers, and item placement, opacity, and blend mode define the initial composition. Without an explicit document canvas the size is a best-effort maximum extent of the placed layers. A saved composition that matches the current inputs takes priority.")]
-        LayerDocument layers,
-        [Input(Type = "COMPOSITOR", Json = "{}", Tooltip = "Layered composition saved by the compositor editor.")] object? compositor = null,
-        NodeContext? context = null, IServiceProvider? services = null)
-    {
-        var frames = Compositor.ExpandItemFrames(Compositor.DocumentItems(layers));
-        var alphas = frames.Select(Compositor.FrameAlpha).ToList();
-        var fingerprints = Compositor.Fingerprints(frames, alphas);
-        var state = Compositor.ParseState(compositor);
-        bool replay = state is not null && frames.Count > 0 && state.Inputs is { } inputs && inputs.Cast<string>().SequenceEqual(fingerprints);
-        (int W, int H)? canvas = null;
-        ImageBatch output;
-        if (replay)
-        {
-            canvas = state!.Canvas;
-            output = Compositor.CompositeFromState(frames, state, alphas);
-        }
-        else if (frames.Count > 0)
-        {
-            canvas = layers.Canvas ?? Compositor.CanvasExtent(frames);
-            output = Compositor.CompositeFromState(frames, Compositor.StateFromItems(frames, canvas.Value), alphas);
-        }
-        else output = new ImageBatch(1, 64, 64, 3);
-        bool stale = Compositor.StateProvided(compositor) && !replay;
-        var (image, mask) = output.Channels == 4 ? Compositor.Outputs(output) : (output, new MaskBatch(1, output.Height, output.Width));
-
-        var ui = new UiOutput();
-        if (context is not null && services is not null)
-        {
-            ui["images"] = await Results.PreviewAsync(image, context, services);
-            var layerRefs = new List<object>();
-            for (int i = 0; i < frames.Count; i++) layerRefs.AddRange(await Results.PreviewAsync(Compositor.LayerPreview(frames[i], alphas[i]), context, services));
-            ui["compositor_layers"] = layerRefs;
-        }
-        ui["compositor_inputs"] = new ArrayValue(fingerprints);
-        ui["compositor_bboxes"] = new ArrayValue(frames.Select(f => (object?)new DictValue
-        {
-            ["x"] = f.X, ["y"] = f.Y, ["width"] = f.W, ["height"] = f.H, ["rotation"] = f.Rotation, ["name"] = f.Name, ["visible"] = f.Visible,
-            ["opacity"] = f.Opacity, ["blend"] = f.Blend, ["flipH"] = f.FlipH, ["flipV"] = f.FlipV,
-        }));
-        if (canvas is { } c) ui["compositor_canvas"] = new ArrayValue { new DictValue { ["w"] = (long)c.W, ["h"] = (long)c.H } };
-        if (stale) ui["compositor_state_stale"] = new ArrayValue { true };
-        return (image, mask, ui);
-    }
-}
-
-[Node(Category = "image", DisplayName = "Add Layer")]
+/// <summary>
+/// Add Layer, as measured: appends one item to a copy of the incoming stack (version 1, its canvas kept). x, y and z_index are always stored; the
+/// mask, a non-empty name, opacity other than 1, a blend mode other than normal, a rotation other than 0 (in radians), a width / height other than 0
+/// and the flips only when set.
+/// </summary>
+[Node("AddLayer", Category = "image/compositing", DisplayName = "Add Layer", OutputNames = ["LAYERS"])]
 public sealed class AddLayer
 {
-    /// <summary>ComfyUI's Add Layer: the stack with one more item (only what differs from the defaults is stated); the document canvas is kept.</summary>
+    public static IEnumerable<string> BlendModes() => CompositorBlend.ModeNames;
+
     public LayerDocument Execute(
         [Input(Tooltip = "Layer content at its native size. A batch expands to consecutive layers.")] ImageBatch image,
-        [Input(Tooltip = "Layer stack to append to. Leave unconnected to start a new stack.")] LayerDocument? layers = null,
-        [Input(Tooltip = "Transparency mask for this layer. Masked areas (value 1) become transparent, multiplying with any alpha channel the image already carries.")] MaskBatch? mask = null,
+        [Input(Optional = true, Tooltip = "Layer stack to append to. Leave unconnected to start a new stack.")] LayerDocument? layers = null,
+        [Input(Optional = true, Tooltip = "Transparency mask for this layer. Masked areas (value 1) become transparent, multiplying with any alpha channel the image already carries.")]
+        MaskBatch? mask = null,
         [Input(Optional = true, Tooltip = "Layer name shown in the compositor editor.")] string name = "",
         [Input(Optional = true, Min = -16384, Max = 16384, Tooltip = "Initial horizontal placement on the canvas.")] long x = 0,
         [Input(Optional = true, Min = -16384, Max = 16384, Tooltip = "Initial vertical placement on the canvas.")] long y = 0,
         [Input(Optional = true, Min = 0.0, Max = 1.0, Step = 0.01, Tooltip = "Initial layer opacity.")] double opacity = 1.0,
-        [Input(Optional = true, OptionsProvider = nameof(BlendModes), Tooltip = "Initial blend mode, applied against the layers below. On the bottom layer over the default transparent background, non-normal modes produce transparency.")] string blendMode = "normal",
+        [Input(Optional = true, OptionsProvider = nameof(BlendModes),
+            Tooltip = "Initial blend mode, applied against the layers below. On the bottom layer over the default transparent background, non-normal modes produce transparency.")]
+        string blendMode = "normal",
         [Input(Optional = true, Min = -360.0, Max = 360.0, Step = 1.0, Tooltip = "Initial rotation in degrees, clockwise.")] double rotation = 0.0,
         [Input(Optional = true, Min = 0, Max = 16384, Tooltip = "Initial display width. 0 keeps the image's native width.")] long width = 0,
         [Input(Optional = true, Min = 0, Max = 16384, Tooltip = "Initial display height. 0 keeps the image's native height.")] long height = 0,
@@ -458,111 +73,451 @@ public sealed class AddLayer
         var item = new LayerItem(image)
         {
             X = x, Y = y, ZIndex = zIndex, Mask = mask,
-            Name = name.Length > 0 ? name : null,
+            Name = string.IsNullOrEmpty(name) ? null : name,
             Opacity = opacity != 1.0 ? opacity : null,
             BlendMode = blendMode != "normal" ? blendMode : null,
-            Rotation = rotation != 0.0 ? rotation * PilTransform.DegToRad : null,
-            W = width > 0 ? width : null,
-            H = height > 0 ? height : null,
+            Rotation = rotation != 0 ? rotation * (Math.PI / 180.0) : null, // Python's math.radians
+            W = width != 0 ? width : null,
+            H = height != 0 ? height : null,
             FlipH = flipH, FlipV = flipV,
         };
-        return new LayerDocument { Layers = [.. layers?.Layers ?? [], item], Canvas = layers?.Canvas };
+        return new LayerDocument { Canvas = layers?.Canvas, Layers = [.. layers?.Layers ?? [], item] };
     }
-
-    public static string[] BlendModes() => CompositorBlend.ModeNames;
 }
 
-[Node(Category = "image", DisplayName = "Layers From Bounding Boxes",
+/// <summary>
+/// Layers From Bounding Boxes, as measured: frame f of the batch becomes one layer placed by box f (bounding boxes, elements or JSON text, as Create
+/// Bounding Boxes reads them; a list of lists gives its first list). Pixel box numbers are truncated (bools and text count as missing), a width / height
+/// above 0 scales the layer; elements need the canvas size to resolve (Python's round of the scaled corner and size) and name the layer by their desc.
+/// A box's metadata names the layer (name, else desc), sets its z_index, and with crop_to_content its content_rect [x, y, w, h] (clamped to the frame)
+/// crops the frame and mask and moves the layer by the rect's offset, its size then the cropped one. Frames without a box sit at the origin. z_index
+/// defaults to one above the stack's highest (0 for a new stack) plus the frame index. A mask batch of 1 applies to every frame, otherwise frame by frame.
+/// </summary>
+[Node("LayersFromBoundingBoxes", Category = "image/compositing", DisplayName = "Layers From Bounding Boxes", OutputNames = ["LAYERS"],
     Description = "Turn an image batch plus its bounding boxes into a layer stack, one layer per frame, each placed by its own box. Use this when a node emits layers as a batch - a batch carries a single placement for every frame, so the individual positions are otherwise lost.")]
 public sealed class LayersFromBoundingBoxes
 {
-    /// <summary>_int: an int or float (not a bool) as a whole number (truncated), else the default.</summary>
-    static long Int(object? value, long fallback) => PyValues.IsNumber(value) && value is not bool ? (long)PyValues.ToInt(value) : fallback;
-
-    /// <summary>_bbox_list: the boxes as pixel boxes; normalized elements need the canvas size.</summary>
-    static ArrayValue BBoxList(object? bboxes, long canvasWidth, long canvasHeight)
-    {
-        if (bboxes is null) return [];
-        if (bboxes is string s)
-        {
-            var text = PyText.Strip(s);
-            if (text.Length == 0) return [];
-            try { bboxes = PyJson.Loads(text); }
-            catch (PyException e) { throw new PyException("ValueError", $"bboxes string input is not valid JSON: {e.PyMessage}"); }
-        }
-        IReadOnlyList<object?> probe = bboxes as ArrayValue ?? [bboxes];
-        if (probe.Count > 0 && probe[0] is ArrayValue first) probe = first;
-        bool hasElements = probe.Any(box => box is DictValue d && PyValues.Get(d, "bbox") is ArrayValue);
-        if (hasElements && (canvasWidth <= 0 || canvasHeight <= 0))
-            throw new PyException("ValueError", "normalized element boxes need canvas_width and canvas_height to resolve to pixels");
-        return BoundingBoxes.FromInput(bboxes, canvasWidth, canvasHeight);
-    }
-
     public LayerDocument Execute(
         [Input(Tooltip = "Image batch; each frame becomes one layer.")] ImageBatch image,
-        [Input(Type = "BOUNDING_BOX,ARRAY,STRING", Tooltip = "Placement boxes, index-aligned with the image batch. Accepts bounding boxes (x, y, width, height), normalized elements (with a 'bbox' - these need canvas_width/canvas_height to resolve to pixels), or a JSON string of either. Frames without a matching box are placed at the origin. A box's width/height scales the layer to fit it. metadata.name (or desc) and metadata.z_index are used when present, and metadata.content_rect (frame-relative) crops the frame to its real content.")]
+        [Input(Type = "BOUNDING_BOX,ARRAY,STRING",
+            Tooltip = "Placement boxes, index-aligned with the image batch. Accepts bounding boxes (x, y, width, height), normalized elements (with a 'bbox' - these need canvas_width/canvas_height to resolve to pixels), or a JSON string of either. Frames without a matching box are placed at the origin. A box's width/height scales the layer to fit it. metadata.name (or desc) and metadata.z_index are used when present, and metadata.content_rect (frame-relative) crops the frame to its real content.")]
         object bboxes,
-        [Input(Tooltip = "Per-frame transparency, index-aligned with the image batch (1 = transparent, LoadImage convention).")] MaskBatch? mask = null,
-        [Input(Tooltip = "Layer stack to append to. Leave unconnected to start a new stack.")] LayerDocument? layers = null,
-        [Input(Optional = true, Tooltip = "Crop each frame to metadata.content_rect where present and place the content at the box position plus the rect offset. Leave on for batches whose frames are padded - it keeps only the real content at its true spot.")] bool cropToContent = true,
+        [Input(Optional = true, Tooltip = "Per-frame transparency, index-aligned with the image batch (1 = transparent, LoadImage convention).")] MaskBatch? mask = null,
+        [Input(Optional = true, Tooltip = "Layer stack to append to. Leave unconnected to start a new stack.")] LayerDocument? layers = null,
+        [Input(Optional = true,
+            Tooltip = "Crop each frame to metadata.content_rect where present and place the content at the box position plus the rect offset. Leave on for batches whose frames are padded - it keeps only the real content at its true spot.")]
+        bool cropToContent = true,
         [Input(Optional = true, Min = 0, Max = 16384, Tooltip = "Document canvas width. 0 derives it from the placed layers.")] long canvasWidth = 0,
         [Input(Optional = true, Min = 0, Max = 16384, Tooltip = "Document canvas height. 0 derives it from the placed layers.")] long canvasHeight = 0)
     {
-        var boxes = BBoxList(bboxes, canvasWidth, canvasHeight);
-        var items = new List<LayerItem>(layers?.Layers ?? []);
-        long baseZ = (items.Count > 0 ? items.Max(i => i.ZIndex) : -1) + 1;
-        int W = image.Width, H = image.Height, c = image.Channels, plane = H * W * c;
-        for (int index = 0; index < image.Batch; index++)
+        var boxes = BBoxInput.Parse(bboxes);
+        bool canvas = canvasWidth > 0 && canvasHeight > 0;
+        if (!canvas && boxes.Any(b => b is BBoxInput.Element))
+            throw new PyException("ValueError", "normalized element boxes need canvas_width and canvas_height to resolve to pixels");
+        var existing = layers?.Layers ?? [];
+        long baseZ = existing.Count > 0 ? existing.Max(l => l.ZIndex) + 1 : 0;
+        var items = new List<LayerItem>(existing);
+        for (int f = 0; f < image.Batch; f++)
         {
-            var box = index < boxes.Count ? boxes[index] as DictValue ?? [] : [];
-            var meta = PyValues.Get(box, "metadata") as DictValue ?? [];
-            var frame = new ImageBatch(1, H, W, c, image.Data[(index * plane)..((index + 1) * plane)]);
-            var frameMask = Compositor.MaskFrame(mask, index);
-            long x = Int(PyValues.Get(box, "x"), 0), y = Int(PyValues.Get(box, "y"), 0);
-            long boxW = Int(PyValues.Get(box, "width"), 0), boxH = Int(PyValues.Get(box, "height"), 0);
-            bool cropped = false;
-            if (cropToContent && PyValues.Get(meta, "content_rect") is ArrayValue { Count: 4 } rect)
+            var frame = Frame(image, f);
+            var frameMask = mask is null ? null : mask.Batch == 1 ? MaskFrame(mask, 0) : f < mask.Batch ? MaskFrame(mask, f) : null;
+            long x = 0, y = 0, z = baseZ + f;
+            long? w = null, h = null;
+            string? name = null;
+            switch (f < boxes.Count ? boxes[f] : null)
             {
-                long left = Math.Min(Math.Max(Int(rect[0], 0), 0), W), top = Math.Min(Math.Max(Int(rect[1], 0), 0), H);
-                long cw = Math.Min(Math.Max(Int(rect[2], 0), 0), W - left), ch = Math.Min(Math.Max(Int(rect[3], 0), 0), H - top);
-                if (cw > 0 && ch > 0)
+                case BBoxInput.Element e:
                 {
-                    frame = Crop(frame, (int)left, (int)top, (int)cw, (int)ch);
-                    if (frameMask is not null) frameMask = CropMask(frameMask, left, top, cw, ch);
-                    x += left;
-                    y += top;
-                    cropped = true;
+                    var (ex, ey, ew, eh) = BBoxInput.Pixels(e, canvasWidth, canvasHeight);
+                    (x, y) = (ex, ey);
+                    if (ew > 0) w = ew;
+                    if (eh > 0) h = eh;
+                    name = NonEmpty(PyValues.Get(e.Raw, "desc"));
+                    break;
+                }
+                case BBoxInput.Box b:
+                {
+                    x = Number(b.Raw["x"]) ?? 0;
+                    y = Number(b.Raw["y"]) ?? 0;
+                    if (Number(b.Raw["width"]) is > 0 and var bw) w = bw;
+                    if (Number(b.Raw["height"]) is > 0 and var bh) h = bh;
+                    if (b.Raw.TryGetValue("metadata", out var m) && m is DictValue meta)
+                    {
+                        name = NonEmpty(PyValues.Get(meta, "name")) ?? NonEmpty(PyValues.Get(meta, "desc"));
+                        if (Number(PyValues.Get(meta, "z_index")) is { } mz) z = mz;
+                        if (cropToContent && ContentRect(PyValues.Get(meta, "content_rect"), frame.Width, frame.Height) is var (cx0, cy0, cx1, cy1))
+                        {
+                            frame = Crop(frame, cx0, cy0, cx1, cy1);
+                            if (frameMask is not null) frameMask = CropMask(frameMask, cx0, cy0, cx1, cy1);
+                            x += cx0;
+                            y += cy0;
+                            w = h = null;
+                        }
+                    }
+                    break;
                 }
             }
-            var name = PyValues.Get(meta, "name") is string { Length: > 0 } n ? n : PyValues.Get(meta, "desc") as string;
-            items.Add(new LayerItem(frame)
-            {
-                X = x, Y = y, ZIndex = Int(PyValues.Get(meta, "z_index"), baseZ + index),
-                W = !cropped && boxW > 0 ? boxW : null,
-                H = !cropped && boxH > 0 ? boxH : null,
-                Mask = frameMask,
-                Name = name is { Length: > 0 } ? name : null,
-            });
+            items.Add(new LayerItem(frame) { X = x, Y = y, ZIndex = z, W = w, H = h, Mask = frameMask, Name = name });
         }
-        (int, int)? canvas = canvasWidth > 0 && canvasHeight > 0 ? ((int)canvasWidth, (int)canvasHeight) : layers?.Canvas;
-        return new LayerDocument { Layers = items, Canvas = canvas };
+        return new LayerDocument { Canvas = canvas ? ((int)canvasWidth, (int)canvasHeight) : layers?.Canvas, Layers = items };
     }
 
-    static ImageBatch Crop(ImageBatch frame, int left, int top, int cw, int ch)
+    static string? NonEmpty(object? v) => v is string { Length: > 0 } s ? s : null;
+
+    /// <summary>int(v) of an int or float (bools and anything else: none).</summary>
+    static long? Number(object? v) => v is bool || !PyValues.IsNumber(v) ? null : (long)PyValues.ToInt(v);
+
+    static (int X0, int Y0, int X1, int Y1)? ContentRect(object? rect, int w, int h)
     {
-        int c = frame.Channels;
-        var o = new ImageBatch(1, ch, cw, c);
-        for (int r = 0; r < ch; r++) Array.Copy(frame.Data, ((top + r) * frame.Width + left) * c, o.Data, r * cw * c, cw * c);
-        return o;
+        if (rect is not ArrayValue { Count: 4 } r) return null;
+        var v = new long[4];
+        for (int i = 0; i < 4; i++)
+            if (Number(r[i]) is { } n) v[i] = n;
+            else return null;
+        long x0 = Math.Max(0, v[0]), y0 = Math.Max(0, v[1]), x1 = Math.Min(w, x0 + v[2]), y1 = Math.Min(h, y0 + v[3]);
+        return x1 > x0 && y1 > y0 ? ((int)x0, (int)y0, (int)x1, (int)y1) : null;
     }
 
-    /// <summary><c>mask[:, top:top + ch, left:left + cw]</c> with Python's slice rules (the mask may be smaller than the picture).</summary>
-    static MaskBatch CropMask(MaskBatch m, long left, long top, long cw, long ch)
+    internal static ImageBatch Frame(ImageBatch image, int f)
     {
-        var (y0, _, _, rows) = PyText.SliceIndices(m.Height, top, top + ch, 1);
-        var (x0, _, _, cols) = PyText.SliceIndices(m.Width, left, left + cw, 1);
-        var o = new MaskBatch(1, (int)rows, (int)cols);
-        for (int r = 0; r < rows; r++) Array.Copy(m.Data, (y0 + r) * m.Width + x0, o.Data, r * cols, cols);
-        return o;
+        int n = image.Height * image.Width * image.Channels;
+        return new ImageBatch(1, image.Height, image.Width, image.Channels, image.Data.AsSpan(f * n, n).ToArray());
+    }
+
+    internal static MaskBatch MaskFrame(MaskBatch mask, int f)
+    {
+        int n = mask.Height * mask.Width;
+        return new MaskBatch(1, mask.Height, mask.Width, mask.Data.AsSpan(f * n, n).ToArray());
+    }
+
+    static ImageBatch Crop(ImageBatch frame, int x0, int y0, int x1, int y1)
+    {
+        int w = x1 - x0, h = y1 - y0, c = frame.Channels;
+        var result = new ImageBatch(1, h, w, c);
+        for (int row = 0; row < h; row++) Array.Copy(frame.Data, ((y0 + row) * frame.Width + x0) * c, result.Data, row * w * c, w * c);
+        return result;
+    }
+
+    static MaskBatch CropMask(MaskBatch mask, int x0, int y0, int x1, int y1)
+    {
+        // The mask is sliced like the frame (Python slicing clamps to its own size).
+        x0 = Math.Min(x0, mask.Width); x1 = Math.Min(x1, mask.Width); y0 = Math.Min(y0, mask.Height); y1 = Math.Min(y1, mask.Height);
+        int w = x1 - x0, h = y1 - y0;
+        var result = new MaskBatch(1, h, w);
+        for (int row = 0; row < h; row++) Array.Copy(mask.Data, (y0 + row) * mask.Width + x0, result.Data, row * w, w);
+        return result;
+    }
+}
+
+/// <summary>
+/// Create Layered Image (ImageCompositor), as measured. Items expand frame by frame (a mask batch of 1 for every frame, otherwise frame by frame; a mask of
+/// another size is resized bilinearly; alpha *= 1 - mask) and are stable-sorted by z_index. Each layer goes to 8 bits (rounded), is resized with Pillow's
+/// LANCZOS to its display size, flipped (horizontal, then vertical) and rotated with Pillow (bicubic, expanded), then decoded to linear light and composited
+/// in stacking order with its blend mode and opacity (<see cref="CompositorBlend"/>) onto a transparent canvas: the document's, else the extent of the
+/// placed layers. A layer's picture is centred on its box; a rotated one sits where its turned box's corners reach. The result is sRGB, RGB with an empty
+/// mask when fully opaque, else RGBA with mask = 1 - alpha.
+/// <para>
+/// A saved composition (the editor's JSON) replays when it matches the current layers' fingerprints: its canvas, each layer's transform, opacity, blend,
+/// visibility and flips, the drawing order and a background colour. One that does not match, or is malformed, is reported stale and the initial
+/// composition is drawn.
+/// </para>
+/// </summary>
+[Node("ImageCompositor", Category = "image/compositing", DisplayName = "Create Layered Image", IsOutput = true, HasIntermediateOutput = true,
+    OutputNames = ["IMAGE", "MASK"])]
+public sealed class ImageCompositor
+{
+    const int MaxLayers = 50, MaxCanvas = 16384;
+
+    sealed class Layer
+    {
+        public required ImageBatch Frame;
+        public MaskBatch? Mask;
+        public required LayerItem Item;
+        public long NativeW, NativeH;
+        public double X, Y, Wf, Hf;
+        public long W, H;
+        public double Rotation, Opacity = 1;
+        public string Blend = "normal";
+        public bool Visible = true, FlipH, FlipV, Replay;
+        public byte[] Rgba = [];
+        public float[] Px = [];
+        public int Pw, Ph;
+    }
+
+    public async Task<(ImageBatch Image, MaskBatch Mask, UiOutput Ui)> ExecuteAsync(
+        [Input(Tooltip = "Layer stack to composite; build it with Add Layer. Items are stacked by z_index, batch frames inside an item expand to consecutive layers, and item placement, opacity, and blend mode define the initial composition. Without an explicit document canvas the size is a best-effort maximum extent of the placed layers. A saved composition that matches the current inputs takes priority.")]
+        LayerDocument? layers,
+        [Input(Type = "COMPOSITOR", Json = "{}", Tooltip = "Layered composition saved by the compositor editor.")] object? compositor,
+        NodeContext? context = null)
+    {
+        var expanded = Expand(layers);
+        var ui = new UiOutput();
+        if (expanded.Count == 0)
+        {
+            ui["compositor_inputs"] = new ArrayValue();
+            ui["compositor_bboxes"] = new ArrayValue();
+            var black = new ImageBatch(1, 64, 64, 3);
+            if (context is not null) ui["images"] = await Results.PreviewAsync(black, context, context.Services);
+            return (black, new MaskBatch(1, 64, 64), ui);
+        }
+        foreach (var l in expanded) Prepare(l);
+        var fingerprints = new ArrayValue(expanded.Select(l => (object?)Fingerprint(l)));
+        var bboxes = new ArrayValue(expanded.Select(l => (object?)new DictValue
+        {
+            ["x"] = l.Item.X, ["y"] = l.Item.Y, ["width"] = l.W, ["height"] = l.H, ["rotation"] = l.Rotation, ["name"] = l.Item.Name,
+            ["visible"] = l.Visible, ["opacity"] = l.Opacity, ["blend"] = l.Blend, ["flipH"] = l.FlipH, ["flipV"] = l.FlipV,
+        }));
+
+        int cw, ch;
+        if (layers!.Canvas is { } docCanvas) (cw, ch) = docCanvas;
+        else
+        {
+            cw = expanded.Max(l => Place(l).X + l.Pw);
+            ch = expanded.Max(l => Place(l).Y + l.Ph);
+        }
+        var drawn = expanded;
+        float[]? background = null;
+        bool stale = false;
+        switch (Saved(compositor, out stale))
+        {
+            case DictValue st when !stale:
+                if (!Matches(st, fingerprints, expanded.Count, out double sw, out double sh)) { stale = true; break; }
+                long rw = PyValues.Round(sw), rh = PyValues.Round(sh);
+                if (rw > MaxCanvas || rh > MaxCanvas)
+                    throw new PyException("ValueError", $"Compositor canvas {rw}x{rh} exceeds the maximum supported size of {MaxCanvas}x{MaxCanvas}");
+                var saved = (ArrayValue)st["layers"]!;
+                drawn = [.. expanded.Select((l, k) => Replayed(l, saved[k]))];
+                if (PyValues.Get(st, "order") is ArrayValue order && order.All(o => o is long or System.Numerics.BigInteger) && order.Select(o => (long)PyValues.Int(o)).Order().SequenceEqual(Enumerable.Range(0, drawn.Count).Select(i => (long)i)))
+                    drawn = [.. order.Select(o => drawn[(int)PyValues.Int(o)])];
+                (cw, ch) = ((int)rw, (int)rh);
+                background = Background(PyValues.Get(st, "background"));
+                break;
+        }
+
+        var (image, mask) = Render(drawn, cw, ch, background);
+        ui["compositor_inputs"] = fingerprints;
+        ui["compositor_bboxes"] = bboxes;
+        ui["compositor_canvas"] = new ArrayValue { new DictValue { ["w"] = (long)cw, ["h"] = (long)ch } };
+        if (stale) ui["compositor_state_stale"] = new ArrayValue { true };
+        if (context is not null)
+        {
+            ui["images"] = await Results.PreviewAsync(image, context, context.Services);
+            var previews = new List<object>();
+            foreach (var l in expanded)
+                previews.AddRange(await Results.PreviewAsync(new ImageBatch(1, (int)l.NativeH, (int)l.NativeW, 4, PilLanczos.FromBytes(l.Rgba)), context, context.Services));
+            ui["compositor_layers"] = previews;
+        }
+        return (image, mask, ui);
+    }
+
+    /// <summary>SpawnGen's fingerprints of the document's layers in stacking order: what a saved composition is matched against.</summary>
+    public static ArrayValue Fingerprints(LayerDocument? layers)
+    {
+        var expanded = Expand(layers);
+        foreach (var l in expanded) l.Rgba = Rgba(l.Frame, l.Mask);
+        return new ArrayValue(expanded.Select(l => (object?)Fingerprint(l)));
+    }
+
+    static List<Layer> Expand(LayerDocument? doc)
+    {
+        if (doc is null) return [];
+        if (doc.Version != 1) throw new PyException("ValueError", $"LAYERS document version {doc.Version} is not supported");
+        var result = new List<Layer>();
+        foreach (var item in doc.Layers)
+        {
+            if (item.Type != "raster") throw new PyException("ValueError", $"LAYERS item type '{item.Type}' is not supported yet");
+            var blend = string.IsNullOrEmpty(item.BlendMode) ? "normal" : item.BlendMode;
+            if (!CompositorBlend.ModeNames.Contains(blend)) throw new PyException("ValueError", $"LAYERS item blend_mode '{blend}' is not a known blend mode");
+            var image = item.Image;
+            for (int f = 0; f < image.Batch; f++)
+            {
+                var m = item.Mask is not { } mk ? null : mk.Batch == 1 ? LayersFromBoundingBoxes.MaskFrame(mk, 0) : f < mk.Batch ? LayersFromBoundingBoxes.MaskFrame(mk, f) : null;
+                if (m is not null && (m.Height != image.Height || m.Width != image.Width))
+                    m = new MaskBatch(1, image.Height, image.Width, TorchInterpolate.Resize(m.Data, 1, m.Height, m.Width, image.Height, image.Width, "bilinear"));
+                long w = item.W is > 0 ? item.W.Value : image.Width, h = item.H is > 0 ? item.H.Value : image.Height;
+                result.Add(new Layer
+                {
+                    Frame = LayersFromBoundingBoxes.Frame(image, f), Mask = m, Item = item, NativeW = image.Width, NativeH = image.Height,
+                    X = item.X, Y = item.Y, W = w, H = h, Wf = w, Hf = h, Rotation = item.Rotation ?? 0, Opacity = item.Opacity ?? 1, Blend = blend,
+                    Visible = item.Visible ?? true, FlipH = item.FlipH, FlipV = item.FlipV,
+                });
+            }
+        }
+        if (result.Count > MaxLayers) throw new PyException("ValueError", $"Compositor supports at most {MaxLayers} layers, got {result.Count}");
+        return [.. result.OrderBy(l => l.Item.ZIndex)]; // stable
+    }
+
+    /// <summary>The frame as 8-bit RGBA: alpha (1 for RGB) times 1 - mask, every value round(v * 255) in float32, clamped.</summary>
+    static byte[] Rgba(ImageBatch frame, MaskBatch? mask)
+    {
+        int n = frame.Height * frame.Width, c = frame.Channels;
+        var px = new byte[n * 4];
+        static byte Q(float v)
+        {
+            float r = MathF.Round(v * 255f, MidpointRounding.ToEven);
+            return (byte)(r < 0 ? 0 : r > 255 ? 255 : r);
+        }
+        for (int i = 0; i < n; i++)
+        {
+            for (int k = 0; k < 3; k++) px[i * 4 + k] = Q(frame.Data[i * c + (c >= 3 ? k : 0)]);
+            float a = c == 4 ? frame.Data[i * c + 3] : 1f;
+            if (mask is not null) a *= 1f - mask.Data[i];
+            px[i * 4 + 3] = Q(a);
+        }
+        return px;
+    }
+
+    /// <summary>The layer's picture at its display size, flipped and rotated, in linear light.</summary>
+    static void Prepare(Layer l)
+    {
+        if (l.Rgba.Length == 0) l.Rgba = Rgba(l.Frame, l.Mask);
+        var px = l.Rgba;
+        int w = (int)l.NativeW, h = (int)l.NativeH;
+        if (l.W != w || l.H != h) { px = PilLanczos.Resize(px, w, h, 4, (int)l.W, (int)l.H); (w, h) = ((int)l.W, (int)l.H); }
+        if (l.FlipH) px = PilTransform.FlipLeftRight(px, w, h, 4);
+        if (l.FlipV) px = PilTransform.FlipTopBottom(px, w, h, 4);
+        if (l.Rotation != 0) (px, w, h) = PilTransform.RotateExpand(px, w, h, -(l.Rotation * (180.0 / Math.PI))); // Python's math.degrees
+        var lin = new float[px.Length];
+        for (int i = 0; i < px.Length; i++)
+        {
+            float v = px[i] / 255f;
+            lin[i] = i % 4 == 3 ? v : CompositorBlend.SrgbToLinear(v);
+        }
+        (l.Px, l.Pw, l.Ph) = (lin, w, h);
+    }
+
+    /// <summary>Where the layer's picture goes: centred on its box; rotated, at the reach of its turned corners (a replay centres on the saved size).</summary>
+    static (int X, int Y) Place(Layer l)
+    {
+        if (l.Rotation != 0 && !l.Replay)
+        {
+            double c = Math.Cos(l.Rotation), s = Math.Sin(l.Rotation), hw = l.W / 2.0, hh = l.H / 2.0, cx = l.X + hw, cy = l.Y + hh;
+            double minX = double.PositiveInfinity, minY = double.PositiveInfinity;
+            foreach (var (px, py) in new[] { (-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh) })
+            {
+                minX = Math.Min(minX, cx + px * c + py * s);
+                minY = Math.Min(minY, cy + -(px * s) + py * c);
+            }
+            return ((int)Math.Floor(minX), (int)Math.Floor(minY));
+        }
+        if (l.Rotation != 0) return ((int)Math.Floor(l.X + l.Wf / 2 - l.Pw / 2.0), (int)Math.Floor(l.Y + l.Hf / 2 - l.Ph / 2.0));
+        return ((int)Math.Floor(l.X + l.W / 2.0 - l.Pw / 2.0), (int)Math.Floor(l.Y + l.H / 2.0 - l.Ph / 2.0));
+    }
+
+    static (ImageBatch, MaskBatch) Render(List<Layer> layers, int cw, int ch, float[]? background)
+    {
+        var canvas = new float[cw * ch * 4];
+        if (background is not null)
+            for (int i = 0; i < cw * ch; i++) background.CopyTo(canvas, i * 4);
+        foreach (var l in layers)
+        {
+            if (!l.Visible) continue;
+            var (ox, oy) = Place(l);
+            int x0 = Math.Max(ox, 0), y0 = Math.Max(oy, 0), x1 = Math.Min(ox + l.Pw, cw), y1 = Math.Min(oy + l.Ph, ch);
+            if (x1 <= x0 || y1 <= y0) continue;
+            CompositorBlend.Composite(l.Blend, canvas, y0 * cw + x0, cw, l.Px, (y0 - oy) * l.Pw + (x0 - ox), l.Pw, x1 - x0, y1 - y0, l.Opacity);
+        }
+        bool opaque = true;
+        for (int i = 3; i < canvas.Length; i += 4) if (canvas[i] != 1f) { opaque = false; break; }
+        int c = opaque ? 3 : 4;
+        var image = new ImageBatch(1, ch, cw, c);
+        var mask = new MaskBatch(1, ch, cw);
+        for (int i = 0; i < cw * ch; i++)
+        {
+            for (int k = 0; k < 3; k++) image.Data[i * c + k] = CompositorBlend.LinearToSrgb(Math.Clamp(canvas[i * 4 + k], 0f, 1f));
+            if (!opaque)
+            {
+                image.Data[i * c + 3] = canvas[i * 4 + 3];
+                mask.Data[i] = 1f - canvas[i * 4 + 3];
+            }
+        }
+        return (image, mask);
+    }
+
+    /// <summary>The compositor value as a dict to replay: none for nothing saved ({} or empty), stale for text that is not JSON.</summary>
+    static object? Saved(object? compositor, out bool stale)
+    {
+        stale = false;
+        if (compositor is string text)
+        {
+            if (PyText.Strip(text).Length == 0) return null;
+            try { compositor = PyJson.Loads(text); }
+            catch (PyException) { stale = true; return null; }
+        }
+        return compositor is DictValue { Count: > 0 } d ? d : null;
+    }
+
+    /// <summary>Whether a saved composition fits the current layers: fingerprints, version 1, one entry per layer and a finite positive canvas.</summary>
+    static bool Matches(DictValue st, ArrayValue fingerprints, int count, out double w, out double h)
+    {
+        w = h = double.NaN;
+        var cv = PyValues.Get(st, "canvas") as DictValue ?? [];
+        try
+        {
+            w = PyValues.ToFloat(PyValues.Get(cv, "w"));
+            h = PyValues.ToFloat(PyValues.Get(cv, "h"));
+        }
+        catch (PyException) { w = h = double.NaN; }
+        return PyValues.Equal(PyValues.Get(st, "inputs"), fingerprints) && PyValues.Equal(PyValues.Get(st, "version"), 1L)
+            && PyValues.Get(st, "layers") is ArrayValue saved && saved.Count == count
+            && w > 0 && h > 0 && double.IsFinite(w) && double.IsFinite(h);
+    }
+
+    /// <summary>A number the editor saved (bools count, text does not); null otherwise.</summary>
+    static double? Num(object? v) => v is bool b ? (b ? 1 : 0) : PyValues.IsNumber(v) ? PyValues.Float(v) : null;
+
+    static Layer Replayed(Layer l, object? saved)
+    {
+        var s = saved as DictValue ?? [];
+        var t = PyValues.Get(s, "transform") as DictValue ?? [];
+        double Coord(string key) => Num(PyValues.Get(t, key, 0L)) is { } v && double.IsFinite(v) ? v : 0;
+        (long Size, double Float) Size(string key, long native) =>
+            Num(PyValues.Get(t, key)) is { } v && double.IsFinite(v) && v > 0 ? (Math.Max(1, PyValues.Round(v)), v) : (native, native);
+        var (w, wf) = Size("w", l.NativeW);
+        var (h, hf) = Size("h", l.NativeH);
+        double rotation = Num(PyValues.Get(t, "rotation", 0L)) is { } r && double.IsFinite(r) ? r : 0;
+        double opacity = Num(PyValues.Get(s, "opacity", 1L)) ?? 1;
+        opacity = double.IsNaN(opacity) ? 1 : Math.Clamp(opacity, 0, 1);
+        var blend = PyValues.Get(s, "blend", "normal") is string b && CompositorBlend.ModeNames.Contains(b) ? b : "normal";
+        var replay = new Layer
+        {
+            Frame = l.Frame, Mask = l.Mask, Item = l.Item, NativeW = l.NativeW, NativeH = l.NativeH, Rgba = l.Rgba,
+            X = Coord("x"), Y = Coord("y"), W = w, H = h, Wf = wf, Hf = hf, Rotation = rotation, Opacity = opacity, Blend = blend,
+            Visible = PyValues.Truthy(PyValues.Get(s, "visible", true)), FlipH = PyValues.Truthy(PyValues.Get(s, "flipH", false)),
+            FlipV = PyValues.Truthy(PyValues.Get(s, "flipV", false)), Replay = true,
+        };
+        Prepare(replay);
+        return replay;
+    }
+
+    /// <summary>The saved background as a linear RGBA pixel: "#rgb" / "#rrggbb" (white otherwise) at its opacity; none when hidden or transparent.</summary>
+    static float[]? Background(object? bg)
+    {
+        if (bg is not DictValue d || !PyValues.Truthy(PyValues.Get(d, "visible", true))) return null;
+        double op = Num(PyValues.Get(d, "opacity", 1L)) ?? 1;
+        op = double.IsNaN(op) ? 1 : Math.Clamp(op, 0, 1);
+        if (op <= 0) return null;
+        double[] rgb = [1, 1, 1];
+        if (PyValues.Get(d, "color") is string c && System.Text.RegularExpressions.Regex.IsMatch(c, "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\\z"))
+        {
+            var hex = c[1..];
+            if (hex.Length == 3) hex = string.Concat(hex.Select(ch => $"{ch}{ch}"));
+            for (int i = 0; i < 3; i++) rgb[i] = Convert.ToInt32(hex.Substring(2 * i, 2), 16) / 255.0;
+        }
+        return [CompositorBlend.SrgbToLinear((float)rgb[0]), CompositorBlend.SrgbToLinear((float)rgb[1]), CompositorBlend.SrgbToLinear((float)rgb[2]), (float)op];
+    }
+
+    /// <summary>
+    /// SpawnGen's layer fingerprint: 16 hex digits of SHA-256 over the 8-bit pixels (mask applied), their size and the initial placement, size, rotation,
+    /// opacity, blend mode, flips and visibility. ComfyUI hashes the same things its own way.
+    /// </summary>
+    static string Fingerprint(Layer l)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(l.Rgba);
+        var text = string.Join("|", l.NativeW, l.NativeH, l.Item.X, l.Item.Y, l.W, l.H, BitConverter.DoubleToInt64Bits(l.Rotation),
+            BitConverter.DoubleToInt64Bits(l.Opacity), l.Blend, l.FlipH, l.FlipV, l.Visible);
+        hash.AppendData(System.Text.Encoding.UTF8.GetBytes(text));
+        return Convert.ToHexStringLower(hash.GetHashAndReset())[..16];
     }
 }

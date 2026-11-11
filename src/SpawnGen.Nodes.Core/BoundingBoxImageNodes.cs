@@ -1,228 +1,266 @@
+using System.Numerics;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-[Node("ImageCropV2", Category = "image/transform", DisplayName = "Crop Image", HasIntermediateOutput = true, OutputNames = ["IMAGE"], Description = "Crop an image to the specified dimensions.")]
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries, SpawnGen's tests and fixture (Fixtures/bbox/bbox.json.gz) and black-box
+// probes of ComfyUI (2026-11-11). Python's semantics (dict access, slicing, arithmetic, the errors they raise) come from the Python documentation through
+// the Py* helpers; Pillow's rectangle from PilDraw; PyTorch's area resize from CommonUpscale.
+
+/// <summary>
+/// Crop Image (ImageCropV2), as measured: x = min(region.get("x", 0), W - 1), y = min(region.get("y", 0), H - 1), then Python's slice
+/// image[:, y:y + height, x:x + width] (width and height default to 512; negative and out-of-range ends follow slicing, so the result can be empty).
+/// The region must be a dict and the indices ints (bools count); it shows the crop as a preview.
+/// </summary>
+[Node("ImageCropV2", Category = "image/transform", DisplayName = "Crop Image", HasIntermediateOutput = true, OutputNames = ["IMAGE"],
+    Description = "Crop an image to the specified dimensions.")]
 public sealed class ImageCropV2
 {
-    /// <summary>
-    /// ComfyUI's Crop Image: the region's x and y are kept inside the picture (at most width - 1, height - 1), then the picture is sliced
-    /// <c>[y : y + height, x : x + width]</c> with Python's slice rules (a negative start counts from the end, the end is clipped); a missing size is 512.
-    /// The crop is shown in the node.
-    /// </summary>
-    public async Task<(ImageBatch Image, UiOutput? Ui)> ExecuteAsync(ImageBatch image,
-        [Input(Type = "BOUNDING_BOX", Json = """{"x": 0, "y": 0, "width": 512, "height": 512}""")] object cropRegion,
-        NodeContext? context = null, IServiceProvider? services = null)
+    public async Task<(ImageBatch Image, UiOutput Ui)> ExecuteAsync(ImageBatch image,
+        [Input(Type = "BOUNDING_BOX", Json = """{"x":0,"y":0,"width":512,"height":512}""")] object? cropRegion,
+        NodeContext context, IServiceProvider services)
     {
-        var crop = Crop(image, cropRegion);
-        return (crop, context is not null && services is not null ? new UiOutput("images", await Results.PreviewAsync(crop, context, services)) : null);
+        var cropped = Crop(image, cropRegion);
+        return (cropped, new UiOutput("images", await Results.PreviewAsync(cropped, context, services)));
     }
 
-    public static ImageBatch Crop(ImageBatch image, object? region)
+    public static ImageBatch Crop(ImageBatch image, object? cropRegion)
     {
-        object? x = PyValues.Get(region, "x", 0L), y = PyValues.Get(region, "y", 0L);
-        object? width = PyValues.Get(region, "width", 512L), height = PyValues.Get(region, "height", 512L);
+        var x = PyValues.Get(cropRegion, "x", 0L);
+        var y = PyValues.Get(cropRegion, "y", 0L);
+        var width = PyValues.Get(cropRegion, "width", 512L);
+        var height = PyValues.Get(cropRegion, "height", 512L);
         x = PyValues.Min(x, (long)image.Width - 1);
         y = PyValues.Min(y, (long)image.Height - 1);
-        object toX = PyValues.Add(width, x), toY = PyValues.Add(height, y);
-        var (y0, _, _, rows) = PyText.SliceIndices(image.Height, SliceIndex(y), SliceIndex(toY), 1);
-        var (x0, _, _, cols) = PyText.SliceIndices(image.Width, SliceIndex(x), SliceIndex(toX), 1);
-        int c = image.Channels;
-        var result = new ImageBatch(image.Batch, (int)rows, (int)cols, c);
+        var yEnd = PyValues.Add(y, height);
+        var xEnd = PyValues.Add(x, width);
+        var (y0, y1) = PySlice.Bounds(y, yEnd, image.Height);
+        var (x0, x1) = PySlice.Bounds(x, xEnd, image.Width);
+        int h = y1 - y0, w = x1 - x0, c = image.Channels;
+        var result = new ImageBatch(image.Batch, h, w, c);
         for (int b = 0; b < image.Batch; b++)
-            for (int r = 0; r < rows; r++)
-                Array.Copy(image.Data, (((long)b * image.Height + y0 + r) * image.Width + x0) * c, result.Data, ((long)b * rows + r) * cols * c, cols * c);
+            for (int row = 0; row < h; row++)
+                Array.Copy(image.Data, (((long)b * image.Height + y0 + row) * image.Width + x0) * c, result.Data, (((long)b * h + row) * w) * c, (long)w * c);
         return result;
-    }
-
-    /// <summary>A slice bound: an int (clamped to long, which slicing clips anyway); anything else is Python's TypeError.</summary>
-    static long SliceIndex(object? v)
-    {
-        if (!PyValues.IsInt(v)) throw new PyException("TypeError", "slice indices must be integers or None or have an __index__ method");
-        var i = PyValues.Int(v);
-        return i > long.MaxValue ? long.MaxValue : i < long.MinValue ? long.MinValue : (long)i;
     }
 }
 
+/// <summary>Python's slice bounds for a sequence of length n.</summary>
+internal static class PySlice
+{
+    /// <summary>
+    /// <c>seq[start:stop]</c>: both must be ints (TypeError otherwise); negative values count from the end; both are clamped to 0..n; an empty slice
+    /// when stop &lt;= start.
+    /// </summary>
+    public static (int Start, int Stop) Bounds(object? start, object? stop, int n)
+    {
+        if (!PyValues.IsInt(start) || !PyValues.IsInt(stop))
+            throw new PyException("TypeError", "slice indices must be integers or None or have an __index__ method");
+        int Norm(BigInteger v)
+        {
+            if (v < 0) v += n;
+            return (int)BigInteger.Clamp(v, 0, n);
+        }
+        int s = Norm(PyValues.Int(start)), e = Norm(PyValues.Int(stop));
+        return (s, Math.Max(s, e));
+    }
+}
+
+/// <summary>
+/// Draw BBoxes, as measured: every picture goes to 8 bits as uint8(float32(v) * 255) (C truncation, wrapping like a numpy cast) and back as b / 255; each
+/// box {x, y, width, height} is Pillow's rectangle outline [x, y, x + width, y + height] (coordinates truncated), 3 pixels wide, in the colour of its
+/// label's COCO class (the class index modulo an 8-colour cycle; any other label, or none, is red), drawn in ascending score order (stable, no score
+/// = 1). A dict, or a list of dicts, applies to every
+/// picture; a list of lists gives picture f the list min(f, last). Without an image the canvas is black and as large as the first picture's boxes
+/// reach (int of the largest x + width and y + height), 640 x 640 when there are none. Pillow refuses the colour on 1 and 2 channel pictures (only when a
+/// box is drawn). ComfyUI also writes the label (and score) as text inside known-label boxes; SpawnGen draws no text yet.
+/// </summary>
 [Node("DrawBBoxes", Category = "image/detection", DisplayName = "Draw BBoxes", OutputNames = ["out_image"])]
 public sealed class DrawBBoxes
 {
-    /// <summary>The COCO classes RT-DETR detects; a box whose label is one of them is drawn in that class's colour and labelled.</summary>
-    public static readonly string[] CocoClasses =
+    static readonly string[] Coco =
     [
-        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign", "parking meter",
-        "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase",
-        "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
-        "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut",
-        "cake", "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
-        "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
+        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+        "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag",
+        "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
+        "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot",
+        "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote",
+        "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier",
+        "toothbrush",
     ];
 
-    static readonly byte[][] Colors = [[255, 0, 0], [0, 200, 0], [0, 0, 255], [255, 165, 0], [128, 0, 128], [0, 255, 255], [255, 20, 147], [100, 149, 237]];
+    static readonly byte[][] Colors =
+    [
+        [255, 0, 0], [0, 200, 0], [0, 0, 255], [255, 165, 0], [128, 0, 128], [0, 255, 255], [255, 20, 147], [100, 149, 237],
+    ];
 
-    /// <summary>
-    /// ComfyUI's Draw BBoxes: each picture with its frame's boxes drawn (3 px outlines, lowest score first; a COCO label picks the colour, else red). A box
-    /// or a flat list of boxes is drawn on every picture; a list of frames goes picture by picture (missing frames draw nothing). Without a picture the
-    /// boxes of the first frame are drawn on black, as large as they reach (640 x 640 when there are none). The picture goes through 8 bits as ComfyUI's
-    /// PIL round trip does. The label text ComfyUI writes in a labelled box needs a font engine, which SpawnGen does not have yet; it is not drawn.
-    /// </summary>
     public ImageBatch Execute(
-        [Input(Type = "BOUNDING_BOX", ForceInput = true, Json = """{"x": 0, "y": 0, "width": 512, "height": 512}""")] object bboxes,
-        ImageBatch? image = null)
+        [Input(Type = "BOUNDING_BOX", Json = """{"x":0,"y":0,"width":512,"height":512}""", ForceInput = true)] object bboxes,
+        [Input(Optional = true)] ImageBatch? image = null)
     {
-        int batch = image?.Batch ?? 1;
-        List<object?> frames = bboxes switch
+        var picture = image ?? Canvas(bboxes);
+        int h = picture.Height, w = picture.Width, c = picture.Channels, pixels = h * w * c;
+        var result = new ImageBatch(picture.Batch, h, w, c);
+        var px = new byte[pixels];
+        for (int f = 0; f < picture.Batch; f++)
         {
-            DictValue d => [new ArrayValue { d }],
-            ArrayValue { Count: > 0 } a when a[0] is DictValue => [a],
-            ArrayValue { Count: > 0 } a => [.. a],
-            _ => [new ArrayValue()],
-        };
-        if (frames.Count == 1) frames = Enumerable.Repeat(frames[0], batch).ToList();
-        frames = frames.Concat(Enumerable.Repeat<object?>(new ArrayValue(), batch)).Take(batch).ToList();
-
-        if (image is null)
-        {
-            batch = frames.Count;
-            long maxW = 640, maxH = 640;
-            var all = frames.SelectMany(PyValues.Iterate).ToList();
-            if (all.Count > 0)
+            for (int i = 0; i < pixels; i++) px[i] = ToByte(picture.Data[(long)f * pixels + i]);
+            // Drawn from the lowest score up (stable; a box without a score counts as 1), so confident boxes end on top.
+            foreach (var box in BoxesOf(bboxes, f).OrderBy(b => PyValues.Float(PyValues.Get(b, "score", 1.0))))
             {
-                maxW = all.Max(d => (long)PyValues.ToInt(PyValues.Add(PyValues.Item(d, "x"), PyValues.Item(d, "width"))));
-                maxH = all.Max(d => (long)PyValues.ToInt(PyValues.Add(PyValues.Item(d, "y"), PyValues.Item(d, "height"))));
+                var x = PyValues.Item(box, "x");
+                var y = PyValues.Item(box, "y");
+                var bw = PyValues.Item(box, "width");
+                var bh = PyValues.Item(box, "height");
+                var label = PyValues.Get(box, "label");
+                double x1 = PyValues.Float(PyValues.Add(x, bw)), y1 = PyValues.Float(PyValues.Add(y, bh));
+                PilDraw.Rectangle(px, w, h, c, PyValues.Float(x), PyValues.Float(y), x1, y1, Ink(label, c), fill: false, width: 3);
             }
-            if (maxW < 0 || maxH < 0) throw new PyException("RuntimeError", $"Trying to create tensor with negative dimension: [{batch}, {maxH}, {maxW}, 3]");
-            image = new ImageBatch(batch, (int)maxH, (int)maxW, 3);
-        }
-
-        int h = image.Height, w = image.Width, c = image.Channels, plane = h * w * c;
-        if (c is < 1 or > 4) throw new ArgumentException($"Draw BBoxes takes pictures of 1 to 4 channels (PIL's L, LA, RGB, RGBA), got {c}.", nameof(image));
-        var result = new ImageBatch(batch, h, w, c);
-        var px = new byte[plane];
-        for (int i = 0; i < batch; i++)
-        {
-            // ToPILImage: mul(255).byte(), truncated and wrapped to 8 bits.
-            for (int k = 0; k < plane; k++) px[k] = unchecked((byte)(int)(image.Data[i * plane + k] * 255f));
-            var detections = frames[i];
-            if (PyValues.Truthy(detections)) Draw(px, w, h, c, PyValues.Iterate(detections).ToList());
-            for (int k = 0; k < plane; k++) result.Data[i * plane + k] = px[k] / 255f;
+            for (int i = 0; i < pixels; i++) result.Data[(long)f * pixels + i] = px[i] / 255f;
         }
         return result;
     }
 
-    static void Draw(byte[] px, int w, int h, int c, List<object?> detections)
+    static byte ToByte(float v)
     {
-        // torch.tensor of the corners: int64 when every value is an int, else float32 (each value rounded to float32).
-        var corners = detections.Select(d => new[]
-        {
-            PyValues.Item(d, "x"), PyValues.Item(d, "y"), PyValues.Add(PyValues.Item(d, "x"), PyValues.Item(d, "width")),
-            PyValues.Add(PyValues.Item(d, "y"), PyValues.Item(d, "height")),
-        }).ToList();
-        bool intBoxes = corners.All(b => b.All(PyValues.IsInt));
-        var labels = detections.Select(d => PyValues.Get(d, "label") is var l && CocoClasses.Any(k => PyValues.Equal(l, k)) ? (string)l! : null).ToList();
-        var scoreValues = detections.Select(d => PyValues.Get(d, "score", 1.0)).ToList();
-        bool intScores = scoreValues.All(PyValues.IsInt);
-        var scores = scoreValues.Select(s => intScores ? PyValues.Float(s) : (double)(float)PyValues.Float(s)).ToList();
-        // PIL's ink for a one- or two-band picture cannot be a colour tuple.
-        if (c is 1 or 2) throw new PyException("TypeError", c == 1 ? "color must be int or single-element tuple" : "color must be int, or tuple of one or two elements");
+        float scaled = v * 255f;
+        return float.IsNaN(scaled) ? (byte)0 : unchecked((byte)(long)scaled);
+    }
 
-        foreach (var k in Enumerable.Range(0, detections.Count).OrderBy(k => scores[k])) // sorted(): stable, ascending score
+    static byte[] Ink(object? label, int channels)
+    {
+        int index = label is string s ? Array.IndexOf(Coco, s) : -1;
+        var rgb = Colors[index < 0 ? 0 : index % Colors.Length];
+        return channels switch
         {
-            var box = corners[k].Select(v => intBoxes ? PyValues.Float(v) : (double)(float)PyValues.Float(v)).ToArray();
-            int colorIndex = labels[k] is { } label ? Array.IndexOf(CocoClasses, label) : 0;
-            var color = Colors[colorIndex % Colors.Length];
-            byte[] ink = c == 4 ? [color[0], color[1], color[2], 255] : color;
-            PilDraw.Rectangle(px, w, h, c, box[0], box[1], box[2], box[3], ink, fill: false, width: 3);
-            // ComfyUI writes f"{label} {score:.2f}" at (x1 + 2, y1 + 2) here; text needs a font engine (not drawn).
+            1 => throw new PyException("TypeError", "color must be int or single-element tuple"),
+            2 => throw new PyException("TypeError", "color must be int, or tuple of one or two elements"),
+            3 => rgb,
+            4 => [rgb[0], rgb[1], rgb[2], 255],
+            _ => throw new ArgumentException($"Draw BBoxes cannot draw on a {channels}-channel picture."),
+        };
+    }
+
+    /// <summary>The boxes drawn on picture <paramref name="frame"/>.</summary>
+    static IEnumerable<object?> BoxesOf(object bboxes, int frame)
+    {
+        if (bboxes is DictValue) return [bboxes];
+        if (bboxes is ArrayValue list)
+        {
+            if (list.Count == 0) return [];
+            if (list[0] is ArrayValue) return PyValues.Iterate(list[Math.Min(frame, list.Count - 1)]);
+            return list;
         }
+        return PyValues.Iterate(bboxes);
+    }
+
+    /// <summary>The black canvas drawn on when there is no image: as large as the first picture's boxes reach, or 640 x 640.</summary>
+    static ImageBatch Canvas(object bboxes)
+    {
+        var boxes = BoxesOf(bboxes, 0).ToList();
+        if (boxes.Count == 0) return new ImageBatch(1, 640, 640, 3);
+        object? right = null, bottom = null;
+        foreach (var box in boxes)
+        {
+            var r = PyValues.Add(PyValues.Item(box, "x"), PyValues.Item(box, "width"));
+            var b = PyValues.Add(PyValues.Item(box, "y"), PyValues.Item(box, "height"));
+            if (right is null || PyValues.Less(right, r)) right = r;
+            if (bottom is null || PyValues.Less(bottom, b)) bottom = b;
+        }
+        return new ImageBatch(1, (int)PyValues.ToInt(bottom), (int)PyValues.ToInt(right), 3);
     }
 }
 
-[Node("CropByBBoxes", Category = "image/transform", DisplayName = "Crop By Bounding Boxes",
+/// <summary>
+/// Crop By Bounding Boxes, as measured: picture f takes the boxes of list min(f, last) (a dict: the same box for all; an empty list: the picture gives
+/// nothing), their union min x, min y, max(x + width), max(y + height), grown by padding on each side, truncated to ints and clamped to the picture.
+/// An empty region falls back to an s x s square, s = int(0.3 min(H, W)), at ((W - s) // 2, int(0.1 H)); if that is empty too the crop is black. The crop is resized with PyTorch's area mode:
+/// stretched to the output size, or (keep_aspect pad) scaled by min(width / cw, height / ch) to Python round()ed sizes and centred on zeros. With no crop
+/// at all the input comes back unchanged.
+/// </summary>
+[Node("CropByBBoxes", Category = "image/transform", DisplayName = "Crop By Bounding Boxes", OutputNames = ["IMAGE"],
     Description = "Crop and resize regions from the input image batch based on provided bounding boxes.")]
 public sealed class CropByBBoxes
 {
-    /// <summary>
-    /// ComfyUI's Crop By Bounding Boxes: per picture, the union of its frame's boxes (the last frame serves the pictures after it), widened by
-    /// <paramref name="padding"/> and kept inside the picture, resized ("area") to the output size, stretched or letterboxed on black ("pad"). A box
-    /// that leaves nothing falls back to a centred square of 30 % of the shorter side, 10 % from the top. Pictures with no boxes are skipped; with no crops
-    /// at all the picture comes back as it is.
-    /// </summary>
     public ImageBatch Execute(ImageBatch image,
-        [Input(Type = "BOUNDING_BOX", ForceInput = true, Json = """{"x": 0, "y": 0, "width": 512, "height": 512}""")] object bboxes,
+        [Input(Type = "BOUNDING_BOX", Json = """{"x":0,"y":0,"width":512,"height":512}""", ForceInput = true)] object bboxes,
         [Input(Min = 64, Max = 4096, Step = 8, Tooltip = "Width each crop is resized to.")] long outputWidth = 512,
         [Input(Min = 64, Max = 4096, Step = 8, Tooltip = "Height each crop is resized to.")] long outputHeight = 512,
         [Input(Min = 0, Max = 1024, Step = 1, Tooltip = "Extra padding in pixels added on each side of the bbox before cropping.")] long padding = 0,
         [Input(Options = ["stretch", "pad"], Tooltip = "Whether to stretch the crop to fit the output size, or pad with black pixels to preserve aspect ratio.")]
         string keepAspect = "stretch")
     {
-        int imgH = image.Height, imgW = image.Width, c = image.Channels, ow = (int)outputWidth, oh = (int)outputHeight;
-        ArrayValue frames;
-        if (bboxes is not ArrayValue list) frames = [new ArrayValue { bboxes }];
-        else if (list.Count == 0) return image;
-        else frames = list;
-
+        int ow = (int)outputWidth, oh = (int)outputHeight, c = image.Channels, h = image.Height, w = image.Width;
         var crops = new List<float[]>();
         for (int f = 0; f < image.Batch; f++)
         {
-            var frameBoxes = frames[Math.Min(f, frames.Count - 1)];
-            if (!PyValues.Truthy(frameBoxes)) continue;
-            var boxes = PyValues.Iterate(frameBoxes).ToList();
-            // Python evaluates min(x1) over every box, then min(y1), max(x2), max(y2): the first failing value raises.
-            long x1 = (long)boxes.Select(b => PyValues.ToInt(PyValues.Item(b, "x"))).ToList().Min();
-            long y1 = (long)boxes.Select(b => PyValues.ToInt(PyValues.Item(b, "y"))).ToList().Min();
-            long x2 = (long)boxes.Select(b => PyValues.ToInt(PyValues.Add(PyValues.Item(b, "x"), PyValues.Item(b, "width")))).ToList().Max();
-            long y2 = (long)boxes.Select(b => PyValues.ToInt(PyValues.Add(PyValues.Item(b, "y"), PyValues.Item(b, "height")))).ToList().Max();
-            if (padding > 0)
+            var boxes = BoxesOf(bboxes, f).ToList();
+            if (boxes.Count == 0) continue;
+            object? left = null, top = null, right = null, bottom = null;
+            foreach (var box in boxes) { var v = PyValues.Item(box, "x"); if (left is null || PyValues.Less(v, left)) left = v; }
+            foreach (var box in boxes) { var v = PyValues.Item(box, "y"); if (top is null || PyValues.Less(v, top)) top = v; }
+            foreach (var box in boxes)
             {
-                x1 = Math.Max(0, x1 - padding);
-                y1 = Math.Max(0, y1 - padding);
-                x2 = Math.Min(imgW, x2 + padding);
-                y2 = Math.Min(imgH, y2 + padding);
+                var v = PyValues.Add(PyValues.Item(box, "x"), PyValues.Item(box, "width"));
+                if (right is null || PyValues.Less(right, v)) right = v;
             }
-            (x1, x2) = (Math.Max(0, x1), Math.Min(imgW, x2));
-            (y1, y2) = (Math.Max(0, y1), Math.Min(imgH, y2));
-
-            if (x2 <= x1 || y2 <= y1)
+            foreach (var box in boxes)
             {
-                long fallback = (long)(Math.Min(imgH, imgW) * 0.3);
-                long fx1 = Math.Max(0, FloorDiv(imgW - fallback, 2));
-                long fy1 = Math.Max(0, (long)(imgH * 0.1));
-                long fx2 = Math.Min(imgW, fx1 + fallback), fy2 = Math.Min(imgH, fy1 + fallback);
-                if (fx2 <= fx1 || fy2 <= fy1)
-                {
-                    crops.Add(new float[oh * ow * c]);
-                    continue;
-                }
-                (x1, y1, x2, y2) = (fx1, fy1, fx2, fy2);
+                var v = PyValues.Add(PyValues.Item(box, "y"), PyValues.Item(box, "height"));
+                if (bottom is null || PyValues.Less(bottom, v)) bottom = v;
             }
-
-            int cw = (int)(x2 - x1), ch = (int)(y2 - y1);
-            var crop = new float[ch * cw * c];
-            for (int r = 0; r < ch; r++)
-                Array.Copy(image.Data, (((long)f * imgH + y1 + r) * imgW + x1) * c, crop, (long)r * cw * c, cw * c);
-
-            if (keepAspect == "pad")
+            int x0 = (int)Math.Max(0, Truncate(Subtract(left, padding))), y0 = (int)Math.Max(0, Truncate(Subtract(top, padding)));
+            int x1 = (int)Math.Min(w, Truncate(PyValues.Add(right, padding))), y1 = (int)Math.Min(h, Truncate(PyValues.Add(bottom, padding)));
+            if (x1 <= x0 || y1 <= y0)
             {
-                double sx = (double)ow / cw, sy = (double)oh / ch, scale = sy < sx ? sy : sx;
-                int sw = (int)PyValues.Round(cw * scale), sh = (int)PyValues.Round(ch * scale);
-                var scaled = CommonUpscale.Resize(crop, cw, ch, c, sw, sh, "area");
-                int left = (int)FloorDiv(ow - sw, 2), top = (int)FloorDiv(oh - sh, 2);
-                var padded = new float[oh * ow * c];
-                for (int r = 0; r < sh; r++)
-                    Array.Copy(scaled, (long)r * sw * c, padded, ((long)(top + r) * ow + left) * c, sw * c);
-                crops.Add(padded);
+                int s = (int)(0.3 * Math.Min(h, w));
+                x0 = (w - s) / 2;
+                y0 = (int)(0.1 * h);
+                x1 = x0 + s;
+                y1 = y0 + s;
             }
-            else crops.Add(CommonUpscale.Resize(crop, cw, ch, c, ow, oh, "area"));
+            int cw = x1 - x0, ch = y1 - y0;
+            if (cw <= 0 || ch <= 0) { crops.Add(new float[ow * oh * c]); continue; } // a picture too small even for that: black
+            var region = new float[cw * ch * c];
+            for (int row = 0; row < ch; row++)
+                Array.Copy(image.Data, (((long)f * h + y0 + row) * w + x0) * c, region, (long)row * cw * c, (long)cw * c);
+            crops.Add(keepAspect == "pad" ? Pad(region, cw, ch, c, ow, oh) : CommonUpscale.Resize(region, cw, ch, c, ow, oh, "area"));
         }
-
         if (crops.Count == 0) return image;
         var result = new ImageBatch(crops.Count, oh, ow, c);
-        for (int i = 0; i < crops.Count; i++) crops[i].CopyTo(result.Data, (long)i * oh * ow * c);
+        for (int i = 0; i < crops.Count; i++) Array.Copy(crops[i], 0, result.Data, (long)i * crops[i].Length, crops[i].Length);
         return result;
     }
 
-    /// <summary>Python's <c>a // b</c> for ints (rounds toward negative infinity).</summary>
-    static long FloorDiv(long a, long b) => (long)Math.Floor((double)a / b);
+    static float[] Pad(float[] region, int cw, int ch, int c, int ow, int oh)
+    {
+        double scale = Math.Min((double)ow / cw, (double)oh / ch);
+        int nw = (int)PyValues.Round(cw * scale), nh = (int)PyValues.Round(ch * scale);
+        var resized = CommonUpscale.Resize(region, cw, ch, c, nw, nh, "area");
+        var canvas = new float[ow * oh * c];
+        int ox = (ow - nw) / 2, oy = (oh - nh) / 2;
+        for (int row = 0; row < nh; row++) Array.Copy(resized, (long)row * nw * c, canvas, ((long)(oy + row) * ow + ox) * c, (long)nw * c);
+        return canvas;
+    }
+
+    /// <summary>The boxes of picture <paramref name="frame"/>: a dict for every picture, else the list min(frame, last) (iterated as Python would).</summary>
+    static IEnumerable<object?> BoxesOf(object bboxes, int frame) => bboxes switch
+    {
+        DictValue => [bboxes],
+        ArrayValue { Count: 0 } => [],
+        ArrayValue list => PyValues.Iterate(list[Math.Min(frame, list.Count - 1)]),
+        _ => PyValues.Iterate(bboxes),
+    };
+
+    /// <summary>Python's <c>a - b</c> for an int b.</summary>
+    static object Subtract(object? a, long b)
+    {
+        if (PyValues.IsInt(a)) return PyValues.Normal(PyValues.Int(a) - b);
+        if (PyValues.IsNumber(a)) return PyValues.Float(a) - b;
+        throw new PyException("TypeError", $"unsupported operand type(s) for -: '{PyValues.TypeName(a)}' and 'int'");
+    }
+
+    /// <summary>Python's <c>int(v)</c> of a number (toward zero).</summary>
+    static long Truncate(object? v) => (long)PyValues.ToInt(v);
 }

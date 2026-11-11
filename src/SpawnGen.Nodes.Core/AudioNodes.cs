@@ -3,91 +3,90 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries and SpawnGen's tests. WAV is read and written by WavFile; FLAC (and Opus) go
+// through AudioFiles, which a host with SpawnDev.Codecs connects.
+
+/// <summary>Load Audio: a WAV or FLAC file from the input folder (an " [input]" annotation is dropped).</summary>
 [Node(Category = "audio", DisplayName = "Load Audio")]
 public sealed class LoadAudio
 {
     public static string[] AudioNames() =>
-        [.. InputFiles.Store.List(n => AudioFiles.LoadableExtensions.Any(e => n.EndsWith(e, StringComparison.OrdinalIgnoreCase)))];
+        [.. InputFiles.Store.List(n => AudioFiles.LoadableExtensions.Contains(Path.GetExtension(n).ToLowerInvariant()))];
 
-    /// <summary>A WAV or FLAC file from the inputs (FLAC through SpawnDev.Codecs), as floats the way ComfyUI's PyAV load gives them.</summary>
     public async Task<AudioClip> ExecuteAsync([Input(OptionsProvider = nameof(AudioNames))] string audio) =>
-        await AudioFiles.LoadAsync(await InputFiles.Store.ReadAsync(audio));
+        await AudioFiles.LoadAsync(await InputFiles.Store.ReadAsync(RecordAudio.StripAnnotation(audio)));
 }
 
+/// <summary>
+/// Save Audio: the clip as a numbered FLAC with the run's metadata (16-bit WAV without SpawnDev.Codecs) in the output folder (prefix "audio/ComfyUI" gives
+/// audio/ComfyUI_00001.flac), shown in the node.
+/// </summary>
 [Node(Category = "audio", DisplayName = "Save Audio (FLAC) (DEPRECATED)", IsOutput = true)]
 public sealed class SaveAudio
 {
-    /// <summary>
-    /// Writes the clip as a 16-bit FLAC file with the prompt and workflow as Vorbis comments, like ComfyUI (<see cref="AudioFiles"/>), and passes it on.
-    /// Without SpawnDev.Codecs (a host with no accelerator) the same 16-bit samples go into a WAV file.
-    /// </summary>
-    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, NodeContext context, IServiceProvider services, string filenamePrefix = "audio/ComfyUI")
-    {
-        if (audio is null) throw new ArgumentException("SaveAudio: input audio is None (source video may have no audio track).", nameof(audio));
-        var (data, extension) = await AudioFiles.EncodeAsync(audio, Results.Metadata(context));
-        var file = await Results.For(services).SaveAsync("output", filenamePrefix, data, extension, trailingUnderscore: false); // ComfyUI: prefix_00001.flac
-        return (audio, new UiOutput("audio", new object[] { file }));
-    }
+    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, NodeContext context, IServiceProvider services, string filenamePrefix = "audio/ComfyUI") =>
+        await AudioResults.SaveAsync(audio, context, services, "output", filenamePrefix);
 }
 
+/// <summary>Save Audio (Opus): the clip as a numbered Ogg Opus at the chosen bit rate (resampled to an Opus rate first), needs SpawnDev.Codecs.</summary>
 [Node(Category = "audio", DisplayName = "Save Audio (Opus) (DEPRECATED)", IsOutput = true)]
 public sealed class SaveAudioOpus
 {
-    public static string[] Qualities() => AudioFiles.OpusQualities;
-
-    /// <summary>
-    /// Writes the clip as an Ogg Opus file (prefix_00001.opus) at the chosen bit rate, resampled to an Opus rate first, with the prompt and workflow as
-    /// comments, like ComfyUI. SpawnDev.Codecs' Opus encoder is a port of libopus' fixed-point build, so the packets are valid but not libopus' float
-    /// build's bytes (ComfyUI's PyAV).
-    /// </summary>
     public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, NodeContext context, IServiceProvider services, string filenamePrefix = "audio/ComfyUI",
-        [Input(OptionsProvider = nameof(Qualities))] string quality = "128k")
-    {
-        if (audio is null) throw new ArgumentException("SaveAudioOpus: input audio is None (source video may have no audio track).", nameof(audio));
-        var (data, extension) = await AudioFiles.EncodeAsync(audio, Results.Metadata(context), "opus", quality);
-        var file = await Results.For(services).SaveAsync("output", filenamePrefix, data, extension, trailingUnderscore: false);
-        return (audio, new UiOutput("audio", new object[] { file }));
-    }
+        [Input(Options = ["64k", "96k", "128k", "192k", "320k"])] string quality = "128k") =>
+        await AudioResults.SaveAsync(audio, context, services, "output", filenamePrefix, "opus", quality);
 }
 
+/// <summary>Save Audio (MP3): not available yet (SpawnDev.Codecs has no MP3 encoder); it fails with that message.</summary>
+[Node(Category = "audio", DisplayName = "Save Audio (MP3) (DEPRECATED)", IsOutput = true)]
+public sealed class SaveAudioMP3
+{
+    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, NodeContext context, IServiceProvider services, string filenamePrefix = "audio/ComfyUI",
+        [Input(Options = ["V0", "128k", "320k"])] string quality = "V0") =>
+        await AudioResults.SaveAsync(audio, context, services, "output", filenamePrefix, "mp3", quality);
+}
+
+/// <summary>Save Audio (Advanced): FLAC, MP3 or Opus, each with its own quality choices.</summary>
 [Node(Category = "audio", DisplayName = "Save Audio (Advanced)", IsOutput = true, Description = "Saves the input audio to your ComfyUI output directory.")]
 public sealed class SaveAudioAdvanced
 {
     public static DynamicOption[] Formats() =>
     [
         new("flac"),
-        new("mp3", DynamicInput.Combo("quality", AudioFiles.Mp3Qualities, "V0")),
-        new("opus", DynamicInput.Combo("quality", AudioFiles.OpusQualities, "128k")),
+        new("mp3", DynamicInput.Combo("quality", ["V0", "128k", "320k"], "V0")),
+        new("opus", DynamicInput.Combo("quality", ["64k", "96k", "128k", "192k", "320k"], "128k")),
     ];
 
-    /// <summary>ComfyUI's Save Audio (Advanced): FLAC, or Opus at a bit rate (see <see cref="SaveAudioOpus"/>); MP3 waits for SpawnDev.Codecs' MP3 encoder.</summary>
-    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(NodeContext context, IServiceProvider services,
-        [Input(Tooltip = "The audio to save.")] AudioClip audio,
-        [Input(Default = "audio/ComfyUI", Tooltip = "The prefix for the file to save. May include formatting tokens such as %date:yyyy-MM-dd%.")] string filenamePrefix,
-        [DynamicCombo(nameof(Formats)), Input(Tooltip = "The file format in which to save the audio.")] DynamicChoice format)
-    {
-        var quality = format.Get<string?>("quality", null);
-        var (data, extension) = await AudioFiles.EncodeAsync(audio, Results.Metadata(context), format.Key, quality);
-        var file = await Results.For(services).SaveAsync("output", filenamePrefix, data, extension, trailingUnderscore: false);
-        return (audio, new UiOutput("audio", new object[] { file }));
-    }
+    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(
+        [Input(Tooltip = "The audio to save.")] AudioClip? audio, NodeContext context, IServiceProvider services,
+        [Input(Tooltip = "The prefix for the file to save. May include formatting tokens such as %date:yyyy-MM-dd%.")] string filenamePrefix = "audio/ComfyUI",
+        [DynamicCombo(nameof(Formats)), Input(Tooltip = "The file format in which to save the audio.")] DynamicChoice? format = null) =>
+        await AudioResults.SaveAsync(audio, context, services, "output", filenamePrefix, format?.Key ?? "flac", format?.Get<string?>("quality", null));
 }
 
+/// <summary>Preview Audio: the clip as a temporary file (FLAC, or WAV without SpawnDev.Codecs), shown in the node.</summary>
 [Node(Category = "audio", DisplayName = "Preview Audio", IsOutput = true, Description = "Preview the audio without saving it to the ComfyUI output directory.")]
 public sealed class PreviewAudio
 {
-    /// <summary>A temporary FLAC file (ComfyUI's PreviewAudio saves like Save Audio, into temp), WAV without SpawnDev.Codecs.</summary>
-    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, NodeContext context, IServiceProvider services)
-    {
-        if (audio is null) throw new ArgumentException("PreviewAudio: input audio is None (source video may have no audio track).", nameof(audio));
-        var (data, extension) = await AudioFiles.EncodeAsync(audio, Results.Metadata(context));
-        var file = await Results.For(services).SaveAsync("temp", "preview", data, extension);
-        return (audio, new UiOutput("audio", new object[] { file }));
-    }
+    public async Task<(AudioClip Audio, UiOutput Ui)> ExecuteAsync(AudioClip? audio, NodeContext context, IServiceProvider services) =>
+        await AudioResults.SaveAsync(audio, context, services, "temp", "ComfyUI_temp");
 }
 
+/// <summary>Audio Info (SpawnGen): the clip's length in seconds, sample rate and channel count.</summary>
 [Node(Category = "audio", DisplayName = "Audio Info")]
 public sealed class AudioInfo
 {
     public (double Seconds, long SampleRate, long Channels) Execute(AudioClip audio) => (audio.Seconds, audio.SampleRate, audio.ChannelCount);
+}
+
+static class AudioResults
+{
+    public static async Task<(AudioClip, UiOutput)> SaveAsync(AudioClip? audio, NodeContext? context, IServiceProvider services, string type, string prefix,
+        string format = "flac", string? quality = null)
+    {
+        if (audio is null) throw new ArgumentException("There is no audio to save.", nameof(audio));
+        var (data, extension) = await AudioFiles.EncodeAsync(audio, Results.Metadata(context), format, quality);
+        var file = await Results.For(services).SaveAsync(type, prefix, data, extension, trailingUnderscore: false);
+        return (audio, new UiOutput("audio", new object[] { file }));
+    }
 }

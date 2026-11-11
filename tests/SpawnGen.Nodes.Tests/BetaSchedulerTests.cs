@@ -22,6 +22,25 @@ public class BetaSchedulerTests
     }
 
     [Test]
+    public void The_CDF_and_quantile_match_scipy()
+    {
+        // Fixtures/beta/beta_scipy.json, tools/parity/make_beta_fixtures.py: scipy.stats.beta over ten shapes, including the scheduler's 0.6 / 0.6 grid.
+        var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "beta", "beta_scipy.json")));
+        double worstPpf = 0, worstCdf = 0;
+        foreach (var c in doc.RootElement.GetProperty("cases").EnumerateArray())
+        {
+            double a = c.GetProperty("a").GetDouble(), b = c.GetProperty("b").GetDouble();
+            if (c.TryGetProperty("ppf", out var ppf))
+                worstPpf = Math.Max(worstPpf, Math.Abs(BetaMath.Ppf(c.GetProperty("q").GetDouble(), a, b) - ppf.GetDouble()));
+            else
+                worstCdf = Math.Max(worstCdf, Math.Abs(BetaMath.Cdf(c.GetProperty("x").GetDouble(), a, b) - c.GetProperty("cdf").GetDouble()));
+        }
+        TestContext.Out.WriteLine($"largest difference from scipy: ppf {worstPpf:E2}, cdf {worstCdf:E2}");
+        Assert.That(worstCdf, Is.LessThan(1e-13));
+        Assert.That(worstPpf, Is.LessThan(1e-12));
+    }
+
+    [Test]
     public void The_beta_schedule_starts_at_the_noisiest_sigma_falls_and_ends_in_zero_without_repeats()
     {
         var m = SamplingSetupTests.Sd();

@@ -11,7 +11,7 @@ namespace SpawnGen.Nodes.Core;
 public static class ExifWriter
 {
     /// <summary>
-    /// ComfyUI's tags (comfy_api ImageSaveHelper._create_webp_metadata): the prompt as <c>"prompt:{json}"</c> in 0x0110 (Model), then each extra_pnginfo entry as
+    /// The tags ComfyUI's saved WebP files carry (as read from its output files): the prompt as <c>"prompt:{json}"</c> in 0x0110 (Model), then each extra_pnginfo entry as
     /// <c>"key:{json}"</c> in 0x010F (Make) and downwards, in order. <paramref name="metadata"/> is <see cref="Results.Metadata"/>: "prompt" first.
     /// </summary>
     public static byte[] ComfyMetadata(IReadOnlyDictionary<string, string> metadata)
@@ -20,8 +20,8 @@ public static class ExifWriter
         int next = 0x010F;
         foreach (var (key, value) in metadata)
         {
-            if (key == "prompt") tags[0x0110] = "prompt:" + ComfyJson.EnsureAscii(value);
-            else tags[next--] = key + ":" + ComfyJson.EnsureAscii(value);
+            if (key == "prompt") tags[0x0110] = "prompt:" + AsciiJson.Escape(value);
+            else tags[next--] = key + ":" + AsciiJson.Escape(value);
         }
         return Encode(tags);
     }

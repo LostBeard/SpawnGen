@@ -1,43 +1,34 @@
 namespace SpawnGen.Nodes.Core;
 
+// Written clean-room (docs/CLEANROOM.md): a typed front for CommonUpscale.
+
+/// <summary>The resize methods of the image nodes.</summary>
 public enum ResampleMethod { NearestExact, Bilinear, Area, Bicubic, Lanczos }
 
-/// <summary>
-/// Image resizing by method name or enum, on interleaved frames. Everything goes through <see cref="Core.CommonUpscale"/>, the port of ComfyUI's
-/// common_upscale checked against PyTorch and Pillow output: PyTorch's interpolate for nearest-exact, bilinear, bicubic and area, Pillow's 8-bit
-/// LANCZOS for lanczos.
-/// </summary>
+/// <summary>Resizing by <see cref="ResampleMethod"/>, over <see cref="CommonUpscale"/>.</summary>
 public static class Resample
 {
+    /// <summary>The method names, in the order the nodes list them.</summary>
     public static readonly string[] MethodNames = ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"];
 
-    public static ResampleMethod Parse(string name) => name switch
-    {
-        "nearest-exact" or "nearest" => ResampleMethod.NearestExact,
-        "bilinear" => ResampleMethod.Bilinear,
-        "area" => ResampleMethod.Area,
-        "bicubic" => ResampleMethod.Bicubic,
-        "lanczos" => ResampleMethod.Lanczos,
-        _ => throw new ArgumentException($"Unknown upscale method '{name}'. Known: {string.Join(", ", MethodNames)}.", nameof(name)),
-    };
+    public static string Name(ResampleMethod method) => MethodNames[(int)method];
 
-    /// <summary>ComfyUI's <c>comfy.utils.common_upscale</c>: with <paramref name="centerCrop"/> the source is first cut to the target's aspect ratio around its middle, then resized.</summary>
-    public static float[] CommonUpscale(float[] src, int w, int h, int channels, int newW, int newH, ResampleMethod method, bool centerCrop) =>
-        Core.CommonUpscale.Resize(src, w, h, channels, newW, newH, Name(method), centerCrop ? "center" : "disabled");
-
-    /// <summary>Resizes one picture of <paramref name="channels"/> interleaved channels from (w, h) to (newW, newH).</summary>
-    public static float[] Resize(float[] src, int w, int h, int channels, int newW, int newH, ResampleMethod method)
+    public static ResampleMethod Parse(string name)
     {
-        if (w <= 0 || h <= 0 || newW <= 0 || newH <= 0) throw new ArgumentOutOfRangeException(nameof(newW), "Sizes must be positive.");
-        return Core.CommonUpscale.Resize(src, w, h, channels, newW, newH, Name(method));
+        int i = Array.IndexOf(MethodNames, name);
+        if (i < 0) throw new ArgumentException($"Unknown resize method '{name}'; known: {string.Join(", ", MethodNames)}.", nameof(name));
+        return (ResampleMethod)i;
     }
 
-    public static string Name(ResampleMethod method) => method switch
+    /// <summary>Resizes one picture of <paramref name="channels"/> interleaved floats per pixel; sizes must be positive.</summary>
+    public static float[] Resize(float[] src, int w, int h, int channels, int newW, int newH, ResampleMethod method)
     {
-        ResampleMethod.NearestExact => "nearest-exact",
-        ResampleMethod.Bilinear => "bilinear",
-        ResampleMethod.Area => "area",
-        ResampleMethod.Bicubic => "bicubic",
-        _ => "lanczos",
-    };
+        if (newW <= 0) throw new ArgumentOutOfRangeException(nameof(newW), "The new width must be positive.");
+        if (newH <= 0) throw new ArgumentOutOfRangeException(nameof(newH), "The new height must be positive.");
+        return global::SpawnGen.Nodes.Core.CommonUpscale.Resize(src, w, h, channels, newW, newH, Name(method));
+    }
+
+    /// <summary><see cref="CommonUpscale.Resize(float[], int, int, int, int, int, string, string)"/>, cropping to the target aspect first when asked.</summary>
+    public static float[] CommonUpscale(float[] src, int w, int h, int channels, int newW, int newH, ResampleMethod method, bool centerCrop) =>
+        global::SpawnGen.Nodes.Core.CommonUpscale.Resize(src, w, h, channels, newW, newH, Name(method), centerCrop ? "center" : "disabled");
 }

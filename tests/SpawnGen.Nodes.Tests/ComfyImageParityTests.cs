@@ -55,6 +55,8 @@ public class ComfyImageParityTests
 
     static IEnumerable<TestCaseData> MainCases() => Cases("main");
     static IEnumerable<TestCaseData> CropCases() => Cases("crop");
+    static IEnumerable<TestCaseData> CropToMaskCases() =>
+        Load("crop_to_mask").Select((c, i) => new TestCaseData(c).SetName($"CropToMask_{i:D2}_{c.Args.GetProperty("case").GetString()}"));
 
     static ImageBatch Img(Tensor t) => new(t.Shape[0], t.Shape[1], t.Shape[2], t.Shape[3], (float[])t.Data.Clone());
     static MaskBatch Mask(Tensor t) => new(t.Shape[0], t.Shape[1], t.Shape[2], (float[])t.Data.Clone());
@@ -64,15 +66,23 @@ public class ComfyImageParityTests
     static double D(Case c, string name) => c.Args.GetProperty(name).GetDouble();
     static bool B(Case c, string name) => c.Args.GetProperty(name).GetBoolean();
 
-    static void Same(HostTensor actual, JsonElement expected, double tolerance, string what = "")
+    /// <summary>
+    /// Every value within <paramref name="tolerance"/> plus <paramref name="relative"/> times the largest expected magnitude in its pixel (the last
+    /// dimension).
+    /// </summary>
+    static void Same(HostTensor actual, JsonElement expected, double tolerance, string what = "", double relative = 0)
     {
         var e = ReadTensor(expected);
         Assert.That(actual.Shape, Is.EqualTo(e.Shape), "shape " + what);
+        int channels = e.Shape[^1];
         double worst = 0;
         int at = -1;
         for (int i = 0; i < e.Data.Length; i++)
         {
-            double d = Math.Abs(actual.Data[i] - e.Data[i]);
+            double magnitude = 0;
+            if (relative > 0)
+                for (int k = i - i % channels; k < i - i % channels + channels; k++) magnitude = Math.Max(magnitude, Math.Abs(e.Data[k]));
+            double d = Math.Abs(actual.Data[i] - e.Data[i]) - relative * magnitude;
             if (!(d <= worst)) { worst = d; at = i; }
         }
         Assert.That(worst, Is.LessThanOrEqualTo(tolerance), $"{what} worst at {at}: {(at >= 0 ? actual.Data[at] : 0)} vs {(at >= 0 ? e.Data[at] : 0)}");
@@ -137,7 +147,10 @@ public class ComfyImageParityTests
                 Same(new ImageAddNoise().Execute(Img(c.Inputs["image"]), c.Args.GetProperty("seed").GetInt64(), (float)D(c, "strength")), o[0], 2e-6);
                 break;
             case "ImageColorSpace":
-                Same(new ImageColorSpace().Execute(Img(c.Inputs["image"]), S(c, "source"), S(c, "destination")), o[0], 2e-5);
+                // SpawnGen computes each pixel in double and rounds once; ComfyUI rounds to float32 along the way. Where PQ, LogC3 and ACEScct decode to
+                // large linear values the two differ by up to about 1e-6 of the pixel's largest channel (float32 rounding, also of the cancelling terms of
+                // the primaries matrices), with SpawnGen at the exact value (checked in float64 for the worst cases, 2026-11-08).
+                Same(new ImageColorSpace().Execute(Img(c.Inputs["image"]), S(c, "source"), S(c, "destination")), o[0], 2e-5, relative: 1e-6);
                 break;
             case "ColorToRGBInt":
                 if (o[0].ValueKind == JsonValueKind.String && o[0].GetString() == "error")
@@ -161,5 +174,36 @@ public class ComfyImageParityTests
     {
         var r = new ImageCropToMask().Execute(Img(c.Inputs["images"]), Mask(c.Inputs["masks"]), I(c, "width"), I(c, "height"), D(c, "pad_factor"), I(c, "grow_mask"), S(c, "background"));
         Same(r, c.Out[0], 1e-6);
+    }
+
+    static IEnumerable<TestCaseData> SdrHdrCases() =>
+        Load("sdr_hdr").Select((c, i) => new TestCaseData(c).SetName($"SdrToHdr_{i:D2}_{c.Args.GetProperty("case").GetString()}"));
+
+    /// <summary>
+    /// tools/parity/make_sdr_to_hdr_fixtures.py: the edges of Convert SDR to HDR (values outside 0..1, saturated colours, 1 / 2 / 4 channels, targets
+    /// between the gain table's knots, above 1000 and below 0.1 nits). Within the documented 2.5e-4 (PARITY.md: the calibrated curve is a measured
+    /// table).
+    /// </summary>
+    [TestCaseSource(nameof(SdrHdrCases))]
+    public void Sdr_to_hdr_edges_match_ComfyUI(Case c)
+    {
+        var choice = new SpawnGen.Engine.Nodes.DynamicChoice("lottes", new Dictionary<string, object?> { ["target_luminance"] = c.Args.GetProperty("target_luminance").GetDouble() });
+        ImageBatch Run() => new ImageSDRToHDR().Execute(Img(c.Inputs["image"]), choice);
+        if (c.Out[0].TryGetProperty("error", out var error))
+            Assert.Throws<ArgumentException>(() => Run(), error.GetString());
+        else
+            Same(Run(), c.Out[0], 2.5e-4);
+    }
+
+    /// <summary>tools/parity/make_crop_to_mask_fixtures.py: 50 ComfyUI cases (window rule, pre-scale, inversion rule, cut-off, grow, batches, colours).</summary>
+    [TestCaseSource(nameof(CropToMaskCases))]
+    public void Crop_to_mask_matches_ComfyUI_measurements(Case c)
+    {
+        ImageBatch Run() => new ImageCropToMask().Execute(Img(c.Inputs["images"]), Mask(c.Inputs["masks"]), I(c, "width"), I(c, "height"), D(c, "pad_factor"),
+            I(c, "grow_mask"), S(c, "background"));
+        if (c.Out[0].TryGetProperty("error", out var error))
+            Assert.Throws<ArgumentException>(() => Run(), error.GetString());
+        else
+            Same(Run(), c.Out[0], 1e-6);
     }
 }

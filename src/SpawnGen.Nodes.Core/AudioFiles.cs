@@ -3,7 +3,7 @@ using SpawnGen.Engine.Types;
 namespace SpawnGen.Nodes.Core;
 
 /// <summary>
-/// The FLAC files the audio save nodes write, like ComfyUI's AudioSaveHelper: PyAV hands the clip to FFmpeg's FLAC encoder as 16-bit samples
+/// The FLAC files the audio save nodes write, as ComfyUI's measured output files are: the clip as 16-bit samples
 /// (<see cref="Samples16"/>) with the run's metadata as Vorbis comments. A host with an accelerator sets <see cref="Flac"/> (SpawnDev.Codecs); without it the
 /// nodes write the same 16-bit samples as WAV.
 /// </summary>
@@ -62,8 +62,8 @@ public static class AudioFiles
         Flac is { } flac ? (await flac(clip, [.. metadata]), "flac") : (WavFile.Encode(clip), "wav");
 
     /// <summary>
-    /// ComfyUI's AudioSaveHelper.save_audio for a format ("flac", "mp3" or "opus") and quality: the file and its extension. Opus resamples the clip to an Opus
-    /// rate first (comfy.audio.resample, <see cref="AudioDsp.Resample(AudioClip, int)"/>). MP3 is not available yet: SpawnDev.Codecs has no MP3 encoder.
+    /// The saved file for a format ("flac", "mp3" or "opus") and quality, as ComfyUI's audio save nodes write it (measured, Fixtures/codecs/save_audio): the
+    /// file and its extension. Opus resamples the clip to an Opus rate first (<see cref="AudioDsp.Resample(AudioClip, int)"/>). MP3 is not available yet: SpawnDev.Codecs has no MP3 encoder.
     /// </summary>
     public static async Task<(byte[] Data, string Extension)> EncodeAsync(AudioClip clip, IReadOnlyDictionary<string, string> metadata, string format, string? quality)
     {

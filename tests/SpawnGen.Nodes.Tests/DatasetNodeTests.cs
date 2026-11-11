@@ -10,7 +10,7 @@ using SpawnGen.Nodes.Core;
 namespace SpawnGen.Nodes.Tests;
 
 /// <summary>
-/// The dataset nodes against ComfyUI's own results (comfy_extras/nodes_dataset.py). Fixtures/dataset/set is the input folder (make_inputs.py);
+/// The dataset nodes against ComfyUI's own results. Fixtures/dataset/set is the input folder (make_inputs.py);
 /// comfy_reference.py made comfy_direct.json.gz by calling ComfyUI's node classes and comfy_graphs.json.gz by running graph_*.json on a ComfyUI server.
 /// Pictures Pillow makes are compared as their 8-bit values, the tensor maths bit for bit, texts and file names character for character.
 /// </summary>
@@ -428,9 +428,8 @@ public class DatasetNodeTests
     static readonly HashSet<string> TextStepPreviews = ["11", "13", "15", "17", "19", "21", "23", "25", "27", "41", "43", "45"];
 
     /// <summary>
-    /// What ComfyUI meant a text step's preview to show. ComfyUI's TextProcessingNode.execute has a bug: its "Single output - wrap in list for
-    /// NodeOutput" branch passes [result] as the one output value, so the text arrives as a list of one and the preview reads ["text"] (Merge Text
-    /// Lists: [[...]]). SpawnGen puts out the result itself: the fixture's one item. Truncate Text (node 41) then gets the uppercase text, not a
+    /// What a text step's preview is meant to show. Measured: ComfyUI's text steps put out their result as a list of one, so its preview reads
+    /// ["text"] (Merge Text Lists: [[...]]), a bug. SpawnGen puts out the result itself: the fixture's one item. Truncate Text (node 41) then gets the uppercase text, not a
     /// list, and cuts it to 2 characters.
     /// </summary>
     static List<string> Intended(string node, List<string> comfy, JsonObject ui)
@@ -463,7 +462,7 @@ public class DatasetNodeTests
         try
         {
             InputFiles.Directory = input;
-            // ComfyUI fails this prompt: its text step puts out a list of one text (TextProcessingNode.execute's wrapping bug), and Save Image-Text
+            // ComfyUI fails this prompt: its text step puts out a list of one text (the bug above), and Save Image-Text
             // writes the pictures, creates the first caption file empty and stops on "write() argument must be str, not list".
             var answer = Graphs.Value["answers"]!["failing"]!;
             Assert.That(((string)answer["status"]!, (string)answer["error"]!["message"]!), Is.EqualTo(("error", "write() argument must be str, not list\n")));
@@ -519,6 +518,73 @@ public class DatasetNodeTests
         await new SaveImageDataSetToFolder().ExecuteAsync(services, [Rgb("a.png"), Rgb("B.PNG")], ["d"], ["p"], ["increment"]);
         Assert.That(results.List("output", "d"), Is.EqualTo(new[] { "p_00001_00000.png", "p_00002_00001.png" }));
         Assert.That(PngReader.Decode(results.Get("output", "p_00002_00001.png", "d")!).Width, Is.EqualTo(20));
+    }
+
+    // ---- rules measured with ComfyUI's server (tools/parity/dataset_rules, 2026-11-11) ---------------------------------------------------------
+
+    static byte[] Png(int red) => PngWriter.Encode(new ImageBatch(1, 2, 2, 3, [.. Enumerable.Range(0, 4).SelectMany(_ => new[] { red / 255f, 0f, 0f })]));
+
+    static int Red(ImageBatch image) => (int)MathF.Round(image.Data[0] * 255f);
+
+    static async Task<T> WithInputs<T>(Dictionary<string, byte[]> files, Func<Task<T>> run)
+    {
+        var store = new MemoryInputStore();
+        foreach (var (name, data) in files) await store.SaveAsync(name, data);
+        var previous = InputFiles.Store;
+        InputFiles.Store = store;
+        try { return await run(); }
+        finally { InputFiles.Store = previous; }
+    }
+
+    [Test]
+    public async Task Folders_are_walked_in_listing_order_one_level_down_with_kohya_repeats()
+    {
+        // Measured: a subfolder is read where it is listed, its whole picture list repeated (a, b, a, b); folders deeper down are not read; the
+        // repeat count is the name's part before the first "_" when all digits ("0_" none, "-1_", "+2_", "2 _", "x_" once); GIF and BMP are skipped.
+        var files = new Dictionary<string, byte[]>
+        {
+            ["d/2_two/a.png"] = Png(10), ["d/2_two/b.png"] = Png(20), ["d/2_two/a.txt"] = Encoding.UTF8.GetBytes("cap a"), ["d/2_two/deep/x.png"] = Png(99),
+            ["d/0_zero/o.png"] = Png(30), ["d/-1_neg/n.png"] = Png(40), ["d/3/t.png"] = Png(50), ["d/m.PNG"] = Png(60), ["d/e.bmp"] = Png(70), ["d/f.gif"] = Png(80),
+            ["d/x_y/s.png"] = Png(90), ["d/z.png"] = Png(100),
+        };
+        var (images, texts) = await WithInputs(files, () => new LoadImageTextDataSetFromFolder().ExecuteAsync("d"));
+        // Listing order (case ignored): -1_neg, 0_zero, 2_two, 3, e.bmp, f.gif, m.PNG, x_y, z.png.
+        Assert.That(images.Select(Red), Is.EqualTo(new[] { 40, 10, 20, 10, 20, 50, 50, 50, 60, 90, 100 }));
+        Assert.That(texts, Is.EqualTo(new[] { "", "cap a", "", "cap a", "", "", "", "", "", "", "" }));
+        var plain = await WithInputs(files, () => new LoadImageDataSetFromFolder().ExecuteAsync("d"));
+        Assert.That(plain.Select(Red), Is.EqualTo(new[] { 60, 100 }), "only the pictures directly in the folder");
+        var folders = await WithInputs(files, () => Task.FromResult(LoadImageDataSetFromFolder.Folders()));
+        Assert.That(folders, Is.EqualTo(new[] { "d", "d/-1_neg", "d/0_zero", "d/2_two", "d/2_two/deep", "d/3", "d/x_y" }), "every folder at any depth");
+    }
+
+    [Test]
+    public void Contrast_turns_about_one_half_and_batches_split_where_ComfyUI_splits_them()
+    {
+        // Measured: Adjust Contrast's pivot is 0.5 (grey 0x20 and 0xE0 in one batch at factor 2 give 0 and 255; a 0x400000 picture gives black).
+        var pair = Concat(new ImageBatch(1, 1, 1, 3, [.. Enumerable.Repeat(0x20 / 255f, 3)]), new ImageBatch(1, 1, 1, 3, [.. Enumerable.Repeat(0xE0 / 255f, 3)]));
+        Assert.That(new AdjustContrast().Execute(pair, 2.0).Data, Is.EqualTo(new[] { 0f, 0f, 0f, 1f, 1f, 1f }));
+        Assert.That(new AdjustContrast().Execute(new ImageBatch(1, 1, 1, 3, [0x40 / 255f, 0f, 0f]), 2.0).Data.All(v => v < 1f / 255f));
+
+        // Measured: Deduplicate Images splits a batch into pictures (two equal ones keep one, a single picture), and Make Image Grid is always
+        // `columns` cells across (2 pictures, 4 columns of 32 with padding 2: 134 x 32).
+        var twins = new ImageBatch(2, 4, 4, 3, [.. Enumerable.Repeat(0.5f, 96)]);
+        var kept = new ImageDeduplication().Execute([twins], [0.95]);
+        Assert.That(kept.Select(k => k.Batch), Is.EqualTo(new[] { 1 }));
+        Assert.That(new ImageGrid().Execute([twins], [4], [32], [32], [2]).Shape, Is.EqualTo(new[] { 1, 32, 134, 3 }));
+
+        // Measured: Shuffle Pairs of Image-Text fails when the lists differ in length.
+        Assert.That(() => new ShuffleImageTextDataset().Execute([twins, twins], ["one"], [0]), Throws.ArgumentException);
+    }
+
+    [Test]
+    public async Task Captions_are_written_for_the_texts_given()
+    {
+        // Measured: three pictures and one text write i_00000.txt only.
+        var results = new MemoryResultStore();
+        var one = Rgb("a.png");
+        await new SaveImageTextDataSetToFolder().ExecuteAsync(new Services(results), [one, one, one], ["B"], ["i"], ["overwrite"], ["only"]);
+        Assert.That(results.List("output", "B"), Is.EqualTo(new[] { "i_00000.png", "i_00000.txt", "i_00001.png", "i_00002.png" }));
+        Assert.That(Encoding.UTF8.GetString(results.Get("output", "i_00000.txt", "B")!), Is.EqualTo("only"));
     }
 
     [Test]

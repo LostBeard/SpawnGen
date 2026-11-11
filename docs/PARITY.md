@@ -109,6 +109,36 @@ Pillow's. Deliberate difference: since ComfyUI #13594 (2026-04-28) its Load Imag
 through swscale to float: WebP and BMP colours come out 1 to 2.4 / 255 off the decoded values, fully opaque WebP / GIF pixels get a mask of 1/255
 instead of 0, and JPEGs are upsampled by ffmpeg instead of libjpeg (4:2:0 pictures: mean 5/255, up to 68/255 off Pillow's). SpawnGen keeps the
 reference decoders' values (what Pillow, libwebp and the browsers show).
+Load Image, Load Image (as Mask), Save Image, Preview Image and Compare Images were rebuilt clean-room (2026-11-11) and checked against ComfyUI's
+nodes and server (Fixtures/image_nodes, tools/parity/make_image_node_fixtures.py; ImageNodeParityTests): RGB, RGBA and palette PNGs (with and without
+tRNS: a palette picture always gets a full-size mask) and an EXIF-rotated JPEG exactly / within 3/255; Load Image (as Mask) gives every frame; Save
+Image's names (`%batch_num%` is the picture's index while the counter is the one for the prefix as written, so those names start at 00001 each run, as
+ComfyUI's do), its PNG text (prompt, then each extra_pnginfo entry) and the preview prefixes (ComfyUI_temp_ / comfy.compare.a_temp_ / b_temp_ with
+the same five letters, comfy.bboxes.background_temp_ for the first background picture only). Preview Image's files carry the prompt; the previews
+of Compare Images, Preview Mask and the other newer nodes carry no text, as ComfyUI's. Deliberate differences: ComfyUI (PyAV) fails with
+"Invalid argument" on grey, grey + alpha, 1-bit, grey JPEG and 16-bit PNGs; SpawnGen loads them as Pillow does (a 16-bit picture by its high
+bytes); PngReader now reads 1-, 2- and 4-bit grey and palette PNGs (PNG spec 7.2, 13.12). Temporary files are numbered as ComfyUI numbers them
+(prefix_00001_.png), in both of SpawnGen's stores.
+Deliberate differences (SpawnGen is more forgiving where ComfyUI fails): Convert Image to Mask with channel "alpha" on an image without alpha gives a mask of ones (ComfyUI: IndexError); Image Blur / Image Sharpen with a radius as large as the picture keep mirroring the edges (ComfyUI: PyTorch's reflect-padding error).
+Deliberate difference: Convert Image Color Space computes every pixel in double precision and rounds once, so it gives the exact values where
+ComfyUI's float32 arithmetic differs by up to about 1e-6 of a pixel's largest channel (PQ, LogC3 and ACEScct decoded to large linear values; checked
+in float64, 2026-11-08). Results in the 0..1 range agree within 2e-5.
+Documented difference: Convert SDR to HDR follows ComfyUI's measured pipeline exactly (sRGB decode, Rec.2020, one gain from Rec.709 luminance,
+HLG), but ComfyUI's calibrated luminance curve has no published description, so SpawnGen interpolates a table measured from ComfyUI
+(tools/parity/make_sdr_to_hdr_table.py: 101 target luminances by 256 levels). Output values agree to about 2e-5 on the fixture and within about
+2e-4 between table knots (under a tenth of an 8-bit level); target luminances between 0 and 0.001 nits use the 0.001 nit curve (2026-11-11).
+Documented differences, Create Layered Image (ImageCompositor, rebuilt clean-room 2026-11-11): the layer fingerprints the editor matches saved
+compositions by are SpawnGen's own (16 hex digits of SHA-256 over the same inputs ComfyUI's depend on: the 8-bit pixels with the mask applied and the
+initial placement, size, rotation, opacity, blend mode, flips and visibility). ComfyUI's hash could not be derived from its behaviour, so a composition
+saved by ComfyUI's editor reports stale in SpawnGen (and the other way round) and is drawn from the layer stack; one saved in SpawnGen replays. The test maps
+ComfyUI's fingerprints to SpawnGen's position by position and checks that the two tell the same layers apart. The hue, saturation and color blend modes
+convert through HLS / HSV in double precision and agree within 2e-7 (the order of ComfyUI's operations there is not known; the other 23 modes are
+bit-exact). Rotated layers are placed by the reach of their turned corners, which matches every fixture case; a few exact 360-degree turns and
+fractional saved sizes of rotated layers can sit one pixel off ComfyUI's placement.
+The model-free audio nodes (Trim Audio Duration, Split / Join Audio Channels, Concatenate Audio, Merge Audio, Adjust Audio Volume, Empty Audio, Audio
+Equalizer (3-Band)) are checked against ComfyUI's node classes (Fixtures/comfy/comfy_audio_nodes.json.gz): the equalizer and the sample-exact nodes bit for
+bit, resampling (torchaudio's sinc kernel) within 2e-6. Differences: SpawnGen's AUDIO is one clip without a batch dimension; a missing input passes the
+other one on; Save Audio writes 16-bit WAV (ComfyUI: FLAC); an unknown merge method is a clear error where ComfyUI fails with UnboundLocalError.
 Deliberate difference: Save Text writes line breaks as given (`
 `); ComfyUI opens its file in Python's text mode, so on Windows it writes `
 
@@ -121,6 +151,8 @@ Deliberate difference: Save Text writes line breaks as given (`
 ` (measured, clean-room batch C).
 Deliberate difference (a ComfyUI bug not copied): ComfyUI's TextProcessingNode.execute wraps a text step's result in a list on its non-list output,
 so its text steps put out ["text"] (previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
+Deliberate difference (a ComfyUI bug not copied): measured with ComfyUI, its text steps put out each result as a list of one text, ["text"]
+(previews show JSON, chained text steps and Save Image-Text captions fail); SpawnGen's put out the text itself.
 
 Still missing, by kind:
 1. **Need the library**: CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use
@@ -138,6 +170,7 @@ Still missing, by kind:
    ModelSave, VAESave; fp16 LDM names) verified: a merge with a LoRA'd copy = ComfyUI (0.13 %), and the saved checkpoint loads back as that merge.
    Open: CLIPSave (ComfyUI writes Hugging Face names, one file per tower: asked the library), Save Checkpoint of parts loaded separately, fp8 weight_dtype.
 2. **Need a codec** (SpawnDev.Codecs; requests with Geordi 2026-11-08 in this order: animated lossy WebP, WebM writer, FLAC of any length, Ogg Opus, VP9 / AV1 inter frames): Save Animated WEBP, SaveWEBM, video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), MP3 / Opus / FLAC audio saving. WebP / GIF / BMP loading is done. Audio on branch `codecs-unreleased` (Codecs 1.0.2-local.8, all clean-room MIT): Save Audio / Preview Audio write FLAC (lossless, metadata byte-identical to FFmpeg's, frames not ComfyUI's bytes, by TJ's choice), Save Audio (Opus) / (Advanced) write Ogg Opus (FFmpeg's container bytes, packets from a fixed-point Opus encoder), Load Audio reads FLAC with ComfyUI's floats exactly; MP3 saving waits for the audio nodes' clean-room batch.
+2. **Need a codec** (SpawnDev.Codecs; requests with Geordi 2026-11-08 in this order: animated lossy WebP, WebM writer, FLAC of any length, Ogg Opus, VP9 / AV1 inter frames): Save Animated WEBP, SaveWEBM, video (LoadVideo / SaveVideo / CreateVideo / GetVideoComponents), MP3 / Opus / FLAC audio saving. WebP / GIF / BMP loading is done.
 3. **Need SpawnGen work**: done: GLSL Shader. src/SpawnGen.Glsl compiles GLSL ES 3.00 fragment shaders (the subset ComfyUI's blueprints use: functions
    and overloads, out / inout, loops, vectors and swizzles, int / uint, texture / texelFetch / textureSize and the usual built-ins) to .NET IL at run time
    and runs them as ILGPU kernels, so the same shader runs on CUDA, OpenCL, WebGPU in the browser and the CPU, with no GL. Against ComfyUI's own

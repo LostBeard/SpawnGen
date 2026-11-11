@@ -7,7 +7,7 @@ using SpawnGen.Nodes.Core;
 namespace SpawnGen.Nodes.ML;
 
 /// <summary>
-/// FLAC for Save Audio and Preview Audio, encoded by SpawnDev.Codecs (a port of FFmpeg's flacenc and FLAC muxer) on the host's accelerator:
+/// FLAC for Save Audio and Preview Audio, encoded by SpawnDev.Codecs (its own MIT FLAC encoder) on the host's accelerator:
 /// <see cref="Install"/> sets <see cref="AudioFiles.Flac"/>. The file is what ComfyUI's PyAV writes: 16-bit samples at FFmpeg's default compression level 5,
 /// the vendor string and trailing <c>encoder</c> comment of the libavformat ComfyUI ships with, and an 8192-byte padding block.
 /// </summary>

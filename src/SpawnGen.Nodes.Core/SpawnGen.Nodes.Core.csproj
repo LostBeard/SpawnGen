@@ -12,5 +12,9 @@
     <!-- The model-saving nodes write through the same result helpers as Save Image. -->
     <InternalsVisibleTo Include="SpawnGen.Nodes.ML" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Convert SDR to HDR's gain curve, measured from ComfyUI by tools/parity/make_sdr_to_hdr_table.py. -->
+    <EmbeddedResource Include="Resources\sdr_to_hdr_gain.bin" LogicalName="SpawnGen.Nodes.Core.sdr_to_hdr_gain.bin" />
+  </ItemGroup>
 
 </Project>

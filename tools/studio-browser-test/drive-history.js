@@ -42,8 +42,10 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const titles = await page.locator('.hist-title').allTextContents();
   check('every run adds an entry, newest first', entries === 2 && /#2/.test(titles[0]) && /#1/.test(titles[1]), titles.join(' | '));
   check('both runs finished', (await page.locator('.hist-entry.done').count()) === 2);
-  const thumbs = await page.locator('.hist-thumbs img').count();
-  check('the first run shows its saved picture; the second, with nothing changed, says its outputs were cached', thumbs === 1 && /cached/.test(await page.textContent('.hist-note')), `${thumbs} thumbnails`);
+  // As ComfyUI does (emit_cached_output, measured 2026-11-08): the second run, with nothing changed, is served from the cache and shows the cached
+  // ui again, so both entries show the same saved file and nothing is saved twice.
+  const srcs = await page.locator('.hist-thumbs img').evaluateAll(imgs => imgs.map(i => decodeURIComponent(i.getAttribute('src') || '')));
+  check('both runs show the saved picture; the cached second run shows the same file', srcs.length === 2 && srcs[0] === srcs[1], srcs.join(' | '));
   const loaded = await page.evaluate(() => [...document.querySelectorAll('.hist-thumbs img')].every(i => i.complete && i.naturalWidth > 0));
   check('the pictures load', loaded);
   await page.screenshot({ path: path.join(OUT, 'history.png') });

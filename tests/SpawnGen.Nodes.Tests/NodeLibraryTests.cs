@@ -136,7 +136,9 @@ public class NodeLibraryTests
     [TestCase("overlay", 0.3f, 0.6f, 0.36f)]
     [TestCase("overlay", 0.8f, 0.6f, 0.84f)]
     [TestCase("difference", 0.8f, 0.6f, 0.2f)]
-    [TestCase("soft_light", 0.8f, 0.6f, 0.6f + 0.4f * 0.6f * 0.6f)]
+    // Measured with ComfyUI (2026-11-08): image1 0xCCCCCC (0.8) over image2 0x999999 (0.6) gives 0.8189 (the W3C soft-light formula); the old expected
+    // value came from an outdated formula.
+    [TestCase("soft_light", 0.8f, 0.6f, 0.8188854f)]
     public void ImageBlend_modes_follow_ComfyUIs_formulas(string mode, float a, float b, float expected)
     {
         var r = new ImageBlend().Execute(Img(1, 1, a), Img(1, 1, b), 1f, mode);

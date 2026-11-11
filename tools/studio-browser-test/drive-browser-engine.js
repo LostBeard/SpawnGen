@@ -27,7 +27,7 @@ fs.mkdirSync(OUT, { recursive: true });
   check('the browser engine is offered', engines.some(e => /This browser/.test(e)), engines.join(' | '));
   await page.selectOption('select.engine', { label: 'This browser (WebGPU)' });
 
-  await page.setInputFiles('input[accept=".png"]', path.join(__dirname, 'apple.png'));
+  await page.setInputFiles('input[accept*=".wav"]', path.join(__dirname, 'apple.png'));
   await page.waitForTimeout(800);
   await page.setInputFiles('input[accept=".json,.png"]', path.join(__dirname, 'load-preview-workflow.json'));
   await page.waitForTimeout(1200);

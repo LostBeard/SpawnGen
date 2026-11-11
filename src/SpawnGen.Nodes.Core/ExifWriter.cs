@@ -1,62 +1,60 @@
-using System.Buffers.Binary;
 using System.Text;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>
-/// The EXIF block ComfyUI puts into saved WebP files, written byte for byte as Pillow's <c>Image.Exif.tobytes()</c> writes it: <c>Exif\0\0</c>, a big-endian
-/// TIFF header, one IFD with the entries sorted by tag (ASCII strings, NUL-terminated, inline when they fit in 4 bytes), then the longer strings, each padded
-/// to an even length.
-/// </summary>
+// Written clean-room (docs/CLEANROOM.md) from the TIFF 6.0 / Exif 2.3 specifications, with the layout and the tags read off Fixtures/codecs/save_webp
+// (the bytes Pillow writes for ComfyUI's animated WEBP): "Exif\0\0", a big-endian TIFF header, one IFD with ASCII entries in tag order, values longer
+// than four bytes after the IFD on even offsets; the prompt in tag 0x0110 and the workflow's keys from 0x010F down, each as "key:value".
+
+/// <summary>EXIF blocks of ASCII tags, as ComfyUI's WEBP files carry the prompt and workflow.</summary>
 public static class ExifWriter
 {
-    /// <summary>
-    /// The tags ComfyUI's saved WebP files carry (as read from its output files): the prompt as <c>"prompt:{json}"</c> in 0x0110 (Model), then each extra_pnginfo entry as
-    /// <c>"key:{json}"</c> in 0x010F (Make) and downwards, in order. <paramref name="metadata"/> is <see cref="Results.Metadata"/>: "prompt" first.
-    /// </summary>
+    /// <summary>The run's metadata as EXIF: "prompt:..." in 0x0110, then each other key as "key:..." in 0x010F, 0x010E, ... (the values JSON, ASCII-escaped).</summary>
     public static byte[] ComfyMetadata(IReadOnlyDictionary<string, string> metadata)
     {
-        var tags = new SortedDictionary<int, string>();
-        int next = 0x010F;
+        var tags = new Dictionary<int, string>();
+        if (metadata.TryGetValue("prompt", out var prompt)) tags[0x0110] = "prompt:" + AsciiJson.Escape(prompt);
+        int tag = 0x010F;
         foreach (var (key, value) in metadata)
         {
-            if (key == "prompt") tags[0x0110] = "prompt:" + AsciiJson.Escape(value);
-            else tags[next--] = key + ":" + AsciiJson.Escape(value);
+            if (key == "prompt") continue;
+            tags[tag--] = key + ":" + AsciiJson.Escape(value);
         }
         return Encode(tags);
     }
 
-    /// <summary>One IFD of ASCII entries (tag -> text), with the <c>Exif\0\0</c> prefix.</summary>
+    /// <summary>"Exif\0\0" and a big-endian TIFF with one IFD of ASCII entries (tag order); each value NUL-terminated.</summary>
     public static byte[] Encode(IReadOnlyDictionary<int, string> asciiTags)
     {
-        var entries = asciiTags.OrderBy(t => t.Key).Select(t => (Tag: t.Key, Data: Ascii(t.Value))).ToList();
-        int dataStart = 8 + 2 + 12 * entries.Count + 4;
-        using var ifd = new MemoryStream();
-        using var data = new MemoryStream();
-        static void U16(Stream s, int v) { Span<byte> b = stackalloc byte[2]; BinaryPrimitives.WriteUInt16BigEndian(b, (ushort)v); s.Write(b); }
-        static void U32(Stream s, long v) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteUInt32BigEndian(b, (uint)v); s.Write(b); }
-        U16(ifd, entries.Count);
-        foreach (var (tag, bytes) in entries)
+        var entries = asciiTags.OrderBy(t => t.Key).Select(t => (Tag: t.Key, Bytes: (byte[])[.. Encoding.ASCII.GetBytes(t.Value), (byte)0])).ToList();
+        int ifdSize = 2 + 12 * entries.Count + 4, dataStart = 8 + ifdSize;
+        var data = new List<byte>();
+        var tiff = new List<byte>();
+        void U16(int v) { tiff.Add((byte)(v >> 8)); tiff.Add((byte)v); }
+        void U32(int v) { tiff.Add((byte)(v >> 24)); tiff.Add((byte)(v >> 16)); tiff.Add((byte)(v >> 8)); tiff.Add((byte)v); }
+        tiff.AddRange("MM"u8.ToArray());
+        U16(42);
+        U32(8);
+        U16(entries.Count);
+        foreach (var (t, bytes) in entries)
         {
-            U16(ifd, tag);
-            U16(ifd, 2); // ASCII
-            U32(ifd, bytes.Length);
+            U16(t);
+            U16(2); // ASCII
+            U32(bytes.Length);
             if (bytes.Length <= 4)
             {
-                ifd.Write(bytes);
-                for (int i = bytes.Length; i < 4; i++) ifd.WriteByte(0);
+                for (int i = 0; i < 4; i++) tiff.Add(i < bytes.Length ? bytes[i] : (byte)0);
             }
             else
             {
-                U32(ifd, dataStart + data.Length);
-                data.Write(bytes);
-                if (bytes.Length % 2 == 1) data.WriteByte(0);
+                if (data.Count % 2 == 1) data.Add(0);
+                U32(dataStart + data.Count);
+                data.AddRange(bytes);
             }
         }
-        U32(ifd, 0); // no next IFD
-        return [.. "Exif\0\0"u8, .. "MM\0*"u8, 0, 0, 0, 8, .. ifd.ToArray(), .. data.ToArray()];
+        U32(0); // no next IFD
+        tiff.AddRange(data);
+        if (tiff.Count % 2 == 1) tiff.Add(0);
+        return [.. "Exif\0\0"u8.ToArray(), .. tiff];
     }
-
-    /// <summary>Pillow's string value: ASCII (anything else becomes '?') plus the terminating NUL.</summary>
-    static byte[] Ascii(string s) => [.. Encoding.ASCII.GetBytes(s), 0];
 }

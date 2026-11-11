@@ -2,84 +2,98 @@ using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>
-/// The FLAC files the audio save nodes write, as ComfyUI's measured output files are: the clip as 16-bit samples
-/// (<see cref="Samples16"/>) with the run's metadata as Vorbis comments. A host with an accelerator sets <see cref="Flac"/> (SpawnDev.Codecs); without it the
-/// nodes write the same 16-bit samples as WAV.
-/// </summary>
+// Written clean-room (docs/CLEANROOM.md). The rules come from the tests and fixtures: the 16-bit samples are the ones whose MD5 ComfyUI's FLAC files
+// carry (Fixtures/codecs/save_audio: x * 32768 rounded half to even, clipped), the Opus rates from SaveAudioOpusTests, the file choices from the
+// save tests. The FLAC and Opus encoders and the FLAC decoder are SpawnDev.Codecs', installed as hooks (CodecsAudio).
+
+/// <summary>Reading and writing audio files: WAV here, FLAC and Opus through SpawnDev.Codecs when it is installed.</summary>
 public static class AudioFiles
 {
-    /// <summary>Encodes a clip as FLAC with these Vorbis comments (in order: prompt, then the editor's extras such as workflow).</summary>
-    public static Func<AudioClip, IReadOnlyList<KeyValuePair<string, string>>, Task<byte[]>>? Flac { get; set; }
-
-    /// <summary>The clip interleaved as 16-bit values: x * 32768 rounded half to even and clipped (FFmpeg's flt -> s16, which PyAV picks for FLAC).</summary>
-    public static int[] Samples16(AudioClip clip)
-    {
-        int n = clip.Length, c = clip.ChannelCount;
-        var samples = new int[n * c];
-        for (int f = 0; f < n; f++)
-            for (int k = 0; k < c; k++)
-                samples[f * c + k] = (int)Math.Clamp(MathF.Round(clip.Channels[k][f] * 32768f), -32768f, 32767f);
-        return samples;
-    }
-
-    /// <summary>
-    /// Encodes a clip as Ogg Opus at an Opus rate (<see cref="OpusRate"/>, already applied) with this bit rate (null = FFmpeg's default) and these
-    /// comments. A host with an accelerator sets it (SpawnDev.Codecs).
-    /// </summary>
-    public static Func<AudioClip, int?, IReadOnlyList<KeyValuePair<string, string>>, Task<byte[]>>? Opus { get; set; }
-
-    /// <summary>
-    /// Decodes a sound file Load Audio is given that is not WAV (FLAC), or null when the format is not one it reads. A host with an accelerator sets it
-    /// (SpawnDev.Codecs).
-    /// </summary>
-    public static Func<byte[], Task<AudioClip?>>? Decode { get; set; }
-
-    /// <summary>The sound file extensions Load Audio lists.</summary>
+    /// <summary>The audio files Load Audio lists.</summary>
     public static readonly string[] LoadableExtensions = [".wav", ".flac"];
 
-    /// <summary>A sound file as ComfyUI's Load Audio reads it: WAV here, other formats through <see cref="Decode"/>.</summary>
-    public static async Task<AudioClip> LoadAsync(byte[] data)
-    {
-        if (data.Length >= 12 && data.AsSpan(0, 4).SequenceEqual("RIFF"u8) && data.AsSpan(8, 4).SequenceEqual("WAVE"u8)) return WavFile.Decode(data);
-        if (Decode is { } decode && await decode(data) is { } clip) return clip;
-        throw new NotSupportedException(Decode is null
-            ? "Load Audio reads WAV here; FLAC needs SpawnDev.Codecs on an accelerator (the server or the browser engine)."
-            : "Load Audio reads WAV and FLAC; this file is neither.");
-    }
-
-    /// <summary>The Opus quality choices and their bit rates (ComfyUI's SaveAudioOpus / Save Audio (Advanced)).</summary>
+    /// <summary>Save Audio's Opus and MP3 quality choices.</summary>
     public static readonly string[] OpusQualities = ["64k", "96k", "128k", "192k", "320k"];
     public static readonly string[] Mp3Qualities = ["V0", "128k", "320k"];
 
-    static readonly int[] OpusRates = [8000, 12000, 16000, 24000, 48000];
+    /// <summary>The sample rates Opus encodes at.</summary>
+    static readonly string[] OpusRates = ["8000", "12000", "16000", "24000", "48000"];
 
-    /// <summary>ComfyUI's rate for Opus: above 48 kHz is 48 kHz; a rate Opus does not have becomes the next higher one it has.</summary>
-    public static int OpusRate(int rate) => rate > 48000 ? 48000 : OpusRates.Contains(rate) ? rate : OpusRates.FirstOrDefault(r => r > rate, 48000);
+    /// <summary>The FLAC encoder: the clip and the comments (prompt, then the workflow's keys) to the file. Without one, Save Audio writes WAV.</summary>
+    public static Func<AudioClip, IReadOnlyList<KeyValuePair<string, string>>, Task<byte[]>>? Flac { get; set; }
 
-    /// <summary>The clip as ComfyUI saves it (FLAC when <see cref="Flac"/> is set, else WAV), with the file extension.</summary>
-    public static async Task<(byte[] Data, string Extension)> EncodeAsync(AudioClip clip, IReadOnlyDictionary<string, string> metadata) =>
-        Flac is { } flac ? (await flac(clip, [.. metadata]), "flac") : (WavFile.Encode(clip), "wav");
+    /// <summary>The Opus encoder: the clip (at an Opus rate), the bitrate in bits per second (null: the encoder's default) and the comments.</summary>
+    public static Func<AudioClip, int?, IReadOnlyList<KeyValuePair<string, string>>, Task<byte[]>>? Opus { get; set; }
 
-    /// <summary>
-    /// The saved file for a format ("flac", "mp3" or "opus") and quality, as ComfyUI's audio save nodes write it (measured, Fixtures/codecs/save_audio): the
-    /// file and its extension. Opus resamples the clip to an Opus rate first (<see cref="AudioDsp.Resample(AudioClip, int)"/>). MP3 is not available yet: SpawnDev.Codecs has no MP3 encoder.
-    /// </summary>
+    /// <summary>The decoder for files that are not WAV (FLAC); null when it does not know the file.</summary>
+    public static Func<byte[], Task<AudioClip?>>? Decode { get; set; }
+
+    /// <summary>The clip as interleaved 16-bit samples: x * 32768 rounded half to even, clipped to the 16-bit range.</summary>
+    public static int[] Samples16(AudioClip clip)
+    {
+        int channels = clip.Channels.Length, n = clip.Length;
+        var r = new int[channels * n];
+        for (int i = 0; i < n; i++)
+            for (int c = 0; c < channels; c++)
+            {
+                float v = clip.Channels[c][i] * 32768f;
+                r[i * channels + c] = (int)Math.Clamp(MathF.Round(v, MidpointRounding.ToEven), -32768f, 32767f);
+            }
+        return r;
+    }
+
+    /// <summary>A file as a clip: WAV directly, anything else through <see cref="Decode"/>.</summary>
+    public static async Task<AudioClip> LoadAsync(byte[] data)
+    {
+        if (WavFile.LooksLikeWav(data)) return WavFile.Decode(data);
+        if (Decode is { } decode && await decode(data) is { } clip) return clip;
+        throw new NotSupportedException("This audio file is not WAV; reading FLAC needs SpawnDev.Codecs, which is not installed in this build.");
+    }
+
+    /// <summary>The Opus rate a clip is resampled to: the lowest Opus rate at or above its rate, at most 48000.</summary>
+    public static int OpusRate(int rate)
+    {
+        foreach (var r in OpusRates.Select(int.Parse))
+            if (r >= rate) return r;
+        return 48000;
+    }
+
+    /// <summary>The clip as Save Audio's default file: FLAC through the encoder, else WAV. Returns the bytes and the extension.</summary>
+    public static Task<(byte[] Data, string Extension)> EncodeAsync(AudioClip clip, IReadOnlyDictionary<string, string> metadata) =>
+        EncodeAsync(clip, metadata, "flac", null);
+
+    /// <summary>The clip in <paramref name="format"/> (flac, opus or mp3) at <paramref name="quality"/>; the run's prompt and workflow go in its comments.</summary>
     public static async Task<(byte[] Data, string Extension)> EncodeAsync(AudioClip clip, IReadOnlyDictionary<string, string> metadata, string format, string? quality)
     {
+        var comments = Comments(metadata);
         switch (format)
         {
             case "flac":
-                return await EncodeAsync(clip, metadata);
+                return Flac is { } flac ? (await flac(clip, comments), "flac") : (WavFile.Encode(clip), "wav");
             case "opus":
-                if (Opus is not { } opus) throw new NotSupportedException("Saving Opus needs SpawnDev.Codecs on an accelerator (the server or the browser engine).");
-                if (clip.ChannelCount > 2) throw new ArgumentException($"Opus saving takes mono or stereo audio; this clip has {clip.ChannelCount} channels.");
-                int? bitrate = quality switch { "64k" => 64000, "96k" => 96000, "128k" => 128000, "192k" => 192000, "320k" => 320000, _ => null };
-                return (await opus(AudioDsp.Resample(clip, OpusRate(clip.SampleRate)), bitrate, [.. metadata]), "opus");
+                var opus = Opus ?? throw new NotSupportedException("Saving Opus needs SpawnDev.Codecs, which is not installed in this build.");
+                if (quality is not null && !OpusQualities.Contains(quality)) throw new ArgumentException($"Unknown Opus quality '{quality}'.", nameof(quality));
+                int rate = OpusRate(clip.SampleRate);
+                var resampled = rate == clip.SampleRate ? clip : AudioDsp.Resample(clip, rate);
+                return (await opus(resampled, quality is null ? null : Bitrate(quality), comments), "opus");
             case "mp3":
-                throw new NotSupportedException("Saving MP3 is not available yet: SpawnDev.Codecs has no MP3 encoder.");
+                if (quality is not null && !Mp3Qualities.Contains(quality)) throw new ArgumentException($"Unknown MP3 quality '{quality}'.", nameof(quality));
+                throw new NotSupportedException("Saving MP3 needs an MP3 encoder, which this build does not have.");
             default:
-                throw new ArgumentException($"Unsupported audio format: '{format}'");
+                throw new ArgumentException($"Unknown audio format '{format}'. The choices are flac, mp3 and opus.", nameof(format));
         }
+    }
+
+    /// <summary>"128k" as 128000.</summary>
+    static int Bitrate(string quality) => int.Parse(quality.TrimEnd('k')) * 1000;
+
+    /// <summary>The comments in ComfyUI's order: the prompt, then the workflow's keys.</summary>
+    static List<KeyValuePair<string, string>> Comments(IReadOnlyDictionary<string, string> metadata)
+    {
+        var list = new List<KeyValuePair<string, string>>();
+        if (metadata.TryGetValue("prompt", out var prompt)) list.Add(new("prompt", prompt));
+        foreach (var kv in metadata)
+            if (kv.Key != "prompt") list.Add(kv);
+        return list;
     }
 }

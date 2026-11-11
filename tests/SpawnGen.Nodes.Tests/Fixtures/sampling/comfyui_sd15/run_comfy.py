@@ -2,7 +2,7 @@
 
     python run_comfy.py <ckpt> <steps> <cfg> <sampler> <prefix> [start latent name, default start.latent] [lora file] [lora strength]
                         [--patch NodeType '{"input": value, ...}'] ... [--inpaint <unet file> <picture> <mask picture>]
-                        [--merge <unet file> <clip file> <lora file> <ratio>]
+                        [--merge <unet file> <clip file> <lora file> <ratio>] [--clip-patch NodeType '{"input": value, ...}'] ...
 
 The start latent (in ComfyUI's input folder) is the noised start; add_noise is disabled so the only randomness is the start itself. The graph matches
 ComfyUIRenderParityTests.RunAsync: prompt "a photo of a red apple on a wooden table", empty negative, KSampler (Advanced), scheduler normal.
@@ -17,7 +17,7 @@ import json, sys, time, urllib.request
 SERVER = "http://127.0.0.1:8199"
 
 
-def graph(ckpt, steps, cfg, sampler, prefix, latent="start.latent", lora=None, strength=1.0, patches=(), inpaint=None, merge=None):
+def graph(ckpt, steps, cfg, sampler, prefix, latent="start.latent", lora=None, strength=1.0, patches=(), inpaint=None, merge=None, clip_patches=()):
     g = {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt}},
         "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a photo of a red apple on a wooden table", "clip": ["1", 1]}},
@@ -55,6 +55,12 @@ def graph(ckpt, steps, cfg, sampler, prefix, latent="start.latent", lora=None, s
         g["5"]["inputs"]["model"] = ["17", 0]
         g["2"]["inputs"]["clip"] = ["18", 0]
         g["3"]["inputs"]["clip"] = ["18", 0]
+    # Each --clip-patch puts a CLIP patch node (CLIPAttentionMultiply, ...) between the CLIP and both prompts, in order.
+    for i, (node, inputs) in enumerate(clip_patches):
+        key = str(40 + i)
+        g[key] = {"class_type": node, "inputs": {"clip": g["2"]["inputs"]["clip"], **inputs}}
+        g["2"]["inputs"]["clip"] = [key, 0]
+        g["3"]["inputs"]["clip"] = [key, 0]
     for i, (node, inputs) in enumerate(patches):
         key = str(30 + i)
         g[key] = {"class_type": node, "inputs": {"model": g["5"]["inputs"]["model"], **inputs}}
@@ -63,11 +69,11 @@ def graph(ckpt, steps, cfg, sampler, prefix, latent="start.latent", lora=None, s
 
 
 if __name__ == "__main__":
-    argv, patches, inpaint, merge = [], [], None, None
+    argv, patches, inpaint, merge, clip_patches = [], [], None, None, []
     i = 1
     while i < len(sys.argv):
-        if sys.argv[i] == "--patch":
-            patches.append((sys.argv[i + 1], json.loads(sys.argv[i + 2])))
+        if sys.argv[i] in ("--patch", "--clip-patch"):
+            (clip_patches if sys.argv[i] == "--clip-patch" else patches).append((sys.argv[i + 1], json.loads(sys.argv[i + 2])))
             i += 3
         elif sys.argv[i] == "--merge":
             merge = sys.argv[i + 1:i + 5]
@@ -82,7 +88,7 @@ if __name__ == "__main__":
     latent = argv[5] if len(argv) > 5 else "start.latent"
     lora = argv[6] if len(argv) > 6 and argv[6] else None
     strength = float(argv[7]) if len(argv) > 7 else 1.0
-    req = urllib.request.Request(SERVER + "/prompt", data=json.dumps({"prompt": graph(ckpt, steps, cfg, sampler, prefix, latent, lora, strength, patches, inpaint, merge)}).encode(),
+    req = urllib.request.Request(SERVER + "/prompt", data=json.dumps({"prompt": graph(ckpt, steps, cfg, sampler, prefix, latent, lora, strength, patches, inpaint, merge, clip_patches)}).encode(),
                                  headers={"Content-Type": "application/json"})
     pid = json.load(urllib.request.urlopen(req))["prompt_id"]
     t0 = time.time()

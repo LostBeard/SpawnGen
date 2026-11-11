@@ -248,7 +248,8 @@ public class ComfyImageNodeTests
     [Test]
     public void Bounding_box_primitive()
     {
-        Assert.That(new PrimitiveBoundingBox().Execute(1, 2, 3, 4), Is.EqualTo(new BoundingBox(1, 2, 3, 4)));
+        // The dict the bounding box nodes read (Crop Image to Bounding Box takes its "x", "y", "width" and "height").
+        Assert.That(new PrimitiveBoundingBox().Execute(1, 2, 3, 4), Is.EqualTo(new DictValue { ["x"] = 1L, ["y"] = 2L, ["width"] = 3L, ["height"] = 4L }));
     }
 
     // ---- saved files ----

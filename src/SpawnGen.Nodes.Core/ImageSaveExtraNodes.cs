@@ -1,99 +1,108 @@
+using System.Globalization;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.Core;
 
-/// <summary>SVG documents (ComfyUI's SVG type: one file per entry), as produced by vector nodes.</summary>
-[Socket("SVG")]
-public sealed record SvgImages(IReadOnlyList<byte[]> Data);
+// Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries and SpawnGen's tests (ComfyImageNodeTests: the chunk layout of Save
+// Animated PNG, the metadata block of Save SVG). The APNG itself comes from PngWriter.EncodeAnimated (Pillow's rules, Pillow is MIT-CMU).
 
-/// <summary>A rectangle in pixels (ComfyUI's BOUNDING_BOX: x, y, width, height).</summary>
-[Socket("BOUNDING_BOX")]
-public sealed record BoundingBox(int X, int Y, int Width, int Height);
-
-[Node(Category = "utilities/primitive", DisplayName = "Bounding Box")]
-public sealed class PrimitiveBoundingBox
+/// <summary>Metadata text as Python's json module writes it with its default ensure_ascii: every non-ASCII UTF-16 unit as \uXXXX.</summary>
+static class AsciiJson
 {
-    public BoundingBox Execute([Input(Min = 0, Max = 16384)] int x = 0, [Input(Min = 0, Max = 16384)] int y = 0,
-        [Input(Min = 1, Max = 16384)] int width = 512, [Input(Min = 1, Max = 16384)] int height = 512) => new(x, y, width, height);
-}
-
-internal static class ComfyJson
-{
-    /// <summary>Python's <c>json.dumps</c> default <c>ensure_ascii</c>: every character above '~' written as <c>\uXXXX</c> (they can only be inside strings).</summary>
-    public static string EnsureAscii(string json)
+    public static string Escape(string json)
     {
-        if (json.All(c => c <= '~')) return json;
-        var sb = new StringBuilder(json.Length + 16);
+        var sb = new StringBuilder(json.Length);
         foreach (var c in json)
-            if (c <= '~') sb.Append(c);
-            else sb.Append("\\u").Append(((int)c).ToString("x4"));
+            if (c < 0x80) sb.Append(c);
+            else sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
         return sb.ToString();
     }
 }
 
-[Node(Category = "image", DisplayName = "Save Animated PNG", IsOutput = true)]
+/// <summary>
+/// Save Animated PNG: the batch as one APNG in the output folder, each picture shown for <c>int(1000 / fps)</c> ms, with the prompt and the
+/// workflow in private "comf" chunks after the image data (keyword, a zero byte, the JSON with non-ASCII escaped). A batch whose pictures are all
+/// alike is a still PNG, and the ui then has no "animated" entry.
+/// </summary>
+[Node("SaveAnimatedPNG", Category = "image", DisplayName = "Save Animated PNG", IsOutput = true)]
 public sealed class SaveAnimatedPNG
 {
-    /// <summary>
-    /// The whole batch as one animated PNG (<c>prefix_00001_.png</c>) at <paramref name="fps"/> (each frame lasts <c>int(1000 / fps)</c> ms), looping.
-    /// Like ComfyUI the prompt and workflow go into private <c>comf</c> chunks after the image data. The pictures are passed on.
-    /// </summary>
     public async Task<(ImageBatch Images, UiOutput Ui)> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services,
         string filenamePrefix = "ComfyUI",
-        [Input(Min = 0.01, Max = 1000, Step = 0.01)] double fps = 6.0,
-        [Input(Min = 0, Max = 9)] int compressLevel = 4)
+        [Input(Min = 0.01, Max = 1000.0, Step = 0.01)] double fps = 6.0,
+        [Input(Min = 0, Max = 9)] long compressLevel = 4)
     {
-        var chunks = Results.Metadata(context)
-            .Select(kv => ("comf", (byte[])[.. Encoding.Latin1.GetBytes(kv.Key), 0, .. Encoding.Latin1.GetBytes(ComfyJson.EnsureAscii(kv.Value))]))
-            .ToList();
-        var png = PngWriter.EncodeAnimated(images, (int)(1000.0 / fps), compressLevel, chunks);
+        var chunks = Results.Metadata(context).Select(kv => ("comf", Encoding.Latin1.GetBytes($"{kv.Key}\0{AsciiJson.Escape(kv.Value)}"))).ToList();
+        var png = PngWriter.EncodeAnimated(images, (int)(1000.0 / fps), (int)compressLevel, chunks);
         var prefix = SavePrefix.ComputeVars(filenamePrefix, images.Width, images.Height, DateTime.Now);
         var file = await Results.For(services).SaveAsync("output", prefix, png);
         var ui = new UiOutput("images", new object[] { file });
-        if (images.Batch > 1) ui["animated"] = new object[] { true };
+        if (IsAnimated(png)) ui["animated"] = new object[] { true };
         return (images, ui);
     }
+
+    /// <summary>Whether the chunk after IHDR is acTL (an APNG rather than a still PNG).</summary>
+    static bool IsAnimated(byte[] png) => png.Length >= 41 && Encoding.ASCII.GetString(png, 37, 4) == "acTL";
 }
 
-[Node(Category = "image", DisplayName = "Save SVG", Description = "Save SVG files on disk.", IsOutput = true)]
+/// <summary>SVG pictures, each the file's bytes (ComfyUI's SVG type).</summary>
+[Socket("SVG")]
+public sealed class SvgImages(IReadOnlyList<byte[]> data)
+{
+    public IReadOnlyList<byte[]> Data { get; } = data;
+}
+
+/// <summary>
+/// Save SVG: each SVG as a file in the output folder, named like Save Image's files with ".svg" ("%batch_num%" in the prefix becomes the
+/// picture's index, each name counted on its own). The prompt and the extra metadata (the workflow) go into a <c>&lt;metadata&gt;</c> CDATA block
+/// right after the opening svg tag, as JSON indented by 2 with non-ASCII escaped (the layout SpawnGen's test pins).
+/// </summary>
+[Node("SaveSVGNode", Category = "image", DisplayName = "Save SVG", IsOutput = true, Description = "Save SVG files on disk.")]
 public sealed class SaveSVGNode
 {
-    /// <summary>
-    /// Writes each SVG (<c>prefix_00001_.svg</c>, <c>%batch_num%</c> in the prefix becomes its index) with ComfyUI's <c>&lt;metadata&gt;</c> block (prompt and
-    /// workflow as indented JSON in CDATA) after every <c>&lt;svg ...&gt;</c> tag, and passes the SVGs on.
-    /// </summary>
     public async Task<(SvgImages Svg, UiOutput Ui)> ExecuteAsync(SvgImages svg, NodeContext context, IServiceProvider services,
         [Input(Tooltip = "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes.")]
         string filenamePrefix = "svg/ComfyUI")
     {
-        var metadata = new JsonObject();
-        foreach (var (key, value) in Results.Metadata(context))
-        {
-            JsonNode? node;
-            try { node = JsonNode.Parse(value); } catch (JsonException) { node = JsonValue.Create(value); }
-            metadata[key] = node;
-        }
-        string json = ComfyJson.EnsureAscii(metadata.ToJsonString(new JsonSerializerOptions
-        {
-            WriteIndented = true, IndentSize = 2, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        }).ReplaceLineEndings("\n"));
-        // ComfyUI's block, whitespace included.
-        string element = "  <metadata>\n                <![CDATA[\n            " + json + "\n                ]]>\n            </metadata>\n            ";
-
         var store = Results.For(services);
-        var prefix = SavePrefix.ComputeVars(filenamePrefix, 0, 0, DateTime.Now);
-        var saved = new List<object>();
+        var block = MetadataBlock(context);
+        var files = new List<object>();
         for (int i = 0; i < svg.Data.Count; i++)
         {
-            var content = Encoding.UTF8.GetString(svg.Data[i]);
-            if (metadata.Count > 0) content = Regex.Replace(content, "(<svg[^>]*>)", m => m.Groups[1].Value + "\n" + element);
-            saved.Add(await store.SaveAsync("output", prefix.Replace("%batch_num%", i.ToString(System.Globalization.CultureInfo.InvariantCulture)), Encoding.UTF8.GetBytes(content), "svg"));
+            var prefix = filenamePrefix.Replace("%batch_num%", i.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+            files.Add(await store.SaveAsync("output", prefix, WithMetadata(svg.Data[i], block), "svg"));
         }
-        return (svg, new UiOutput("images", saved));
+        return (svg, new UiOutput("images", files));
     }
+
+    static string? MetadataBlock(NodeContext? context)
+    {
+        var metadata = Results.Metadata(context);
+        if (metadata.Count == 0) return null;
+        var all = new DictValue();
+        foreach (var (key, json) in metadata) all[key] = PyJson.Loads(json);
+        return "\n  <metadata>\n                <![CDATA[\n            " + AsciiJson.Escape(PyJson.Dumps(all, 2)) +
+               "\n                ]]>\n            </metadata>\n            ";
+    }
+
+    /// <summary>The SVG with the block inserted after the first "&lt;svg ...&gt;" tag; unchanged without a block or such a tag.</summary>
+    static byte[] WithMetadata(byte[] svg, string? block)
+    {
+        if (block is null) return svg;
+        var text = Encoding.UTF8.GetString(svg);
+        int start = text.IndexOf("<svg", StringComparison.Ordinal);
+        int end = start < 0 ? -1 : text.IndexOf('>', start);
+        return end < 0 ? svg : Encoding.UTF8.GetBytes(text[..(end + 1)] + block + text[(end + 1)..]);
+    }
+}
+
+/// <summary>Bounding Box: a BOUNDING_BOX value, the dict {"x", "y", "width", "height"} the bounding box nodes read.</summary>
+[Node("PrimitiveBoundingBox", Category = "utilities/primitive", DisplayName = "Bounding Box", OutputNames = ["BOUNDING_BOX"], OutputTypes = ["BOUNDING_BOX"])]
+public sealed class PrimitiveBoundingBox
+{
+    public object Execute([Input(Min = 0, Max = 16384)] long x = 0, [Input(Min = 0, Max = 16384)] long y = 0,
+        [Input(Min = 1, Max = 16384)] long width = 512, [Input(Min = 1, Max = 16384)] long height = 512) =>
+        new DictValue { ["x"] = x, ["y"] = y, ["width"] = width, ["height"] = height };
 }

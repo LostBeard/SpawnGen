@@ -414,7 +414,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## k-diffusion (MIT)
 
 Used for: the karras and exponential noise schedules and the EDM sigma formulas (src/SpawnGen.Nodes.ML/Schedulers.cs, ModelSampling.cs), which follow
-k-diffusion's implementation of Karras et al. 2022.
+k-diffusion's implementation of Karras et al. 2022, and the samplers in src/SpawnGen.Nodes.ML/Samplers.cs and SamplersAdvanced.cs that follow
+k-diffusion's algorithms (Euler, Euler ancestral, Heun, DPM-2, LMS, DPM-Solver fast / adaptive with its PID step-size controller, DPM-Solver++
+2S ancestral, SDE, 2M and 2M / 3M SDE).
 
 ```
 Copyright (c) 2022 Katherine Crowson
@@ -437,6 +439,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
+
+## sd-webui-samplers-scheduler (MIT)
+
+Used for: the Heun++ sampler (heunpp2) in src/SpawnGen.Nodes.ML/SamplersAdvanced.cs, which follows the algorithm of Carzit's
+sd-webui-samplers-scheduler (https://github.com/Carzit/sd-webui-samplers-scheduler, MIT License). No files are copied from it.
 
 ## diffusers and genmo mochi (Apache-2.0)
 

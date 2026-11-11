@@ -37,6 +37,7 @@ public static partial class Samplers
         "heunpp2" => Heunpp2(run, x, s),
         "euler_cfg_pp" => EulerCfgPP(run, x, s),
         EulerPP => EulerPPAlternative(run, x, s),
+        "cfgpp_ud10_ab" => CfgPPUd10Ab(run, x, s),
         "gradient_estimation" => GradientEstimation(run, x, s, cfgPP: false),
         "gradient_estimation_cfg_pp" => GradientEstimation(run, x, s, cfgPP: true),
         "res_multistep" => ResMultistep(run, x, s, cfgPP: false),
@@ -89,6 +90,60 @@ public static partial class Samplers
             var nx = new float[x.Length];
             for (int k = 0; k < nx.Length; k++) nx[k] = r * x[k] + (1 - r) * (2 * denoised[k] - u[k]);
             x = nx;
+            run.Step(i);
+        }
+        return x;
+    }
+
+    /// <summary>
+    /// cfgpp_ud10_ab: a CFG++ multistep on the noise estimates, its weights measured from ComfyUI's sampler (no published description). The first
+    /// step is CFG++ Euler; later steps, with rho = h / h_prev in sigma, weigh the guided noise estimates (1 + rho / 8, -rho^2 / 8 sigma_prev / sigma)
+    /// and the unconditional ones over the last three steps; a step to sigma 0 extrapolates the denoised estimate, D + rho (D - D_prev).
+    /// </summary>
+    static async Task<float[]> CfgPPUd10Ab(Run run, float[] x, double[] s)
+    {
+        var xs = new List<float[]>();
+        var ds = new List<float[]>();
+        var us = new List<float[]>();
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            var u = run.UncondOrDenoised(denoised);
+            await run.Callback(denoised);
+            xs.Add(x); ds.Add(denoised); us.Add(u);
+            double si = (float)s[i], sn = (float)s[i + 1];
+            if (i == 0)
+            {
+                x = sn == 0 ? denoised : LinCombine(denoised, 1, Subtract(x, u), sn / si);
+                run.Step(i);
+                continue;
+            }
+            double sp = (float)s[i - 1], rho = (sn - si) / (si - sp);
+            if (sn == 0)
+            {
+                x = LinCombine(denoised, 1 + rho, ds[i - 1], -rho);
+                run.Step(i);
+                continue;
+            }
+            double a = sn * (0.225 * rho + 0.0125 * rho * rho);
+            double c = 0;
+            if (i >= 2)
+            {
+                double spp = (float)s[i - 2], rhoPrev = (si - sp) / (sp - spp);
+                c = si * rho * rho * rhoPrev / 80;
+            }
+            double dSum = -(rho / 8) * si + rho * rho / 8 * sp, bw = -a - c - dSum;
+            var r = new float[x.Length];
+            for (int k = 0; k < r.Length; k++)
+            {
+                double eD = (x[k] - denoised[k]) / si, eDp = (xs[i - 1][k] - ds[i - 1][k]) / sp;
+                double eU = (x[k] - u[k]) / si, eUp = (xs[i - 1][k] - us[i - 1][k]) / sp;
+                double v = x[k] - si * (1 + rho / 8) * eD + rho * rho / 8 * sp * eDp + (sn + a) * eU + bw * eUp;
+                if (i >= 2) v += c * (xs[i - 2][k] - us[i - 2][k]) / (float)s[i - 2];
+                r[k] = (float)v;
+            }
+            x = r;
             run.Step(i);
         }
         return x;

@@ -362,12 +362,13 @@ public static class GuidancePatches
     }
 
     /// <summary>
-    /// Differential Diffusion: the inpainting mask made binary at the run's progress (in model timesteps from the run's first sigma down to the
-    /// model's lowest); a strength strictly between 0 and 1 blends the original mask back in (measured).
+    /// Differential Diffusion: the inpainting mask made binary at the run's progress (in model timesteps from the run's first sigma down to its last
+    /// sigma, or the model's lowest when the run ends below it); a strength strictly between 0 and 1 blends the original mask back in (measured).
     /// </summary>
     public static float[] DifferentialDiffusionMask(double sigma, float[] mask, double[] stepSigmas, ModelSampling sampling, double strength)
     {
-        double tsFrom = sampling.Timestep(stepSigmas[0]), tsTo = sampling.Timestep(sampling.SigmaMin), current = sampling.Timestep(sigma);
+        double sigmaTo = Math.Max(sampling.SigmaMin, stepSigmas[^1]);
+        double tsFrom = sampling.Timestep(stepSigmas[0]), tsTo = sampling.Timestep(sigmaTo), current = sampling.Timestep(sigma);
         double threshold = (current - tsTo) / (tsFrom - tsTo);
         var r = new float[mask.Length];
         bool blend = strength > 0 && strength < 1;

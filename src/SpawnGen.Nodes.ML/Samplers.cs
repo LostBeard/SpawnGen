@@ -30,8 +30,11 @@ public static partial class Samplers
     /// <summary>The CFG++ samplers, which read the unconditional estimate.</summary>
     public static bool UsesUncond(string sampler) => sampler.EndsWith("_cfg_pp", StringComparison.Ordinal) || sampler is "cfgpp_ud10_ab" or EulerPP;
 
-    /// <summary>Samplers that need the negative evaluated even at cfg 1 (the CFG++ ones).</summary>
-    public static bool DisablesCfg1Optimization(string sampler) => UsesUncond(sampler);
+    /// <summary>
+    /// Samplers that need the negative evaluated even at cfg 1: the CFG++ ones, except cfgpp_ud10_ab, which lets cfg 1 skip it and then uses the
+    /// guided estimate in its place (measured).
+    /// </summary>
+    public static bool DisablesCfg1Optimization(string sampler) => UsesUncond(sampler) && sampler != "cfgpp_ud10_ab";
 
     /// <summary>The denoiser: the denoised estimate of <paramref name="x"/> at <paramref name="sigma"/>.</summary>
     public delegate Task<float[]> DenoiseFn(float[] x, float sigma);
@@ -154,6 +157,9 @@ public static partial class Samplers
 
         /// <summary>The unconditional estimate of the last prediction (zeros when there was none: a CFG++ sampler then acts like its plain form).</summary>
         public float[] Uncond(float[] denoised) => uncond?.Invoke() is { } u ? u.UncondDenoised : denoised;
+
+        /// <summary>The unconditional estimate when one was evaluated, else the guided one.</summary>
+        public float[] UncondOrDenoised(float[] denoised) => uncond?.Invoke() is { HasUncond: true } u ? u.UncondDenoised : denoised;
 
         public Task Callback(float[] denoised) => onDenoised?.Invoke(denoised) ?? Task.CompletedTask;
 

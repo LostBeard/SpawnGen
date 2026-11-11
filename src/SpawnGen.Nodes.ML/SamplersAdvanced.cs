@@ -36,6 +36,7 @@ public static partial class Samplers
     {
         "heunpp2" => Heunpp2(run, x, s),
         "euler_cfg_pp" => EulerCfgPP(run, x, s),
+        EulerPP => EulerPPAlternative(run, x, s),
         "gradient_estimation" => GradientEstimation(run, x, s, cfgPP: false),
         "gradient_estimation_cfg_pp" => GradientEstimation(run, x, s, cfgPP: true),
         "res_multistep" => ResMultistep(run, x, s, cfgPP: false),
@@ -70,6 +71,24 @@ public static partial class Samplers
             var u = run.Uncond(denoised);
             await run.Callback(denoised);
             x = Step(denoised, ToD(x, s[i], u), s[i + 1]);
+            run.Step(i);
+        }
+        return x;
+    }
+
+    /// <summary>SamplerEulerCFGpp's "alternative": an Euler step towards 2 D - U, the guided estimate pushed once more away from the unconditional one (measured).</summary>
+    static async Task<float[]> EulerPPAlternative(Run run, float[] x, double[] s)
+    {
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            run.Check();
+            var denoised = await run.Denoise(x, s[i]);
+            var u = run.Uncond(denoised);
+            await run.Callback(denoised);
+            float r = (float)s[i + 1] / (float)s[i];
+            var nx = new float[x.Length];
+            for (int k = 0; k < nx.Length; k++) nx[k] = r * x[k] + (1 - r) * (2 * denoised[k] - u[k]);
+            x = nx;
             run.Step(i);
         }
         return x;
@@ -192,13 +211,13 @@ public static partial class Samplers
                 run.Step(i);
                 continue;
             }
-            double sig = (float)s[i], h = Math.Log(sig / (float)s[i + 1]), hEta = (1 + eta) * h;
+            double sig = (float)s[i], lam0 = LamOf(run, sig), h = LamOf(run, (float)s[i + 1]) - lam0, hEta = (1 + eta) * h;
             var noises = new List<float[]>();
             var estimates = new List<float[]> { d0 };
             float[] StageX(double c, bool final)
             {
-                double sc = sig * Math.Exp(-c * h);
-                double keepX = sc / sig * Math.Exp(-eta * c * h), total = -Expm1D(-c * hEta);
+                double sc = c == 1 ? (float)s[i + 1] : SigmaOfLam(run, lam0 + c * h), ac = AlphaOf(run, sc);
+                double keepX = sc / sig * Math.Exp(-eta * c * h), total = ac * -Expm1D(-c * hEta);
                 var dw = new double[estimates.Count];
                 dw[0] = total;
                 if (estimates.Count > 1)
@@ -209,7 +228,7 @@ public static partial class Samplers
                     if (final && solver == "phi_1") { dw[0] = 0; dw[last] = total; }
                     else
                     {
-                        double w = c * hEta * Phi2(-c * hEta) / (cl / c);
+                        double w = ac * c * hEta * Phi2(-c * hEta) / (cl / c);
                         dw[0] -= w;
                         dw[last] += w;
                     }
@@ -239,7 +258,7 @@ public static partial class Samplers
             {
                 if (eta != 0) noises.Add(run.Noise.Next());
                 var xs = StageX(fr[st], final: false);
-                estimates.Add(await run.Denoise(xs, sig * Math.Exp(-fr[st] * h)));
+                estimates.Add(await run.Denoise(xs, SigmaOfLam(run, lam0 + fr[st] * h)));
             }
             if (eta != 0) noises.Add(run.Noise.Next());
             x = StageX(1, final: true);
@@ -270,9 +289,13 @@ public static partial class Samplers
                 run.Step(i);
                 continue;
             }
-            double ls = (float)s[i], lt = (float)s[i + 1], r = f(lt) / f(ls);
+            // A flow model runs in the equivalent variance-exploding space: lambda = sigma / (1 - sigma), x / (1 - sigma) (measured).
+            bool flow = run.Sampling.IsConst;
+            double sg = (float)s[i], sn = (float)s[i + 1];
+            double ls = flow ? sg / (1 - sg) : sg, lt = flow ? sn / (1 - sn) : sn, r = f(lt) / f(ls);
+            double inA = flow ? 1 - sg : 1, outA = flow ? 1 - sn : 1;
             var nx = new double[x.Length];
-            for (int k = 0; k < nx.Length; k++) nx[k] = r * x[k] + (1 - r) * denoised[k];
+            for (int k = 0; k < nx.Length; k++) nx[k] = r * x[k] / inA + (1 - r) * denoised[k];
             int stage = Math.Min(maxStage, i + 1);
             float[]? d1 = null;
             if (stage >= 2 && old is not null)
@@ -299,8 +322,13 @@ public static partial class Samplers
                     for (int k = 0; k < nx.Length; k++) nx[k] += b * ((d1[k] - oldD1[k]) / half);
                 }
             }
-            x = [.. nx.Select(v => (float)v)];
-            if (sNoise != 0) AddNoise(x, run.Noise.Next(), Math.Sqrt(Math.Max(lt * lt - ls * ls * r * r, 0)) * sNoise);
+            if (sNoise != 0)
+            {
+                var z = run.Noise.Next();
+                double c = Math.Sqrt(Math.Max(lt * lt - ls * ls * r * r, 0)) * sNoise;
+                for (int k = 0; k < nx.Length; k++) nx[k] += c * z[k];
+            }
+            x = [.. nx.Select(v => (float)(v * outA))];
             oldD1 = d1;
             old = denoised;
             lPrev2 = lPrev;
@@ -457,7 +485,7 @@ public static partial class Samplers
         double sNoise = run.SNoise;
         var tauFunc = o.TauFunc ?? TauInterval(run.Sampling.PercentToSigma(0.2), run.Sampling.PercentToSigma(0.8), 1.0);
         var s = sigmas.Select(v => (double)(float)v).ToArray();
-        static double Lam(double v) => -Math.Log(v);
+        double Lam(double v) => LamOf(run, v);
         var x = x0.Select(v => (double)v).ToArray();
         async Task<double[]> Model(double[] xv, double sigma, bool report = true)
         {
@@ -559,7 +587,7 @@ public static partial class Samplers
     {
         var o = run.Options;
         double start = o.SNoise ?? 1, end = o.SNoiseEnd ?? start, clip = o.NoiseClipStd ?? 0;
-        int noised = Math.Max(s.Count(v => v > 0) - 1, 1);
+        int steps = s.Length - 1;
         for (int i = 0; i < s.Length - 1; i++)
         {
             run.Check();
@@ -569,7 +597,7 @@ public static partial class Samplers
             if (s[i + 1] > 0)
             {
                 var z = run.Noise.Next();
-                double scale = noised <= 1 ? start : start + (end - start) * i / (noised - 1);
+                double scale = steps <= 1 ? start : start + (end - start) * i / (steps - 1);
                 var n = new float[z.Length];
                 float std = clip > 0 ? Std(z) : 0;
                 for (int k = 0; k < n.Length; k++)
@@ -1018,20 +1046,127 @@ public static partial class Samplers
     // ---- CFG++ (Chung et al. 2024) helpers and the flow (rectified-flow) ancestral steps: fitted below ----
 
 
-    static Task<float[]> FlowAncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta, float[]? uncond) =>
-        throw new NotImplementedException("flow ancestral");
+    /// <summary>
+    /// The rectified-flow ancestral split (x = (1 - sigma) x0 + sigma noise): step deterministically to sigma_down = sigma' (1 + (sigma'/sigma - 1) eta),
+    /// scale to the next sigma's signal level (1 - sigma') / (1 - sigma_down) and add the noise that makes up sigma' (derived; matches the fixtures).
+    /// </summary>
+    static (double Down, double Scale, double Noise) FlowSplit(double sigma, double sigmaNext, double eta)
+    {
+        float sg = (float)sigma, sn = (float)sigmaNext;
+        double down = sn * (1 + (sn / sg - 1) * eta), scale = (1 - sn) / (1 - down);
+        double noise = Math.Sqrt(Math.Max(sn * sn - down * down * scale * scale, 0));
+        return (down, scale, noise);
+    }
 
-    static Task<float[]> FlowDpm2AncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta) =>
-        throw new NotImplementedException("flow dpm_2_ancestral");
+    static float[] FlowRenoise(Run run, float[] xDown, double sigmaNext, double scale, double noise, double eta)
+    {
+        var r = Scale(xDown, (float)scale);
+        if (eta > 0 && sigmaNext > 0) AddNoise(r, run.Noise.Next(), noise * run.SNoise);
+        return r;
+    }
 
-    static Task<float[]> FlowDpmpp2SAncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta) =>
-        throw new NotImplementedException("flow dpmpp_2s_ancestral");
+    static Task<float[]> FlowAncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta, float[]? uncond)
+    {
+        var (down, scale, noise) = FlowSplit(sigma, sigmaNext, eta);
+        float k = (float)(down / (float)sigma);
+        var xd = uncond is null ? LinCombine(x, k, denoised, 1 - k) : LinCombine(denoised, 1, Subtract(x, uncond), k);
+        return Task.FromResult(FlowRenoise(run, xd, sigmaNext, scale, noise, eta));
+    }
 
-    static Task<float[]> FlowDpmppSdeStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta, double r, BrownianNoise brownian) =>
-        throw new NotImplementedException("flow dpmpp_sde");
+    /// <summary>
+    /// Euler ancestral CFG++ on a flow model (measured): the ancestral split of the equivalent variance-exploding sigmas sigma / (1 - sigma), the
+    /// step to the guided estimate with the unconditional estimate's flow noise (x - (1 - sigma) U) / sigma, then the flow renoising.
+    /// </summary>
+    static float[] FlowCfgPPAncestralStep(Run run, float[] x, float[] denoised, float[] uncond, double sigma, double sigmaNext, double eta)
+    {
+        double sg = (float)sigma, sn = (float)sigmaNext;
+        var (downVe, _) = AncestralStep(sg / (1 - sg), sn / (1 - sn), eta);
+        double down = downVe / (1 + downVe), scale = (1 - sn) / (1 - down);
+        double noise = Math.Sqrt(Math.Max(sn * sn - down * down * scale * scale, 0));
+        var xd = new float[x.Length];
+        for (int k = 0; k < xd.Length; k++)
+            xd[k] = (float)(down * (x[k] - (1 - sg) * uncond[k]) / sg + (1 - down) * denoised[k]);
+        return FlowRenoise(run, xd, sigmaNext, scale, noise, eta);
+    }
+
+    static async Task<float[]> FlowDpm2AncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta)
+    {
+        var (down, scale, noise) = FlowSplit(sigma, sigmaNext, eta);
+        var d = ToD(x, sigma, denoised);
+        float[] xd;
+        if (down == 0) xd = Step(x, d, -(float)sigma);
+        else
+        {
+            float mid = MathF.Exp(Lerp(Log(sigma), Log(down), 0.5f));
+            var x2 = Step(x, d, mid - (float)sigma);
+            var d2 = ToD(x2, mid, await run.Denoise(x2, mid));
+            xd = Step(x, d2, (float)down - (float)sigma);
+        }
+        return FlowRenoise(run, xd, sigmaNext, scale, noise, eta);
+    }
+
+    static async Task<float[]> FlowDpmpp2SAncestralStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta)
+    {
+        var (down, scale, noise) = FlowSplit(sigma, sigmaNext, eta);
+        float[] xd;
+        if (down == 0) xd = denoised;
+        else
+        {
+            double t = LamOf(run, sigma), h = LamOf(run, down) - t, sigS = SigmaOfLam(run, t + 0.5 * h);
+            var x2 = LinCombine(x, sigS / sigma, denoised, AlphaOf(run, sigS) * -Expm1D(-h * 0.5));
+            var denoised2 = await run.Denoise(x2, sigS);
+            xd = LinCombine(x, down / sigma, denoised2, AlphaOf(run, down) * -Expm1D(-h));
+        }
+        return FlowRenoise(run, xd, sigmaNext, scale, noise, eta);
+    }
+
+    // ---- flow (rectified flow, x = (1 - sigma) x0 + sigma noise) forms of the exponential samplers ----
+
+    /// <summary>The half-log-SNR: -log sigma, or log((1 - sigma) / sigma) for a flow model.</summary>
+    internal static double LamOf(Run run, double sigma) => run.Sampling.IsConst ? Math.Log((1 - sigma) / sigma) : -Math.Log(sigma);
+
+    internal static double SigmaOfLam(Run run, double lam) => run.Sampling.IsConst ? 1 / (1 + Math.Exp(lam)) : Math.Exp(-lam);
+
+    /// <summary>The signal scale: 1, or 1 - sigma for a flow model.</summary>
+    internal static double AlphaOf(Run run, double sigma) => run.Sampling.IsConst ? 1 - sigma : 1;
+
+    /// <summary>The exponential SDE step in data prediction: (sigma'/sigma) e^(-eta h) x + alpha' (1 - e^(-(1 + eta) h)) D + sigma' sqrt(1 - e^(-2 eta h)) z.</summary>
+    static double[] ExpSdeWeights(Run run, double sigma, double sigmaNext, double eta)
+    {
+        double h = LamOf(run, sigmaNext) - LamOf(run, sigma);
+        return [sigmaNext / sigma * Math.Exp(-eta * h), AlphaOf(run, sigmaNext) * -Expm1D(-(1 + eta) * h), sigmaNext * Math.Sqrt(-Expm1D(-2 * eta * h)), h];
+    }
+
+    static async Task<float[]> FlowDpmppSdeStep(Run run, float[] x, float[] denoised, double sigma, double sigmaNext, double eta, double r, BrownianNoise brownian)
+    {
+        double lam = LamOf(run, sigma), h = LamOf(run, sigmaNext) - lam, sMid = SigmaOfLam(run, lam + h * r), fac = 1 / (2 * r);
+        var w1 = ExpSdeWeights(run, sigma, sMid, eta);
+        var x2 = LinCombine(x, w1[0], denoised, w1[1]);
+        AddNoise(x2, brownian.Increment(sigma, sMid), w1[2] * run.SNoise);
+        var denoised2 = await run.Denoise(x2, sMid);
+        var w2 = ExpSdeWeights(run, sigma, sigmaNext, eta);
+        var dd = LinCombine(denoised, 1 - fac, denoised2, fac);
+        var r2 = LinCombine(x, w2[0], dd, w2[1]);
+        AddNoise(r2, brownian.Increment(sigma, sigmaNext), w2[2] * run.SNoise);
+        return r2;
+    }
 
     static Task<(float[], float)> FlowDpmpp2MSdeStep(Run run, float[] x, float[] denoised, float[]? old, float hLast, double sigma, double sigmaNext, double eta,
-        string solverType) => throw new NotImplementedException("flow dpmpp_2m_sde");
+        string solverType)
+    {
+        var w = ExpSdeWeights(run, sigma, sigmaNext, eta);
+        double h = w[3], a = AlphaOf(run, sigmaNext), e = -Expm1D(-h - eta * h);
+        var r = LinCombine(x, w[0], denoised, w[1]);
+        if (old is not null)
+        {
+            double inv = 1 / (hLast / h);
+            double c = solverType == "heun" ? a * (e / (-h - eta * h) + 1) * inv : a * 0.5 * e * inv;
+            var diff = Subtract(denoised, old);
+            for (int k = 0; k < r.Length; k++) r[k] += (float)c * diff[k];
+        }
+        if (eta != 0) AddNoise(r, run.Noise.Next(), w[2] * run.SNoise);
+        return Task.FromResult((r, (float)h));
+    }
 
     /// <summary>SA-Solver's stochasticity: eta between the two sigmas (inclusive), 0 elsewhere.</summary>
     public static Func<double, double> TauInterval(double startSigma, double endSigma, double eta = 1.0) =>

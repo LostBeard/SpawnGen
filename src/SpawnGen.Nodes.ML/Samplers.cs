@@ -296,7 +296,8 @@ public static partial class Samplers
             await run.Callback(denoised);
             if (run.Sampling.IsConst)
             {
-                x = await FlowAncestralStep(run, x, denoised, s[i], s[i + 1], eta, cfgPP ? run.Uncond(denoised) : null);
+                x = cfgPP ? FlowCfgPPAncestralStep(run, x, denoised, run.Uncond(denoised), s[i], s[i + 1], eta)
+                    : await FlowAncestralStep(run, x, denoised, s[i], s[i + 1], eta, null);
                 run.Step(i);
                 continue;
             }
@@ -639,8 +640,11 @@ public static partial class Samplers
             if (s[i + 1] == 0) x = denoised;
             else
             {
-                float t = -Log(s[i]), sNext = -Log(s[i + 1]), h = sNext - t, hEta = h * ((float)eta + 1);
-                x = LinCombine(x, MathF.Exp(-hEta), denoised, -ExpM1(-hEta));
+                bool flow = run.Sampling.IsConst;
+                float t = flow ? (float)LamOf(run, s[i]) : -Log(s[i]), sNext = flow ? (float)LamOf(run, s[i + 1]) : -Log(s[i + 1]), h = sNext - t, hEta = h * ((float)eta + 1);
+                float a = flow ? (float)AlphaOf(run, s[i + 1]) : 1f;
+                float keepX = flow ? (float)(s[i + 1] / s[i] * Math.Exp(-eta * h)) : MathF.Exp(-hEta);
+                x = LinCombine(x, keepX, denoised, -ExpM1(-hEta) * a);
                 if (h2 is not null)
                 {
                     float r0 = h1!.Value / h, r1 = h2.Value / h;
@@ -651,14 +655,14 @@ public static partial class Samplers
                     {
                         float d1 = d10[k] + (d10[k] - d11[k]) * r0 / (r0 + r1);
                         float d2 = (d10[k] - d11[k]) / (r0 + r1);
-                        x[k] = x[k] + phi2 * d1 - phi3 * d2;
+                        x[k] = x[k] + a * (phi2 * d1 - phi3 * d2);
                     }
                 }
                 else if (h1 is not null)
                 {
                     float r = h1.Value / h, phi2 = ExpM1(-hEta) / hEta + 1;
                     var dd = Subtract(denoised, d1Prev!);
-                    for (int k = 0; k < x.Length; k++) x[k] += phi2 * (dd[k] / r);
+                    for (int k = 0; k < x.Length; k++) x[k] += a * phi2 * (dd[k] / r);
                 }
                 if (eta != 0) AddNoise(x, run.Noise.Next(), (float)s[i + 1] * MathF.Sqrt(-ExpM1(-2 * h * (float)eta)) * (float)run.SNoise);
                 (h1, h2) = (h, h1);

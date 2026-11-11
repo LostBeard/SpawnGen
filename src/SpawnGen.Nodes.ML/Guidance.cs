@@ -1,84 +1,88 @@
+using SpawnDev.ILGPU.ML.StableDiffusion;
 using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Nodes.ML;
 
-/// <summary>What a guidance patch works on: one picture's latent (channels, height, width, channel-first like the sampler), the model sampling, and a way to ask the model about another conditioning.</summary>
-public sealed class PatchContext
-{
-    public required int Channels { get; init; }
-    public required int Height { get; init; }
-    public required int Width { get; init; }
-    public required ModelSampling Sampling { get; init; }
-    /// <summary>Where this picture sits in the latent batch (the sampler goes picture by picture; a latent operation blending with another batch needs it).</summary>
-    public int BatchIndex { get; init; }
-    /// <summary>How many pictures the latent batch holds (ComfyUI's patches see the whole batch at once; the video cfg patches spread cfg across it).</summary>
-    public int BatchSize { get; init; } = 1;
-    /// <summary>The model's denoised estimate for a conditioning at the current sample and sigma, ignoring its timestep range (PerpNeg's empty prompt).</summary>
-    public required Func<Conditioning, Task<float[]>> EvaluateUnscheduled { get; init; }
-    /// <summary>The UNet options the model samples with (FreeU, ...), for a patch that calls the model with a change to them.</summary>
-    public UNetOptions UNet { get; init; } = UNetOptions.None;
-    /// <summary>ComfyUI's calc_cond_batch for one conditioning with other UNet options (PAG's perturbed pass): its timestep range applies.</summary>
-    public Func<Conditioning, UNetOptions, Task<float[]>> EvaluateWith { get; init; } = (_, _) => throw new NotSupportedException("This context cannot call the model.");
-    /// <summary>ComfyUI's calc_cond_batch for one conditioning at another sample than the step's (SAG's degraded picture), with the run's UNet options.</summary>
-    public Func<Conditioning, float[], Task<float[]>> EvaluateAt { get; init; } = (_, _) => throw new NotSupportedException("This context cannot call the model.");
-    /// <summary>The middle-attention mass the last unconditional pass recorded (SAG; see <see cref="ModelPatches.RecordUncondMiddleAttention"/>), or null.</summary>
-    public Func<Task<float[]?>> ReadMiddleAttention { get; init; } = () => Task.FromResult<float[]?>(null);
-}
+// Written clean-room (docs/CLEANROOM.md). The patch points follow ComfyUI's documented model options (pre-cfg functions that see every
+// conditioning's denoised estimate, one cfg function that replaces the plain classifier-free guidance, post-cfg functions that adjust the result)
+// and the behaviour SamplingNodeSchemaTests, RescaleCfgTests, LatentOperationTests and SamplerParityTests pin down; classifier-free guidance is
+// Ho & Salimans 2022.
 
-/// <summary>
-/// Patches that change how the UNet itself runs (ComfyUI's patches inside the model's forward, not around it): FreeU, PAG's perturbed self-attention. They need a
-/// UNet loaded by SpawnDev.ILGPU.ML's Stable Diffusion code (a .safetensors checkpoint or Load Diffusion Model), not an ONNX export.
-/// </summary>
+/// <summary>A cfg value used instead of the guider's between two sigmas (CFG Override); bounds are inclusive.</summary>
+public sealed record CfgOverride(double Cfg, double SigmaHigh, double SigmaLow);
+
+/// <summary>Deep Shrink (PatchModelAddDownscale) and the sigmas it acts between (inclusive).</summary>
+public sealed record DeepShrinkWindow(SdDeepShrink Shrink, double SigmaStart, double SigmaEnd);
+
+/// <summary>Options for the UNet itself, set by the UNet patch nodes.</summary>
 public sealed record UNetOptions
 {
     public static readonly UNetOptions None = new();
 
-    /// <summary>FreeU's backbone and skip scales (null = off).</summary>
-    public SpawnDev.ILGPU.ML.StableDiffusion.SdFreeU? FreeU { get; init; }
-    /// <summary>The middle block's self-attention returns its values unchanged (Perturbed-Attention Guidance's perturbed pass).</summary>
+    public SdFreeU? FreeU { get; init; }
     public bool PerturbMiddleSelfAttention { get; init; }
-    /// <summary>The call keeps the middle block's first self-attention mass for <see cref="PatchContext.ReadMiddleAttention"/> (SAG's unconditional pass).</summary>
     public bool RecordMiddleSelfAttention { get; init; }
-    /// <summary>HyperTile's tiled self-attention (null = off).</summary>
-    public SpawnDev.ILGPU.ML.StableDiffusion.SdHyperTile? HyperTile { get; init; }
-    /// <summary>ToMe's token merging in the self-attention (null = off). With random destinations and no <c>Rng</c>, each sampling run draws them from a generator of its own seeded the same way, so a run repeats.</summary>
-    public SpawnDev.ILGPU.ML.StableDiffusion.SdTokenMerge? TokenMerge { get; init; }
-    /// <summary>Deep shrink and the sigmas it applies between (null = off); <see cref="At"/> drops it outside that window.</summary>
+    public SdHyperTile? HyperTile { get; init; }
+    public SdTokenMerge? TokenMerge { get; init; }
     public DeepShrinkWindow? DeepShrink { get; init; }
 
+    /// <summary>True when nothing is set (the plain UNet).</summary>
     public bool IsNone => this == None;
 
-    /// <summary>The options of a model call at <paramref name="sigma"/>: deep shrink only while sigma_end &lt;= sigma &lt;= sigma_start, as PatchModelAddDownscale checks per call.</summary>
+    /// <summary>The options in force at <paramref name="sigma"/>: Deep Shrink only inside its window.</summary>
     public UNetOptions At(double sigma) =>
         DeepShrink is { } d && !(sigma <= d.SigmaStart && sigma >= d.SigmaEnd) ? this with { DeepShrink = null } : this;
 }
 
-/// <summary>PatchModelAddDownscale's patch and its window: the sigmas of its start and end percent, taken when the node ran, as ComfyUI does.</summary>
-public sealed record DeepShrinkWindow(SpawnDev.ILGPU.ML.StableDiffusion.SdDeepShrink Shrink, double SigmaStart, double SigmaEnd);
+/// <summary>What a patch can see and ask of the run besides its arguments.</summary>
+public sealed class PatchContext
+{
+    public int Channels { get; init; }
+    public int Height { get; init; }
+    public int Width { get; init; }
+    public ModelSampling Sampling { get; init; } = null!;
 
-/// <summary>ComfyUI's sampler_cfg_function arguments: <c>Cond</c> / <c>Uncond</c> are x minus the denoised estimates; the result r gives the guided estimate x - r.</summary>
+    /// <summary>Which picture of the batch this is, and the batch size (the sampler runs picture by picture).</summary>
+    public int BatchIndex { get; init; }
+    public int BatchSize { get; init; } = 1;
+
+    /// <summary>A conditioning's denoised estimate at this step, ignoring its timestep range.</summary>
+    public Func<Conditioning, Task<float[]>> EvaluateUnscheduled { get; init; } = null!;
+
+    /// <summary>The UNet options in force at this step.</summary>
+    public UNetOptions? UNet { get; init; }
+
+    /// <summary>A conditioning's denoised estimate with other UNet options.</summary>
+    public Func<Conditioning, UNetOptions, Task<float[]>>? EvaluateWith { get; init; }
+
+    /// <summary>A conditioning's denoised estimate at another input (same sigma).</summary>
+    public Func<Conditioning, float[], Task<float[]>>? EvaluateAt { get; init; }
+
+    /// <summary>The middle self-attention recorded during the last unconditional evaluation, when one was asked for.</summary>
+    public Func<Task<float[]>>? ReadMiddleAttention { get; init; }
+}
+
+/// <summary>A pre-cfg patch's input: every conditioning's denoised estimate (zeros where one is absent).</summary>
+public sealed record PreCfgArgs(bool[] CondsPresent, float[][] CondsOut, double CondScale, double Sigma, float[] Input, PatchContext Context);
+
+/// <summary>A cfg function's input. Cond and Uncond are input - denoised (the noise-like predictions); the function returns that kind of value.</summary>
 public sealed record CfgFunctionArgs(float[] Cond, float[] Uncond, double CondScale, double Sigma, float[] Input, float[] CondDenoised, float[] UncondDenoised,
     bool HasCond, bool HasUncond, PatchContext Context);
 
-/// <summary>ComfyUI's sampler_post_cfg_function arguments: the guided estimate so far and what it came from (HasCond / HasUncond: whether those conditionings were used).</summary>
-public sealed record PostCfgArgs(float[] Denoised, bool HasCond, bool HasUncond, double CondScale, float[] CondDenoised, float[] UncondDenoised, double Sigma, float[] Input,
-    PatchContext Context)
+/// <summary>A post-cfg patch's input: the guided estimate and the two it came from.</summary>
+public sealed record PostCfgArgs(float[] Denoised, bool HasCond, bool HasUncond, double CondScale, float[] CondDenoised, float[] UncondDenoised, double Sigma,
+    float[] Input, PatchContext Context)
 {
-    /// <summary>The conditioning the conditional estimate came from (ComfyUI's args["cond"]; PAG evaluates it again).</summary>
     public Conditioning? Cond { get; init; }
-    /// <summary>The conditioning the unconditional estimate came from, null when it was skipped (ComfyUI's args["uncond"]; SAG evaluates it at another sample).</summary>
     public Conditioning? Uncond { get; init; }
 }
 
-/// <summary>ComfyUI's sampler_pre_cfg_function arguments: the denoised estimate of each conditioning (zero for one not used, see CondsPresent) before they are combined.</summary>
-public sealed record PreCfgArgs(bool[] CondsPresent, float[][] CondsOut, double CondScale, double Sigma, float[] Input, PatchContext Context);
-
-/// <summary>A cfg override from CFGOverride: <c>Cfg</c> replaces the guider's cfg while sigma is within [SigmaLow, SigmaHigh].</summary>
-public sealed record CfgOverride(double Cfg, double SigmaHigh, double SigmaLow);
+/// <summary>The two estimates of the last guided prediction (what the CFG++ samplers read).</summary>
+public sealed record GuidanceOutput(float[] CondDenoised, float[] UncondDenoised, bool HasUncond);
 
 /// <summary>
-/// The guidance patches on a model (ComfyUI's model_options entries). Each patch is a factory, called once per sampling run, so a patch that keeps state across
-/// steps (APG's running average) starts fresh. Patches are added in order; a newer cfg function replaces the older one, as in ComfyUI.
+/// The guidance patches on a model. Patches are stored as factories so each sampling run starts with fresh state (APG's momentum); a newer cfg
+/// function replaces an older one, pre- and post-cfg patches stack in the order they were added.
 /// </summary>
 public sealed record ModelPatches
 {
@@ -87,38 +91,42 @@ public sealed record ModelPatches
     public IReadOnlyList<Func<Func<PreCfgArgs, float[][]>>> PreCfg { get; init; } = [];
     public Func<Func<CfgFunctionArgs, Task<float[]>>>? CfgFunction { get; init; }
     public IReadOnlyList<Func<Func<PostCfgArgs, Task<float[]>>>> PostCfg { get; init; } = [];
+
+    /// <summary>Evaluate the negative even at cfg 1 (a patch that needs it).</summary>
     public bool DisableCfg1Optimization { get; init; }
-    /// <summary>ComfyUI's denoise_mask_function: (sigma, inpaint mask per pixel, the run's sigmas, model sampling) to the mask used for this model call.</summary>
+
+    /// <summary>Differential Diffusion: the inpainting mask to use at a sigma, from the mask, the run's sigmas and the model sampling.</summary>
     public Func<double, float[], double[], ModelSampling, float[]>? DenoiseMask { get; init; }
+
     public IReadOnlyList<CfgOverride> CfgOverrides { get; init; } = [];
-    /// <summary>How the UNet runs on every call (FreeU, ...).</summary>
-    public UNetOptions UNet { get; init; } = UNetOptions.None;
-    /// <summary>
-    /// SAG's attention capture: the unconditional pass of each step (ComfyUI's cond_or_uncond 1, the second conditioning of a calc_cond_batch) records the middle
-    /// block's first self-attention mass.
-    /// </summary>
+    public UNetOptions? UNet { get; init; }
+
+    /// <summary>Record the middle self-attention during the unconditional evaluation (Self-Attention Guidance).</summary>
     public bool RecordUncondMiddleAttention { get; init; }
 
     public ModelPatches WithPreCfg(Func<Func<PreCfgArgs, float[][]>> patch, bool disableCfg1 = false) =>
         this with { PreCfg = [.. PreCfg, patch], DisableCfg1Optimization = DisableCfg1Optimization || disableCfg1 };
 
     public ModelPatches WithPostCfg(Func<Func<PostCfgArgs, float[]>> patch, bool disableCfg1 = false) =>
-        WithPostCfgAsync(() => { var f = patch(); return a => Task.FromResult(f(a)); }, disableCfg1);
+        WithPostCfgAsync(() =>
+        {
+            var f = patch();
+            return a => Task.FromResult(f(a));
+        }, disableCfg1);
 
-    /// <summary>A post-cfg patch that calls the model (PAG).</summary>
     public ModelPatches WithPostCfgAsync(Func<Func<PostCfgArgs, Task<float[]>>> patch, bool disableCfg1 = false) =>
         this with { PostCfg = [.. PostCfg, patch], DisableCfg1Optimization = DisableCfg1Optimization || disableCfg1 };
 
     public ModelPatches WithCfgFunction(Func<Func<CfgFunctionArgs, Task<float[]>>> patch, bool disableCfg1 = false) =>
         this with { CfgFunction = patch, DisableCfg1Optimization = DisableCfg1Optimization || disableCfg1 };
 
-    /// <summary>A stateless patch as a factory.</summary>
+    /// <summary>A patch without state, as a factory that hands out the same function.</summary>
     public static Func<T> Stateless<T>(T function) => () => function;
 }
 
 /// <summary>
-/// How the model is steered at each step (ComfyUI's GUIDER): which conditionings are evaluated and how their denoised estimates are combined. <see cref="Cfg"/> is the
-/// guider's own cfg (the one CFGOverride replaces); guiders with two scales keep theirs separately.
+/// GUIDER: how the model is steered at each step, which conditionings are evaluated and how their estimates are combined. <see cref="Cfg"/> is the
+/// guider's own scale (the one CFG Override replaces).
 /// </summary>
 [Socket("GUIDER")]
 public abstract class GuiderChoice(ModelHandle model, double cfg)
@@ -126,202 +134,174 @@ public abstract class GuiderChoice(ModelHandle model, double cfg)
     public ModelHandle Model { get; } = model;
     public double Cfg { get; } = cfg;
 
-    /// <summary>Every conditioning the guider may evaluate (their embeddings go to the GPU once per run).</summary>
+    /// <summary>Every conditioning the guider may evaluate.</summary>
     public abstract IEnumerable<Conditioning> Conditionings { get; }
 
-    /// <summary>ComfyUI's predict_noise: the guided denoised estimate at the step's sample and sigma, with <paramref name="cfg"/> after any override.</summary>
-    internal abstract Task<float[]> PredictAsync(GuidanceStep step, double cfg);
+    /// <summary>The guided denoised estimate for the step, with <paramref name="cfg"/> after any override.</summary>
+    public abstract Task<float[]> PredictAsync(GuidanceStep step, double cfg);
 }
 
-/// <summary>Classifier-free guidance: uncond + cfg * (cond - uncond), the negative skipped at cfg 1 (CFGGuider, and what KSampler and SamplerCustom use).</summary>
+/// <summary>Classifier-free guidance (CFG Guider, KSampler, SamplerCustom): uncond + cfg (cond - uncond).</summary>
 public sealed class CfgGuider(ModelHandle model, Conditioning positive, Conditioning negative, double cfg) : GuiderChoice(model, cfg)
 {
     public Conditioning Positive { get; } = positive;
     public Conditioning Negative { get; } = negative;
     public override IEnumerable<Conditioning> Conditionings => [Positive, Negative];
-    internal override Task<float[]> PredictAsync(GuidanceStep step, double cfg) => step.SamplingFunction(Positive, Negative, cfg);
+    public override Task<float[]> PredictAsync(GuidanceStep step, double cfg) => step.SamplingFunction(Positive, Negative, cfg);
 }
 
-/// <summary>The prompt alone (BasicGuider): there is no negative, so the unconditional estimate is zero, at the guider's cfg of 1.</summary>
+/// <summary>The prompt alone (Basic Guider): no negative, so the unconditional estimate is zero, at cfg 1.</summary>
 public sealed class BasicGuiderChoice(ModelHandle model, Conditioning conditioning) : GuiderChoice(model, 1.0)
 {
     public Conditioning Positive { get; } = conditioning;
     public override IEnumerable<Conditioning> Conditionings => [Positive];
-    internal override Task<float[]> PredictAsync(GuidanceStep step, double cfg) => step.SamplingFunction(Positive, null, cfg);
+    public override Task<float[]> PredictAsync(GuidanceStep step, double cfg) => step.SamplingFunction(Positive, null, cfg);
 }
 
 /// <summary>
-/// Two prompts and a negative (DualCFGGuider): "regular" is cfg_function(cond2 vs negative, cfg_cond2_negative) + (cond1 - cond2) * cfg_conds; "nested" guides cond1 against
-/// cond2 first and the result against the negative.
+/// Two prompts and a negative (Dual CFG Guider). "regular": the second prompt guided against the negative by cfg_cond2_negative, plus cfg_conds
+/// times (first - second). "nested": the first prompt guided against the second by cfg_conds, that result against the negative by
+/// cfg_cond2_negative.
 /// </summary>
-public sealed class DualCfgGuiderChoice(ModelHandle model, Conditioning cond1, Conditioning cond2, Conditioning negative, double cfgConds, double cfgCond2Negative, bool nested)
-    : GuiderChoice(model, 1.0)
+public sealed class DualCfgGuiderChoice(ModelHandle model, Conditioning cond1, Conditioning cond2, Conditioning negative, double cfgConds, double cfgCond2Negative,
+    bool nested) : GuiderChoice(model, 1.0)
 {
     public override IEnumerable<Conditioning> Conditionings => [cond1, cond2, negative];
 
-    internal override async Task<float[]> PredictAsync(GuidanceStep step, double cfg)
+    public override async Task<float[]> PredictAsync(GuidanceStep step, double cfg)
     {
-        Conditioning? negativeCond = negative, middleCond = cond2;
+        var outs = await step.CalcCondBatch(negative, cond2, cond1);
+        float[] neg = outs[0], second = outs[1], first = outs[2];
         if (nested)
         {
-            var o = await step.CalcCondBatch(negativeCond, middleCond, cond1);
-            var predText = await step.CfgFunction(o[2], o[1], cfgConds, cond1, middleCond);
-            return Samplers.Guide(o[0], predText, cfgCond2Negative);
+            var inner = Samplers.Guide(second, first, cfgConds);
+            return Samplers.Guide(neg, inner, cfgCond2Negative);
         }
-        if (!step.DisableCfg1Optimization && cfgCond2Negative == 1.0)
-        {
-            negativeCond = null;
-            if (cfgConds == 1.0) middleCond = null;
-        }
-        var outs = await step.CalcCondBatch(negativeCond, middleCond, cond1);
-        var guided = await step.CfgFunction(outs[1], outs[0], cfgCond2Negative, middleCond, negativeCond);
+        var guided = Samplers.Guide(neg, second, cfgCond2Negative);
         var r = new float[guided.Length];
-        for (int k = 0; k < r.Length; k++) r[k] = (float)(guided[k] + (outs[2][k] - outs[1][k]) * cfgConds);
+        float k = (float)cfgConds;
+        for (int i = 0; i < r.Length; i++) r[i] = guided[i] + (first[i] - second[i]) * k;
         return r;
     }
 }
 
-/// <summary>Perp-Neg (PerpNegGuider): the negative only pushes along the part of it perpendicular to the prompt, both measured from an empty prompt.</summary>
-public sealed class PerpNegGuiderChoice(ModelHandle model, Conditioning positive, Conditioning negative, Conditioning empty, double cfg, double negScale) : GuiderChoice(model, cfg)
+/// <summary>Perp-Neg (Armandpour et al. 2023) as a guider: the negative pushes only along its part perpendicular to the prompt, both measured from an empty prompt.</summary>
+public sealed class PerpNegGuiderChoice(ModelHandle model, Conditioning positive, Conditioning negative, Conditioning empty, double cfg, double negScale)
+    : GuiderChoice(model, cfg)
 {
     public override IEnumerable<Conditioning> Conditionings => [positive, negative, empty];
 
-    internal override async Task<float[]> PredictAsync(GuidanceStep step, double cfg)
+    public override async Task<float[]> PredictAsync(GuidanceStep step, double cfg)
     {
-        Conditioning? negativeCond = negative, emptyCond = empty;
-        if (!step.DisableCfg1Optimization && negScale == 0.0)
-        {
-            negativeCond = null;
-            if (cfg == 1.0) emptyCond = null;
-        }
-        var outs = step.ApplyPreCfg([positive, negativeCond, emptyCond], await step.CalcCondBatch(positive, negativeCond, emptyCond), cfg);
+        var conds = new Conditioning?[] { positive, negative, empty };
+        var outs = step.ApplyPreCfg(conds, await step.CalcCondBatch(conds), cfg);
         var result = GuidancePatches.PerpNeg(outs[0], outs[1], outs[2], negScale, cfg);
-        return await step.ApplyPostCfg(result, outs[0], outs[1], cfg, positive, negativeCond);
+        return await step.ApplyPostCfg(result, outs[0], outs[1], cfg, positive, negative);
     }
 }
 
-/// <summary>
-/// One sampling run's guidance: the guider plus fresh instances of the model's patches. <see cref="PredictAsync"/> is one model call (ComfyUI's CFGGuider.predict_noise
-/// with its wrappers); <see cref="Last"/> is what the CFG++ samplers read afterwards.
-/// </summary>
+/// <summary>One guided prediction: the step's input and sigma, and the stages of guidance a guider combines.</summary>
+public sealed class GuidanceStep(GuidanceRun run, float[] x, double sigma, Func<Conditioning, bool, Task<float[]>> evaluate, PatchContext context)
+{
+    public float[] X { get; } = x;
+    public double Sigma { get; } = sigma;
+    public PatchContext Context { get; } = context;
+    public bool DisableCfg1Optimization => run.DisableCfg1;
+
+    /// <summary>Each conditioning's denoised estimate (zeros for a missing one); the second is the unconditional slot.</summary>
+    public async Task<float[][]> CalcCondBatch(params Conditioning?[] conds)
+    {
+        var outs = new float[conds.Length][];
+        for (int i = 0; i < conds.Length; i++)
+            outs[i] = conds[i] is { } c ? await evaluate(c, i == 1) : new float[X.Length];
+        return outs;
+    }
+
+    /// <summary>The standard pipeline: estimates, pre-cfg patches, the cfg (function), post-cfg patches; at cfg 1 the negative is skipped unless disabled.</summary>
+    public async Task<float[]> SamplingFunction(Conditioning cond, Conditioning? uncond, double cfg)
+    {
+        if (!DisableCfg1Optimization && Math.Abs(cfg - 1.0) <= 1e-9) uncond = null;
+        var conds = new[] { cond, uncond };
+        var outs = ApplyPreCfg(conds, await CalcCondBatch(conds), cfg);
+        var guided = await CfgFunction(outs[0], outs[1], cfg, cond, uncond);
+        return await ApplyPostCfg(guided, outs[0], outs[1], cfg, cond, uncond);
+    }
+
+    public float[][] ApplyPreCfg(Conditioning?[] conds, float[][] outs, double cfg)
+    {
+        if (run.PreCfg.Length == 0) return outs;
+        var present = conds.Select(c => c is not null).ToArray();
+        foreach (var patch in run.PreCfg) outs = patch(new PreCfgArgs(present, outs, cfg, Sigma, X, Context));
+        return outs;
+    }
+
+    public async Task<float[]> CfgFunction(float[] condPred, float[] uncondPred, double cfg, Conditioning? cond, Conditioning? uncond)
+    {
+        if (run.CfgFn is null) return Samplers.Guide(uncondPred, condPred, cfg);
+        var r = await run.CfgFn(new CfgFunctionArgs(Samplers.Subtract(X, condPred), Samplers.Subtract(X, uncondPred), cfg, Sigma, X, condPred, uncondPred,
+            cond is not null, uncond is not null, Context));
+        return Samplers.Subtract(X, r);
+    }
+
+    public async Task<float[]> ApplyPostCfg(float[] denoised, float[] condPred, float[] uncondPred, double cfg, Conditioning? cond, Conditioning? uncond)
+    {
+        run.Last = new GuidanceOutput(condPred, uncondPred, uncond is not null);
+        foreach (var patch in run.PostCfg)
+            denoised = await patch(new PostCfgArgs(denoised, cond is not null, uncond is not null, cfg, condPred, uncondPred, Sigma, X, Context) { Cond = cond, Uncond = uncond });
+        return denoised;
+    }
+}
+
+/// <summary>A sampling run's guidance for one picture: the guider with its model's patches instantiated once for the run.</summary>
 public sealed class GuidanceRun
 {
-    internal readonly GuiderChoice Guider;
-    internal readonly Func<PreCfgArgs, float[][]>[] PreCfg;
-    internal readonly Func<CfgFunctionArgs, Task<float[]>>? CfgFn;
-    internal readonly Func<PostCfgArgs, Task<float[]>>[] PostCfg;
-    internal readonly bool DisableCfg1;
+    public readonly GuiderChoice Guider;
+    public readonly Func<PreCfgArgs, float[][]>[] PreCfg;
+    public readonly Func<CfgFunctionArgs, Task<float[]>>? CfgFn;
+    public readonly Func<PostCfgArgs, Task<float[]>>[] PostCfg;
+    public readonly bool DisableCfg1;
     readonly int _channels, _height, _width;
+    readonly ModelPatches _patches;
 
     public GuidanceRun(GuiderChoice guider, int channels, int height, int width, bool samplerDisablesCfg1)
     {
         Guider = guider;
-        var p = guider.Model.Patches;
-        PreCfg = [.. p.PreCfg.Select(f => f())];
-        CfgFn = p.CfgFunction?.Invoke();
-        PostCfg = [.. p.PostCfg.Select(f => f())];
-        DisableCfg1 = p.DisableCfg1Optimization || samplerDisablesCfg1;
+        _patches = guider.Model.Patches ?? ModelPatches.None;
+        PreCfg = [.. _patches.PreCfg.Select(f => f())];
+        CfgFn = _patches.CfgFunction?.Invoke();
+        PostCfg = [.. _patches.PostCfg.Select(f => f())];
+        DisableCfg1 = samplerDisablesCfg1 || _patches.DisableCfg1Optimization;
         (_channels, _height, _width) = (channels, height, width);
     }
 
-    /// <summary>The picture of the batch this run samples.</summary>
     public int BatchIndex { get; init; }
-    /// <summary>How many pictures the batch holds.</summary>
     public int BatchSize { get; init; } = 1;
 
-    /// <summary>The conditional / unconditional estimates of the last cfg combination (ComfyUI's post-cfg capture of the CFG++ samplers).</summary>
-    public GuidanceOutput? Last { get; internal set; }
+    /// <summary>The estimates of the last prediction.</summary>
+    public GuidanceOutput? Last { get; set; }
 
     /// <summary>
-    /// The guided denoised estimate at <paramref name="x"/>, <paramref name="sigma"/>. <paramref name="evaluate"/> is calc_cond_batch for one conditioning: whether its
-    /// timestep range applies, and the UNet options of the call.
+    /// The guided denoised estimate at <paramref name="x"/>, <paramref name="sigma"/>. <paramref name="evaluate"/> gives a conditioning's denoised
+    /// estimate (whether its timestep range applies, the UNet options); the optional functions serve Self-Attention Guidance.
     /// </summary>
     public Task<float[]> PredictAsync(float[] x, double sigma, Func<Conditioning, bool, UNetOptions, Task<float[]>> evaluate,
-        Func<Conditioning, float[], UNetOptions, Task<float[]>>? evaluateAt = null, Func<Task<float[]?>>? readMiddleAttention = null)
+        Func<Conditioning, float[], UNetOptions, Task<float[]>>? evaluateAt = null, Func<Task<float[]>>? readMiddleAttention = null)
     {
-        var unet = Guider.Model.Patches.UNet;
+        var options = (_patches.UNet ?? UNetOptions.None).At(sigma);
         double cfg = Guider.Cfg;
-        foreach (var o in Guider.Model.Patches.CfgOverrides)
-            if (o.SigmaLow <= sigma && sigma <= o.SigmaHigh) cfg = o.Cfg; // the override nearest the sampler (added last) wins
-        var step = new GuidanceStep(this, x, sigma, (c, scheduled) => evaluate(c, scheduled, unet), new PatchContext
+        foreach (var o in _patches.CfgOverrides)
+            if (sigma <= o.SigmaHigh && sigma >= o.SigmaLow) cfg = o.Cfg;
+        var context = new PatchContext
         {
             Channels = _channels, Height = _height, Width = _width, Sampling = Guider.Model.Sampling, BatchIndex = BatchIndex, BatchSize = BatchSize,
-            EvaluateUnscheduled = c => evaluate(c, false, unet), UNet = unet, EvaluateWith = (c, options) => evaluate(c, true, options),
-            ReadMiddleAttention = readMiddleAttention ?? (() => Task.FromResult<float[]?>(null)),
-            EvaluateAt = evaluateAt is null ? (_, _) => throw new NotSupportedException("This run cannot call the model at another sample.") : (c, sample) => evaluateAt(c, sample, unet),
-        });
+            EvaluateUnscheduled = c => evaluate(c, false, options),
+            UNet = options,
+            EvaluateWith = (c, o) => evaluate(c, true, o),
+            EvaluateAt = evaluateAt is null ? null : (c, at) => evaluateAt(c, at, options),
+            ReadMiddleAttention = readMiddleAttention,
+        };
+        var recording = _patches.RecordUncondMiddleAttention ? options with { RecordMiddleSelfAttention = true } : options;
+        var step = new GuidanceStep(this, x, sigma, (c, isUncond) => evaluate(c, true, isUncond ? recording : options), context);
         return Guider.PredictAsync(step, cfg);
-    }
-}
-
-/// <summary>One model call of a <see cref="GuidanceRun"/>: ComfyUI's sampling_function, cfg_function and calc_cond_batch at a fixed sample and sigma.</summary>
-public sealed class GuidanceStep
-{
-    readonly GuidanceRun _run;
-    readonly Func<Conditioning, bool, Task<float[]>> _evaluate;
-
-    internal GuidanceStep(GuidanceRun run, float[] x, double sigma, Func<Conditioning, bool, Task<float[]>> evaluate, PatchContext context)
-    {
-        _run = run;
-        X = x;
-        Sigma = sigma;
-        _evaluate = evaluate;
-        Context = context;
-    }
-
-    public float[] X { get; }
-    public double Sigma { get; }
-    public PatchContext Context { get; }
-    public bool DisableCfg1Optimization => _run.DisableCfg1;
-
-    /// <summary>The denoised estimate of each conditioning; a missing one is zero, like ComfyUI's empty batch slot.</summary>
-    public async Task<float[][]> CalcCondBatch(params Conditioning?[] conds)
-    {
-        var r = new float[conds.Length][];
-        for (int i = 0; i < conds.Length; i++)
-            r[i] = conds[i] is not { } c ? new float[X.Length]
-                : i == 1 && _run.Guider.Model.Patches.RecordUncondMiddleAttention ? await Context.EvaluateWith(c, Context.UNet with { RecordMiddleSelfAttention = true })
-                : await _evaluate(c, true);
-        return r;
-    }
-
-    /// <summary>ComfyUI's sampling_function: the prompt and (unless cfg is 1) the negative, the pre-cfg patches, then <see cref="CfgFunction"/>.</summary>
-    public async Task<float[]> SamplingFunction(Conditioning? cond, Conditioning? uncond, double cfg)
-    {
-        var uncondUsed = cfg == 1.0 && !DisableCfg1Optimization ? null : uncond;
-        var outs = ApplyPreCfg([cond, uncondUsed], await CalcCondBatch(cond, uncondUsed), cfg);
-        return await CfgFunction(outs[0], outs[1], cfg, cond, uncondUsed);
-    }
-
-    /// <summary>The pre-cfg patches over the per-conditioning estimates.</summary>
-    public float[][] ApplyPreCfg(Conditioning?[] conds, float[][] outs, double cfg)
-    {
-        var present = conds.Select(c => c is not null).ToArray();
-        foreach (var fn in _run.PreCfg) outs = fn(new PreCfgArgs(present, outs, cfg, Sigma, X, Context));
-        return outs;
-    }
-
-    /// <summary>ComfyUI's cfg_function: the cfg function patch (or plain CFG), then the post-cfg patches; records the estimates for the CFG++ samplers.</summary>
-    public async Task<float[]> CfgFunction(float[] condPred, float[] uncondPred, double cfg, Conditioning? cond, Conditioning? uncond)
-    {
-        float[] result;
-        if (_run.CfgFn is { } fn)
-        {
-            var noise = await fn(new CfgFunctionArgs(Samplers.Subtract(X, condPred), Samplers.Subtract(X, uncondPred), cfg, Sigma, X, condPred, uncondPred,
-                cond is not null, uncond is not null, Context));
-            result = Samplers.Subtract(X, noise);
-        }
-        else result = Samplers.Guide(uncondPred, condPred, cfg);
-        return await ApplyPostCfg(result, condPred, uncondPred, cfg, cond, uncond);
-    }
-
-    /// <summary>The post-cfg patches (and the CFG++ capture, which ComfyUI's samplers add as the last post-cfg function).</summary>
-    public async Task<float[]> ApplyPostCfg(float[] denoised, float[] condPred, float[] uncondPred, double cfg, Conditioning? cond, Conditioning? uncond)
-    {
-        bool hasUncond = uncond is not null;
-        foreach (var fn in _run.PostCfg)
-            denoised = await fn(new PostCfgArgs(denoised, cond is not null, hasUncond, cfg, condPred, uncondPred, Sigma, X, Context) { Cond = cond, Uncond = uncond });
-        _run.Last = new GuidanceOutput(condPred, uncondPred, hasUncond);
-        return denoised;
     }
 }

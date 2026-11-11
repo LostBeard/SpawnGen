@@ -49,9 +49,17 @@ public sealed class TorchRandom
     /// <c>torch.randn(n)</c> on a freshly seeded generator. 16 or more values: normal_fill (all uniforms first, Box-Muller in blocks of 16,
     /// the last partial block redrawn); fewer: the scalar double-precision normal_distribution, whose second value is cached for the next draw.
     /// </summary>
-    public static float[] Randn(long seed, int n)
+    public static float[] Randn(long seed, int n) => new TorchRandom(seed).Randn(n);
+
+    double? _cachedNormal;
+
+    /// <summary>
+    /// The next <c>torch.randn(n)</c> from this generator (successive calls continue the stream, as successive torch.randn calls on one
+    /// generator do).
+    /// </summary>
+    public float[] Randn(int n)
     {
-        var g = new TorchRandom(seed);
+        var g = this;
         var data = new float[n];
         if (n >= 16)
         {
@@ -65,13 +73,12 @@ public sealed class TorchRandom
             return data;
         }
 
-        double? cached = null;
         for (int i = 0; i < n; i++)
         {
-            if (cached is { } next) { data[i] = (float)next; cached = null; continue; }
+            if (_cachedNormal is { } next) { data[i] = (float)next; _cachedNormal = null; continue; }
             double u1 = g.NextDouble(), u2 = g.NextDouble();
             double r = Math.Sqrt(-2.0 * Math.Log(1.0 - u2)), theta = 2.0 * Math.PI * u1;
-            cached = r * Math.Sin(theta);
+            _cachedNormal = r * Math.Sin(theta);
             data[i] = (float)(r * Math.Cos(theta));
         }
         return data;

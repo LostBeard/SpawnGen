@@ -55,6 +55,8 @@ public class ComfyImageParityTests
 
     static IEnumerable<TestCaseData> MainCases() => Cases("main");
     static IEnumerable<TestCaseData> CropCases() => Cases("crop");
+    static IEnumerable<TestCaseData> CropToMaskCases() =>
+        Load("crop_to_mask").Select((c, i) => new TestCaseData(c).SetName($"CropToMask_{i:D2}_{c.Args.GetProperty("case").GetString()}"));
 
     static ImageBatch Img(Tensor t) => new(t.Shape[0], t.Shape[1], t.Shape[2], t.Shape[3], (float[])t.Data.Clone());
     static MaskBatch Mask(Tensor t) => new(t.Shape[0], t.Shape[1], t.Shape[2], (float[])t.Data.Clone());
@@ -172,5 +174,17 @@ public class ComfyImageParityTests
     {
         var r = new ImageCropToMask().Execute(Img(c.Inputs["images"]), Mask(c.Inputs["masks"]), I(c, "width"), I(c, "height"), D(c, "pad_factor"), I(c, "grow_mask"), S(c, "background"));
         Same(r, c.Out[0], 1e-6);
+    }
+
+    /// <summary>tools/parity/make_crop_to_mask_fixtures.py: 50 ComfyUI cases (window rule, pre-scale, inversion rule, cut-off, grow, batches, colours).</summary>
+    [TestCaseSource(nameof(CropToMaskCases))]
+    public void Crop_to_mask_matches_ComfyUI_measurements(Case c)
+    {
+        ImageBatch Run() => new ImageCropToMask().Execute(Img(c.Inputs["images"]), Mask(c.Inputs["masks"]), I(c, "width"), I(c, "height"), D(c, "pad_factor"),
+            I(c, "grow_mask"), S(c, "background"));
+        if (c.Out[0].TryGetProperty("error", out var error))
+            Assert.Throws<ArgumentException>(() => Run(), error.GetString());
+        else
+            Same(Run(), c.Out[0], 1e-6);
     }
 }

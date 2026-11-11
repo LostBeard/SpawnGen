@@ -43,7 +43,13 @@
             <button class="danger" title="Stop the run in progress" @onclick="InterruptAsync">Stop</button>
         }
         <button class="primary" disabled="@(_engine is null)" @onclick="() => QueueAsync()"
-                title="@(_engine is null ? "No engine: this browser has no WebGPU and there is no SpawnGen server." : $"Run the graph on: {_engine.Name} (Ctrl+Enter)")">Queue</button>
+                title="@(_engine is null ? "No engine: this browser has no WebGPU and there is no SpawnGen server." : $"Run the graph on: {_engine.Name} (Ctrl+Enter)")">
+            <span>Queue</span>
+            @if (_pending.Count > 0)
+            {
+                <span class="count" title="Runs waiting in the queue">@_pending.Count</span>
+            }
+        </button>
         @if (_running)
         {
             <button title="Put the graph at the front of the queue so it runs next (Ctrl+Shift+Enter)" @onclick="() => QueueAsync(front: true)">Front</button>
@@ -60,8 +66,6 @@
         </select>
         <label class="button" title="Upload a PNG, JPEG, WebP, GIF or BMP for Load Image nodes, a WAV for Load Audio, or a .latent for Load Latent">Upload<InputFile @key="_fileInputs" OnChange="OnUploadChosenAsync" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.wav,.latent" hidden /></label>
         <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
-        @{ var statusText = $"{RunStatus()}{_doc.Graph.Nodes.Count} nodes, {_doc.Graph.Links.Count} links, {(int)Math.Round(_view.Viewport.Scale * 100)}%"; }
-        <span class="status" title="@statusText">@statusText</span>
     </div>
 
     <div class="tabs" @onpointerdown="CloseMenus">
@@ -343,6 +347,28 @@
                     <li @onclick="() => { CloseMenus(); item.Action(); }">@item.Label</li>
                 }
             </ul>
+        }
+    </div>
+
+    @* Always on screen: what the engine is doing, how far along (download or steps), and how many runs wait. *@
+    @{
+        var statusText = $"{RunStatus()}{_doc.Graph.Nodes.Count} nodes, {_doc.Graph.Links.Count} links, {(int)Math.Round(_view.Viewport.Scale * 100)}%";
+        var busy = _running || _queueRemaining > 0 || _pending.Count > 0;
+        var fraction = RunFraction();
+    }
+    <div class="runbar @(busy ? "busy" : "")">
+        <span class="run-dot @(_running ? "running" : busy ? "queued" : "")" title="@(_running ? "Running" : busy ? "Queued" : "Idle")"></span>
+        <span class="status" title="@statusText">@statusText</span>
+        @if (_running)
+        {
+            <div class="run-progress @(fraction is null ? "indeterminate" : "")" title="@(fraction is { } pf ? $"{pf * 100:0}%" : "Working")">
+                <div style="width:@(fraction is { } f ? $"{f * 100:0.#}" : "30")%"></div>
+            </div>
+            <span class="run-pct">@(fraction is { } p ? $"{p * 100:0}%" : "")</span>
+        }
+        @if (_pending.Count > 0)
+        {
+            <button class="queued" title="Runs waiting: open the queue" @onclick="OpenQueue">@_pending.Count queued</button>
         }
     </div>
 </div>
@@ -1095,6 +1121,12 @@
         _studio?.Focus();
     }
 
+    void OpenQueue()
+    {
+        _historyOpen = true;
+        _studio?.Focus();
+    }
+
     void ClearHistory() => _history.RemoveAll(e => e.State != "running");
 
     /// <summary>
@@ -1164,6 +1196,7 @@
     bool _modelsOpen, _polling;
     SpawnGen.Runtime.ModelCacheInfo? _cache;
     string? _downloadText;
+    SpawnGen.Runtime.ModelDownload? _download;
 
     static string FormatBytes(long bytes) => bytes switch
     {
@@ -1197,14 +1230,35 @@
             while ((_modelsOpen || _running) && _engine is not null)
             {
                 _cache = await _engine.GetModelCacheAsync();
-                var d = _cache.Downloads.FirstOrDefault();
-                _downloadText = d is null ? null : $"Downloading {ShortKey(d.Key)} {(d.Fraction is { } f ? $"{f * 100:0}%" : FormatBytes(d.Received))}";
+                var d = _download = _cache.Downloads.FirstOrDefault();
+                _downloadText = d is null ? null : DownloadText(d, _cache.Downloads.Count);
                 await InvokeAsync(StateHasChanged);
                 await Task.Delay(1000);
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { }
-        finally { _polling = false; _downloadText = null; await InvokeAsync(StateHasChanged); }
+        finally { _polling = false; _downloadText = null; _download = null; await InvokeAsync(StateHasChanged); }
+    }
+
+    /// <summary>"Downloading unet / model.onnx: 412 MB of 1.6 GB, 5.1 MB/s" (plus how many other files are downloading).</summary>
+    static string DownloadText(SpawnGen.Runtime.ModelDownload d, int count)
+    {
+        var name = ShortKey(d.Key);
+        name = name[(name.LastIndexOf(" / ", StringComparison.Ordinal) is var cut and >= 0 ? cut + 3 : 0)..]; // the file; the Models panel shows the repo
+        var text = $"Downloading {name}: {FormatBytes(d.Received)}{(d.Total > 0 ? $" of {FormatBytes(d.Total)}" : "")}";
+        if (d.BytesPerSecond > 0) text += $", {FormatBytes((long)d.BytesPerSecond)}/s";
+        if (count > 1) text += $" (+{count - 1} more)";
+        return text;
+    }
+
+    /// <summary>How far the run is, for the status bar: the download in progress, else the running node's steps; null when neither is known.</summary>
+    double? RunFraction()
+    {
+        if (_download?.Fraction is { } downloaded) return downloaded;
+        if (_visuals.ProgressMax > 0) return _visuals.Fraction;
+        // A loader's own stage text ("Loading sd_turbo: unet:parse 40%").
+        if (_statusText is { } text && System.Text.RegularExpressions.Regex.Match(text, @"(\d{1,3})%$") is { Success: true } m) return Math.Min(int.Parse(m.Groups[1].Value), 100) / 100.0;
+        return null;
     }
 
     async Task RemoveModelAsync(SpawnGen.Runtime.CachedModelFile file)
@@ -1459,18 +1513,32 @@
     string RunStatus()
     {
         if (!_running && _queueRemaining == 0) return "";
-        var where = _executingTitle is null ? "Queued" : $"Running {_executingTitle}";
-        if (_visuals.ProgressMax > 0) where += $" {_visuals.ProgressValue:0}/{_visuals.ProgressMax:0}";
+        var where = _executingTitle is null ? (_running ? "Running" : "Queued") : $"Running {_executingTitle}";
+        // A download is the slow part when it happens, so it wins over the loader's own stage text.
+        if (_downloadText is not null) where += $": {_downloadText}";
+        else if (_visuals.ProgressMax > 0) where += $" {_visuals.ProgressValue:0}/{_visuals.ProgressMax:0}";
         else if (_statusText is not null) where += $": {_statusText}";
-        if (_downloadText is not null) where += $" ({_downloadText})";
         return where + " · ";
     }
+
+    bool _queueNoteShown;
 
     async Task QueueAsync(bool front = false)
     {
         if (_engine is null) { ShowMessage("There is no engine: this browser has no WebGPU and no SpawnGen server serves this page."); return; }
+        int ahead = _pending.Count + (_running ? 1 : 0), queued = 0;
+        _queueNoteShown = false;
         for (int run = 0, runs = Math.Clamp(_batchCount, 1, 100); run < runs; run++)
+        {
             if (!await QueueOnceAsync(front)) break;
+            queued++;
+        }
+        // Say what Queue did, so a second press is a choice and not a guess.
+        if (queued > 0 && !_queueNoteShown)
+        {
+            var what = queued == 1 ? "Queued" : $"Queued {queued} runs";
+            ShowMessage(front || ahead == 0 ? (front && ahead > 0 ? $"{what}: runs next" : what) : $"{what}: {ahead} ahead");
+        }
         _studio?.Focus();
     }
 
@@ -1505,7 +1573,7 @@
             // A front-of-queue batch puts each run at the very front in turn, so the batch runs in reverse order (as in ComfyUI).
             if (front) _pending.Insert(0, queued); else _pending.Add(queued);
         }
-        if (compiled.Notes.Count > 0) ShowMessage(compiled.Notes[0]);
+        if (compiled.Notes.Count > 0) { ShowMessage(compiled.Notes[0]); _queueNoteShown = true; }
         ControlAfterGenerate.ApplyAfterQueue(_doc, Registry.GetSchema, Random.Shared);
         return true;
     }
@@ -1550,10 +1618,10 @@
                 break;
             case "execution_start":
                 StartHistoryEntry((string?)data["prompt_id"]);
-                _ = PollModelsAsync();
                 _visuals.BeginRun();
                 _running = true;
                 _statusText = null;
+                _ = PollModelsAsync(); // after _running is set: the poll loop runs only while a run is going (or the Models panel is open)
                 break;
             case "executing":
                 _visuals.ExecutingNode = node;

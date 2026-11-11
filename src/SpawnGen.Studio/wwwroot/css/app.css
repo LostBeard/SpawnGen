@@ -241,3 +241,37 @@ body { background: var(--bg-2); color: var(--fg); font-family: system-ui, "Segoe
     .app-picks { width: 100%; top: auto; height: 45%; }
     .app-steps { left: 8px; right: 8px; transform: none; flex-wrap: wrap; }
 }
+
+/* ---- Workflow library (Workflows / Apps sidebar) and the Save dialog ---- */
+.library.workflows { z-index: 6; } /* above the app view: the library is used from an app too */
+.workflows .wf-tabs { display: flex; gap: 4px; padding: 8px 8px 0; }
+.workflows .wf-tabs button { flex: 1; background: var(--ctl); color: var(--fg-mid); border: 1px solid var(--line-2); border-radius: 5px; padding: 4px 8px; cursor: pointer; font: inherit; }
+.workflows .wf-tabs button.on { background: #2f5fa8; border-color: #3d73c4; color: #fff; }
+.workflows .wf-create { width: 100%; margin: 4px 0; background: var(--ctl); color: var(--fg); border: 1px dashed var(--line-2); border-radius: 5px; padding: 6px; cursor: pointer; font: inherit; }
+.workflows .wf-create:hover { border-color: #4f8fe8; color: var(--fg-strong); }
+.workflows .wf-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 4px; cursor: pointer; color: var(--fg); }
+.workflows .wf-item:hover { background: var(--bg-3); }
+.workflows .wf-item.active { background: #2f5fa833; color: var(--fg-strong); }
+.workflows .wf-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflows .wf-item small { color: var(--fg-dim); font-size: 11px; white-space: nowrap; }
+.workflows .wf-item button { background: none; border: 0; color: var(--fg-dim); cursor: pointer; padding: 0 3px; font-size: 13px; visibility: hidden; }
+.workflows .wf-item:hover button, .workflows .wf-item.confirm button { visibility: visible; }
+.workflows .wf-item button:hover { color: var(--fg-strong); }
+.workflows .wf-item.confirm { cursor: default; background: var(--bg-3); }
+.workflows .wf-item.confirm button { border: 1px solid var(--line-2); border-radius: 4px; padding: 1px 8px; color: var(--fg); background: var(--ctl); font-size: 12px; }
+.workflows .wf-item.confirm button.danger { background: #8a2f2f; border-color: #b04545; color: #fff; }
+.workflows .wf-app { font-size: 10px; font-weight: 600; text-transform: uppercase; color: #fff; background: #2f5fa8; border-radius: 3px; padding: 0 4px; }
+.workflows .wf-rename { width: 100%; box-sizing: border-box; margin: 2px 0; padding: 4px 8px; background: var(--bg-1); color: var(--fg-strong); border: 1px solid #4f8fe8; border-radius: 4px; font: inherit; outline: none; }
+.workflows .wf-foot { display: flex; align-items: center; gap: 6px; padding: 8px; border-top: 1px solid var(--line); font-size: 12px; }
+.workflows .wf-foot button { background: var(--ctl); color: var(--fg); border: 1px solid var(--line-2); border-radius: 5px; padding: 3px 10px; cursor: pointer; font: inherit; }
+.workflows .wf-foot span { color: var(--fg-dim); margin-left: auto; white-space: nowrap; }
+.modal-back { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; background: #0008; }
+.save-dialog { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 16px 18px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 10px 40px #000a; display: flex; flex-direction: column; gap: 10px; }
+.save-dialog h3 { margin: 0; color: var(--fg-strong); font-size: 15px; }
+.save-dialog p { margin: 0; color: var(--fg-dim); font-size: 12px; }
+.save-dialog p.warn { color: #e0b040; }
+.save-dialog input { padding: 6px 10px; background: var(--bg-1); color: var(--fg-strong); border: 1px solid var(--line-2); border-radius: 5px; font: inherit; outline: none; }
+.save-dialog input:focus { border-color: #4f8fe8; }
+.save-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
+.save-dialog button { background: var(--ctl); color: var(--fg); border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 14px; cursor: pointer; font: inherit; }
+.save-dialog button.primary { background: #2f5fa8; border-color: #3d73c4; color: #fff; }

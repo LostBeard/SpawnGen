@@ -9,6 +9,8 @@ public sealed class WorkflowTab
     public required string Name { get; set; }
     /// <summary>ComfyUI workflow JSON; null for a tab nobody has filled yet.</summary>
     public string? Json { get; set; }
+    /// <summary>Where the workflow is saved in the workflow library (<c>sub/name.json</c> under workflows/), or null when it was never saved there.</summary>
+    public string? Path { get; set; }
     public double Scale { get; set; } = 1;
     public double OffsetX { get; set; }
     public double OffsetY { get; set; }
@@ -73,7 +75,7 @@ public sealed class WorkflowTabs
     {
         var tabs = new JsonArray();
         foreach (var t in _tabs)
-            tabs.Add(new JsonObject { ["id"] = t.Id, ["name"] = t.Name, ["json"] = t.Json, ["scale"] = t.Scale, ["x"] = t.OffsetX, ["y"] = t.OffsetY });
+            tabs.Add(new JsonObject { ["id"] = t.Id, ["name"] = t.Name, ["json"] = t.Json, ["path"] = t.Path, ["scale"] = t.Scale, ["x"] = t.OffsetX, ["y"] = t.OffsetY });
         return new JsonObject { ["version"] = Version, ["active"] = ActiveId, ["tabs"] = tabs }.ToJsonString();
     }
 
@@ -90,7 +92,7 @@ public sealed class WorkflowTabs
                 if ((string?)o["id"] is not { Length: > 0 } id || result._tabs.Any(t => t.Id == id)) continue;
                 result._tabs.Add(new WorkflowTab
                 {
-                    Id = id, Name = (string?)o["name"] ?? "Workflow", Json = (string?)o["json"],
+                    Id = id, Name = (string?)o["name"] ?? "Workflow", Json = (string?)o["json"], Path = (string?)o["path"],
                     Scale = Math.Clamp((double?)o["scale"] ?? 1, Viewport.MinScale, Viewport.MaxScale), OffsetX = (double?)o["x"] ?? 0, OffsetY = (double?)o["y"] ?? 0,
                 });
             }

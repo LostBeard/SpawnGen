@@ -17,7 +17,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const results = [];
   const check = (name, ok, detail) => { results.push(ok); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail ? '  [' + detail + ']' : '')); };
   const saved = async () => {
-    const [download] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
     const p = path.join(OUT, 'groups-saved.json');
     await download.saveAs(p);
     return JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -80,7 +80,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await page.waitForTimeout(300);
   wf = await saved();
   check('Delete removes the selected group and keeps the nodes', wf.groups.length === 0 && wf.nodes.length === 7, `${wf.groups.length} groups ${wf.nodes.length} nodes`);
-  await page.mouse.click(200, 800);          // the Save button had the focus: give it back to the canvas
+  await page.mouse.click(200, 800);          // the Export button had the focus: give it back to the canvas
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(300);
   wf = await saved();

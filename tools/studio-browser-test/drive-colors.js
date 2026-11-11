@@ -34,7 +34,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await colour(1400, 234, 'Colour: yellow'); // VAE Decode title
   await page.screenshot({ path: path.join(OUT, 'colors.png') });
 
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
   await download.saveAs(path.join(OUT, 'colors-saved.json'));
   const saved = JSON.parse(fs.readFileSync(path.join(OUT, 'colors-saved.json'), 'utf8'));
   const sampler = saved.nodes.find(n => n.type === 'KSampler');
@@ -43,7 +43,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const coloured = await hash();
   await page.waitForTimeout(1600);
   await page.reload(); await page.waitForSelector('canvas'); await page.waitForTimeout(3500);
-  const [again] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
+  const [again] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
   await again.saveAs(path.join(OUT, 'colors-saved2.json'));
   const reloaded = JSON.parse(fs.readFileSync(path.join(OUT, 'colors-saved2.json'), 'utf8')).nodes.find(n => n.type === 'KSampler');
   check('the colours survive a reload', reloaded.color === '#323' && reloaded.bgcolor === '#535', `${reloaded.color} ${reloaded.bgcolor}`);

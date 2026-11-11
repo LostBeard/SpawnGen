@@ -39,6 +39,13 @@ public static class ServerApp
         configure?.Invoke(builder);
 
         var app = builder.Build();
+        // ComfyUI answers every route both as /x and /api/x (its frontend uses /api/...): the prefix is taken off before routing.
+        app.Use((context, next) =>
+        {
+            if (context.Request.Path.StartsWithSegments("/api", out var rest) && rest.HasValue) context.Request.Path = rest;
+            return next(context);
+        });
+        app.UseRouting();
         app.UseWebSockets();
         // WebP, GIF and BMP for Load Image decode on the GPU (SpawnDev.Codecs); the accelerator opens on the first such picture.
         CodecsImages.Install(() => Task.FromResult(app.Services.GetRequiredService<MlRuntime>().Accelerator));
@@ -65,6 +72,7 @@ public static class ServerApp
         var events = app.Services.GetRequiredService<EventHub>();
         var registry = app.Services.GetRequiredService<NodeRegistry>();
         var options = app.Services.GetRequiredService<ServerOptions>();
+        UserData.Map(app, options);
 
         app.MapGet("/object_info", () => Results.Content(ObjectInfo(registry).ToJsonString(), "application/json"));
 

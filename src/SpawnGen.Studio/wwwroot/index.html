@@ -115,6 +115,52 @@
         // Applied before the app boots, so a light page does not flash dark first.
         try { window.spawngenSetTheme(JSON.parse(localStorage.getItem('spawngen.settings') || '{}').Palette); } catch (e) { }
         window.spawngenStoreSet = function (key, value) { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } };
+        // The workflow library when no server serves the Studio: files in IndexedDB (database spawngen-userdata, store files, {path, text, modified,
+        // created}). Each call is one transaction; results are strings ("done", "exists", "missing") or JSON text.
+        window.spawngenFiles = (function () {
+            let db = null;
+            function open() {
+                return db ??= new Promise((resolve, reject) => {
+                    const r = indexedDB.open("spawngen-userdata", 1);
+                    r.onupgradeneeded = () => r.result.createObjectStore("files", { keyPath: "path" });
+                    r.onsuccess = () => resolve(r.result);
+                    r.onerror = () => { db = null; reject(r.error); };
+                });
+            }
+            async function run(mode, body) {
+                const store = (await open()).transaction("files", mode).objectStore("files");
+                return new Promise((resolve, reject) => {
+                    store.transaction.onerror = () => reject(store.transaction.error);
+                    body(store, resolve);
+                });
+            }
+            const get = (store, path, then) => { const r = store.get(path); r.onsuccess = () => then(r.result ?? null); };
+            return {
+                list: () => run("readonly", (s, done) => {
+                    const r = s.getAll();
+                    r.onsuccess = () => done(JSON.stringify(r.result.map(f => ({ path: f.path, size: new Blob([f.text]).size, modified: f.modified }))));
+                }),
+                read: path => run("readonly", (s, done) => get(s, path, f => done(f ? f.text : null))),
+                write: (path, text, overwrite) => run("readwrite", (s, done) => get(s, path, old => {
+                    if (old && !overwrite) { done("exists"); return; }
+                    const now = Date.now();
+                    s.put({ path, text, modified: now, created: old ? old.created : now }).onsuccess = () => done("done");
+                })),
+                move: (from, to, overwrite) => run("readwrite", (s, done) => get(s, from, f => {
+                    if (!f) { done("missing"); return; }
+                    if (from === to) { done("done"); return; }
+                    get(s, to, old => {
+                        if (old && !overwrite) { done("exists"); return; }
+                        s.put({ ...f, path: to });
+                        s.delete(from).onsuccess = () => done("done");
+                    });
+                })),
+                remove: path => run("readwrite", (s, done) => get(s, path, f => {
+                    if (!f) { done("missing"); return; }
+                    s.delete(path).onsuccess = () => done("done");
+                })),
+            };
+        })();
         // Saves a picture (a data or same-origin URL) as a file download.
         window.spawngenDownloadUrl = function (name, url) {
             const a = document.createElement("a");

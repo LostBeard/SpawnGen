@@ -71,7 +71,7 @@ fs.mkdirSync(OUT, { recursive: true });
   await shot('app-5-result');
 
   // The saved workflow carries the app.
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Save")')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
   const savePath = path.join(OUT, 'app-workflow.app.json');
   await download.saveAs(savePath);
   const saved = JSON.parse(fs.readFileSync(savePath, 'utf8'));

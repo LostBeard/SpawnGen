@@ -13,7 +13,7 @@ One editor, three ways to run it, the same ComfyUI workflow files on all of them
 |---|---|
 | Browser, nothing to install | the GitHub Pages build above (or `src/SpawnGen.Studio` served by any static host) |
 | Desktop app | `src/SpawnGen.Desktop`: a Photino window over an in-process server, native CUDA/OpenCL |
-| Server | `src/SpawnGen.Server`: ComfyUI-shaped HTTP + WebSocket API (`/prompt`, `/queue`, `/history`, `/object_info`, `/view`, `/upload/image`, `/ws`); also serves the Studio |
+| Server | `src/SpawnGen.Server`: ComfyUI-shaped HTTP + WebSocket API (`/prompt`, `/queue`, `/history`, `/object_info`, `/view`, `/upload/image`, `/userdata`, `/settings`, `/ws`, each also under `/api`); also serves the Studio |
 
 How close to ComfyUI it is, feature by feature, is in [docs/PARITY.md](docs/PARITY.md). Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -37,8 +37,8 @@ dotnet run --project src/SpawnGen.Server -c Release --urls http://localhost:8188
 ```
 
 Open http://localhost:8188 for the Studio; the same address is the API. Models, inputs and results live under
-`%LOCALAPPDATA%\SpawnGen` (`models`, `input`, `output`, `temp`, `custom_nodes`); change them with `SpawnGen__ModelsPath`, `SpawnGen__OutputPath`, `SpawnGen__InputPath`, `SpawnGen__TempPath`,
-`SpawnGen__CustomNodesPath` (environment variables or `--SpawnGen:ModelsPath=...`). Models that are not on disk download from Hugging Face on first use into `models\hub`.
+`%LOCALAPPDATA%\SpawnGen` (`models`, `input`, `output`, `temp`, `custom_nodes`, and `user`: saved workflows and settings); change them with `SpawnGen__ModelsPath`, `SpawnGen__OutputPath`, `SpawnGen__InputPath`, `SpawnGen__TempPath`,
+`SpawnGen__CustomNodesPath`, `SpawnGen__UserPath` (environment variables or `--SpawnGen:ModelsPath=...`). Models that are not on disk download from Hugging Face on first use into `models\hub`.
 The Studio alone (the browser engine, no server) is `dotnet run --project src/SpawnGen.Studio -c Release`.
 
 To add another Stable Diffusion checkpoint, put a `checkpoints.json` in the models folder:

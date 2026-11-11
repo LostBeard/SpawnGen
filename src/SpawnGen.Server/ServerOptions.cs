@@ -10,6 +10,8 @@ public sealed class ServerOptions
     public string OutputPath { get; set; } = Path.Combine(Home, "output");
     public string InputPath { get; set; } = Path.Combine(Home, "input");
     public string TempPath { get; set; } = Path.Combine(Home, "temp");
+    /// <summary>The user's files: saved workflows and apps (<c>default/workflows</c>) and settings, as in ComfyUI's user folder.</summary>
+    public string UserPath { get; set; } = Path.Combine(Home, "user");
     /// <summary>Folder of custom node assemblies (.dll with classes marked [Node]), loaded when the server starts. See docs/CUSTOM_NODES.md.</summary>
     public string CustomNodesPath { get; set; } = Path.Combine(Home, "custom_nodes");
 

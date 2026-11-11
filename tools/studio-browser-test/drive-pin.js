@@ -19,7 +19,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const check = (name, ok, detail) => { results.push(ok); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail ? '  [' + detail + ']' : '')); };
   const hash = async () => crypto.createHash('md5').update(await page.locator('canvas').screenshot()).digest('hex');
   const saved = async (name) => {
-    const [d] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
+    const [d] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
     await d.saveAs(path.join(OUT, name));
     return JSON.parse(fs.readFileSync(path.join(OUT, name), 'utf8')).nodes.find(n => n.type === 'KSampler');
   };

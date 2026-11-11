@@ -94,7 +94,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   check('dragging a number widget scrubs it without opening the editor', (await page.locator('.widget-edit').count()) === 0);
 
   // Save the workflow and read what was downloaded.
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
   const savePath = `${OUT}/saved-workflow.json`;
   await download.saveAs(savePath);
   const saved = JSON.parse(fs.readFileSync(savePath, 'utf8'));

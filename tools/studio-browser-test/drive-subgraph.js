@@ -27,9 +27,9 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await page.waitForTimeout(1200);
   check('three nodes to start with', (await nodes()) === 3);
 
-  await page.mouse.click(480, 440);
+  await page.mouse.click(470, 397);            // title bars: a click on a widget would open its editor
   await page.keyboard.down('Shift');
-  await page.mouse.click(800, 450);
+  await page.mouse.click(780, 397);
   await page.keyboard.up('Shift');
   await page.keyboard.press('Control+Shift+E');
   await page.waitForTimeout(500);
@@ -40,12 +40,12 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const errorToast = await page.locator('.toast').first().textContent().catch(() => '');
   check('the graph with the subgraph runs', await page.locator('button:has-text("Queue")').isVisible() && !/failed/i.test(errorToast || ''), errorToast);
 
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
   await download.saveAs(path.join(OUT, 'subgraph-saved.json'));
   const saved = fs.readFileSync(path.join(OUT, 'subgraph-saved.json'), 'utf8');
   check('the saved workflow carries the definition', /"definitions"/.test(saved) && /"inputNode"/.test(saved) && /"target_id": -20/.test(saved) && /StringConcatenate/.test(saved));
 
-  await page.locator('canvas').focus(); // Queue and Save took the keyboard focus; the subgraph node is still selected
+  await page.locator('canvas').focus(); // Queue and Export took the keyboard focus; the subgraph node is still selected
   await page.keyboard.press('Control+Shift+E');
   await page.waitForTimeout(500);
   check('Ctrl+Shift+E on the subgraph node unpacks it', (await nodes()) === 3, `${await nodes()} nodes`);

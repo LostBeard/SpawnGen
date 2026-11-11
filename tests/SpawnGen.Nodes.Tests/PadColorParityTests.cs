@@ -100,7 +100,9 @@ public class PadColorParityTests
     public void SDR_to_HDR_matches_ComfyUI(Case c)
     {
         var r = new ImageSDRToHDR().Execute(Img(c.Inputs["image"]), Choice(c.Args.GetProperty("algorithm"), "algorithm"));
-        Same(r, c.Out, 2.4e-7); // float32 step by step: at most an ulp or two (torch's SIMD pow / exp / log)
+        // A documented difference (PARITY.md): ComfyUI's calibrated luminance curve is a measured table in SpawnGen (no description of it exists), so
+        // values agree to about 2e-5 here and at most about 2e-4 between the table's target-luminance knots, under a tenth of an 8-bit level.
+        Same(r, c.Out, 2.5e-4);
     }
 
     [TestCaseSource(nameof(TransferCases))]

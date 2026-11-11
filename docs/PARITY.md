@@ -113,6 +113,10 @@ Deliberate differences (SpawnGen is more forgiving where ComfyUI fails): Convert
 Deliberate difference: Convert Image Color Space computes every pixel in double precision and rounds once, so it gives the exact values where
 ComfyUI's float32 arithmetic differs by up to about 1e-6 of a pixel's largest channel (PQ, LogC3 and ACEScct decoded to large linear values; checked
 in float64, 2026-11-08). Results in the 0..1 range agree within 2e-5.
+Documented difference: Convert SDR to HDR follows ComfyUI's measured pipeline exactly (sRGB decode, Rec.2020, one gain from Rec.709 luminance,
+HLG), but ComfyUI's calibrated luminance curve has no published description, so SpawnGen interpolates a table measured from ComfyUI
+(tools/parity/make_sdr_to_hdr_table.py: 101 target luminances by 256 levels). Output values agree to about 2e-5 on the fixture and within about
+2e-4 between table knots (under a tenth of an 8-bit level); target luminances between 0 and 0.001 nits use the 0.001 nit curve (2026-11-11).
 Deliberate difference: Save Text writes line breaks as given (`
 `); ComfyUI opens its file in Python's text mode, so on Windows it writes `
 

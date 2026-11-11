@@ -176,6 +176,25 @@ public class ComfyImageParityTests
         Same(r, c.Out[0], 1e-6);
     }
 
+    static IEnumerable<TestCaseData> SdrHdrCases() =>
+        Load("sdr_hdr").Select((c, i) => new TestCaseData(c).SetName($"SdrToHdr_{i:D2}_{c.Args.GetProperty("case").GetString()}"));
+
+    /// <summary>
+    /// tools/parity/make_sdr_to_hdr_fixtures.py: the edges of Convert SDR to HDR (values outside 0..1, saturated colours, 1 / 2 / 4 channels, targets
+    /// between the gain table's knots, above 1000 and below 0.1 nits). Within the documented 2.5e-4 (PARITY.md: the calibrated curve is a measured
+    /// table).
+    /// </summary>
+    [TestCaseSource(nameof(SdrHdrCases))]
+    public void Sdr_to_hdr_edges_match_ComfyUI(Case c)
+    {
+        var choice = new SpawnGen.Engine.Nodes.DynamicChoice("lottes", new Dictionary<string, object?> { ["target_luminance"] = c.Args.GetProperty("target_luminance").GetDouble() });
+        ImageBatch Run() => new ImageSDRToHDR().Execute(Img(c.Inputs["image"]), choice);
+        if (c.Out[0].TryGetProperty("error", out var error))
+            Assert.Throws<ArgumentException>(() => Run(), error.GetString());
+        else
+            Same(Run(), c.Out[0], 2.5e-4);
+    }
+
     /// <summary>tools/parity/make_crop_to_mask_fixtures.py: 50 ComfyUI cases (window rule, pre-scale, inversion rule, cut-off, grow, batches, colours).</summary>
     [TestCaseSource(nameof(CropToMaskCases))]
     public void Crop_to_mask_matches_ComfyUI_measurements(Case c)

@@ -7,19 +7,15 @@ namespace SpawnGen.Nodes.ML;
 
 // Written clean-room (docs/CLEANROOM.md) from ComfyUI's /object_info entries (Save Video, Save WEBM: inputs, tooltips, defaults) and black-box
 // runs (2026-11-12): file names (prefix_00001_.ext in the prefix's subfolder), the ui entry and its metadata (kind video, size, duration, fps;
-// frame_count for MP4 only), auto picking MP4 (WebM for AV1). Encoding is SpawnDev.Codecs' VideoFileEncoderGpu. SpawnDev.Codecs is patent-free:
+// frame_count for MP4 only, not for MKV or WebM), auto picking MP4 (WebM for AV1), MKV staying MKV for every codec. Encoding is SpawnDev.Codecs' VideoFileEncoderGpu. SpawnDev.Codecs is patent-free:
 // no H.264, so SpawnGen writes AV1 (sides that are multiples of 64) or VP9 where ComfyUI writes H.264. crf maps to the encoders' quantizer index as
-// libvpx / libaom map cq-level (crf x 4; 62 -> 249, 63 -> 255); every frame is a key frame for now, so files are larger than ComfyUI's.
+// libvpx / libaom map cq-level (Codecs' VideoFileEncodeOptions.QIndexFromCrf); every frame is a key frame for now, so files are larger than ComfyUI's.
 
 /// <summary>What the video save nodes share: the codec choice, the frame rate as a fraction, the sound, the ui entry.</summary>
 internal static class VideoFiles
 {
-    /// <summary>libvpx / libaom's quantizer_to_qindex: crf (cq-level) 0..63 to the 0..255 quantizer index (at least 1: lossless is not available).</summary>
-    public static int QIndexFromCrf(double crf)
-    {
-        int q = (int)Math.Round(Math.Clamp(crf, 0, 63));
-        return Math.Max(1, q switch { 62 => 249, 63 => 255, _ => q * 4 });
-    }
+    /// <summary>crf (cq-level, a FLOAT widget in ComfyUI) rounded into 0..63, then Codecs' libvpx / libaom quantizer_to_qindex table.</summary>
+    public static int QIndexFromCrf(double crf) => VideoFileEncodeOptions.QIndexFromCrf((int)Math.Round(Math.Clamp(crf, 0, 63)));
 
     /// <summary>AV1 needs both sides to be multiples of 64 in Codecs' encoder.</summary>
     public static bool Av1Fits(int width, int height) => width % 64 == 0 && height % 64 == 0;
@@ -56,7 +52,8 @@ internal static class VideoFiles
         int w = frames.Width, h = frames.Height;
         var prefix = SavePrefix.ComputeVars(filenamePrefix, w, h, DateTime.Now);
         var mp4 = container == VideoContainer.Mp4;
-        var file = (await Results.For(services).SaveAsync("output", prefix, bytes, mp4 ? "mp4" : "webm")) with
+        var extension = container switch { VideoContainer.Mp4 => "mp4", VideoContainer.Mkv => "mkv", _ => "webm" };
+        var file = (await Results.For(services).SaveAsync("output", prefix, bytes, extension)) with
         {
             Metadata = new ResultMetadata("video", w, h)
             {
@@ -92,7 +89,7 @@ internal static class VideoFiles
 /// <summary>
 /// Save Video: the VIDEO as a file in the output folder (prefix "video/ComfyUI" gives video/ComfyUI_00001_.mp4), with its sound (Opus). ComfyUI's
 /// format / codec / encoding choices; codec auto writes AV1 when both sides are multiples of 64, else VP9 (ComfyUI writes H.264, which SpawnGen
-/// does not: SpawnDev.Codecs is patent-free). Format auto is MP4, WebM for AV1. MKV waits for Codecs' Matroska writer. The prompt and workflow are
+/// does not: SpawnDev.Codecs is patent-free). Format auto is MP4, WebM for AV1; MKV is Matroska for every codec. The prompt and workflow are
 /// not embedded in the file yet.
 /// </summary>
 [Node("SaveVideo", Category = "video", DisplayName = "Save Video", IsOutput = true, Description = "Saves the input videos to your ComfyUI output directory.")]
@@ -126,13 +123,15 @@ public sealed class SaveVideo
 
         if (codecKey == "h264")
             throw new NotSupportedException("H.264 is not available: SpawnGen's codecs are patent-free. Choose codec auto (AV1 or VP9) or av1.");
-        if (formatKey == "mkv")
-            throw new NotSupportedException("MKV is not available yet (SpawnDev.Codecs writes MP4 and WebM so far); choose mp4, webm or auto.");
         var frames = video.Frames;
         bool av1 = codecKey == "av1" || VideoFiles.Av1Fits(frames.Width, frames.Height);
         if (av1 && !VideoFiles.Av1Fits(frames.Width, frames.Height))
             throw new NotSupportedException($"AV1 needs sides that are multiples of 64 for now, got {frames.Width}x{frames.Height}; choose codec auto (VP9).");
-        var container = formatKey switch { "webm" => VideoContainer.WebM, "mp4" => VideoContainer.Mp4, _ => codecKey == "av1" ? VideoContainer.WebM : VideoContainer.Mp4 };
+        var container = formatKey switch
+        {
+            "webm" => VideoContainer.WebM, "mp4" => VideoContainer.Mp4, "mkv" => VideoContainer.Mkv,
+            _ => codecKey == "av1" ? VideoContainer.WebM : VideoContainer.Mp4,
+        };
         var (_, ui) = await VideoFiles.SaveAsync(frames, video.Fps, video.Audio, filenamePrefix, container, av1 ? VideoCodec.Av1 : VideoCodec.Vp9, qindex, context, services);
         return (video, ui);
     }

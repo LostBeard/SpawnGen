@@ -78,6 +78,46 @@ public class SaveVideoTests
         Assert.That(w.Inputs.Select(i => i.Name), Is.EqualTo(new[] { "images", "filename_prefix", "codec", "fps", "crf" }));
     }
 
+    [TestCase("auto", 96)]
+    [TestCase("av1", 128)]
+    public async Task Save_Video_writes_MKV_as_Matroska_named_and_described_as_ComfyUI_does(string codec, int width)
+    {
+        // Measured with ComfyUI (Save Video, format mkv, codec auto and av1, 3 frames 128x64 at 24 fps): video/probe_mkv_00001_.mkv,
+        // metadata {kind video, width 128, height 64, duration 0.125, fps 24.0} with no frame_count (MP4 alone carries it).
+        using var ilgpu = ILGPU.Context.Create(b => b.CPU());
+        using var acc = ilgpu.CreateCPUAccelerator(0);
+        using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()), acc);
+        var store = new MemoryResultStore();
+        byte[]? written = null;
+        store.Saved += (_, data) => written = data;
+        var dump = Environment.GetEnvironmentVariable("SPAWNGEN_DUMP_DIR");
+        var services = new Services(store, runtime);
+        var encoding = new DynamicChoice("re-encode", new Dictionary<string, object?> { ["crf"] = 20.0 });
+        var format = new DynamicChoice("mkv", new Dictionary<string, object?> { ["codec"] = new DynamicChoice(codec, new Dictionary<string, object?> { ["encoding"] = encoding }) });
+
+        var (_, ui) = await new SaveVideo().ExecuteAsync(new VideoClip(Frames(3, width, 64), 24.0), NodeCtx(services), services, "video/probe_mkv", format);
+
+        var file = (ResultFile)((object[])ui["images"]!)[0];
+        Assert.That((file.Filename, file.Subfolder, file.Type), Is.EqualTo(("probe_mkv_00001_.mkv", "video", "output")));
+        var m = file.Metadata!;
+        Assert.That((m.Kind, m.Width, m.Height, m.Duration, m.Fps, m.FrameCount), Is.EqualTo(("video", width, 64, (double?)0.125, (double?)24.0, (int?)null)));
+        Assert.That(System.Text.Encoding.ASCII.GetString(written!).Contains("matroska"), Is.True, "EBML DocType matroska");
+        Assert.That(System.Text.Encoding.ASCII.GetString(written!).Contains("webm"), Is.False, "not a WebM DocType");
+        if (dump is not null) File.WriteAllBytes(Path.Combine(dump, $"savevideo_{codec}.mkv"), written!);
+        if (codec == "av1") return; // Codecs' loader decodes AV1 key frames only so far; the AV1 .mkv was checked with FFmpeg (PyAV) instead
+        var video = await new WebMVideoLoaderGpu(acc).LoadAsync(written!);
+        Assert.That((video.Width, video.Height, video.Frames.Count, video.FrameRate), Is.EqualTo((96, 64, 3, 24.0)), "auto at 96x64 is VP9");
+    }
+
+    sealed class Services(IResultStore store, MlRuntime runtime) : IServiceProvider
+    {
+        public object? GetService(Type t) => t == typeof(IResultStore) ? store : t == typeof(MlRuntime) ? runtime : null;
+    }
+
+    static NodeContext NodeCtx(IServiceProvider services) =>
+        (NodeContext)Activator.CreateInstance(typeof(NodeContext), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
+            ["1", "SaveVideo", services, CancellationToken.None, null, new Lazy<string>(() => "{}"), new Dictionary<string, string>(), null, null, 0], null)!;
+
     static class VideoFilesAccess
     {
         static readonly Type T = typeof(SaveVideo).Assembly.GetType("SpawnGen.Nodes.ML.VideoFiles")!;

@@ -43,10 +43,8 @@ public sealed class RegisteredNode
         public (string Input, string Key)[]? Members { get; init; }
         /// <summary>For an Autogrow parameter: the type each member's value is coerced to.</summary>
         public Type? MemberType { get; init; }
-        /// <summary>For a dynamic combo parameter: each option's inputs (full names) and the names the choice reports them by.</summary>
-        public Dictionary<string, (string Input, string Key)[]>? DynamicOptions { get; init; }
-        /// <summary>For a dynamic combo parameter: the option chosen when the prompt names none.</summary>
-        public string? DynamicDefault { get; init; }
+        /// <summary>For a dynamic combo parameter: its options' inputs, nested combos included.</summary>
+        public DynamicBinding? Dynamic { get; init; }
         /// <summary>For the <see cref="ExtraInputsAttribute"/> parameter: the inputs the schema lists (the others are extra).</summary>
         public HashSet<string>? Known { get; init; }
     }
@@ -125,16 +123,9 @@ public sealed class RegisteredNode
                         args[i] = BuildGroup(p, members, inputs);
                         break;
                     }
-                    if (p.DynamicOptions is { } options)
+                    if (p.Dynamic is { } dynamic)
                     {
-                        // A list node receives the choice as a list of one.
-                        inputs.TryGetValue(p.InputName!, out var chosen);
-                        var key = chosen as string ?? (chosen as IReadOnlyList<object?> is { Count: > 0 } chosenList ? chosenList[0] as string : null) ?? p.DynamicDefault!;
-                        var values = new Dictionary<string, object?>(StringComparer.Ordinal);
-                        if (options.TryGetValue(key, out var optionInputs))
-                            foreach (var (input, name) in optionInputs)
-                                if (inputs.TryGetValue(input, out var value)) values[name] = value;
-                        args[i] = new DynamicChoice(key, values);
+                        args[i] = Choose(dynamic, p.InputName!, inputs);
                         break;
                     }
                     if (p.ElementType is { } element && inputs.TryGetValue(p.InputName!, out var rawList) && rawList is IReadOnlyList<object?> items)
@@ -172,6 +163,59 @@ public sealed class RegisteredNode
             }
         }
         return args;
+    }
+
+    /// <summary>A dynamic combo's choice and the values of its inputs; a nested combo's value is its own choice.</summary>
+    static DynamicChoice Choose(DynamicBinding binding, string inputName, IReadOnlyDictionary<string, object?> inputs)
+    {
+        // A list node receives the choice as a list of one.
+        inputs.TryGetValue(inputName, out var chosen);
+        var key = chosen as string ?? (chosen as IReadOnlyList<object?> is { Count: > 0 } chosenList ? chosenList[0] as string : null) ?? binding.Default;
+        var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+        if (binding.Options.TryGetValue(key, out var optionInputs))
+            foreach (var (input, name, nested) in optionInputs)
+            {
+                if (nested is not null) values[name] = Choose(nested, input, inputs);
+                else if (inputs.TryGetValue(input, out var value)) values[name] = value;
+            }
+        return new DynamicChoice(key, values);
+    }
+
+    /// <summary>
+    /// The inputs a dynamic combo's options bring (<c>name.input</c>), nested combos in turn (<c>format.codec.encoding</c>), and how to bind them.
+    /// Options may share an input name (two ways to scale both have "width"): one input, brought by every option that has it; a shared nested combo
+    /// offers the union of its options (Save Video's codec lists h264 under mp4 but not under webm).
+    /// </summary>
+    internal static DynamicBinding RegisterDynamic(string name, IReadOnlyList<DynamicOption> options, string chosenByDefault, List<InputSpec> inputs,
+        Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> dynamicCombos)
+    {
+        var nested = new Dictionary<string, (DynamicInput Spec, List<string> Options, List<DynamicOption> SubOptions)>(StringComparer.Ordinal);
+        var order = new List<string>();
+        foreach (var option in options)
+            foreach (var input in option.Inputs)
+            {
+                if (!nested.TryGetValue(input.Name, out var entry)) { nested[input.Name] = entry = (input, [], []); order.Add(input.Name); }
+                entry.Options.Add(option.Key);
+                foreach (var sub in input.Options ?? [])
+                    if (!entry.SubOptions.Any(o => o.Key == sub.Key)) entry.SubOptions.Add(sub);
+            }
+        var children = new Dictionary<string, DynamicBinding>(StringComparer.Ordinal);
+        foreach (var n in order)
+        {
+            var (spec, from, subOptions) = nested[n];
+            var full = $"{name}.{n}";
+            var widget = spec.Options is null ? spec.Widget : spec.Widget! with { Options = [.. subOptions.Select(o => o.Key)] };
+            inputs.Add(new InputSpec(full, spec.Type, Required: false, widget, spec.Tooltip)
+            {
+                DynamicParent = name, DynamicOptions = from, Optional = !spec.Required, MatchTemplate = spec.MatchTemplate,
+            });
+            if (spec.Options is not null)
+                children[n] = RegisterDynamic(full, subOptions, spec.Widget?.Default as string ?? subOptions[0].Key, inputs, dynamicCombos);
+        }
+        dynamicCombos[name] = options.ToDictionary(o => o.Key, o => (IReadOnlyList<string>)o.Inputs.Select(i => $"{name}.{i.Name}").ToList(), StringComparer.Ordinal);
+        return new DynamicBinding(
+            options.ToDictionary(o => o.Key, o => o.Inputs.Select(i => ($"{name}.{i.Name}", i.Name, children.GetValueOrDefault(i.Name))).ToArray(), StringComparer.Ordinal),
+            chosenByDefault);
     }
 
     /// <summary>An Autogrow parameter: the members that have a value, in order, as a list or as a dictionary by short name.</summary>
@@ -367,26 +411,7 @@ public sealed class NodeRegistry
                 var keys = options.Select(o => o.Key).ToList();
                 var chosenByDefault = ia?.Default as string ?? (p.HasDefaultValue ? p.DefaultValue as string : null) ?? keys[0];
                 inputs.Add(new InputSpec(name, SocketType.String, Required: true, new WidgetSpec(WidgetKind.Combo) { Options = keys, Default = chosenByDefault }, ia?.Tooltip));
-                // Options may share an input name (two ways to scale both have "width"): one input, brought by every option that has it.
-                var nested = new Dictionary<string, (DynamicInput Spec, List<string> Options)>(StringComparer.Ordinal);
-                var order = new List<string>();
-                foreach (var option in options)
-                    foreach (var input in option.Inputs)
-                    {
-                        if (!nested.TryGetValue(input.Name, out var entry)) { nested[input.Name] = entry = (input, []); order.Add(input.Name); }
-                        entry.Options.Add(option.Key);
-                    }
-                foreach (var n in order)
-                    inputs.Add(new InputSpec($"{name}.{n}", nested[n].Spec.Type, Required: false, nested[n].Spec.Widget, nested[n].Spec.Tooltip)
-                    {
-                        DynamicParent = name, DynamicOptions = nested[n].Options, Optional = !nested[n].Spec.Required, MatchTemplate = nested[n].Spec.MatchTemplate,
-                    });
-                dynamicCombos[name] = options.ToDictionary(o => o.Key, o => (IReadOnlyList<string>)o.Inputs.Select(i => $"{name}.{i.Name}").ToList(), StringComparer.Ordinal);
-                bindings.Add(new(p, RegisteredNode.ParamKind.Input, name)
-                {
-                    DynamicOptions = options.ToDictionary(o => o.Key, o => o.Inputs.Select(i => ($"{name}.{i.Name}", i.Name)).ToArray(), StringComparer.Ordinal),
-                    DynamicDefault = chosenByDefault,
-                });
+                bindings.Add(new(p, RegisteredNode.ParamKind.Input, name) { Dynamic = RegisteredNode.RegisterDynamic(name, options, chosenByDefault, inputs, dynamicCombos) });
                 continue;
             }
             if (p.GetCustomAttribute<AutogrowAttribute>() is { } grow)

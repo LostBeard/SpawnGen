@@ -34,6 +34,10 @@ public sealed record ResultMetadata(
 
     [JsonPropertyName("fps"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? Fps { get; init; }
+
+    /// <summary>A video's frames: ComfyUI reports them for MP4 files only (measured).</summary>
+    [JsonPropertyName("frame_count"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? FrameCount { get; init; }
 }
 
 /// <summary>Where a folder result store keeps the "output" and "temp" results.</summary>

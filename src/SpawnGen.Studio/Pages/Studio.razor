@@ -324,7 +324,7 @@
                     {
                         var run = entry;
                         <div class="hist-entry @run.State">
-                            <div class="hist-title">#@run.Number · @run.Started.ToString("HH:mm:ss")@(run.Seconds is { } sec ? $" · {sec:0.#} s" : "") · @run.State</div>
+                            <div class="hist-title">#@run.Number · @(run.Past && run.Started.Date != DateTime.Today ? run.Started.ToString("yyyy-MM-dd HH:mm:ss") : run.Started.ToString("HH:mm:ss"))@(run.Seconds is { } sec ? $" · {sec:0.#} s" : "") · @run.State@(run.Past ? " · earlier" : "")</div>
                             <div class="hist-engine">@run.Engine</div>
                             @if (run.Error is not null)
                             {
@@ -1560,6 +1560,10 @@
 
     sealed class HistoryEntry
     {
+        /// <summary>The engine's id of the run (null for a run whose start carried none).</summary>
+        public string? PromptId { get; init; }
+        /// <summary>A run from before this page was opened, read from the engine's history.</summary>
+        public bool Past { get; init; }
         public required int Number { get; init; }
         public required DateTime Started { get; init; }
         public required string Engine { get; init; }
@@ -1626,8 +1630,61 @@
         var started = _pending.FirstOrDefault(p => p.Id == promptId) ?? (_pending.Count > 0 && promptId is null ? _pending[0] : null);
         if (started is not null) _pending.Remove(started);
         var workflow = started?.Workflow ?? Snapshot() ?? "";
-        _history.Insert(0, new HistoryEntry { Number = ++_runNumber, Started = DateTime.Now, Engine = _engine?.Name ?? "", Workflow = workflow });
+        _history.Insert(0, new HistoryEntry { PromptId = promptId, Number = ++_runNumber, Started = DateTime.Now, Engine = _engine?.Name ?? "", Workflow = workflow });
         if (_history.Count > 50) _history.RemoveAt(_history.Count - 1);
+    }
+
+    /// <summary>
+    /// The engine's earlier runs (ComfyUI's queue panel lists the server's history after a reload): each run this page does not list yet, with its
+    /// pictures, sound and workflow (extra_data.extra_pnginfo.workflow), newest first, after this page's own runs.
+    /// </summary>
+    async Task LoadPastRunsAsync(IEngineClient engine)
+    {
+        if (await engine.GetHistoryAsync(50) is not { } history) return;
+        var known = _history.Select(h => h.PromptId).Where(id => id is not null).ToHashSet();
+        var past = new List<HistoryEntry>();
+        foreach (var (id, node) in history)
+        {
+            if (known.Contains(id) || node is not JsonObject run) continue;
+            if (PastRun(engine, id, run) is { } entry) past.Add(entry);
+        }
+        _history.AddRange(past.OrderByDescending(p => p.Started));
+        if (_history.Count > 50) _history.RemoveRange(50, _history.Count - 50);
+        _runNumber = Math.Max(_runNumber, _history.Count == 0 ? 0 : _history.Max(h => h.Number));
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>One /history entry as a history panel entry (null when it is not one).</summary>
+    static HistoryEntry? PastRun(IEngineClient engine, string id, JsonObject run)
+    {
+        if (run["prompt"] is not JsonArray prompt || prompt.Count < 4) return null;
+        var extra = prompt[3] as JsonObject;
+        var messages = (run["status"]?["messages"] as JsonArray)?.OfType<JsonArray>().Where(m => m.Count == 2).ToList() ?? [];
+        long? Stamp(string name) => messages.FirstOrDefault(m => (string?)m[0] == name)?[1]?["timestamp"] is JsonValue t && t.TryGetValue<long>(out var v) ? v : null;
+        long? created = extra?["create_time"] is JsonValue c && c.TryGetValue<long>(out var ct) ? ct : Stamp("execution_start");
+        var last = messages.Count > 0 && messages[^1][1]?["timestamp"] is JsonValue lt && lt.TryGetValue<long>(out var lv) ? lv : (long?)null;
+        var end = messages.Count > 0 ? (string?)messages[^1][0] : null;
+        var state = (string?)run["status"]?["status_str"] == "success" ? "done" : end == "execution_interrupted" ? "stopped" : "failed";
+        var entry = new HistoryEntry
+        {
+            PromptId = id, Past = true,
+            Number = prompt[0] is JsonValue n && n.TryGetValue<int>(out var number) ? number : 0,
+            Started = created is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime : DateTime.MinValue,
+            Engine = engine.Name,
+            Workflow = extra?["extra_pnginfo"]?["workflow"]?.ToJsonString() ?? "",
+            State = state,
+            Seconds = created is { } s0 && last is { } s1 && s1 >= s0 ? (s1 - s0) / 1000.0 : null,
+            Error = state == "failed" ? (string?)messages.LastOrDefault(m => (string?)m[0] == "execution_error")?[1]?["exception_message"] : null,
+        };
+        foreach (var (_, output) in run["outputs"] as JsonObject ?? [])
+        {
+            foreach (var file in (output?["images"] as JsonArray)?.OfType<JsonObject>() ?? [])
+                if ((string?)file["filename"] is { } name && !name.EndsWith(".glb", StringComparison.OrdinalIgnoreCase))
+                    entry.Urls.Add(engine.ViewUrl(name, (string?)file["subfolder"], (string?)file["type"]));
+            foreach (var file in (output?["audio"] as JsonArray)?.OfType<JsonObject>() ?? [])
+                if ((string?)file["filename"] is { } name) entry.Audio.Add(engine.ViewUrl(name, (string?)file["subfolder"], (string?)file["type"]));
+        }
+        return entry;
     }
 
     void FinishHistoryEntry(string state, string? error)
@@ -1972,6 +2029,7 @@
             foreach (var schema in _serverSchemas)
                 if (Registry.GetSchema(schema.Id) is null) Registry.AddRemote(schema);
             _engines.Add(Server); // a native GPU is the faster choice when there is one, so it is the default
+            await LoadPastRunsAsync(Server);
         }
         if (Browser.WebGpuAvailable) _engines.Add(Browser);
         _engine = _engines.FirstOrDefault();

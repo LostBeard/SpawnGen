@@ -44,4 +44,10 @@ public interface IEngineClient
 
     /// <summary>The output pictures a Load Image (from Outputs) node can pick from, newest first, as annotated names (<c>name [output]</c>).</summary>
     Task<IReadOnlyList<string>> ListOutputFilesAsync();
+
+    /// <summary>
+    /// The engine's own record of finished runs in ComfyUI's /history format (prompt id to entry), the latest <paramref name="maxItems"/>; null when
+    /// the engine keeps none beyond this page (the browser engine's runs are this page's).
+    /// </summary>
+    Task<JsonObject?> GetHistoryAsync(int maxItems) => Task.FromResult<JsonObject?>(null);
 }

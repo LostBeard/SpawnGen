@@ -96,6 +96,15 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const wf = JSON.parse(require('fs').readFileSync(await download.path(), 'utf8'));
   check('it is saved as shape 4', wf.nodes.find(n => n.id === 4).shape === 4 && wf.nodes.find(n => n.id === 2).shape === undefined,
     JSON.stringify(wf.nodes.map(n => [n.id, n.shape])));
+  // Mode: ComfyUI's four entries; On Event is kept as mode 1 (and still runs).
+  items = await menu(1000, 313);
+  await page.click('.menu li.has-sub:has-text("Mode")');
+  const modes = await page.locator('.menu li.has-sub.open .sub li').allTextContents();
+  check('Mode offers Always, On Event, Never and On Trigger', JSON.stringify(modes) === '["Always","On Event","Never","On Trigger"]', JSON.stringify(modes));
+  await page.click('.menu .sub li:text-is("On Event")'); await page.waitForTimeout(300);
+  const [again] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
+  const wf2 = JSON.parse(require('fs').readFileSync(await again.path(), 'utf8'));
+  check('On Event is saved as mode 1', wf2.nodes.find(n => n.id === 2).mode === 1, JSON.stringify(wf2.nodes.map(n => [n.id, n.mode])));
   await page.screenshot({ path: path.join(__dirname, 'out', 'menus-1.png') });
 
   check('no browser errors', problems.length === 0, problems.join(' | '));

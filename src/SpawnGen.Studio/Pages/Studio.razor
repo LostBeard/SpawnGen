@@ -1406,9 +1406,15 @@
                 items.Add(new("Open in Mask Editor", () => _ = OpenMaskEditorAsync(node)));
             if (node.ClassType == "LoadImageOutput")
                 items.Add(new("Refresh and pick the newest output", () => _ = PickNewestOutputAsync(hit.NodeId)));
-            var colours = new List<MenuItem>();
-            if (chosen.Any(id => _doc.Graph.FindNode(id) is { } n && (n.Color is not null || n.BgColor is not null)))
-                colours.Add(new("default", () => { foreach (var id in chosen) _doc.SetNodeColor(id, null, null); _doc.EndGesture(); }));
+            // ComfyUI's Mode: Always, On Event, Never, On Trigger (the two LiteGraph event modes run like Always).
+            items.Add(SubMenu("Mode", [.. new (string Name, NodeMode Mode)[] { ("Always", NodeMode.Always), ("On Event", NodeMode.OnEvent), ("Never", NodeMode.Never), ("On Trigger", NodeMode.OnTrigger) }
+                .Select(m => new MenuItem(m.Name, () => { foreach (var id in chosen) _doc.SetMode(id, m.Mode); _doc.EndGesture(); }))]));
+            // Resize: back to the size the node's content needs (a width dragged by hand is dropped).
+            items.Add(new("Resize", () => { foreach (var id in chosen) _doc.SetWidth(id, null); _doc.EndGesture(); }));
+            var colours = new List<MenuItem>
+            {
+                new("No color", () => { foreach (var id in chosen) _doc.SetNodeColor(id, null, null); _doc.EndGesture(); }),
+            };
             foreach (var (name, color, bg) in EditorGroup.NodePalette)
                 colours.Add(new(name, () => { foreach (var id in chosen) _doc.SetNodeColor(id, color, bg); _doc.EndGesture(); }));
             items.Add(SubMenu("Colours", colours));

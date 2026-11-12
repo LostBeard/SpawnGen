@@ -43,7 +43,7 @@ public static class ControlAfterGenerate
         {
             foreach (var node in doc.Graph.Nodes.ToList())
             {
-                if (node.Mode != NodeMode.Always) continue;
+                if (!node.Mode.Runs()) continue;
                 foreach (var input in schema(node.ClassType)?.Inputs.Where(HasControl) ?? [])
                 {
                     if (doc.Graph.LinkInto(node.Id, input.Name) is not null) continue;

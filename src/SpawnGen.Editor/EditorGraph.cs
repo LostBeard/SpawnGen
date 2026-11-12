@@ -6,10 +6,21 @@ namespace SpawnGen.Editor;
 public enum NodeMode
 {
     Always = 0,
+    /// <summary>LiteGraph's event mode, kept from a workflow and offered in the Mode menu as ComfyUI does; a run treats it as Always (measured: ComfyUI's
+    /// frontend sends such a node like an Always one).</summary>
+    OnEvent = 1,
     /// <summary>Muted: the node and everything that depends only on it is skipped.</summary>
     Never = 2,
+    /// <summary>LiteGraph's trigger mode: kept and run as Always, like <see cref="OnEvent"/>.</summary>
+    OnTrigger = 3,
     /// <summary>Bypassed: the node is skipped and its inputs pass through to matching outputs.</summary>
     Bypass = 4,
+}
+
+public static class NodeModes
+{
+    /// <summary>Whether a node in this mode runs: every mode but Never (muted) and Bypass.</summary>
+    public static bool Runs(this NodeMode mode) => mode is not (NodeMode.Never or NodeMode.Bypass);
 }
 
 /// <summary>A node's outline, as ComfyUI saves it (<c>shape</c>: 1 box, 2 round, 4 card): box has square corners, card rounds only the top ones.</summary>

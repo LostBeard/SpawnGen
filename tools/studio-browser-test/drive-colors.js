@@ -50,8 +50,8 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   check('the colours survive a reload', reloaded.color === '#323' && reloaded.bgcolor === '#535', `${reloaded.color} ${reloaded.bgcolor}`);
 
   await require('./tab-offset')(page);
-  await colour(1040, 234, 'default');
-  check('Colour: default goes back to the theme', (await hash()) !== coloured);
+  await colour(1040, 234, 'No color');
+  check('No color goes back to the theme', (await hash()) !== coloured);
   check('no browser errors', problems.length === 0, problems.join(' | '));
   await browser.close();
   process.exit(results.every(Boolean) ? 0 : 1);

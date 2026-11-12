@@ -59,3 +59,35 @@ public class NodeShapeTests
         Assert.That(doc.Graph.GetNode(ids["sampler"]).Clone(999).Shape, Is.EqualTo(NodeShape.Box));
     }
 }
+
+/// <summary>ComfyUI's Mode menu: LiteGraph's On Event (1) and On Trigger (3) are kept in the workflow and run like Always (measured: its frontend sends them).</summary>
+public class NodeModeTests
+{
+    [Test]
+    public void Event_and_trigger_modes_are_kept_and_run_like_always()
+    {
+        var (doc, ids) = Fixtures.Txt2Img();
+        doc.SetMode(ids["decode"], NodeMode.OnEvent);
+        doc.SetMode(ids["sampler"], NodeMode.OnTrigger);
+        var json = ComfyWorkflow.Save(doc);
+        var back = new EditorDocument(doc.Registry);
+        ComfyWorkflow.Load(json, back);
+        Assert.That((back.Graph.GetNode(ids["decode"]).Mode, back.Graph.GetNode(ids["sampler"]).Mode), Is.EqualTo((NodeMode.OnEvent, NodeMode.OnTrigger)));
+        var compiled = GraphCompiler.Compile(back.Graph, back.Registry).Graph;
+        Assert.That(compiled.Nodes.ContainsKey(ids["decode"].ToString()) && compiled.Nodes.ContainsKey(ids["sampler"].ToString()), Is.True);
+        Assert.That(compiled.Nodes[ids["save"].ToString()].Inputs["images"].NodeId, Is.EqualTo(ids["decode"].ToString()));
+        Assert.That((NodeMode.OnEvent.Runs(), NodeMode.OnTrigger.Runs(), NodeMode.Never.Runs(), NodeMode.Bypass.Runs()), Is.EqualTo((true, true, false, false)));
+    }
+
+    [Test]
+    public void Resize_drops_a_hand_set_width()
+    {
+        var (doc, ids) = Fixtures.Txt2Img();
+        doc.SetWidth(ids["sampler"], 900);
+        doc.EndGesture();
+        doc.SetWidth(ids["sampler"], null);
+        Assert.That(doc.Graph.GetNode(ids["sampler"]).Width, Is.Null);
+        doc.Undo();
+        Assert.That(doc.Graph.GetNode(ids["sampler"]).Width, Is.EqualTo(900));
+    }
+}

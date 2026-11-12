@@ -173,7 +173,8 @@
     /// <summary>Reports what could not be applied (a number that is not one).</summary>
     [Parameter] public Action<string>? Message { get; set; }
 
-    static readonly (NodeMode Mode, string Label)[] Modes = [(NodeMode.Always, "Always"), (NodeMode.Never, "Never (muted)"), (NodeMode.Bypass, "Bypass")];
+    static readonly (NodeMode Mode, string Label)[] Modes =
+        [(NodeMode.Always, "Always"), (NodeMode.OnEvent, "On Event"), (NodeMode.Never, "Never (muted)"), (NodeMode.OnTrigger, "On Trigger"), (NodeMode.Bypass, "Bypass")];
 
     static bool Blank(string? s) => string.IsNullOrWhiteSpace(s);
 

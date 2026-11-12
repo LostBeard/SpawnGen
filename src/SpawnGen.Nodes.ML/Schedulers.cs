@@ -13,7 +13,7 @@ namespace SpawnGen.Nodes.ML;
 /// </summary>
 public sealed class ModelSigmas
 {
-    public enum Continuity { Discrete, ContinuousEdm, ContinuousV }
+    public enum Continuity { Discrete, ContinuousEdm, ContinuousV, Flow }
 
     /// <summary>The scheduler names, in ComfyUI's order.</summary>
     public static string[] SchedulerNames { get; } = ["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"];
@@ -23,11 +23,16 @@ public sealed class ModelSigmas
     readonly double[]? _alphasCumprod;
     readonly int _timestepStride; // distilled tables: table index i is training timestep (i + 1) * stride - 1
     readonly double _continuousMin, _continuousMax;
+    readonly Func<double, double>? _flowShift; // flow models: t in 0..1 to sigma
+    readonly double _flowMultiplier = 1;
 
     public Continuity Kind { get; }
 
-    ModelSigmas(float[] sigmas, double[]? alphasCumprod, Continuity kind, int stride = 1, double min = 0, double max = 0)
+    ModelSigmas(float[] sigmas, double[]? alphasCumprod, Continuity kind, int stride = 1, double min = 0, double max = 0,
+        Func<double, double>? flowShift = null, double flowMultiplier = 1)
     {
+        _flowShift = flowShift;
+        _flowMultiplier = flowMultiplier;
         _sigmas = sigmas;
         _logSigmas = [.. sigmas.Select(s => MathF.Log(s))];
         _alphasCumprod = alphasCumprod;
@@ -71,6 +76,29 @@ public sealed class ModelSigmas
         return new ModelSigmas(table, null, v ? Continuity.ContinuousV : Continuity.ContinuousEdm, 1, min, max);
     }
 
+    /// <summary>
+    /// A flow model's table (ModelSamplingSD3 / AuraFlow / Flux, measured against ComfyUI's schedules): <paramref name="entries"/> sigmas (1000;
+    /// Flux 10000), entry i the shifted t = (i + 1) / entries. SD3 and AuraFlow shift as sigma = shift t / (1 + (shift - 1) t) (the SD3 paper's timestep shift); Flux as
+    /// e^mu / (e^mu + 1/t - 1). The model is told timestep = sigma x <paramref name="multiplier"/> (1000 for SD3, 1 for AuraFlow and Flux).
+    /// </summary>
+    public static ModelSigmas Flow(Func<double, double> shift, double multiplier, int entries = 1000)
+    {
+        var table = new float[entries];
+        for (int i = 0; i < table.Length; i++) table[i] = (float)shift((i + 1) / (double)entries);
+        return new ModelSigmas(table, null, Continuity.Flow, flowShift: shift, flowMultiplier: multiplier);
+    }
+
+    /// <summary>The SD3 timestep shift: sigma = shift t / (1 + (shift - 1) t).</summary>
+    public static Func<double, double> Sd3Shift(double shift) => t => shift * t / (1 + (shift - 1) * t);
+
+    /// <summary>Flux's shift for an image: mu grows linearly with its token count (16x16-pixel patches) from base_shift at 256 to max_shift at 4096.</summary>
+    public static Func<double, double> FluxShift(double maxShift, double baseShift, int width, int height)
+    {
+        double m = (maxShift - baseShift) / (4096 - 256), b = baseShift - m * 256;
+        double mu = width * height / (8.0 * 8 * 2 * 2) * m + b, e = Math.Exp(mu);
+        return t => t <= 0 ? 0 : e / (e + (1 / t - 1));
+    }
+
     /// <summary>The LCM table: every 20th training timestep (19, 39, ..., 999), 50 entries.</summary>
     public ModelSigmas Distilled(int originalSteps = 50)
     {
@@ -111,6 +139,7 @@ public sealed class ModelSigmas
         {
             case Continuity.ContinuousEdm: return 0.25f * MathF.Log((float)sigma);
             case Continuity.ContinuousV: return MathF.Atan((float)sigma) / MathF.PI * 2f;
+            case Continuity.Flow: return (float)(sigma * _flowMultiplier);
         }
         float log = MathF.Log((float)sigma);
         int best = 0;
@@ -130,6 +159,7 @@ public sealed class ModelSigmas
         {
             case Continuity.ContinuousEdm: return MathF.Exp((float)timestep / 0.25f);
             case Continuity.ContinuousV: return MathF.Tan((float)timestep * MathF.PI / 2f);
+            case Continuity.Flow: return (float)_flowShift!(timestep / _flowMultiplier);
         }
         double t = Math.Clamp((timestep + 1) / _timestepStride - 1, 0, _sigmas.Length - 1);
         int low = (int)Math.Floor(t), high = (int)Math.Ceiling(t);
@@ -145,6 +175,7 @@ public sealed class ModelSigmas
     {
         if (percent <= 0) return 999999999.9;
         if (percent >= 1) return 0;
+        if (Kind == Continuity.Flow) return _flowShift!(1 - percent);
         if (Kind != Continuity.Discrete)
             return Math.Exp(Math.Log(_continuousMin) + (Math.Log(_continuousMax) - Math.Log(_continuousMin)) * (1 - percent));
         return Sigma((1 - percent) * (_sigmas.Length * _timestepStride - 1));

@@ -144,6 +144,38 @@ public sealed class ModelSamplingContinuousEDM
     }
 }
 
+/// <summary>ModelSamplingSD3: a flow-matching model's sampling with the SD3 timestep shift (Wan 2.x uses it with shift 8, SD3 with 3).</summary>
+[Node("ModelSamplingSD3", Category = "model/patch/stable diffusion", DisplayName = "ModelSamplingSD3")]
+public sealed class ModelSamplingSD3
+{
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0.0, Max = 100.0, Step = 0.01)] double shift = 3.0) =>
+        Patch.WithSampling(model, new ModelSampling(ModelSigmas.Flow(ModelSigmas.Sd3Shift(shift), 1000), PredictionType.Const));
+}
+
+/// <summary>ModelSamplingAuraFlow: the same shift with the model told sigma itself as its timestep; img_to_img_velocity for image-to-image flow models.</summary>
+[Node("ModelSamplingAuraFlow", Category = "model/patch", DisplayName = "ModelSamplingAuraFlow")]
+public sealed class ModelSamplingAuraFlow
+{
+    public static string[] SamplingTypes() => ["flow", "img_to_img_velocity"];
+
+    public ModelHandle Execute(ModelHandle model, [Input(Min = 0.0, Max = 100.0, Step = 0.01)] double shift = 1.73,
+        [Input(Optional = true, OptionsProvider = nameof(SamplingTypes))] string sampling = "flow") =>
+        Patch.WithSampling(model, new ModelSampling(ModelSigmas.Flow(ModelSigmas.Sd3Shift(shift), 1),
+            sampling == "img_to_img_velocity" ? PredictionType.ImgToImgFlow : PredictionType.Const));
+}
+
+/// <summary>ModelSamplingFlux: Flux's resolution-dependent shift (more for bigger pictures).</summary>
+[Node("ModelSamplingFlux", Category = "model/patch/flux", DisplayName = "ModelSamplingFlux")]
+public sealed class ModelSamplingFlux
+{
+    public ModelHandle Execute(ModelHandle model,
+        [Input(Min = 0.0, Max = 100.0, Step = 0.01)] double maxShift = 1.15,
+        [Input(Min = 0.0, Max = 100.0, Step = 0.01)] double baseShift = 0.5,
+        [Input(Min = 16, Max = 16384, Step = 8)] int width = 1024,
+        [Input(Min = 16, Max = 16384, Step = 8)] int height = 1024) =>
+        Patch.WithSampling(model, new ModelSampling(ModelSigmas.Flow(ModelSigmas.FluxShift(maxShift, baseShift, width, height), 1, entries: 10000), PredictionType.Const));
+}
+
 [Node("ModelSamplingContinuousV", Category = "model/patch", DisplayName = "ModelSamplingContinuousV")]
 public sealed class ModelSamplingContinuousV
 {

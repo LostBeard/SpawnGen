@@ -190,7 +190,12 @@ public static class ServerApp
 
         app.MapPost("/interrupt", () => { queue.Interrupt(); return Results.Ok(); });
 
-        app.MapGet("/history", () => Results.Content(HistoryJson(queue.History).ToJsonString(), "application/json"));
+        // ComfyUI's max_items: the latest that many runs, oldest of them first.
+        app.MapGet("/history", (int? max_items) =>
+        {
+            var all = queue.History;
+            return Results.Content(HistoryJson(max_items is > 0 and var n && n < all.Count ? all.Skip(all.Count - n) : all).ToJsonString(), "application/json");
+        });
         app.MapGet("/history/{id}", (string id) =>
             queue.FindHistory(id) is { } h ? Results.Content(HistoryJson([h]).ToJsonString(), "application/json") : Results.Json(new JsonObject()));
         app.MapPost("/history", async (HttpRequest request) =>

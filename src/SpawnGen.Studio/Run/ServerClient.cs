@@ -194,6 +194,12 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
     }
 
     /// <summary>The URL of a result file the server holds (a SaveImage or PreviewImage output).</summary>
+    public async Task<JsonObject?> GetHistoryAsync(int maxItems)
+    {
+        try { return await http.GetFromJsonAsync<JsonObject>($"history?max_items={maxItems}", _stop.Token); }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { return null; }
+    }
+
     public string ViewUrl(string filename, string? subfolder, string? type) =>
         $"view?filename={Uri.EscapeDataString(filename)}&subfolder={Uri.EscapeDataString(subfolder ?? "")}&type={Uri.EscapeDataString(type ?? "output")}";
 

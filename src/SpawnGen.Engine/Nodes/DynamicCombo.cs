@@ -13,9 +13,17 @@ public sealed class DynamicComboAttribute(string optionsMethod) : Attribute
 /// <summary>One choice of a dynamic combo and the inputs it brings (ComfyUI's DynamicCombo.Option).</summary>
 public sealed record DynamicOption(string Key, params DynamicInput[] Inputs);
 
-/// <summary>An input inside a dynamic combo option: a widget, or a socket when it has no widget.</summary>
+/// <summary>An input inside a dynamic combo option: a widget, a socket when it has no widget, or a dynamic combo of its own (<see cref="Options"/>).</summary>
 public sealed record DynamicInput(string Name, SocketType Type, WidgetSpec? Widget = null, bool Required = true, string? Tooltip = null)
 {
+    /// <summary>For a nested dynamic combo (ComfyUI's Save Video: format, then codec, then encoding mode): its options. Its value is a <see cref="DynamicChoice"/>.</summary>
+    public IReadOnlyList<DynamicOption>? Options { get; init; }
+
+    /// <summary>A dynamic combo inside an option: its choice brings inputs of its own (<c>format.codec.encoding</c>).</summary>
+    public static DynamicInput Nested(string name, IReadOnlyList<DynamicOption> options, string? @default = null, string? tooltip = null) =>
+        new(name, SocketType.String, new WidgetSpec(WidgetKind.Combo) { Options = [.. options.Select(o => o.Key)], Default = @default ?? options[0].Key }, Tooltip: tooltip)
+        { Options = options };
+
     /// <summary>ComfyUI's MatchType socket: the template id it shares with the node's other matching inputs and outputs.</summary>
     public string? MatchTemplate { get; init; }
 
@@ -50,3 +58,6 @@ public sealed class DynamicChoice(string key, IReadOnlyDictionary<string, object
     public T Get<T>(string name, T fallback = default!) =>
         Values.TryGetValue(name, out var v) && v is not null && ValueCoercion.TryCoerce(v, typeof(T), out var typed) ? (T)typed! : fallback;
 }
+
+/// <summary>How a dynamic combo's options bind: each option's inputs (full name, the name the choice reports, the binding of a nested combo), and the default.</summary>
+internal sealed record DynamicBinding(Dictionary<string, (string Input, string Key, DynamicBinding? Nested)[]> Options, string Default);

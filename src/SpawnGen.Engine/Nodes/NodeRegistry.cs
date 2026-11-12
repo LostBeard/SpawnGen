@@ -101,7 +101,7 @@ public sealed class RegisteredNode
         }
     }
 
-    static object?[] BuildArgs(ParamBinding[] ps, IReadOnlyDictionary<string, object?> inputs, NodeContext context)
+    object?[] BuildArgs(ParamBinding[] ps, IReadOnlyDictionary<string, object?> inputs, NodeContext context)
     {
         var args = new object?[ps.Length];
         for (var i = 0; i < ps.Length; i++)
@@ -147,6 +147,10 @@ public sealed class RegisteredNode
                     }
                     else if (inputs.TryGetValue(p.InputName!, out var raw) && raw is not null)
                     {
+                        // ComfyUI's lists can hold numbers ("auto", 8, 10): such a choice reaches a text parameter as its text.
+                        if (raw is long or int && p.Info.ParameterType == typeof(string)
+                            && Schema.Inputs.FirstOrDefault(s => s.Name == p.InputName)?.Widget?.Kind == WidgetKind.Combo)
+                            raw = Convert.ToString(raw, System.Globalization.CultureInfo.InvariantCulture)!;
                         if (!ValueCoercion.TryCoerce(raw, p.Info.ParameterType, out var typed))
                             throw new InvalidCastException(
                                 $"Input '{p.InputName}' expects {p.Info.ParameterType.Name} but got {raw.GetType().Name}.");

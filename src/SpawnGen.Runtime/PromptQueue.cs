@@ -12,6 +12,11 @@ public sealed record QueuedPrompt(int Number, string Id, PromptGraph Graph, stri
     public IReadOnlyList<string> Outputs { get; init; } = [];
     /// <summary>Output nodes left out because what they need does not validate, with their errors (reported as ComfyUI's node_errors).</summary>
     public IReadOnlyList<OutputFailure> Skipped { get; init; } = [];
+    /// <summary>
+    /// ComfyUI's extra_data as /queue and /history report it: what the request sent as extra_data, its top-level client_id, and create_time
+    /// (Unix milliseconds), in that order (measured).
+    /// </summary>
+    public JsonObject ExtraData { get; init; } = [];
 }
 
 /// <summary>One finished (or failed) run, as <c>/history</c> reports it.</summary>
@@ -20,6 +25,11 @@ public sealed class HistoryEntry
     public required int Number { get; init; }
     public required string Id { get; init; }
     public required PromptGraph Graph { get; init; }
+    public JsonObject ExtraData { get; init; } = [];
+    /// <summary>The output nodes the run executed (ComfyUI's outputs_to_execute).</summary>
+    public IReadOnlyList<string> OutputNodes { get; init; } = [];
+    /// <summary>The run's status messages as ComfyUI keeps them: execution_start, execution_cached, then execution_success / _error / _interrupted, each with its timestamp.</summary>
+    public IReadOnlyList<(string Event, JsonObject Data)> Messages { get; init; } = [];
     /// <summary>"success", "error" or "interrupted".</summary>
     public required string Status { get; init; }
     public string? ErrorMessage { get; init; }
@@ -67,7 +77,7 @@ public sealed class PromptQueue : IDisposable
     /// when no output node can run.
     /// </summary>
     public QueuedPrompt Enqueue(PromptGraph graph, string? clientId, IReadOnlyDictionary<string, string>? extraPngInfo = null, bool front = false, string? previewMethod = null,
-        IReadOnlyList<string>? targets = null)
+        IReadOnlyList<string>? targets = null, JsonObject? extraData = null)
     {
         var admission = PromptAdmission.Check(Registry, graph, targets);
         if (admission.Refused) throw PromptAdmission.Refusal(admission);
@@ -77,7 +87,7 @@ public sealed class PromptQueue : IDisposable
         {
             item = new QueuedPrompt(++_number, Guid.NewGuid().ToString("D"), graph, clientId, extraPngInfo, previewMethod)
             {
-                Outputs = admission.Outputs, Skipped = admission.Failures,
+                Outputs = admission.Outputs, Skipped = admission.Failures, ExtraData = ExtraDataOf(extraData, clientId),
             };
             if (front) _pending.Insert(0, item); else _pending.Add(item);
         }
@@ -85,6 +95,18 @@ public sealed class PromptQueue : IDisposable
         PublishStatus();
         return item;
     }
+
+    /// <summary>The request's extra_data (copied), its top-level client_id when it sent one, and the time it was queued.</summary>
+    static JsonObject ExtraDataOf(JsonObject? extraData, string? clientId)
+    {
+        var r = extraData?.DeepClone() as JsonObject ?? [];
+        if (clientId is not null) r["client_id"] = clientId;
+        r["create_time"] = Now();
+        return r;
+    }
+
+    /// <summary>ComfyUI's message timestamps: Unix time in milliseconds.</summary>
+    internal static long Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     public (QueuedPrompt? Running, IReadOnlyList<QueuedPrompt> Pending) Snapshot()
     {
@@ -188,7 +210,14 @@ public sealed class PromptQueue : IDisposable
         catch (OperationCanceledException)
         {
             status = "interrupted";
-            _events.Publish(new RunEvent("execution_interrupted", new JsonObject { ["prompt_id"] = item.Id }));
+            var d = new JsonObject { ["prompt_id"] = item.Id };
+            if (observer.Current is { } node)
+            {
+                d["node_id"] = node;
+                d["node_type"] = item.Graph.Nodes.TryGetValue(node, out var n) ? n.ClassType : null;
+            }
+            d["executed"] = new JsonArray([.. observer.Executed.Select(e => (JsonNode)e)]);
+            observer.Record("execution_interrupted", d);
         }
         catch (Exception ex)
         {
@@ -198,9 +227,11 @@ public sealed class PromptQueue : IDisposable
             // The engine's observer already published execution_error for failures inside a run.
         }
 
+        if (status == "success") observer.Record("execution_success", new JsonObject { ["prompt_id"] = item.Id });
         var entry = new HistoryEntry
         {
-            Number = item.Number, Id = item.Id, Graph = item.Graph, Status = status, ErrorMessage = errorMessage, ErrorNodeId = errorNode,
+            Number = item.Number, Id = item.Id, Graph = item.Graph, ExtraData = item.ExtraData, OutputNodes = item.Outputs, Messages = observer.Messages,
+            Status = status, ErrorMessage = errorMessage, ErrorNodeId = errorNode,
             Outputs = observer.Outputs, Cached = result?.Cached ?? observer.CachedNodes, Seconds = (DateTime.UtcNow - started).TotalSeconds,
         };
         lock (_gate)
@@ -208,8 +239,6 @@ public sealed class PromptQueue : IDisposable
             _history.Add(entry);
             if (_history.Count > HistoryLimit) _history.RemoveAt(0);
         }
-        if (status == "success")
-            _events.Publish(new RunEvent("execution_success", new JsonObject { ["prompt_id"] = item.Id }));
         // ComfyUI ends every prompt, however it went, with "executing" for no node once the history holds it; API clients wait for it.
         _events.Publish(new RunEvent("executing", new JsonObject { ["node"] = null, ["prompt_id"] = item.Id }));
     }
@@ -219,6 +248,19 @@ public sealed class PromptQueue : IDisposable
     {
         public Dictionary<string, JsonObject> Outputs { get; } = [];
         public List<string> CachedNodes { get; } = [];
+        /// <summary>The nodes that ran to the end, in order (ComfyUI's "executed" in an error or interruption).</summary>
+        public List<string> Executed { get; } = [];
+        /// <summary>The node running now.</summary>
+        public string? Current { get; private set; }
+        public List<(string Event, JsonObject Data)> Messages { get; } = [];
+
+        /// <summary>A status message: stamped, published, and kept for the history.</summary>
+        public void Record(string name, JsonObject data)
+        {
+            data["timestamp"] = Now();
+            Messages.Add((name, (JsonObject)data.DeepClone()));
+            events.Publish(new(name, data));
+        }
 
         JsonObject Data(string? node = null)
         {
@@ -227,17 +269,19 @@ public sealed class PromptQueue : IDisposable
             return d;
         }
 
-        public void OnStart(string promptId, IReadOnlyList<string> plan) => events.Publish(new("execution_start", Data()));
+        public void OnStart(string promptId, IReadOnlyList<string> plan) => Record("execution_start", Data());
 
-        public void OnNodeCached(string nodeId)
+        /// <summary>ComfyUI sends one execution_cached right after execution_start, listing every cached node (empty when none).</summary>
+        public void OnCachedNodes(IReadOnlyList<string> nodeIds) =>
+            Record("execution_cached", new JsonObject { ["nodes"] = new JsonArray([.. nodeIds.Select(n => (JsonNode)n)]), ["prompt_id"] = item.Id });
+
+        public void OnNodeCached(string nodeId) => CachedNodes.Add(nodeId);
+
+        public void OnNodeExecuting(string nodeId)
         {
-            CachedNodes.Add(nodeId);
-            var d = Data();
-            d["nodes"] = new JsonArray(nodeId);
-            events.Publish(new("execution_cached", d));
+            Current = nodeId;
+            events.Publish(new("executing", Data(nodeId)));
         }
-
-        public void OnNodeExecuting(string nodeId) => events.Publish(new("executing", Data(nodeId)));
 
         public void OnNodeProgress(string nodeId, double value, double max, string? message)
         {
@@ -257,6 +301,7 @@ public sealed class PromptQueue : IDisposable
 
         public void OnNodeExecuted(string nodeId, NodeOutputs outputs)
         {
+            if (!Executed.Contains(nodeId)) Executed.Add(nodeId);
             if (outputs.Ui is not { Count: > 0 } ui) return;
             var output = new JsonObject();
             foreach (var (key, value) in ui)
@@ -273,10 +318,14 @@ public sealed class PromptQueue : IDisposable
             var d = Data();
             if (nodeId is not null) d["node_id"] = nodeId;
             var inner = error is NodeExecutionException { InnerException: { } i } ? i : error;
+            if (error is NodeExecutionException nee) d["node_type"] = nee.ClassType;
+            d["executed"] = new JsonArray([.. Executed.Select(e => (JsonNode)e)]);
             d["exception_message"] = inner.Message;
             d["exception_type"] = inner is ExecutionBlockedException ? "ExecutionBlocked" : inner.GetType().Name; // ComfyUI's name for it
-            if (error is NodeExecutionException nee) d["node_type"] = nee.ClassType;
-            events.Publish(new("execution_error", d));
+            d["traceback"] = new JsonArray([.. (inner.StackTrace ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => (JsonNode)(l.TrimEnd() + "\n"))]);
+            d["current_inputs"] = new JsonObject();
+            d["current_outputs"] = new JsonArray([.. item.Graph.Nodes.Keys.Select(k => (JsonNode)k)]);
+            Record("execution_error", d);
         }
     }
 }

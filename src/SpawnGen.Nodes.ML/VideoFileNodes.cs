@@ -34,20 +34,14 @@ public sealed class LoadVideo
         var video = await new WebMVideoLoaderGpu(accelerator).LoadAsync(bytes);
         var clip = new VideoClip(Frames(video), video.FrameRate, Audio(video.Audio), "8", "sRGB");
 
-        var ui = new UiOutput("images", new object[]
+        var entry = new ResultFile(Path.GetFileName(name), Path.GetDirectoryName(name)?.Replace('\\', '/') ?? "", "input")
         {
-            new Dictionary<string, object?>
+            Metadata = new ResultMetadata("video", video.Width, video.Height)
             {
-                ["filename"] = Path.GetFileName(name),
-                ["subfolder"] = Path.GetDirectoryName(name)?.Replace('\\', '/') ?? "",
-                ["type"] = "input",
-                ["metadata"] = new Dictionary<string, object?>
-                {
-                    ["kind"] = "video", ["width"] = video.Width, ["height"] = video.Height,
-                    ["duration"] = Math.Round(Math.Max(clip.Seconds, clip.Audio is { } a ? a.Seconds : 0), 3), ["fps"] = video.FrameRate,
-                },
+                Duration = Math.Round(Math.Max(clip.Seconds, clip.Audio is { } a ? a.Seconds : 0), 3), Fps = video.FrameRate,
             },
-        });
+        };
+        var ui = new UiOutput("images", new object[] { entry });
         ui["animated"] = new object[] { true };
         return (clip, ui);
     }

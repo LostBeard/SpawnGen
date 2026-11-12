@@ -7,11 +7,34 @@ namespace SpawnGen.Nodes.Core;
 // Fixtures/comfy/save_counter.json (made by running ComfyUI), save prefixes, subfolders and temporary names from the Save Image, Preview Image,
 // Save Latent and audio tests, and folder listings measured with ComfyUI's server (the dataset folder options, 2026-11-11).
 
-/// <summary>A file a node saved, as ComfyUI's ui entries name it: <c>{"filename", "subfolder", "type"}</c>.</summary>
+/// <summary>
+/// A file a node saved, as ComfyUI's ui entries name it: <c>{"filename", "subfolder", "type"}</c>, and for pictures and videos the
+/// <c>"metadata"</c> ComfyUI adds (measured: Save / Preview Image and the animated savers give kind "image" with the size; audio has none).
+/// </summary>
 public sealed record ResultFile(
     [property: JsonPropertyName("filename")] string Filename,
     [property: JsonPropertyName("subfolder")] string Subfolder,
-    [property: JsonPropertyName("type")] string Type);
+    [property: JsonPropertyName("type")] string Type)
+{
+    [JsonPropertyName("metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ResultMetadata? Metadata { get; init; }
+
+    /// <summary>This file marked as a picture of that size.</summary>
+    public ResultFile AsImage(int width, int height) => this with { Metadata = new ResultMetadata("image", width, height) };
+}
+
+/// <summary>ComfyUI's ui metadata of a saved file: its kind ("image", "video"), size, and for a video its length in seconds and frame rate.</summary>
+public sealed record ResultMetadata(
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("width")] int Width,
+    [property: JsonPropertyName("height")] int Height)
+{
+    [JsonPropertyName("duration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? Duration { get; init; }
+
+    [JsonPropertyName("fps"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? Fps { get; init; }
+}
 
 /// <summary>Where a folder result store keeps the "output" and "temp" results.</summary>
 public sealed class OutputOptions

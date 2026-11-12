@@ -34,7 +34,7 @@ public sealed class SaveAnimatedWEBP
         var file = await EncodeAsync(images, fps, quality, accelerator, lossless, m, ExifWriter.ComfyMetadata(Results.Metadata(context)));
         int w = images.Width, h = images.Height;
         var prefix = SavePrefix.ComputeVars(filenamePrefix, w, h, DateTime.Now);
-        var saved = await Results.For(services).SaveAsync("output", prefix, file, "webp");
+        var saved = (await Results.For(services).SaveAsync("output", prefix, file, "webp")).AsImage(w, h);
         var ui = new UiOutput("images", new object[] { saved });
         if (images.Batch > 1) ui["animated"] = new object[] { true };
         return (images, ui);

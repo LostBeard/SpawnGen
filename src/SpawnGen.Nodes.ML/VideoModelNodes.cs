@@ -96,10 +96,9 @@ public sealed class Wan22Video
         if (width % 32 != 0 || height % 32 != 0) throw new ArgumentException($"Wan 2.2 needs sides that are multiples of 32, got {width}x{height}.");
         if ((length - 1) % 4 != 0) throw new ArgumentException($"Wan 2.2 makes 4n+1 frames (1, 5, 9 ... 121), got {length}.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        // The library's model host has the 8-bit text encoder (its default file, bf16, is not hosted yet).
         var dit = Wan22Paths.DitFile(model == "5B Turbo" ? "turbo_q8" : "q8");
         var loaded = await runtime.GetOrLoadAsync($"wan22:{Wan22Pipeline.DefaultRepo}:{dit}", () => Task.FromResult(new Loaded(
-            new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo, Wan22Paths.InRepo(dit, Wan22Paths.TextEncoderFile("q8"))))));
+            new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo, Wan22Paths.InRepo(dit)))));
 
         byte[]? rgb = null;
         if (startImage is not null)

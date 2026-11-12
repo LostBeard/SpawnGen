@@ -12,7 +12,7 @@ public class WanTests
         var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
         if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
         using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
-        var pipeline = new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo, Wan22Paths.InRepo(textEncoder: Wan22Paths.TextEncoderFile("q8")));
+        var pipeline = new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo, Wan22Paths.InRepo());
         var request = new WanRequest
         {
             Prompt = "A red apple slowly rotates on a wooden table, soft morning light", NegativePrompt = null!,
@@ -22,7 +22,7 @@ public class WanTests
         var video = await pipeline.GenerateAsync(request);
         var report = new System.Text.StringBuilder();
         report.AppendLine($"device: {runtime.Accelerator.Name} ({runtime.Accelerator.AcceleratorType}); {(DateTime.Now - started).TotalSeconds:F1} s");
-        report.AppendLine("request: 640x352, 9 frames, 50 steps, cfg 5, shift 5, seed 42, UniPC, default negative (null), DiT q8, umT5 q8, VAE f16, ML 5.8.14");
+        report.AppendLine("request: 640x352, 9 frames, 50 steps, cfg 5, shift 5, seed 42, UniPC, default negative (null), DiT q8, umT5 q8, VAE f16, ML 5.8.15");
 
         var latent = video.Latent;
         int channels = 48, per = latent.Length / channels;
@@ -55,7 +55,7 @@ public class WanTests
         if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
         using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
         var pipeline = new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo,
-            Wan22Paths.InRepo(Wan22Paths.DitFile("turbo_q8"), Wan22Paths.TextEncoderFile("q8")));
+            Wan22Paths.InRepo(Wan22Paths.DitFile("turbo_q8")));
         var report = new System.Text.StringBuilder();
         report.AppendLine($"device: {runtime.Accelerator.Name} ({runtime.Accelerator.AcceleratorType})");
         var console = Console.Out;

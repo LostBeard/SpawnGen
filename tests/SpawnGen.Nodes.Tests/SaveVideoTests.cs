@@ -109,6 +109,40 @@ public class SaveVideoTests
         Assert.That((video.Width, video.Height, video.Frames.Count, video.FrameRate), Is.EqualTo((96, 64, 3, 24.0)), "auto at 96x64 is VP9");
     }
 
+    [Test]
+    public async Task Save_Video_auto_writes_any_picture_size_as_VP9()
+    {
+        // 70x50: not a multiple of 8 or 64, so auto picks VP9 and Codecs codes the right-edge and corner partitions (local.18 on).
+        using var ilgpu = ILGPU.Context.Create(b => b.CPU());
+        using var acc = ilgpu.CreateCPUAccelerator(0);
+        using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()), acc);
+        var store = new MemoryResultStore();
+        byte[]? written = null;
+        store.Saved += (_, data) => written = data;
+        var services = new Services(store, runtime);
+        var frames = Frames(3, 70, 50);
+        var encoding = new DynamicChoice("re-encode", new Dictionary<string, object?> { ["crf"] = 4.0 });
+        var format = new DynamicChoice("webm", new Dictionary<string, object?> { ["codec"] = new DynamicChoice("auto", new Dictionary<string, object?> { ["encoding"] = encoding }) });
+
+        var (_, ui) = await new SaveVideo().ExecuteAsync(new VideoClip(frames, 24.0), NodeCtx(services), services, "video/odd", format);
+
+        var file = (ResultFile)((object[])ui["images"]!)[0];
+        Assert.That((file.Filename, file.Metadata!.Width, file.Metadata.Height), Is.EqualTo(("odd_00001_.webm", 70, 50)));
+        var video = await new WebMVideoLoaderGpu(acc).LoadAsync(written!);
+        Assert.That((video.Width, video.Height, video.Frames.Count), Is.EqualTo((70, 50, 3)));
+        double err = 0, rightEdge = 0;
+        int edgeCount = 0;
+        for (int f = 0; f < 3; f++)
+            for (int i = 0; i < video.Frames[f].Length; i++)
+            {
+                double d = Math.Abs(video.Frames[f][i] - frames.Data[f * 70 * 50 * 3 + i]);
+                err += d;
+                if ((i / 3) % 70 >= 64) { rightEdge += d; edgeCount++; }
+            }
+        Assert.That(err / frames.Data.Length, Is.LessThan(0.02), "the frames come back");
+        Assert.That(rightEdge / edgeCount, Is.LessThan(0.02), "including the columns right of the last full 64-pixel block");
+    }
+
     sealed class Services(IResultStore store, MlRuntime runtime) : IServiceProvider
     {
         public object? GetService(Type t) => t == typeof(IResultStore) ? store : t == typeof(MlRuntime) ? runtime : null;

@@ -90,7 +90,7 @@ public sealed class Wan22Video
         [Input(OptionsProvider = nameof(Samplers))] string sampler = "uni_pc",
         ImageBatch? startImage = null,
         [Input(OptionsProvider = nameof(Models), Tooltip = "5B: the model as released (20-50 steps, cfg 5). 5B Turbo: the distilled transformer, 4 steps with cfg 1 and the few_step sampler, far faster.")] string model = "5B",
-        [Input(Tooltip = "Decode the video in tiles: much less GPU memory (720p on an 8 GB card), nearly the same pictures.")] bool tiledDecode = false)
+        [Input(Tooltip = "Decode the video in tiles: much less GPU memory, nearly the same pictures, but slower (measured about 5x on an RX 590). Leave it off unless the decode runs out of memory.")] bool tiledDecode = false)
     {
         if (string.IsNullOrWhiteSpace(prompt)) throw new ArgumentException("The prompt is empty.", nameof(prompt));
         if (width % 32 != 0 || height % 32 != 0) throw new ArgumentException($"Wan 2.2 needs sides that are multiples of 32, got {width}x{height}.");

@@ -48,6 +48,51 @@ public class WanTests
         TestContext.Out.WriteLine(path);
     }
 
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU and the Wan Turbo files. Times every pipeline stage, twice in one process (the second run has no download or first-use compile). Writes wan_timing.txt.")]
+    public async Task Wan_turbo_stage_timing_at_720p()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var pipeline = new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo,
+            Wan22Paths.InRepo(Wan22Paths.DitFile("turbo_q8"), Wan22Paths.TextEncoderFile("q8")));
+        var report = new System.Text.StringBuilder();
+        report.AppendLine($"device: {runtime.Accelerator.Name} ({runtime.Accelerator.AcceleratorType})");
+        var console = Console.Out;
+        for (int run = 1; run <= 2; run++)
+        {
+            var log = new StringWriter();
+            Console.SetOut(log); // WanRequest.Trace prints the decoder stages to the console
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            double last = 0;
+            report.AppendLine($"run {run}: 1280x704, 9 frames, Turbo q8, 4 steps, cfg 1, FewStep, shift 5, seed 42, Trace on");
+            var progress = new SyncProgress(p =>
+            {
+                double now = clock.Elapsed.TotalSeconds;
+                report.AppendLine($"  {now,8:F1} s (+{now - last,7:F1})  {p.Stage} {p.Fraction:F3} {p.Message}");
+                last = now;
+            });
+            var video = await pipeline.GenerateAsync(new WanRequest
+            {
+                Prompt = "A red apple slowly rotates on a wooden table, soft morning light", NegativePrompt = null!,
+                Width = 1280, Height = 704, Frames = 9, Steps = 4, GuidanceScale = 1, Shift = 5, Seed = 42, Sampler = WanSampler.FewStep,
+                RgbaFrames = true, Trace = true,
+            }, progress);
+            Console.SetOut(console);
+            report.AppendLine($"  total {clock.Elapsed.TotalSeconds:F1} s, {video.Frames} frames");
+            foreach (var line in log.ToString().Split('\n').Where(l => l.Contains("[Wan]"))) report.AppendLine("    " + line.Trim());
+        }
+        var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, "wan_timing.txt");
+        File.WriteAllText(path, report.ToString());
+        TestContext.Out.WriteLine(report.ToString());
+    }
+
+    /// <summary>An IProgress that runs its callback on the reporting thread (Progress&lt;T&gt; posts to the thread pool, which would blur the times).</summary>
+    sealed class SyncProgress(Action<WanProgress> report) : IProgress<WanProgress>
+    {
+        public void Report(WanProgress value) => report(value);
+    }
+
     static double Mean(float[] a, int start, int count) { double s = 0; for (int i = start; i < start + count; i++) s += a[i]; return s / count; }
 
     static double Std(float[] a, int start, int count)

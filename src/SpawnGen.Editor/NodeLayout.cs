@@ -219,15 +219,23 @@ public static class NodeLayout
         foreach (var input in schema.Inputs)
         {
             if (input.DynamicParent is not null) continue;
-            yield return input;
-            if (input.Widget is null || !schema.Inputs.Any(i => i.DynamicParent == input.Name)) continue;
-            var chosen = widgets.GetValueOrDefault(input.Name) as string ?? input.Widget.Default as string;
-            if (chosen is null) continue;
-            IEnumerable<InputSpec?> nested = schema.DynamicCombos.TryGetValue(input.Name, out var options)
-                ? options.TryGetValue(chosen, out var names) ? names.Select(schema.FindInput) : []
-                : schema.Inputs.Where(i => i.DynamicParent == input.Name && i.DynamicOptions.Contains(chosen)); // a remote schema: schema order
-            foreach (var n in nested) if (n is not null) yield return n;
+            foreach (var shown in WithChosen(schema, input, widgets)) yield return shown;
         }
+    }
+
+    /// <summary>An input, then (for a dynamic combo) the inputs its chosen option brings, each followed by its own (nested combos, depth first).</summary>
+    static IEnumerable<InputSpec> WithChosen(NodeSchema schema, InputSpec input, IReadOnlyDictionary<string, object?> widgets)
+    {
+        yield return input;
+        if (input.Widget is null || !schema.Inputs.Any(i => i.DynamicParent == input.Name)) yield break;
+        var chosen = widgets.GetValueOrDefault(input.Name) as string ?? input.Widget.Default as string;
+        if (chosen is null) yield break;
+        IEnumerable<InputSpec?> nested = schema.DynamicCombos.TryGetValue(input.Name, out var options)
+            ? options.TryGetValue(chosen, out var names) ? names.Select(schema.FindInput) : []
+            : schema.Inputs.Where(i => i.DynamicParent == input.Name && i.DynamicOptions.Contains(chosen)); // a remote schema: schema order
+        foreach (var n in nested)
+            if (n is not null)
+                foreach (var shown in WithChosen(schema, n, widgets)) yield return shown;
     }
 
     /// <summary>The name a slot shows: a member of a group or of a dynamic combo shows its own part (<c>image0</c> for <c>images.image0</c>).</summary>

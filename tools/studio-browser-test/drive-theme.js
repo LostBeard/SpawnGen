@@ -35,6 +35,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
 
   await page.goto(URL);
   await page.evaluate(() => localStorage.removeItem('spawngen.settings'));
+  await page.goto(URL); await require('./reset-settings')(page); // settings live on the server: start from the defaults
   await open();
   const dark = await canvasStats();
   const darkBar = await toolbarBg();
@@ -61,6 +62,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   check('Dark brings the dark picture back', Math.abs(back.mean - dark.mean) < 2, back.mean.toFixed(1) + ' vs ' + dark.mean.toFixed(1));
   check('and the dark toolbar', (await toolbarBg()) === darkBar);
   check('no browser errors', problems.length === 0, problems.join(' | '));
+  await require('./reset-settings')(page); // and leave none behind
   await browser.close();
   process.exit(results.every(Boolean) ? 0 : 1);
 })().catch(e => { console.error('SCRIPT ERROR', e); process.exit(2); });

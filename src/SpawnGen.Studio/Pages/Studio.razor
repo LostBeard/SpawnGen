@@ -802,7 +802,7 @@
             _dropRef = DotNetObjectReference.Create(this);
             await Interop.InvokeVoidAsync("spawngenEnableDrop", _dropRef, ".stage");
             _studio.CanvasPressed += CloseMenus; // the canvas reports its own presses first, so a menu it opens right after is not closed again
-            _settings = StudioSettings.FromJson(await Interop.InvokeAsync<string?>("spawngenStoreGet", SettingsKey));
+            _settings = await LoadSettingsAsync();
             LinkGeometry.Style = _settings.LinkStyle;
             _view.SnapToGrid = _settings.SnapToGrid;
             _view.GridSize = _settings.GridSize;
@@ -1699,6 +1699,45 @@
     // ---- settings ----
 
     const string SettingsKey = "spawngen.settings";
+    /// <summary>The Studio's settings in the server's settings (comfy.settings.json, ComfyUI's per-user settings), so every browser gets them.</summary>
+    const string ServerSettingsId = "SpawnGen.Settings";
+
+    /// <summary>
+    /// The settings: the server's when a server serves the Studio and has them (this browser's copy is brought up to date, for the theme it applies
+    /// before the app boots); else this browser's, which then go to the server too.
+    /// </summary>
+    async Task<StudioSettings> LoadSettingsAsync()
+    {
+        var local = await Interop.InvokeAsync<string?>("spawngenStoreGet", SettingsKey);
+        if (!_serverStore) return StudioSettings.FromJson(local);
+        try
+        {
+            using var response = await Http.GetAsync("api/settings/" + ServerSettingsId);
+            var text = response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync() : null;
+            if (System.Text.Json.Nodes.JsonNode.Parse(text ?? "null") is System.Text.Json.Nodes.JsonObject saved)
+            {
+                var settings = StudioSettings.FromJson(saved.ToJsonString());
+                if (settings.Palette != StudioSettings.FromJson(local).Palette) await Interop.InvokeVoidAsync("spawngenSetTheme", settings.Palette);
+                await Interop.InvokeVoidAsync("spawngenStoreSet", SettingsKey, settings.ToJson());
+                return settings;
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or TaskCanceledException) { return StudioSettings.FromJson(local); }
+        var first = StudioSettings.FromJson(local);
+        _settings = first;
+        _ = SaveServerSettingsAsync(); // the server has none yet: it starts with this browser's
+        return first;
+    }
+
+    async Task SaveServerSettingsAsync()
+    {
+        try
+        {
+            using var body = new StringContent(_settings.ToJson(), System.Text.Encoding.UTF8, "application/json");
+            using var _ = await Http.PostAsync("api/settings/" + ServerSettingsId, body);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { } // this browser keeps them; the next change tries again
+    }
     StudioSettings _settings = new();
     bool _settingsOpen;
 
@@ -1722,6 +1761,7 @@
         _studio?.MarkDirty();
         _view.Invalidate();
         _ = Interop.InvokeVoidAsync("spawngenStoreSet", SettingsKey, _settings.ToJson());
+        if (_serverStore) _ = SaveServerSettingsAsync();
         InvokeAsync(StateHasChanged);
     }
 

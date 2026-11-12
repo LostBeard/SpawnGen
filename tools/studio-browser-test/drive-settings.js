@@ -20,6 +20,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const hash = async () => crypto.createHash('md5').update(await page.locator('canvas').screenshot()).digest('hex');
   const open = async () => { await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(3500); };
 
+  await page.goto(URL); await require('./reset-settings')(page); // settings live on the server: start from the defaults
   await open();
   const spline = await hash();
   await page.click('button:has-text("Settings")');
@@ -48,6 +49,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await page.waitForTimeout(300);
   check('the minimap can be switched off in the settings', !(await page.locator('button:has-text("Map")').evaluate(b => b.classList.contains('on'))));
   check('no browser errors', problems.length === 0, problems.join(' | '));
+  await require('./reset-settings')(page); // and leave none behind
   await browser.close();
   process.exit(results.every(Boolean) ? 0 : 1);
 })().catch(e => { console.error('SCRIPT ERROR', e); process.exit(2); });

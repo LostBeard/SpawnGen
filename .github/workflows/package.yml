@@ -1,0 +1,35 @@
+# Builds SpawnGen for people without .NET: the desktop app and the server, self-contained, for Windows x64, Linux x64 and macOS arm64
+# (tools/package.sh). Run it by hand (Actions > Package desktop builds > Run workflow); the builds are the run's artifacts to download.
+name: Package desktop builds
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Install .NET WASM Build Tools
+        run: dotnet workload install wasm-tools
+      - name: Publish
+        run: tools/package.sh win-x64 linux-x64 osx-arm64
+      - uses: actions/upload-artifact@v4
+        with: { name: SpawnGen-desktop-win-x64, path: artifacts/SpawnGen-desktop-win-x64 }
+      - uses: actions/upload-artifact@v4
+        with: { name: SpawnGen-desktop-linux-x64, path: artifacts/SpawnGen-desktop-linux-x64 }
+      - uses: actions/upload-artifact@v4
+        with: { name: SpawnGen-desktop-osx-arm64, path: artifacts/SpawnGen-desktop-osx-arm64 }
+      - uses: actions/upload-artifact@v4
+        with: { name: SpawnGen-server-win-x64, path: artifacts/SpawnGen-server-win-x64 }
+      - uses: actions/upload-artifact@v4
+        with: { name: SpawnGen-server-linux-x64, path: artifacts/SpawnGen-server-linux-x64 }
+      - uses: actions/upload-artifact@v4
+        with: { name: SpawnGen-server-osx-arm64, path: artifacts/SpawnGen-server-osx-arm64 }

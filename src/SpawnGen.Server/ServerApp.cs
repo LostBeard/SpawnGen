@@ -15,7 +15,9 @@ public static class ServerApp
 {
     public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configure = null)
     {
-        var builder = WebApplication.CreateBuilder(args);
+        // The app's own folder, not the current one: a published server or desktop app started from anywhere (a shortcut, a terminal) finds its
+        // Studio files (wwwroot) and appsettings.json.
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });
         // Serve the Studio's files straight from the build output when running from a checkout (`dotnet run`). A published server carries them in
         // wwwroot instead and there is no manifest, so this does nothing there.
         builder.WebHost.UseStaticWebAssets();

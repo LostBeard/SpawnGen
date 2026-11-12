@@ -9,3 +9,4 @@ _scratch/
 output/
 tools/studio-browser-test/out/
 __pycache__/
+artifacts/

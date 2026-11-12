@@ -57,6 +57,10 @@ Use Release for any real ML work: Debug and Release produce different ILGPU IR. 
 `--filter "Name=..."` and set `SPAWNGEN_MODELS` to the models folder); they save pictures and sounds that are meant to be looked at.
 `tools/studio-browser-test` drives the real page in headless Chrome (`npm install`, then `npm run test:...`; see its README).
 
+Builds for people without .NET: `tools/package.sh [win-x64 linux-x64 osx-arm64]` publishes the desktop app (`SpawnGen.exe`, the Studio in a native
+window) and the server (`SpawnGen.Server.exe`), self-contained, into `artifacts/`; each folder runs from anywhere. The "Package desktop builds" workflow
+(run by hand in Actions) builds all three platforms. Linux's desktop app needs WebKitGTK (libwebkit2gtk-4.1); the macOS build is unsigned.
+
 The browser build is compiled to native WebAssembly (AOT) for the hosted version: `dotnet publish src/SpawnGen.Studio -c Release -p:StudioAot=true` (needs `dotnet workload install wasm-tools`,
 takes about an hour; the GitHub Pages workflow does it). An ordinary build interprets the C#, which is fine for development and far slower for big graphs.
 

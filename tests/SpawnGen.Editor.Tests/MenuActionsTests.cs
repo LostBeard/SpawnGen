@@ -62,3 +62,30 @@ public class MenuActionsTests
         Assert.That(doc.Graph.Nodes.Count, Is.EqualTo(nodes));
     }
 }
+
+/// <summary>The selection's Align, with ComfyUI's measured rules: Top / Left to the first edge, Bottom / Right lined up on the last one.</summary>
+public class AlignTests
+{
+    [TestCase(AlignEdge.Top)]
+    [TestCase(AlignEdge.Bottom)]
+    [TestCase(AlignEdge.Left)]
+    [TestCase(AlignEdge.Right)]
+    public void Align_lines_the_selected_nodes_up_and_undo_puts_them_back(AlignEdge edge)
+    {
+        var (doc, ids) = Fixtures.Txt2Img();
+        var view = new EditorView(doc);
+        int[] chosen = [ids["pos"], ids["sampler"], ids["latent"]];
+        foreach (var id in chosen) view.ToggleSelect(id);
+        Rect B(int id) => view.Hits.Geometry(doc.Graph.GetNode(id)).Bounds;
+        var before = chosen.ToDictionary(id => id, B);
+        Assert.That(view.AlignSelection(edge), Is.True);
+        double Edge(Rect b) => edge switch { AlignEdge.Top => b.Y, AlignEdge.Bottom => b.Bottom, AlignEdge.Left => b.X, _ => b.Right };
+        double expected = edge is AlignEdge.Top or AlignEdge.Left ? before.Values.Min(Edge) : before.Values.Max(Edge);
+        Assert.That(chosen.Select(id => Edge(B(id))), Is.All.EqualTo(expected).Within(1e-9));
+        bool vertical = edge is AlignEdge.Top or AlignEdge.Bottom;
+        Assert.That(chosen.All(id => vertical ? B(id).X == before[id].X : B(id).Y == before[id].Y), Is.True, "only one axis moves");
+        doc.Undo();
+        Assert.That(chosen.All(id => B(id) == before[id]), Is.True, "one undo step");
+        Assert.That(new EditorView(doc).AlignSelection(edge), Is.False, "nothing selected");
+    }
+}

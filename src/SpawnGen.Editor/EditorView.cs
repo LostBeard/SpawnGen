@@ -7,6 +7,9 @@ public enum PointerButton { None, Left, Middle, Right }
 [Flags]
 public enum Modifiers { None = 0, Shift = 1, Ctrl = 2, Alt = 4, Space = 8 }
 
+/// <summary>Which edge the selection's Align lines nodes up on.</summary>
+public enum AlignEdge { Top, Bottom, Left, Right }
+
 /// <summary>A link being dragged out of a slot. <see cref="Target"/> is where it would land if released now.</summary>
 public sealed class LinkDraft
 {
@@ -544,6 +547,42 @@ public sealed class EditorView
         if (nodes.Count == 0) return false;
         bool collapse = nodes.Any(n => !n.Collapsed);
         Document.Group(() => { foreach (var n in nodes) Document.SetCollapsed(n.Id, collapse); });
+        Document.EndGesture();
+        ViewChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// The selection's Align (ComfyUI's, measured): Top / Left move every selected node to the topmost top / leftmost left; Bottom / Right line their
+    /// bottoms / right edges up with the lowest bottom / rightmost edge. Pinned nodes stay; one undo step. False with fewer than two nodes.
+    /// </summary>
+    public bool AlignSelection(AlignEdge edge)
+    {
+        var nodes = _selected.Select(Document.Graph.FindNode).OfType<EditorNode>().Where(n => !n.Pinned).ToList();
+        if (_selected.Count < 2 || nodes.Count == 0) return false;
+        var bounds = _selected.Select(Document.Graph.FindNode).OfType<EditorNode>().ToDictionary(n => n.Id, n => Hits.Geometry(n).Bounds);
+        double target = edge switch
+        {
+            AlignEdge.Top => bounds.Values.Min(b => b.Y),
+            AlignEdge.Bottom => bounds.Values.Max(b => b.Bottom),
+            AlignEdge.Left => bounds.Values.Min(b => b.X),
+            _ => bounds.Values.Max(b => b.Right),
+        };
+        Document.Group(() =>
+        {
+            foreach (var n in nodes)
+            {
+                var b = bounds[n.Id];
+                var (dx, dy) = edge switch
+                {
+                    AlignEdge.Top => (0.0, target - b.Y),
+                    AlignEdge.Bottom => (0.0, target - b.Bottom),
+                    AlignEdge.Left => (target - b.X, 0.0),
+                    _ => (target - b.Right, 0.0),
+                };
+                Document.MoveNodes([n.Id], dx, dy);
+            }
+        });
         Document.EndGesture();
         ViewChanged?.Invoke();
         return true;

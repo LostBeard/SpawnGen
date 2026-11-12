@@ -1527,6 +1527,8 @@
             items.Add(new("Add node...", () => OpenSearch(world, null)));
             items.Add(new("Add group here", () => { _doc.AddGroup(world.X, world.Y, 420, 300); _doc.EndGesture(); }));
             if (_view.SelectedNodes.Count > 0) items.Add(new("Group selected nodes  (Ctrl+G)", () => _view.GroupSelection()));
+            if (_view.SelectedNodes.Count > 1)
+                items.Add(SubMenu("Align", [.. Enum.GetValues<AlignEdge>().Select(edge => new MenuItem(edge.ToString(), () => _view.AlignSelection(edge)))]));
             if (_view.CanPaste) items.Add(new("Paste  (Ctrl+V)", () => _view.Paste(world)));
             AddTemplateMenu(items, world);
             items.Add(new("Fit view  (F)", () => _view.FitToView()));

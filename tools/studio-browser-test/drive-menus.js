@@ -105,6 +105,19 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const [again] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
   const wf2 = JSON.parse(require('fs').readFileSync(await again.path(), 'utf8'));
   check('On Event is saved as mode 1', wf2.nodes.find(n => n.id === 2).mode === 1, JSON.stringify(wf2.nodes.map(n => [n.id, n.mode])));
+  // Align: the top Text and the bottom Preview as Text, lined up on the left.
+  await page.mouse.click(300, 820);
+  await page.mouse.click(590, 313);
+  await page.keyboard.down('Shift'); await page.mouse.click(1000, 573); await page.keyboard.up('Shift');
+  await page.mouse.click(300, 820, { button: 'right' }); await page.waitForTimeout(300);
+  await page.click('.menu li.has-sub:has-text("Align")');
+  const edges = await page.locator('.menu li.has-sub.open .sub li').allTextContents();
+  check('a selection offers Align: Top, Bottom, Left, Right', JSON.stringify(edges) === '["Top","Bottom","Left","Right"]', JSON.stringify(edges));
+  await page.click('.menu .sub li:text-is("Left")'); await page.waitForTimeout(300);
+  const [aligned] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
+  const wf3 = JSON.parse(require('fs').readFileSync(await aligned.path(), 'utf8'));
+  const x1 = wf3.nodes.find(n => n.id === 1).pos[0], x4 = wf3.nodes.find(n => n.id === 4).pos[0];
+  check('Align Left lines their left edges up on the leftmost', x1 === x4 && x1 === 80, `${x1} ${x4}`);
   await page.screenshot({ path: path.join(__dirname, 'out', 'menus-1.png') });
 
   check('no browser errors', problems.length === 0, problems.join(' | '));

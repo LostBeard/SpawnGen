@@ -22,16 +22,17 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const colour = async (x, y, label) => {
     await page.mouse.click(x, y, { button: 'right' });
     await page.waitForSelector('.menu');
-    await page.click(`.menu li:has-text("${label}")`);
+    await page.click('.menu li.has-sub:has-text("Colours")');        // the Colours submenu, then the colour
+    await page.click(`.menu .sub li:text-is("${label}")`);
     await page.waitForTimeout(300);
   };
 
   await open();
   const before = await hash();
-  await colour(1040, 234, 'Colour: purple'); // KSampler title
+  await colour(1040, 234, 'purple'); // KSampler title
   const after = await hash();
   check('colouring a node changes the picture', before !== after);
-  await colour(1400, 234, 'Colour: yellow'); // VAE Decode title
+  await colour(1400, 234, 'yellow'); // VAE Decode title
   await page.screenshot({ path: path.join(OUT, 'colors.png') });
 
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
@@ -49,7 +50,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   check('the colours survive a reload', reloaded.color === '#323' && reloaded.bgcolor === '#535', `${reloaded.color} ${reloaded.bgcolor}`);
 
   await require('./tab-offset')(page);
-  await colour(1040, 234, 'Colour: default');
+  await colour(1040, 234, 'default');
   check('Colour: default goes back to the theme', (await hash()) !== coloured);
   check('no browser errors', problems.length === 0, problems.join(' | '));
   await browser.close();

@@ -9,7 +9,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
 
 (async () => {
   const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--disable-gpu'] });
-  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, acceptDownloads: true });
   const problems = [];
   page.on('console', m => { if (m.type() === 'error') problems.push(m.text()); });
   page.on('pageerror', e => problems.push('PAGEERROR ' + e.message));
@@ -80,6 +80,22 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   check('a linked input slot offers Disconnect', items.includes('Disconnect'), items.join(' | '));
   await pick('Disconnect');
   check('its link is gone', JSON.stringify(await counts()) === '[5,0]', JSON.stringify(await counts()));
+  // Shapes: card on the bottom Preview as Text; it changes the drawing and is saved as ComfyUI's shape 4.
+  const canvasHash = async () => require('crypto').createHash('md5').update(await page.locator('canvas').screenshot()).digest('hex');
+  await page.mouse.click(300, 820); await page.waitForTimeout(200);
+  const plain = await canvasHash();
+  items = await menu(1000, 573);
+  check('the node menu has Colours and Shapes submenus', items.some(t => /^Colours/.test(t)) && items.some(t => /^Shapes/.test(t)), items.join(' | ').slice(0, 200));
+  await page.click('.menu li.has-sub:has-text("Shapes")');
+  const shapes = await page.locator('.menu li.has-sub.open .sub li').allTextContents();
+  check('Shapes offers default, box, round and card', JSON.stringify(shapes) === '["default","box","round","card"]', JSON.stringify(shapes));
+  await page.click('.menu .sub li:text-is("card")'); await page.waitForTimeout(300);
+  await page.mouse.click(300, 820); await page.waitForTimeout(300);
+  check('the card outline is drawn', (await canvasHash()) !== plain);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
+  const wf = JSON.parse(require('fs').readFileSync(await download.path(), 'utf8'));
+  check('it is saved as shape 4', wf.nodes.find(n => n.id === 4).shape === 4 && wf.nodes.find(n => n.id === 2).shape === undefined,
+    JSON.stringify(wf.nodes.map(n => [n.id, n.shape])));
   await page.screenshot({ path: path.join(__dirname, 'out', 'menus-1.png') });
 
   check('no browser errors', problems.length === 0, problems.join(' | '));

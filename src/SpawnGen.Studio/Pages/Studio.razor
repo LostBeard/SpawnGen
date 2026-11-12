@@ -509,10 +509,29 @@
 
         @if (_menu is { } m)
         {
-            <ul class="menu" style="left:@(Px(m.At.X)); top:@(Px(m.At.Y))" @onpointerdown:stopPropagation>
-                @foreach (var item in m.Items)
+            <ul class="menu @(m.At.X > _view.ScreenSize.X - 420 ? "flip" : "")" style="left:@(Px(m.At.X)); top:@(Px(m.At.Y))" @onpointerdown:stopPropagation>
+                @for (int i = 0; i < m.Items.Count; i++)
                 {
-                    <li @onclick="() => { CloseMenus(); item.Action(); }">@item.Label</li>
+                    var item = m.Items[i];
+                    var index = i;
+                    if (item.Sub is { } sub)
+                    {
+                        @* A submenu opens on hover, or on a click (touch screens). *@
+                        <li class="has-sub @(_openSub == index ? "open" : "")" @onclick="() => _openSub = _openSub == index ? null : index">
+                            <span>@item.Label</span><span class="arrow">&#x25B8;</span>
+                            <ul class="menu sub">
+                                @foreach (var subItem in sub)
+                                {
+                                    var chosen = subItem;
+                                    <li @onclick:stopPropagation="true" @onclick="() => { CloseMenus(); chosen.Action(); }">@chosen.Label</li>
+                                }
+                            </ul>
+                        </li>
+                    }
+                    else
+                    {
+                        <li @onclick="() => { CloseMenus(); item.Action(); }">@item.Label</li>
+                    }
                 }
             </ul>
         }
@@ -679,8 +698,15 @@
         public LinkDraft? Draft { get; init; }
     }
 
-    sealed record MenuItem(string Label, Action Action);
+    sealed record MenuItem(string Label, Action Action)
+    {
+        public List<MenuItem>? Sub { get; init; }
+    }
     sealed record MenuState(Point At, List<MenuItem> Items);
+    int? _openSub;   // the submenu opened by a click (hover opens one too)
+
+    /// <summary>A menu entry that opens a list of entries (ComfyUI's Colors, Shapes ...).</summary>
+    static MenuItem SubMenu(string label, List<MenuItem> items) => new(label, () => { }) { Sub = items };
 
     ElementReference _canvasRef, _editRef, _searchRef;
     EditorDocument _doc = null!;
@@ -784,6 +810,7 @@
         var items = new List<MenuItem> { new("Starter graph in this tab", LoadExample) };
         foreach (var example in _examples ?? []) items.Add(new(example.Name, () => _ = OpenExampleAsync(example)));
         if (_examples is null) ShowMessage("The example list could not be read.");
+        _openSub = null;
         _menu = new MenuState(new Point(8, 6), items);
     }
 
@@ -1328,10 +1355,15 @@
                 items.Add(new("Open in Mask Editor", () => _ = OpenMaskEditorAsync(node)));
             if (node.ClassType == "LoadImageOutput")
                 items.Add(new("Refresh and pick the newest output", () => _ = PickNewestOutputAsync(hit.NodeId)));
+            var colours = new List<MenuItem>();
+            if (chosen.Any(id => _doc.Graph.FindNode(id) is { } n && (n.Color is not null || n.BgColor is not null)))
+                colours.Add(new("default", () => { foreach (var id in chosen) _doc.SetNodeColor(id, null, null); _doc.EndGesture(); }));
             foreach (var (name, color, bg) in EditorGroup.NodePalette)
-                items.Add(new($"Colour: {name}", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, color, bg); _doc.EndGesture(); }));
-            if (node.Color is not null || node.BgColor is not null)
-                items.Add(new("Colour: default", () => { foreach (var id in _view.SelectedNodes.Append(hit.NodeId).Distinct().ToList()) _doc.SetNodeColor(id, null, null); _doc.EndGesture(); }));
+                colours.Add(new(name, () => { foreach (var id in chosen) _doc.SetNodeColor(id, color, bg); _doc.EndGesture(); }));
+            items.Add(SubMenu("Colours", colours));
+            // ComfyUI's Shapes: the outline of the node (saved as its shape).
+            items.Add(SubMenu("Shapes", [.. new (string Name, NodeShape? Shape)[] { ("default", null), ("box", NodeShape.Box), ("round", NodeShape.Round), ("card", NodeShape.Card) }
+                .Select(s => new MenuItem(s.Name, () => { foreach (var id in chosen) _doc.SetShape(id, s.Shape); _doc.EndGesture(); }))]));
             if (node.Previews.Count > 0)
             {
                 items.Add(new("Open Image", () => { _lightbox = node.Previews[0].Url; InvokeAsync(StateHasChanged); }));
@@ -1370,8 +1402,7 @@
         else if (hit.Kind == HitKind.GroupTitle)
         {
             items.Add(new("Edit group title", () => OnGroupTitleEdit(hit.NodeId)));
-            foreach (var (name, color) in EditorGroup.Palette)
-                items.Add(new($"Colour: {name}", () => { _doc.SetGroupColor(hit.NodeId, color); _doc.EndGesture(); }));
+            items.Add(SubMenu("Colours", [.. EditorGroup.Palette.Select(p => new MenuItem(p.Name, () => { _doc.SetGroupColor(hit.NodeId, p.Color); _doc.EndGesture(); }))]));
             var pinnedGroup = _doc.Graph.GetGroup(hit.NodeId).Pinned;
             items.Add(new(pinnedGroup ? "Unpin group  (P)" : "Pin group  (P)", () => { _doc.SetGroupPinned(hit.NodeId, !pinnedGroup); _doc.EndGesture(); }));
             if (!pinnedGroup) items.Add(new("Delete group  (Del)", () => { _doc.DeleteGroup(hit.NodeId); }));
@@ -1384,6 +1415,7 @@
             if (_view.CanPaste) items.Add(new("Paste  (Ctrl+V)", () => _view.Paste(world)));
             items.Add(new("Fit view  (F)", () => _view.FitToView()));
         }
+        _openSub = null;
         _menu = new MenuState(screen, items);
         InvokeAsync(StateHasChanged);
     }
@@ -1392,6 +1424,7 @@
     {
         if (_menu is null) return;
         _menu = null;
+        _openSub = null;
         _studio?.Focus();
     }
 

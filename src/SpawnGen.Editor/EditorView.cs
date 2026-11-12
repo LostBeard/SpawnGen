@@ -936,6 +936,8 @@ public sealed class EditorView
                 if (original.Mode != NodeMode.Always) Document.SetMode(added.Id, original.Mode);
                 if (original.Width is { } w) Document.SetWidth(added.Id, w);
                 if (original.Collapsed) Document.SetCollapsed(added.Id, true);
+                if (original.Color is not null || original.BgColor is not null) Document.SetNodeColor(added.Id, original.Color, original.BgColor);
+                if (original.Shape is { } shape) Document.SetShape(added.Id, shape);
                 map[original.Id] = added.Id;
                 created.Add(added.Id);
             }

@@ -68,7 +68,8 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   // Colour from the menu.
   await page.mouse.click(title2.x, title2.y, { button: 'right' });
   await page.waitForSelector('.menu');
-  await page.click('.menu li:has-text("Colour: green")');
+  await page.click('.menu li.has-sub:has-text("Colours")');
+  await page.click('.menu .sub li:text-is("green")');
   await page.waitForTimeout(300);
   wf = await saved();
   check('the context menu changes the colour', wf.groups[0].color === '#8A8', wf.groups[0].color);

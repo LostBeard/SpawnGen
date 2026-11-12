@@ -12,6 +12,9 @@ public enum NodeMode
     Bypass = 4,
 }
 
+/// <summary>A node's outline, as ComfyUI saves it (<c>shape</c>: 1 box, 2 round, 4 card): box has square corners, card rounds only the top ones.</summary>
+public enum NodeShape { Box = 1, Round = 2, Card = 4 }
+
 public sealed class EditorNode
 {
     public required int Id { get; init; }
@@ -27,6 +30,8 @@ public sealed class EditorNode
     public bool Collapsed { get; set; }
     /// <summary>A pinned node stays where it is: it cannot be dragged, resized, collapsed or deleted from the canvas (ComfyUI's <c>flags.pinned</c>).</summary>
     public bool Pinned { get; set; }
+    /// <summary>The outline the user picked (the node menu's Shape); null = the default, drawn round and not saved.</summary>
+    public NodeShape? Shape { get; set; }
     public NodeMode Mode { get; set; }
     /// <summary>Drawing and hit-test order, higher is on top. View state: not undoable, not part of the saved workflow's meaning.</summary>
     public int ZIndex { get; set; }
@@ -47,7 +52,7 @@ public sealed class EditorNode
 
     public EditorNode Clone(int? newId = null) => new()
     {
-        Id = newId ?? Id, ClassType = ClassType, Title = Title, Color = Color, BgColor = BgColor, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Pinned = Pinned, Mode = Mode,
+        Id = newId ?? Id, ClassType = ClassType, Title = Title, Color = Color, BgColor = BgColor, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Pinned = Pinned, Shape = Shape, Mode = Mode,
         Widgets = new Dictionary<string, object?>(Widgets, StringComparer.Ordinal),
         Properties = (System.Text.Json.Nodes.JsonObject)Properties.DeepClone(),
     };

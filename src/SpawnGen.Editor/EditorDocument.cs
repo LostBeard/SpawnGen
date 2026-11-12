@@ -258,6 +258,12 @@ public sealed class EditorDocument(NodeRegistry registry)
         Run(new SetNodePropertyCommand<(string?, string?)>(nodeId, "color", (node.Color, node.BgColor), (color, bgColor), (n, v) => (n.Color, n.BgColor) = v));
     }
 
+    public void SetShape(int nodeId, NodeShape? shape)
+    {
+        var node = Graph.GetNode(nodeId);
+        if (node.Shape != shape) Run(new SetNodePropertyCommand<NodeShape?>(nodeId, "shape", node.Shape, shape, (n, v) => n.Shape = v));
+    }
+
     public void SetMode(int nodeId, NodeMode mode)
     {
         var node = Graph.GetNode(nodeId);

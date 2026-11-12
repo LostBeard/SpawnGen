@@ -58,7 +58,9 @@ public sealed class SaveAnimatedWEBP
 /// Wan 2.2 TI2V 5B (Alibaba, Apache-2.0) from the library's 8-bit export: a video from a prompt, or from a start picture and a prompt. One node for
 /// the whole model, like FLUX.2 Klein: the library runs its text encoder (UMT5-XXL), flow transformer and video VAE in turn. Gives the frames (an
 /// image batch, for Create Video / Save Animated WEBP) and the model's frame rate (24). The defaults are ComfyUI's Wan 2.2 5B template's
-/// (1280x704, 121 frames, 20 steps, cfg 5, shift 8, UniPC); sides are multiples of 32 and the length is 4n+1 frames.
+/// (1280x704, 121 frames, 20 steps, cfg 5, shift 8, UniPC); sides are multiples of 32 and the length is 4n+1 frames. Below its 1280x704 training
+/// size the model degrades (checked against the official implementation at 640x352). "5B Turbo" is the distilled transformer: 4 steps, cfg 1,
+/// few_step. Tiled decode keeps 720p within an 8 GB card.
 /// </summary>
 [Node(Category = "video", DisplayName = "Wan 2.2 Video (TI2V 5B)", OutputNames = ["images", "fps"])]
 public sealed class Wan22Video
@@ -67,6 +69,7 @@ public sealed class Wan22Video
     public const double FrameRate = 24.0;
 
     public static string[] Samplers() => ["uni_pc", "few_step"];
+    public static string[] Models() => ["5B", "5B Turbo"];
 
     sealed class Loaded(Wan22Pipeline pipeline) : IDisposable
     {
@@ -77,23 +80,26 @@ public sealed class Wan22Video
     public async Task<(ImageBatch Images, double Fps)> ExecuteAsync(NodeContext context, IServiceProvider services,
         [Input(Multiline = true)] string prompt = "",
         [Input(Multiline = true)] string negativePrompt = Wan22Pipeline.DefaultNegativePrompt,
-        [Input(Min = 32, Max = 2048, Step = 32)] int width = 1280,
-        [Input(Min = 32, Max = 2048, Step = 32)] int height = 704,
+        [Input(Min = 32, Max = 2048, Step = 32, Tooltip = "Wan 2.2 5B was trained at 1280x704 and 704x1280; well below that it degrades (posterised, over-saturated: the reference does too).")] int width = 1280,
+        [Input(Min = 32, Max = 2048, Step = 32, Tooltip = "Wan 2.2 5B was trained at 1280x704 and 704x1280; well below that it degrades (posterised, over-saturated: the reference does too).")] int height = 704,
         [Input(Min = 1, Max = 481, Step = 4)] int length = 121,
         [Input(Min = 1, Max = 100)] int steps = 20,
         [Input(Min = 0.0, Max = 30.0, Step = 0.1)] double cfg = 5.0,
         [Input(Min = 0.0, Max = 100.0, Step = 0.01)] double shift = 8.0,
         long seed = 0,
         [Input(OptionsProvider = nameof(Samplers))] string sampler = "uni_pc",
-        ImageBatch? startImage = null)
+        ImageBatch? startImage = null,
+        [Input(OptionsProvider = nameof(Models), Tooltip = "5B: the model as released (20-50 steps, cfg 5). 5B Turbo: the distilled transformer, 4 steps with cfg 1 and the few_step sampler, far faster.")] string model = "5B",
+        [Input(Tooltip = "Decode the video in tiles: much less GPU memory (720p on an 8 GB card), nearly the same pictures.")] bool tiledDecode = false)
     {
         if (string.IsNullOrWhiteSpace(prompt)) throw new ArgumentException("The prompt is empty.", nameof(prompt));
         if (width % 32 != 0 || height % 32 != 0) throw new ArgumentException($"Wan 2.2 needs sides that are multiples of 32, got {width}x{height}.");
         if ((length - 1) % 4 != 0) throw new ArgumentException($"Wan 2.2 makes 4n+1 frames (1, 5, 9 ... 121), got {length}.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         // The library's model host has the 8-bit text encoder (its default file, bf16, is not hosted yet).
-        var loaded = await runtime.GetOrLoadAsync($"wan22:{Wan22Pipeline.DefaultRepo}", () => Task.FromResult(new Loaded(
-            new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo, Wan22Paths.InRepo(textEncoder: Wan22Paths.TextEncoderFile("q8"))))));
+        var dit = Wan22Paths.DitFile(model == "5B Turbo" ? "turbo_q8" : "q8");
+        var loaded = await runtime.GetOrLoadAsync($"wan22:{Wan22Pipeline.DefaultRepo}:{dit}", () => Task.FromResult(new Loaded(
+            new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo, Wan22Paths.InRepo(dit, Wan22Paths.TextEncoderFile("q8"))))));
 
         byte[]? rgb = null;
         if (startImage is not null)
@@ -105,7 +111,7 @@ public sealed class Wan22Video
         var request = new WanRequest
         {
             Prompt = prompt, NegativePrompt = negativePrompt, Width = width, Height = height, Frames = length, Steps = steps,
-            GuidanceScale = cfg, Shift = shift, Seed = seed, Sampler = sampler == "few_step" ? WanSampler.FewStep : WanSampler.UniPC, RgbaFrames = true,
+            GuidanceScale = cfg, Shift = shift, Seed = seed, Sampler = sampler == "few_step" ? WanSampler.FewStep : WanSampler.UniPC, RgbaFrames = true, TiledDecode = tiledDecode,
             ImageRgb = rgb, ImageWidth = startImage?.Width ?? 0, ImageHeight = startImage?.Height ?? 0,
         };
         var progress = new Progress<WanProgress>(p =>

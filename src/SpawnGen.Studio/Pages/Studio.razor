@@ -401,6 +401,56 @@
             </div>
         }
 
+        @if (_templateDialog is { } templateDialog)
+        {
+            <div class="modal-back" @onclick="() => _templateDialog = null">
+                <div class="save-dialog" @onclick:stopPropagation="true">
+                    <h3>Save as template</h3>
+                    <p>@templateDialog.Ids.Length node(s) and the links among them, kept @Store.Where; insert them from the canvas menu's Node Templates.</p>
+                    <input placeholder="Template name" value="@templateDialog.Name" @oninput="OnTemplateNameInput" @onkeydown="OnTemplateNameKey" @ref="_templateNameRef" />
+                    @if (templateDialog.Replace)
+                    {
+                        <p class="warn">There is a template named @templateDialog.Name.Trim(). Replace it?</p>
+                    }
+                    <div class="row">
+                        <button @onclick="() => _templateDialog = null">Cancel</button>
+                        <button class="primary" @onclick="ConfirmTemplateAsync">@(templateDialog.Replace ? "Replace" : "Save")</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (_templatesManageOpen)
+        {
+            <div class="modal-back" @onclick="() => _templatesManageOpen = false">
+                <div class="save-dialog templates-manage" @onclick:stopPropagation="true">
+                    <h3>Node templates</h3>
+                    <p>Kept @Store.Where. Rename a template by editing its name.</p>
+                    <div class="tpl-list">
+                        @for (int i = 0; i < _nodeTemplates.Count; i++)
+                        {
+                            var index = i;
+                            var template = _nodeTemplates[i];
+                            <div class="tpl-row">
+                                <input value="@template.Name" @onchange="e => RenameTemplateAsync(index, e.Value?.ToString())" />
+                                <button title="Delete this template" @onclick="() => DeleteTemplateAsync(index)">&times;</button>
+                            </div>
+                        }
+                        @if (_nodeTemplates.Count == 0)
+                        {
+                            <p>No templates yet: select nodes, then the canvas menu's Save Selected as Template.</p>
+                        }
+                    </div>
+                    <div class="row">
+                        <label class="button" title="Add the templates of a comfy.templates.json file">Import<InputFile @key="_fileInputs" OnChange="OnTemplatesImportAsync" accept=".json" hidden /></label>
+                        <button disabled="@(_nodeTemplates.Count == 0)" title="Download every template as comfy.templates.json" @onclick="ExportTemplatesAsync">Export</button>
+                        <span class="grow"></span>
+                        <button class="primary" @onclick="() => _templatesManageOpen = false">Close</button>
+                    </div>
+                </div>
+            </div>
+        }
+
         @if (_shortcutsOpen)
         {
             <div class="modal-back" @onclick="ToggleShortcuts">
@@ -803,6 +853,7 @@
             await Interop.InvokeVoidAsync("spawngenEnableDrop", _dropRef, ".stage");
             _studio.CanvasPressed += CloseMenus; // the canvas reports its own presses first, so a menu it opens right after is not closed again
             _settings = await LoadSettingsAsync();
+            _ = LoadNodeTemplatesAsync();
             LinkGeometry.Style = _settings.LinkStyle;
             _view.SnapToGrid = _settings.SnapToGrid;
             _view.GridSize = _settings.GridSize;
@@ -825,6 +876,13 @@
             catch (Microsoft.JSInterop.JSException) { } // the editor was closed (a quick pick) before it could take focus
         }
         if (_focusSearch) { _focusSearch = false; await Task.Delay(40); await _searchRef.FocusAsync(); }
+        if (_focusTemplateName)
+        {
+            _focusTemplateName = false;
+            await Task.Delay(40);
+            try { await _templateNameRef.FocusAsync(); }
+            catch (Microsoft.JSInterop.JSException) { }
+        }
         if (_focusCapture)
         {
             _focusCapture = false;
@@ -1470,6 +1528,7 @@
             items.Add(new("Add group here", () => { _doc.AddGroup(world.X, world.Y, 420, 300); _doc.EndGesture(); }));
             if (_view.SelectedNodes.Count > 0) items.Add(new("Group selected nodes  (Ctrl+G)", () => _view.GroupSelection()));
             if (_view.CanPaste) items.Add(new("Paste  (Ctrl+V)", () => _view.Paste(world)));
+            AddTemplateMenu(items, world);
             items.Add(new("Fit view  (F)", () => _view.FitToView()));
         }
         _openSub = null;

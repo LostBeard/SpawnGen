@@ -23,6 +23,9 @@ public interface IWorkflowStore
     Task<StoreResult> WriteAsync(string path, string text, bool overwrite);
     Task<StoreResult> MoveAsync(string from, string to, bool overwrite);
     Task<StoreResult> DeleteAsync(string path);
+    /// <summary>A file of the user's beside the workflows folder (comfy.templates.json ...), or null when there is none.</summary>
+    Task<string?> ReadUserFileAsync(string name);
+    Task<bool> WriteUserFileAsync(string name, string text);
 }
 
 /// <summary>The library on the server that serves the Studio, through ComfyUI's userdata API.</summary>
@@ -66,6 +69,23 @@ public sealed class ServerWorkflowStore(HttpClient http) : IWorkflowStore
 
     public Task<StoreResult> DeleteAsync(string path) => Send(() => http.DeleteAsync(FileUrl(path)));
 
+    public async Task<string?> ReadUserFileAsync(string name)
+    {
+        try
+        {
+            // Only a file that is there is read: asking for a missing one would put a 404 in the browser's console.
+            using var listing = await http.GetAsync("api/userdata?dir=.");
+            if (!listing.IsSuccessStatusCode || JsonNode.Parse(await listing.Content.ReadAsStringAsync()) is not JsonArray files
+                || !files.Any(f => (string?)f == name)) return null;
+            using var response = await http.GetAsync("api/userdata/" + Uri.EscapeDataString(name));
+            return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync() : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { return null; }
+    }
+
+    public async Task<bool> WriteUserFileAsync(string name, string text) =>
+        await Send(() => http.PostAsync("api/userdata/" + Uri.EscapeDataString(name) + "?overwrite=true", new StringContent(text, Encoding.UTF8, "application/json"))) == StoreResult.Done;
+
     static async Task<StoreResult> Send(Func<Task<HttpResponseMessage>> request)
     {
         try
@@ -107,6 +127,19 @@ public sealed class BrowserWorkflowStore(IJSRuntime js) : IWorkflowStore
     public Task<StoreResult> WriteAsync(string path, string text, bool overwrite) => Call("spawngenFiles.write", path, text, overwrite);
     public Task<StoreResult> MoveAsync(string from, string to, bool overwrite) => Call("spawngenFiles.move", from, to, overwrite);
     public Task<StoreResult> DeleteAsync(string path) => Call("spawngenFiles.remove", path);
+
+    // The user's other files live in the browser's storage (they are small: node templates).
+    public async Task<string?> ReadUserFileAsync(string name)
+    {
+        try { return await js.InvokeAsync<string?>("spawngenStoreGet", "spawngen.user/" + name); }
+        catch (JSException) { return null; }
+    }
+
+    public async Task<bool> WriteUserFileAsync(string name, string text)
+    {
+        try { return await js.InvokeAsync<bool>("spawngenStoreSet", "spawngen.user/" + name, text); }
+        catch (JSException) { return false; }
+    }
 
     async Task<StoreResult> Call(string function, params object?[] args)
     {

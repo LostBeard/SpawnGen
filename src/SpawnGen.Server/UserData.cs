@@ -25,6 +25,15 @@ public static class UserData
         string root = Path.GetFullPath(Root(options));
         Directory.CreateDirectory(Path.Combine(root, "workflows")); // the library's folder exists from the start, so listing it is never a 404
 
+        // The user's files and settings change under the same names (a workflow saved again): a browser must never answer from its cache.
+        app.Use((context, next) =>
+        {
+            var path = context.Request.Path;
+            if (path.StartsWithSegments("/userdata") || path.StartsWithSegments("/v2/userdata") || path.StartsWithSegments("/settings") || path.StartsWithSegments("/users"))
+                context.Response.Headers.CacheControl = "no-store";
+            return next(context);
+        });
+
         app.MapGet("/users", () => Results.Json(new JsonObject { ["storage"] = "server", ["migrated"] = true }));
 
         app.MapGet("/userdata", (HttpRequest request) =>

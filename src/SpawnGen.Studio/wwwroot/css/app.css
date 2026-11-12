@@ -302,3 +302,11 @@ body { background: var(--bg-2); color: var(--fg); font-family: system-ui, "Segoe
 .shortcuts .sc-foot { display: flex; align-items: center; gap: 10px; color: var(--fg-mid); }
 .shortcuts .sc-foot span { flex: 1; }
 .shortcuts .sc-foot button { background: var(--ctl); color: var(--fg); border: 1px solid var(--line-2); border-radius: 5px; padding: 4px 12px; cursor: pointer; font: inherit; }
+
+/* ---- Node templates ---- */
+.templates-manage .tpl-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.templates-manage .tpl-row { display: flex; gap: 6px; align-items: center; }
+.templates-manage .tpl-row input { flex: 1; }
+.templates-manage .row { align-items: center; }
+.templates-manage .row .grow { flex: 1; }
+.save-dialog label.button { background: var(--ctl); color: var(--fg); border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 14px; cursor: pointer; font: inherit; }

@@ -128,6 +128,19 @@ public class UserDataTests
     }
 
     [Test]
+    public async Task Browsers_are_told_not_to_cache_the_users_files()
+    {
+        await Send(HttpMethod.Post, "api/userdata/workflows%2Fa.json", "{}");
+        foreach (var url in new[] { "api/userdata/workflows%2Fa.json", "api/userdata?dir=workflows", "api/v2/userdata", "api/settings", "userdata/workflows%2Fa.json" })
+        {
+            using var response = await _http.GetAsync(url);
+            Assert.That(response.Headers.CacheControl?.NoStore, Is.True, url);
+        }
+        using var other = await _http.GetAsync("api/queue");
+        Assert.That(other.Headers.CacheControl?.NoStore ?? false, Is.False, "only the user's files");
+    }
+
+    [Test]
     public async Task Every_route_also_answers_under_api()
     {
         Assert.That((await Send(HttpMethod.Get, "api/queue")).Code, Is.EqualTo(HttpStatusCode.OK));

@@ -942,6 +942,14 @@ public sealed class EditorView
         PasteClip(new Clipboard(nodes, links, []), new Point(nodes.Min(n => n.X) + 30, nodes.Min(n => n.Y) + 30), keepExternalInputs: false);
     }
 
+    /// <summary>Puts copies of nodes from elsewhere (a node template) with the links among them, top-left at <paramref name="at"/>, selected; one undo step.</summary>
+    public void PasteNodes(IReadOnlyCollection<EditorNode> nodes, IEnumerable<EditorLink> links, Point at)
+    {
+        if (nodes.Count == 0) return;
+        var ids = nodes.Select(n => n.Id).ToHashSet();
+        PasteClip(new Clipboard([.. nodes.Select(n => n.Clone())], [.. links.Where(l => ids.Contains(l.FromNode) && ids.Contains(l.ToNode))], []), at, keepExternalInputs: false);
+    }
+
     void PasteClip(Clipboard clip, Point at, bool keepExternalInputs)
     {
         double minX = clip.Nodes.Min(n => n.X), minY = clip.Nodes.Min(n => n.Y);

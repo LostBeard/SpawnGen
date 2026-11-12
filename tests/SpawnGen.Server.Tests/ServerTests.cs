@@ -65,7 +65,7 @@ public class ServerTests
         Directory.CreateDirectory(Path.Combine(_dir, "input"));
         _app = ServerApp.Build(
             ["--urls", "http://127.0.0.1:0", $"--SpawnGen:ModelsPath={_dir}/models", $"--SpawnGen:OutputPath={_dir}/output",
-             $"--SpawnGen:InputPath={_dir}/input", $"--SpawnGen:TempPath={_dir}/temp", "--environment", "Development"],
+             $"--SpawnGen:InputPath={_dir}/input", $"--SpawnGen:TempPath={_dir}/temp", $"--SpawnGen:UserPath={_dir}/user", "--environment", "Development"],
             builder => builder.Services.AddSingleton(new NodeRegistry()
                 .AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(SpawnGen.Nodes.ML.KSampler).Assembly).AddAssembly(typeof(WaitNode).Assembly)));
         await _app.StartAsync();

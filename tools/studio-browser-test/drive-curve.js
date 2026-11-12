@@ -1,4 +1,4 @@
-// The CURVE widget in the real page: a Curve Editor node shows its curve as a plot; pressing on empty space adds a point and dragging moves it; Save writes
+// The CURVE widget in the real page: a Curve Editor node shows its curve as a plot; pressing on empty space adds a point and dragging moves it; Export writes
 // the points in ComfyUI's {"points": [...], "interpolation": ...} form. STUDIO_URL (default http://localhost:8188/).
 const { chromium } = require('playwright-core');
 const fs = require('fs');
@@ -63,7 +63,7 @@ const workflow = {
     await page.mouse.up();
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(OUT, 'curve-after.png') });
-    const [download] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('button:has-text("Save")')]);
+    const [download] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('.toolbar button:has-text("Export")')]);
     const saved = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
     const value = saved.nodes.find(n => n.type === 'CurveEditor').widgets_values[0];
     const pts = value.points;

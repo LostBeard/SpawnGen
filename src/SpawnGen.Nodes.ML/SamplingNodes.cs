@@ -7,6 +7,7 @@ namespace SpawnGen.Nodes.ML;
 // samplers that take one step more and drop the penultimate sigma, whose list was read from a running ComfyUI) and SamplingSetupTests (the
 // advanced sampler's slicing).
 
+[VideoLatents]
 [Node("KSampler", Category = "model/sampling", DisplayName = "KSampler",
     Description = "Uses the provided model, positive and negative conditioning to denoise the latent image.")]
 public sealed class KSampler
@@ -64,6 +65,7 @@ public sealed class KSampler
     }
 }
 
+[VideoLatents]
 [Node("KSamplerAdvanced", Category = "model/sampling", DisplayName = "KSampler (Advanced)")]
 public sealed class KSamplerAdvanced
 {

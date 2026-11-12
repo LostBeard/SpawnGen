@@ -158,7 +158,15 @@ public static class PromptValidator
                 // ComfyUI hands an object-valued widget's value to the node as it is; the node reads what it needs.
                 return null;
             case WidgetKind.Combo:
-                if (literal is not string str) return "expects one of the listed options.";
+                // ComfyUI's lists can hold numbers ("auto", 8, 10): a number matches the option written the same way.
+                var str = literal switch
+                {
+                    string text => text,
+                    long or int => Convert.ToString(literal, System.Globalization.CultureInfo.InvariantCulture),
+                    double whole when whole == Math.Floor(whole) && Math.Abs(whole) < 9e15 => ((long)whole).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    _ => null,
+                };
+                if (str is null) return "expects one of the listed options.";
                 var options = w.ResolveOptions();
                 return options.Contains(str, StringComparer.OrdinalIgnoreCase)
                     ? null

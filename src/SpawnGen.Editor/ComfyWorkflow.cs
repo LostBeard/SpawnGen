@@ -65,6 +65,7 @@ public static class ComfyWorkflow
                 X = Pair(n["pos"]).X, Y = Pair(n["pos"]).Y,
                 Collapsed = (bool?)n["flags"]?["collapsed"] ?? false,
                 Pinned = (bool?)n["flags"]?["pinned"] ?? false,
+                Shape = ReadShape(n["shape"]),
                 Mode = Enum.IsDefined(typeof(NodeMode), (int?)n["mode"] ?? 0) ? (NodeMode)((int?)n["mode"] ?? 0) : NodeMode.Always,
                 ZIndex = ++z,
                 Properties = n["properties"] is JsonObject props ? (JsonObject)props.DeepClone() : [],
@@ -302,6 +303,7 @@ public static class ComfyWorkflow
             if (n.Title is not null) obj["title"] = n.Title;
             if (n.Color is not null) obj["color"] = n.Color;
             if (n.BgColor is not null) obj["bgcolor"] = n.BgColor;
+            if (n.Shape is { } shape) obj["shape"] = (int)shape;
 
             var inputs = new JsonArray();
             var outputs = new JsonArray();
@@ -415,4 +417,13 @@ public static class ComfyWorkflow
         foreach (var n in graph.Nodes.OrderBy(n => n.Id)) Visit(n.Id);
         return order;
     }
+
+    /// <summary>ComfyUI's node <c>shape</c>: saved as 1 (box), 2 (round) or 4 (card); its names are read too. Anything else is the default.</summary>
+    public static NodeShape? ReadShape(JsonNode? value) => value switch
+    {
+        JsonValue v when v.TryGetValue<int>(out var n) && Enum.IsDefined(typeof(NodeShape), n) => (NodeShape)n,
+        JsonValue v when v.TryGetValue<double>(out var d) && d == Math.Floor(d) && Enum.IsDefined(typeof(NodeShape), (int)d) => (NodeShape)(int)d,
+        JsonValue v when v.TryGetValue<string>(out var name) => name.ToLowerInvariant() switch { "box" => NodeShape.Box, "round" => NodeShape.Round, "card" => NodeShape.Card, _ => null },
+        _ => null,
+    };
 }

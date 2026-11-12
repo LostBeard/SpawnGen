@@ -289,14 +289,14 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
 
         ctx.GlobalAlpha = node.Mode == NodeMode.Never ? 0.4 : node.Mode == NodeMode.Bypass ? 0.55 : 1;
         // Body and title.
-        RoundRect(ctx, b, 8);
+        NodeOutline(ctx, node, b);
         bool isNote = schema is { FrontendOnly: true } && schema.Id != "Reroute";
         ctx.FillStyle = node.Mode == NodeMode.Bypass ? Theme.Current.BypassBody : node.BgColor ?? (isNote ? Theme.Current.NoteBody : Theme.NodeBody);
         ctx.Fill();
         if (!geo.Collapsed || true)
         {
             ctx.Save();
-            RoundRect(ctx, b, 8);
+            NodeOutline(ctx, node, b);
             ctx.Clip();
             ctx.FillStyle = schema is null ? Theme.Current.MissingTitle : node.Color ?? (isNote ? Theme.Current.NoteTitle : Theme.TitleColor(schema.Category));
             ctx.FillRect(geo.TitleBar.X, geo.TitleBar.Y, geo.TitleBar.Width, geo.TitleBar.Height);
@@ -304,7 +304,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         }
         bool running = visuals.ExecutingNode == node.Id;
         bool failed = visuals.Errors.ContainsKey(node.Id);
-        RoundRect(ctx, b, 8);
+        NodeOutline(ctx, node, b);
         ctx.LineWidth = running || failed ? 3 : selected ? 2 / scale + 0.5 : 1.5;
         ctx.StrokeStyle = failed ? Theme.Error : running ? Theme.Running : selected ? Theme.NodeSelected : (schema is null ? Theme.Error : Theme.NodeBorder);
         ctx.Stroke();
@@ -374,6 +374,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         }
         ctx.GlobalAlpha = 1;
 
+        DrawAppPicks(ctx, node, geo, scale, detailed);
+
         // A failed node says why, in a red tag under it.
         if (failed && detailed)
         {
@@ -387,6 +389,62 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             ctx.TextBaseline = "middle";
             ctx.FillText(text, b.X + 8, b.Bottom + 17);
         }
+    }
+
+    const string AppPick = "#4aa8ff";
+
+    /// <summary>The App Builder's outlines: pickable widgets / output nodes dashed, picked ones solid with their place in the app.</summary>
+    void DrawAppPicks(CanvasRenderingContext2D ctx, EditorNode node, NodeGeometry geo, double scale, bool detailed)
+    {
+        if (visuals.ShowAppOutputs && visuals.AppOutputCandidates.Contains(node.Id))
+        {
+            int place = visuals.AppOutputs.IndexOf(node.Id);
+            var r = geo.Bounds;
+            RoundRect(ctx, new Rect(r.X - 4, r.Y - 4, r.Width + 8, r.Height + 8), 10);
+            ctx.StrokeStyle = AppPick;
+            ctx.LineWidth = place >= 0 ? 3 : 1.5;
+            if (place < 0) ctx.SetLineDash([6, 4]);
+            ctx.Stroke();
+            ctx.SetLineDash([]);
+            if (place >= 0) Badge(ctx, r.Right - 2, r.Y - 2, place + 1);
+        }
+        if (visuals.ShowAppInputs && detailed && !geo.Collapsed)
+        {
+            foreach (var w in geo.Widgets)
+            {
+                int place = visuals.AppInputs.IndexOf((node.Id, w.Name));
+                var r = w.Bounds;
+                RoundRect(ctx, new Rect(r.X - 2, r.Y - 1, r.Width + 4, r.Height + 2), 6);
+                if (place >= 0)
+                {
+                    ctx.GlobalAlpha = 0.18;
+                    ctx.FillStyle = AppPick;
+                    ctx.Fill();
+                    ctx.GlobalAlpha = 1;
+                }
+                ctx.StrokeStyle = AppPick;
+                ctx.LineWidth = place >= 0 ? 2 : 1;
+                if (place < 0) ctx.SetLineDash([4, 3]);
+                ctx.Stroke();
+                ctx.SetLineDash([]);
+                if (place >= 0) Badge(ctx, r.Right + 2, r.Y + r.Height / 2, place + 1);
+            }
+        }
+    }
+
+    /// <summary>A small numbered disc.</summary>
+    void Badge(CanvasRenderingContext2D ctx, double x, double y, int number)
+    {
+        ctx.BeginPath();
+        ctx.Arc(x, y, 9, 0, Math.PI * 2);
+        ctx.FillStyle = AppPick;
+        ctx.Fill();
+        ctx.Font = Theme.Font;
+        ctx.FillStyle = "#ffffff";
+        ctx.TextAlign = "center";
+        ctx.TextBaseline = "middle";
+        ctx.FillText(number.ToString(System.Globalization.CultureInfo.InvariantCulture), x, y + 0.5);
+        ctx.TextAlign = "left";
     }
 
     /// <summary>The node's result text, one line per row in a dark box; what does not fit is cut off with an ellipsis.</summary>
@@ -698,6 +756,35 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
     }
 
     /// <summary>Starts a new path shaped as a rounded rectangle (canvas 2D has no portable RoundRect, so it is built from arcs).</summary>
+    /// <summary>
+    /// A node's outline by its shape, as ComfyUI draws them (measured from its canvas): round (the default) rounds every corner, box none, card only
+    /// the top two.
+    /// </summary>
+    static void NodeOutline(CanvasRenderingContext2D ctx, EditorNode node, Rect b)
+    {
+        const double r = 8;
+        switch (node.Shape)
+        {
+            case NodeShape.Box: RoundRect(ctx, b, 0, 0, 0, 0); break;
+            case NodeShape.Card: RoundRect(ctx, b, r, r, 0, 0); break;
+            default: RoundRect(ctx, b, r); break;
+        }
+    }
+
+    /// <summary>A rectangle path with its own radius per corner: top-left, top-right, bottom-right, bottom-left.</summary>
+    static void RoundRect(CanvasRenderingContext2D ctx, Rect r, double topLeft, double topRight, double bottomRight, double bottomLeft)
+    {
+        double max = Math.Min(r.Width, r.Height) / 2;
+        double tl = Math.Min(topLeft, max), tr = Math.Min(topRight, max), br = Math.Min(bottomRight, max), bl = Math.Min(bottomLeft, max);
+        ctx.BeginPath();
+        ctx.MoveTo(r.X + tl, r.Y);
+        if (tr > 0) ctx.ArcTo(r.Right, r.Y, r.Right, r.Bottom, tr); else ctx.LineTo(r.Right, r.Y);
+        if (br > 0) ctx.ArcTo(r.Right, r.Bottom, r.X, r.Bottom, br); else ctx.LineTo(r.Right, r.Bottom);
+        if (bl > 0) ctx.ArcTo(r.X, r.Bottom, r.X, r.Y, bl); else ctx.LineTo(r.X, r.Bottom);
+        if (tl > 0) ctx.ArcTo(r.X, r.Y, r.Right, r.Y, tl); else ctx.LineTo(r.X, r.Y);
+        ctx.ClosePath();
+    }
+
     static void RoundRect(CanvasRenderingContext2D ctx, Rect r, double radius)
     {
         double rad = Math.Min(radius, Math.Min(r.Width, r.Height) / 2);

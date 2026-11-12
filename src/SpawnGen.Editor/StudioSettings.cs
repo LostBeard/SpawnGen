@@ -19,6 +19,8 @@ public sealed class StudioSettings
     /// <summary>How samplers preview while they work, sent with each prompt (ComfyUI's preview method): auto / latent2rgb (a quick colour guess), taesd (the
     /// tiny VAE from vae_approx, close to the final picture), none.</summary>
     public string PreviewMethod { get; set; } = "auto";
+    /// <summary>The user's keyboard shortcut changes, as <see cref="KeyBindings.ToJson"/> writes them (only what differs from the defaults).</summary>
+    public System.Text.Json.Nodes.JsonObject Shortcuts { get; set; } = [];
 
     /// <summary>The preview methods, as ComfyUI names them.</summary>
     public static readonly string[] PreviewMethods = ["auto", "latent2rgb", "taesd", "none"];
@@ -41,6 +43,8 @@ public sealed class StudioSettings
             if (root.TryGetProperty(nameof(ShowNodeIds), out var sn) && sn.ValueKind is JsonValueKind.True or JsonValueKind.False) s.ShowNodeIds = sn.GetBoolean();
             if (root.TryGetProperty(nameof(Palette), out var pa) && pa.ValueKind == JsonValueKind.String && pa.GetString() is { Length: > 0 and <= 40 } pid) s.Palette = pid;
             if (root.TryGetProperty(nameof(ShowMinimap), out var sm) && sm.ValueKind is JsonValueKind.True or JsonValueKind.False) s.ShowMinimap = sm.GetBoolean();
+            if (root.TryGetProperty(nameof(Shortcuts), out var sc) && sc.ValueKind == JsonValueKind.Object)
+                s.Shortcuts = KeyBindings.FromJson(System.Text.Json.Nodes.JsonNode.Parse(sc.GetRawText())).ToJson();
             if (root.TryGetProperty(nameof(PreviewMethod), out var pm) && pm.ValueKind == JsonValueKind.String && PreviewMethods.Contains(pm.GetString())) s.PreviewMethod = pm.GetString()!;
         }
         catch (JsonException) { }

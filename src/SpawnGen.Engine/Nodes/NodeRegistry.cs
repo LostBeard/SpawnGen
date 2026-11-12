@@ -1,5 +1,6 @@
 ﻿using System.Reflection;
 using System.Runtime.CompilerServices;
+using SpawnGen.Engine.Types;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace SpawnGen.Engine.Nodes;
@@ -53,6 +54,9 @@ public sealed class RegisteredNode
     internal Type Type { get; init; } = default!;
     internal MethodInfo Method { get; init; } = default!;
     internal ParamBinding[] Params { get; init; } = default!;
+    bool? _takesVideoLatents;
+    /// <summary>Whether the node's class is marked <see cref="VideoLatentsAttribute"/>.</summary>
+    bool TakesVideoLatents => _takesVideoLatents ??= Type.IsDefined(typeof(VideoLatentsAttribute), false);
     internal Type[] OutputTypes { get; init; } = default!;
     internal bool ReturnsTuple { get; init; } = default!;
     internal int UiIndex { get; init; } = default!;
@@ -101,7 +105,7 @@ public sealed class RegisteredNode
         }
     }
 
-    static object?[] BuildArgs(ParamBinding[] ps, IReadOnlyDictionary<string, object?> inputs, NodeContext context)
+    object?[] BuildArgs(ParamBinding[] ps, IReadOnlyDictionary<string, object?> inputs, NodeContext context)
     {
         var args = new object?[ps.Length];
         for (var i = 0; i < ps.Length; i++)
@@ -147,9 +151,15 @@ public sealed class RegisteredNode
                     }
                     else if (inputs.TryGetValue(p.InputName!, out var raw) && raw is not null)
                     {
+                        // ComfyUI's lists can hold numbers ("auto", 8, 10): such a choice reaches a text parameter as its text.
+                        if (raw is long or int && p.Info.ParameterType == typeof(string)
+                            && Schema.Inputs.FirstOrDefault(s => s.Name == p.InputName)?.Widget?.Kind == WidgetKind.Combo)
+                            raw = Convert.ToString(raw, System.Globalization.CultureInfo.InvariantCulture)!;
                         if (!ValueCoercion.TryCoerce(raw, p.Info.ParameterType, out var typed))
                             throw new InvalidCastException(
                                 $"Input '{p.InputName}' expects {p.Info.ParameterType.Name} but got {raw.GetType().Name}.");
+                        if (typed is LatentBatch { IsVideo: true } && p.Info.ParameterType == typeof(LatentBatch) && !TakesVideoLatents)
+                            throw new NotSupportedException($"{Schema.DisplayName} does not take video latents (input '{p.InputName}') in SpawnGen yet.");
                         args[i] = typed;
                     }
                     else

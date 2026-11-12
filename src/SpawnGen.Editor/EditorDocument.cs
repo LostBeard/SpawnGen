@@ -201,6 +201,29 @@ public sealed class EditorDocument(NodeRegistry registry)
         if (Graph.FindLink(linkId) is { } link) Run(new DisconnectCommand(link));
     }
 
+    /// <summary>Takes out every link leaving an output (one undo step); returns how many there were.</summary>
+    public int DisconnectOutput(int nodeId, int output)
+    {
+        var links = Graph.LinksFrom(nodeId, output).ToList();
+        Group(() => { foreach (var l in links) Disconnect(l.Id); });
+        return links.Count;
+    }
+
+    /// <summary>Puts a Reroute node into a link, centred on (<paramref name="x"/>, <paramref name="y"/>): source to reroute to target, one undo step.</summary>
+    public EditorNode? InsertReroute(int linkId, double x, double y)
+    {
+        if (Graph.FindLink(linkId) is not { } link) return null;
+        EditorNode? reroute = null;
+        Group(() =>
+        {
+            reroute = AddNode("Reroute", x - NodeLayout.RerouteWidth / 2, y - NodeLayout.RerouteHeight / 2);
+            Disconnect(link.Id);
+            Connect(link.FromNode, link.FromOutput, reroute.Id, "value", out _);
+            Connect(reroute.Id, 0, link.ToNode, link.ToInput, out _);
+        });
+        return reroute;
+    }
+
     public void SetWidget(int nodeId, string name, object? value)
     {
         var node = Graph.GetNode(nodeId);
@@ -255,6 +278,12 @@ public sealed class EditorDocument(NodeRegistry registry)
         var node = Graph.GetNode(nodeId);
         if (node.Color == color && node.BgColor == bgColor) return;
         Run(new SetNodePropertyCommand<(string?, string?)>(nodeId, "color", (node.Color, node.BgColor), (color, bgColor), (n, v) => (n.Color, n.BgColor) = v));
+    }
+
+    public void SetShape(int nodeId, NodeShape? shape)
+    {
+        var node = Graph.GetNode(nodeId);
+        if (node.Shape != shape) Run(new SetNodePropertyCommand<NodeShape?>(nodeId, "shape", node.Shape, shape, (n, v) => n.Shape = v));
     }
 
     public void SetMode(int nodeId, NodeMode mode)

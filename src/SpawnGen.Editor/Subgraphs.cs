@@ -98,7 +98,7 @@ public static class SubgraphExpander
         var current = graph;
         for (int depth = 0; depth < MaxDepth; depth++)
         {
-            var instances = current.Nodes.Where(n => n.Mode == NodeMode.Always && SubgraphLibrary.Get(n.ClassType) is not null).ToList();
+            var instances = current.Nodes.Where(n => n.Mode.Runs() && SubgraphLibrary.Get(n.ClassType) is not null).ToList();
             if (instances.Count == 0) return current;
             current = ExpandOnce(current, instances);
         }

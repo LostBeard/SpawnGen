@@ -10,15 +10,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="SpawnDev.ILGPU.ML" Version="5.8.14" Condition="'$(IlgpuMlProject)' == ''" />
+    <PackageReference Include="SpawnDev.ILGPU.ML" Version="5.8.15" Condition="'$(IlgpuMlProject)' == ''" />
     <!-- Test an unreleased library build: dotnet build -p:IlgpuMlProject=<path to SpawnDev.ILGPU.ML.csproj> -->
     <ProjectReference Include="$(IlgpuMlProject)" Condition="'$(IlgpuMlProject)' != ''" />
     <!-- 5.4.1 corrupts streamed weight uploads on some AMD OpenCL drivers (Polaris): SD-Turbo output turns to noise. 5.4.2 fixes it. -->
-    <PackageReference Include="SpawnDev.ILGPU" Version="5.4.27" />
-    <PackageReference Include="SpawnDev.Codecs" Version="1.0.2-local.13" Condition="'$(CodecsProject)' == ''" />
-    <!-- Test an unreleased Codecs build: dotnet build -p:CodecsProject=<path to SpawnDev.Codecs.csproj> -->
-    <ProjectReference Include="$(CodecsProject)" Condition="'$(CodecsProject)' != ''" />
-
+    <PackageReference Include="SpawnDev.ILGPU" Version="5.4.28" />
+    <PackageReference Include="SpawnDev.Codecs" Version="1.0.2-local.15" Condition="'$(CodecsProject)' == ''" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SpawnGen.Glsl\SpawnGen.Glsl.csproj" />

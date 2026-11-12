@@ -1,0 +1,103 @@
+@using System.Globalization
+@using SpawnGen.Engine.Nodes
+
+@* One parameter as a form field: checkbox, combo, colour, multiline text, number (clamped to its range), JSON or text. Used by the Properties panel
+   and App Mode's input panel. *@
+<label class="@(Spec.Multiline ? "multi" : Spec.Kind == WidgetKind.Boolean ? "row" : "")" title="@Tooltip">
+    @if (Spec.Kind == WidgetKind.Boolean)
+    {
+        <input type="checkbox" checked="@(Value is true)" disabled="@Linked" @onchange="e => OnSet(e.Value is true)" />
+        @Label
+    }
+    else
+    {
+        <span>@Label@(Linked ? " (linked)" : "")</span>
+        @if (Linked)
+        {
+            <span class="dim">set by its link</span>
+        }
+        else if (Spec.Kind == WidgetKind.Combo)
+        {
+            var options = Spec.ResolveOptions();
+            <select @onchange="e => OnSet(Str(e.Value))">
+                @if (!options.Contains(Text))
+                {
+                    <option value="@Text" selected>@Text</option>
+                }
+                @foreach (var o in options)
+                {
+                    <option value="@o" selected="@(o == Text)">@o</option>
+                }
+            </select>
+        }
+        else if (Spec.Kind == WidgetKind.Color)
+        {
+            <input type="color" value="@Text" @onchange="e => OnSet(Str(e.Value))" />
+        }
+        else if (Spec.Multiline)
+        {
+            <textarea rows="@Rows" value="@Text" @onchange="e => OnSet(Str(e.Value))"></textarea>
+        }
+        else if (Spec.Kind is WidgetKind.Int or WidgetKind.Float)
+        {
+            <input type="number" value="@Text" step="@(Spec.Step?.ToString(CultureInfo.InvariantCulture) ?? (Spec.Kind == WidgetKind.Float ? "any" : "1"))"
+                   min="@Spec.Min?.ToString(CultureInfo.InvariantCulture)" max="@Spec.Max?.ToString(CultureInfo.InvariantCulture)"
+                   @onchange="e => SetNumber(e.Value?.ToString())" />
+        }
+        else if (Spec.Kind == WidgetKind.Json)
+        {
+            <input type="text" value="@Text" @onchange="e => SetJson(e.Value?.ToString())" />
+        }
+        else
+        {
+            <input type="text" value="@Text" @onchange="e => OnSet(Str(e.Value))" />
+        }
+    }
+</label>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public WidgetSpec Spec { get; set; } = default!;
+    [Parameter] public object? Value { get; set; }
+    [Parameter] public bool Linked { get; set; }
+    [Parameter] public string? Tooltip { get; set; }
+    [Parameter] public int Rows { get; set; } = 4;
+    /// <summary>Applies a new value (already parsed and clamped).</summary>
+    [Parameter, EditorRequired] public Action<object?> OnSet { get; set; } = default!;
+    /// <summary>Reports what could not be applied (a number that is not one).</summary>
+    [Parameter] public Action<string>? Message { get; set; }
+
+    static string Str(object? v) => v?.ToString() ?? "";
+
+    string Text
+    {
+        get
+        {
+            var value = Value ?? Spec.Default;
+            return Spec.Kind == WidgetKind.Json ? SpawnGen.Engine.Types.JsonLiteral.ToJson(value) : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
+        }
+    }
+
+    /// <summary>An object-valued widget (a bounding box, ...) edited as its JSON text.</summary>
+    void SetJson(string? text)
+    {
+        if (!SpawnGen.Engine.Types.JsonLiteral.TryParse(text ?? "", out var value) || value is null)
+        {
+            Message?.Invoke($"'{text}' is not valid JSON.");
+            return;
+        }
+        OnSet(value);
+    }
+
+    void SetNumber(string? text)
+    {
+        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || double.IsNaN(v) || double.IsInfinity(v))
+        {
+            Message?.Invoke($"'{text}' is not a valid number.");
+            return;
+        }
+        if (Spec.Min is { } min) v = Math.Max(v, min);
+        if (Spec.Max is { } max) v = Math.Min(v, max);
+        OnSet(Spec.Kind == WidgetKind.Int ? (object)(long)Math.Round(v) : v);
+    }
+}

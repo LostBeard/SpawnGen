@@ -36,6 +36,11 @@
                     @ColourOptions(nodes)
                 </select>
             </label>
+            <label>Shape
+                <select @onchange="e => ForAll(nodes, n => Doc.SetShape(n.Id, ParseShape(e.Value?.ToString())))">
+                    @ShapeOptions(nodes)
+                </select>
+            </label>
             <label class="row"><input type="checkbox" checked="@nodes.All(n => n.Pinned)" @onchange="e => ForAll(nodes, n => Doc.SetPinned(n.Id, e.Value is true))" /> Pinned</label>
         }
         else
@@ -69,6 +74,11 @@
                 <label>Colour
                     <select @onchange="e => Commit(() => SetColour(node.Id, e.Value?.ToString()))">
                         @ColourOptions([node])
+                    </select>
+                </label>
+                <label>Shape
+                    <select @onchange="e => Commit(() => Doc.SetShape(node.Id, ParseShape(e.Value?.ToString())))">
+                        @ShapeOptions([node])
                     </select>
                 </label>
                 <label class="row"><input type="checkbox" checked="@node.Pinned" @onchange="e => Commit(() => Doc.SetPinned(node.Id, e.Value is true))" /> Pinned</label>
@@ -163,7 +173,8 @@
     /// <summary>Reports what could not be applied (a number that is not one).</summary>
     [Parameter] public Action<string>? Message { get; set; }
 
-    static readonly (NodeMode Mode, string Label)[] Modes = [(NodeMode.Always, "Always"), (NodeMode.Never, "Never (muted)"), (NodeMode.Bypass, "Bypass")];
+    static readonly (NodeMode Mode, string Label)[] Modes =
+        [(NodeMode.Always, "Always"), (NodeMode.OnEvent, "On Event"), (NodeMode.Never, "Never (muted)"), (NodeMode.OnTrigger, "On Trigger"), (NodeMode.Bypass, "Bypass")];
 
     static bool Blank(string? s) => string.IsNullOrWhiteSpace(s);
 
@@ -208,87 +219,30 @@
         }
     };
 
-    RenderFragment Widget(EditorNode node, string name, WidgetSpec spec, bool linked, string? tooltip) => __builder =>
+    /// <summary>A shape picked in the panel: default (null), box, round or card.</summary>
+    static NodeShape? ParseShape(string? value) => Enum.TryParse<NodeShape>(value, ignoreCase: true, out var shape) ? shape : null;
+
+    RenderFragment ShapeOptions(IReadOnlyList<EditorNode> nodes) => __builder =>
     {
-        var value = node.Widgets.GetValueOrDefault(name) ?? spec.Default;
-        var text = spec.Kind == WidgetKind.Json ? SpawnGen.Engine.Types.JsonLiteral.ToJson(value) : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
-        <label class="@(spec.Multiline ? "multi" : spec.Kind == WidgetKind.Boolean ? "row" : "")" title="@tooltip">
-            @if (spec.Kind == WidgetKind.Boolean)
-            {
-                <input type="checkbox" checked="@(value is true)" disabled="@linked" @onchange="e => Commit(() => Doc.SetWidget(node.Id, name, e.Value is true))" />
-                @name
-            }
-            else
-            {
-                <span>@name@(linked ? " (linked)" : "")</span>
-                @if (linked)
-                {
-                    <span class="dim">set by its link</span>
-                }
-                else if (spec.Kind == WidgetKind.Combo)
-                {
-                    var options = spec.ResolveOptions();
-                    <select @onchange="e => SetText(node.Id, name, e.Value)">
-                        @if (!options.Contains(text))
-                        {
-                            <option value="@text" selected>@text</option>
-                        }
-                        @foreach (var o in options)
-                        {
-                            <option value="@o" selected="@(o == text)">@o</option>
-                        }
-                    </select>
-                }
-                else if (spec.Kind == WidgetKind.Color)
-                {
-                    <input type="color" value="@text" @onchange="e => SetText(node.Id, name, e.Value)" />
-                }
-                else if (spec.Multiline)
-                {
-                    <textarea rows="4" value="@text" @onchange="e => SetText(node.Id, name, e.Value)"></textarea>
-                }
-                else if (spec.Kind is WidgetKind.Int or WidgetKind.Float)
-                {
-                    <input type="number" value="@text" step="@(spec.Step?.ToString(CultureInfo.InvariantCulture) ?? (spec.Kind == WidgetKind.Float ? "any" : "1"))"
-                           min="@spec.Min?.ToString(CultureInfo.InvariantCulture)" max="@spec.Max?.ToString(CultureInfo.InvariantCulture)"
-                           @onchange="e => SetNumber(node.Id, name, spec, e.Value?.ToString())" />
-                }
-                else if (spec.Kind == WidgetKind.Json)
-                {
-                    <input type="text" value="@text" @onchange="e => SetJson(node.Id, name, e.Value?.ToString())" />
-                }
-                else
-                {
-                    <input type="text" value="@text" @onchange="e => SetText(node.Id, name, e.Value)" />
-                }
-            }
-        </label>
+        var current = nodes.Select(n => n.Shape).Distinct().ToList();
+        if (current.Count > 1)
+        {
+            <option value="" selected>(mixed)</option>
+        }
+        var one = current.Count == 1 ? current[0] : (NodeShape?)(-1);
+        <option value="default" selected="@(current.Count == 1 && one is null)">default</option>
+        foreach (var shape in new[] { NodeShape.Box, NodeShape.Round, NodeShape.Card })
+        {
+            <option value="@shape.ToString().ToLowerInvariant()" selected="@(current.Count == 1 && one == shape)">@shape.ToString().ToLowerInvariant()</option>
+        }
     };
 
-    void SetText(int nodeId, string name, object? value) => Commit(() => Doc.SetWidget(nodeId, name, value?.ToString() ?? ""));
-
-    /// <summary>An object-valued widget (a bounding box, ...) edited as its JSON text.</summary>
-    void SetJson(int nodeId, string name, string? text)
+    RenderFragment Widget(EditorNode node, string name, WidgetSpec spec, bool linked, string? tooltip) => __builder =>
     {
-        if (!SpawnGen.Engine.Types.JsonLiteral.TryParse(text ?? "", out var value) || value is null)
-        {
-            Message?.Invoke($"'{text}' is not valid JSON.");
-            return;
-        }
-        Commit(() => Doc.SetWidget(nodeId, name, value));
-    }
-
-    void SetNumber(int nodeId, string name, WidgetSpec spec, string? text)
-    {
-        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || double.IsNaN(v) || double.IsInfinity(v))
-        {
-            Message?.Invoke($"'{text}' is not a valid number.");
-            return;
-        }
-        if (spec.Min is { } min) v = Math.Max(v, min);
-        if (spec.Max is { } max) v = Math.Min(v, max);
-        Commit(() => Doc.SetWidget(nodeId, name, spec.Kind == WidgetKind.Int ? (object)(long)Math.Round(v) : v));
-    }
+        var nodeId = node.Id;
+        <WidgetField Label="@name" Spec="spec" Value="@node.Widgets.GetValueOrDefault(name)" Linked="linked" Tooltip="@tooltip" Message="Message"
+                     OnSet="v => Commit(() => Doc.SetWidget(nodeId, name, v))" />
+    };
 
     string Label(EditorNode n) => $"{n.Title ?? Doc.Registry.GetSchema(n.ClassType)?.DisplayName ?? n.ClassType} #{n.Id}";
 

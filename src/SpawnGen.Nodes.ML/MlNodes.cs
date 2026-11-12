@@ -142,12 +142,15 @@ static class VaePictures
     }
 }
 
+[VideoLatents]
 [Node("VAEDecode", Category = "model/latent", DisplayName = "VAE Decode")]
 public sealed class VAEDecode
 {
-    /// <summary>Each latent decoded to a picture 8 times its size, (v + 1) / 2 clamped to 0..1.</summary>
+    /// <summary>Each latent decoded to a picture 8 times its size, (v + 1) / 2 clamped to 0..1; a video latent to its frames (every item's in turn).</summary>
     public async Task<ImageBatch> ExecuteAsync(LatentBatch samples, VaeHandle vae, NodeContext context, IServiceProvider services)
     {
+        if (samples.IsVideo) return await VideoVae.DecodeAsync(vae.Vae, samples, context.CancellationToken);
+        if (vae.Vae is IVideoVaeModel) throw new NotSupportedException($"{vae.Vae.Name} is a video VAE; it decodes video latents.");
         int h = samples.Height, w = samples.Width;
         var image = new ImageBatch(samples.Batch, h * 8, w * 8, 3);
         for (int b = 0; b < samples.Batch; b++)
@@ -159,8 +162,10 @@ public sealed class VAEDecode
 [Node("VAEEncode", Category = "model/latent", DisplayName = "VAE Encode")]
 public sealed class VAEEncode
 {
+    /// <summary>The pictures as latents; with a video VAE (Wan 2.2's) the batch is one video, cut to multiples of 16.</summary>
     public async Task<LatentBatch> ExecuteAsync(ImageBatch pixels, VaeHandle vae, NodeContext context, IServiceProvider services) =>
-        await VaePictures.EncodeAsync(vae.Vae, pixels, context.CancellationToken);
+        vae.Vae is IVideoVaeModel video ? await VideoVae.EncodeAsync(video, pixels, context.CancellationToken)
+            : await VaePictures.EncodeAsync(vae.Vae, pixels, context.CancellationToken);
 
     /// <summary>The picture cut down to whole multiples of 8, the cut shared between both sides (the extra pixel at the far side), as measured.</summary>
     public static ImageBatch CropForVae(ImageBatch pixels) => Inpaint.Crop(pixels, (pixels.Height / 8) * 8, (pixels.Width / 8) * 8);

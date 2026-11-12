@@ -131,7 +131,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     // ---- IEngineClient ----
 
-    public Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null)
+    public Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null)
     {
         PromptGraph graph;
         try { graph = PromptJson.Parse(promptJson); }
@@ -141,16 +141,23 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         }
         try
         {
-            var item = _queue.Enqueue(graph, "browser", workflowJson is null ? null : new Dictionary<string, string> { ["workflow"] = workflowJson }, front, previewMethod);
-            return Task.FromResult(new QueueResult(true, item.Id, null, new Dictionary<int, string>()));
+            var item = _queue.Enqueue(graph, "browser", workflowJson is null ? null : new Dictionary<string, string> { ["workflow"] = workflowJson }, front, previewMethod, targets);
+            // Output nodes left out (what they need does not validate) are reported while the rest runs, as on the server.
+            return Task.FromResult(new QueueResult(true, item.Id, null, PerNode(item.Skipped.SelectMany(f => f.Result.Errors))));
         }
         catch (PromptValidationException ex)
         {
-            var perNode = new Dictionary<int, string>();
-            foreach (var group in ex.Result.Errors.Where(e => int.TryParse(e.NodeId, out _)).GroupBy(e => int.Parse(e.NodeId!)))
-                perNode[group.Key] = string.Join("; ", group.Select(e => e.Message));
-            return Task.FromResult(new QueueResult(false, null, "Prompt outputs failed validation", perNode));
+            var message = ex.Result.Errors is [{ Code: PromptAdmission.NoOutputsCode }] ? "Prompt has no outputs" : "Prompt outputs failed validation";
+            return Task.FromResult(new QueueResult(false, null, message, PerNode(ex.Result.Errors)));
         }
+    }
+
+    static Dictionary<int, string> PerNode(IEnumerable<ValidationError> errors)
+    {
+        var perNode = new Dictionary<int, string>();
+        foreach (var group in errors.Distinct().Where(e => int.TryParse(e.NodeId, out _)).GroupBy(e => int.Parse(e.NodeId!)))
+            perNode[group.Key] = string.Join("; ", group.Select(e => e.Message));
+        return perNode;
     }
 
     public Task InterruptAsync()

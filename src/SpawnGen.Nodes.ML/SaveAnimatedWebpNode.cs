@@ -31,10 +31,23 @@ public sealed class SaveAnimatedWEBP
             throw new NotSupportedException($"Lossy WebP is encoded with libwebp's method 4 (\"default\") on the GPU; method \"{method}\" is not available yet.");
         if (images.Channels is not (3 or 4)) throw new ArgumentException($"WebP needs 3 or 4 channels, got {images.Channels}.", nameof(images));
         var accelerator = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
-        int w = images.Width, h = images.Height, duration = (int)(1000.0 / fps);
-        var frames = Enumerable.Range(0, images.Batch).Select(i => (ReadOnlyMemory<byte>)Rgba(images, i)).ToList();
-        var exif = ExifWriter.ComfyMetadata(Results.Metadata(context));
+        var file = await EncodeAsync(images, fps, quality, accelerator, lossless, m, ExifWriter.ComfyMetadata(Results.Metadata(context)));
+        int w = images.Width, h = images.Height;
+        var prefix = SavePrefix.ComputeVars(filenamePrefix, w, h, DateTime.Now);
+        var saved = await Results.For(services).SaveAsync("output", prefix, file, "webp");
+        var ui = new UiOutput("images", new object[] { saved });
+        if (images.Batch > 1) ui["animated"] = new object[] { true };
+        return (images, ui);
+    }
 
+    /// <summary>The batch as a WebP file (animated for more than one picture), each frame int(1000 / fps) ms; <paramref name="method"/> is libwebp's 0-6.</summary>
+    public static async Task<byte[]> EncodeAsync(ImageBatch images, double fps, int quality, ILGPU.Runtime.Accelerator accelerator,
+        bool lossless = true, int method = 4, byte[]? exif = null)
+    {
+        if (fps <= 0) throw new ArgumentOutOfRangeException(nameof(fps), "The frame rate must be above 0.");
+        exif ??= ExifWriter.ComfyMetadata(new Dictionary<string, string>());
+        int w = images.Width, h = images.Height, duration = (int)(1000.0 / fps), m = method;
+        var frames = Enumerable.Range(0, images.Batch).Select(i => (ReadOnlyMemory<byte>)Rgba(images, i)).ToList();
         byte[] file;
         if (lossless)
         {
@@ -54,12 +67,7 @@ public sealed class SaveAnimatedWEBP
                 : await enc.EncodeAnimationAsync(frames, w, h, [.. Enumerable.Repeat(duration, frames.Count)],
                     new WebPLossyEncodeOptions { Quality = quality, Method = m }, new WebPAnimEncoderOptions { Exif = exif });
         }
-
-        var prefix = SavePrefix.ComputeVars(filenamePrefix, w, h, DateTime.Now);
-        var saved = await Results.For(services).SaveAsync("output", prefix, file, "webp");
-        var ui = new UiOutput("images", new object[] { saved });
-        if (images.Batch > 1) ui["animated"] = new object[] { true };
-        return (images, ui);
+        return file;
     }
 
     /// <summary>One picture as RGBA8 the way ComfyUI hands it to Pillow: <c>np.clip(255 * x, 0, 255).astype(uint8)</c> (truncated), opaque without alpha.</summary>

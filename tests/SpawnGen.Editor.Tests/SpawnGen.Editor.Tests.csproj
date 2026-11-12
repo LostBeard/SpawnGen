@@ -15,6 +15,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\SpawnGen.Editor\SpawnGen.Editor.csproj" />
     <ProjectReference Include="..\..\src\SpawnGen.Nodes.Core\SpawnGen.Nodes.Core.csproj" />
     <ProjectReference Include="..\..\src\SpawnGen.Nodes.ML\SpawnGen.Nodes.ML.csproj" />

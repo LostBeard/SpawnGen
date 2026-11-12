@@ -26,10 +26,12 @@ public sealed class ValidationResult
     public bool IsValid => Errors.Count == 0;
 }
 
-public sealed class PromptValidationException(ValidationResult result)
+public sealed class PromptValidationException(ValidationResult result, IReadOnlyList<OutputFailure>? failures = null)
     : Exception("Prompt is invalid: " + string.Join("; ", result.Errors.Select(e => e.Message)))
 {
     public ValidationResult Result { get; } = result;
+    /// <summary>Each output node that failed with its own errors (which outputs an error stops), when the prompt was checked output by output.</summary>
+    public IReadOnlyList<OutputFailure> Failures { get; } = failures ?? [];
 }
 
 public sealed class NodeExecutionException(string nodeId, string classType, Exception inner)

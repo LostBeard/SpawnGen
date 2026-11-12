@@ -9,6 +9,8 @@ namespace SpawnGen.Nodes.ML;
 // torch.randn of the latent from a CPU generator seeded with the seed (Fixtures/sampling/comfyui_sd15); a conditioning's entries are evaluated where
 // they are active (timestep ranges inclusive, SamplingSetupTests) and combined as a weighted average over their areas and masks; inpainting
 // re-noises the kept area to the step's sigma on the way into the model and pins it on the way out (SamplerParityTests' inpaint cases).
+// A video latent [C, F, h, w] is laid out like a picture latent [C, F x h, w], so the run treats it as one (areas and masks over the stacked
+// frames: a video noise mask is a MaskBatch of F x h rows); only the model call is told the frames (UNetRun.Frames).
 
 /// <summary>A sampling run's settings: seed, sampler, whether the start is noised, the sampler's options.</summary>
 internal sealed record SamplingSettings(long Seed, string Sampler, bool AddNoise = true, SamplerOptions? Options = null);
@@ -25,7 +27,7 @@ internal static class SamplingCore
     /// </summary>
     internal static float[] InitialNoise(long seed, int index, LatentBatch latent)
     {
-        int per = latent.Channels * latent.Height * latent.Width;
+        int per = latent.ItemSize;
         if (latent.BatchIndex is null) return TorchRandom.Randn(seed, per * latent.Batch).AsSpan(index * per, per).ToArray();
         int want = NoiseIndex(latent, index);
         var g = new TorchRandom(seed);
@@ -46,20 +48,22 @@ internal static class SamplingCore
         var diffusion = model.Model ?? throw new InvalidOperationException("The guider has no diffusion model to run.");
         var sampling = model.Sampling;
         var format = model.LatentFormat;
-        int batch = latent.Batch, ch = latent.Channels, h = latent.Height, w = latent.Width, plane = h * w, per = ch * plane;
+        int batch = latent.Batch, ch = latent.Channels, h = StackedHeight(latent), w = latent.Width, plane = h * w, per = ch * plane;
         var runSigmas = sigmas.Select(v => (double)v).ToArray();
         var output = new float[latent.Data.Length];
         var denoisedOut = new float[latent.Data.Length];
-        var previewer = context.WantsPreview ? await LatentPreviewer.CreateAsync(context.PreviewMethod, format, context.Services) : null;
+        var previewer = context.WantsPreview && !latent.IsVideo && format.RgbFactors.Length > 0 ? await LatentPreviewer.CreateAsync(context.PreviewMethod, format, context.Services) : null;
         var ct = context.CancellationToken;
         int steps = sigmas.Length - 1, done = 0, total = steps * batch;
         using var unet = diffusion.BeginRun(acc);
+        unet.Frames = latent.Frames;
         for (int b = 0; b < batch; b++)
         {
             var original = format.ProcessIn(latent.Data.AsSpan(b * per, per).ToArray());
             var noise = settings.AddNoise ? InitialNoise(settings.Seed, b, latent) : new float[per];
             var x0 = sampling.NoiseScaling(sigmas[0], noise, original, sampling.IsMaxDenoise(sigmas[0]));
             var mask = ResizedMask(latent.NoiseMask, b, h, w);
+            unet.FirstFrameClean = latent.IsVideo && FirstFrameOnlyKept(mask, latent.Frames, plane / latent.Frames);
             var run = new GuidanceRun(guider, ch, h, w, Samplers.DisablesCfg1Optimization(settings.Sampler)) { BatchIndex = b, BatchSize = batch };
             int item = b;
             Samplers.DenoiseFn denoise = (x, sigma) => InpaintedCall(x, sigma, mask, model.Patches?.DenoiseMask, runSigmas, sampling, original, noise, plane,
@@ -80,8 +84,25 @@ internal static class SamplingCore
             format.ProcessOut(x).CopyTo(output, b * per);
             format.ProcessOut(last ?? x).CopyTo(denoisedOut, b * per);
         }
-        return (new LatentBatch(batch, ch, h, w, output) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex },
-                new LatentBatch(batch, ch, h, w, denoisedOut) { NoiseMask = latent.NoiseMask, BatchIndex = latent.BatchIndex });
+        return (LatentBatch.Shaped(latent, batch, output).With(latent), LatentBatch.Shaped(latent, batch, denoisedOut).With(latent));
+    }
+
+    /// <summary>The latent's rows as the run sees them: a video latent's frames stacked (F x h), a picture latent's height.</summary>
+    internal static int StackedHeight(LatentBatch latent) => latent.Frames * latent.Height;
+
+    /// <summary>
+    /// Whether an image-to-video mask keeps the first frame (0 there, 1 everywhere else, as Wan22ImageToVideoLatent makes it): the model then runs that
+    /// frame at timestep 0. No mask, or one that keeps nothing, is ordinary sampling; one that keeps everything (a one-frame video from a picture) too,
+    /// since every frame is pinned to the original anyway. Any other kept region is not something the video models take yet.
+    /// </summary>
+    internal static bool FirstFrameOnlyKept(float[]? mask, int frames, int framePlane)
+    {
+        if (mask is null || Array.TrueForAll(mask, v => v == 1f)) return false;
+        if (Array.TrueForAll(mask, v => v == 0f)) return true;
+        for (int i = 0; i < mask.Length; i++)
+            if (mask[i] != (i < framePlane ? 0f : 1f))
+                throw new NotSupportedException("This video latent's noise mask keeps something other than the first frame; SpawnGen's video models take a start picture only.");
+        return true;
     }
 
     /// <summary>
@@ -91,7 +112,7 @@ internal static class SamplingCore
     static async Task<float[]> EvaluateAsync(UNetRun unet, Conditioning cond, float[] x, double sigma, bool scheduled, UNetOptions options,
         ModelSampling sampling, LatentFormat format, LatentBatch latent, float[] original, int item, CancellationToken ct)
     {
-        int ch = latent.Channels, h = latent.Height, w = latent.Width, plane = h * w;
+        int ch = latent.Channels, h = StackedHeight(latent), w = latent.Width, plane = h * w;
         var sum = new double[x.Length];
         var count = new double[plane];
         float t = (float)sampling.Timestep(sigma);

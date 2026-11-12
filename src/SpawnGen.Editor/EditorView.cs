@@ -7,6 +7,9 @@ public enum PointerButton { None, Left, Middle, Right }
 [Flags]
 public enum Modifiers { None = 0, Shift = 1, Ctrl = 2, Alt = 4, Space = 8 }
 
+/// <summary>Which edge the selection's Align lines nodes up on.</summary>
+public enum AlignEdge { Top, Bottom, Left, Right }
+
 /// <summary>A link being dragged out of a slot. <see cref="Target"/> is where it would land if released now.</summary>
 public sealed class LinkDraft
 {
@@ -92,6 +95,13 @@ public sealed class EditorView
     public event Action<Hit, Point>? ContextMenuRequested;
     /// <summary>A short message for a toast (a refused link, a paste problem).</summary>
     public event Action<string>? Message;
+
+    /// <summary>What a click picks instead of editing (the App Builder's input and output steps).</summary>
+    public PickTarget Picking { get; set; }
+    /// <summary>A widget was clicked while <see cref="Picking"/> is <see cref="PickTarget.Widgets"/>.</summary>
+    public event Action<int, string>? WidgetPicked;
+    /// <summary>A node was clicked while <see cref="Picking"/> is <see cref="PickTarget.Nodes"/>.</summary>
+    public event Action<int>? NodePicked;
 
     // ---- selection ----
 
@@ -254,6 +264,21 @@ public sealed class EditorView
             return;
         }
         if (button != PointerButton.Left) return;
+        // The App Builder picks with a click: the widget or node is chosen, not edited, moved or selected (panning and the minimap still work).
+        if (Picking == PickTarget.Widgets && hit.Kind == HitKind.Widget && hit.Name is { } pickedWidget)
+        {
+            WidgetPicked?.Invoke(hit.NodeId, pickedWidget);
+            return;
+        }
+        if (Picking == PickTarget.Nodes && hit.Kind is HitKind.NodeBody or HitKind.TitleBar or HitKind.Widget)
+        {
+            NodePicked?.Invoke(hit.NodeId);
+            return;
+        }
+        if (Picking != PickTarget.None && hit.Kind is HitKind.NodeBody or HitKind.TitleBar or HitKind.Widget or HitKind.InputSlot or HitKind.OutputSlot
+            or HitKind.ResizeHandle or HitKind.CollapseButton)
+            return; // nothing else on a node reacts while picking
+
 
         _pressed = hit;
         switch (hit.Kind)
@@ -515,6 +540,61 @@ public sealed class EditorView
         ViewChanged?.Invoke();
     }
 
+    /// <summary>Alt+C: collapses the selected nodes, or expands them when they all are collapsed (pinned ones stay); one undo step.</summary>
+    public bool ToggleCollapseSelection()
+    {
+        var nodes = _selected.Select(Document.Graph.FindNode).OfType<EditorNode>().Where(n => !n.Pinned).ToList();
+        if (nodes.Count == 0) return false;
+        bool collapse = nodes.Any(n => !n.Collapsed);
+        Document.Group(() => { foreach (var n in nodes) Document.SetCollapsed(n.Id, collapse); });
+        Document.EndGesture();
+        ViewChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// The selection's Align (ComfyUI's, measured): Top / Left move every selected node to the topmost top / leftmost left; Bottom / Right line their
+    /// bottoms / right edges up with the lowest bottom / rightmost edge. Pinned nodes stay; one undo step. False with fewer than two nodes.
+    /// </summary>
+    public bool AlignSelection(AlignEdge edge)
+    {
+        var nodes = _selected.Select(Document.Graph.FindNode).OfType<EditorNode>().Where(n => !n.Pinned).ToList();
+        if (_selected.Count < 2 || nodes.Count == 0) return false;
+        var bounds = _selected.Select(Document.Graph.FindNode).OfType<EditorNode>().ToDictionary(n => n.Id, n => Hits.Geometry(n).Bounds);
+        double target = edge switch
+        {
+            AlignEdge.Top => bounds.Values.Min(b => b.Y),
+            AlignEdge.Bottom => bounds.Values.Max(b => b.Bottom),
+            AlignEdge.Left => bounds.Values.Min(b => b.X),
+            _ => bounds.Values.Max(b => b.Right),
+        };
+        Document.Group(() =>
+        {
+            foreach (var n in nodes)
+            {
+                var b = bounds[n.Id];
+                var (dx, dy) = edge switch
+                {
+                    AlignEdge.Top => (0.0, target - b.Y),
+                    AlignEdge.Bottom => (0.0, target - b.Bottom),
+                    AlignEdge.Left => (target - b.X, 0.0),
+                    _ => (target - b.Right, 0.0),
+                };
+                Document.MoveNodes([n.Id], dx, dy);
+            }
+        });
+        Document.EndGesture();
+        ViewChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>Zoom In / Zoom Out from the keyboard: about the middle of the canvas, a wheel notch's worth (1.1x).</summary>
+    public void ZoomStep(bool zoomIn)
+    {
+        Viewport.ZoomAt(new Point(ScreenSize.X / 2, ScreenSize.Y / 2), zoomIn ? 1.1 : 1 / 1.1);
+        ViewChanged?.Invoke();
+    }
+
     public void Wheel(Point screen, double deltaY, Modifiers mods = Modifiers.None)
     {
         Viewport.ZoomAt(screen, Math.Pow(1.001, -deltaY));
@@ -646,8 +726,9 @@ public sealed class EditorView
                 DeleteSelection();
                 return true;
             case "escape":
-                if (Draft is not null) { Draft = null; _mode = Mode.Idle; ViewChanged?.Invoke(); }
-                else ClearSelection();
+                if (Draft is not null) { Draft = null; _mode = Mode.Idle; ViewChanged?.Invoke(); return true; }
+                if (_selected.Count == 0 && SelectedLink is null && SelectedGroup is null) return false; // nothing to clear: the Studio's (leave a subgraph ...)
+                ClearSelection();
                 return true;
             case "z" when ctrl && !shift:
                 Document.Undo();
@@ -677,6 +758,8 @@ public sealed class EditorView
                 return true;
             case "p" when !ctrl && !shift:
                 return TogglePin();
+            case "c" when mods.HasFlag(Modifiers.Alt) && !ctrl:
+                return ToggleCollapseSelection();
             case "f" or "home" when !ctrl:
                 FitToView(selectionOnly: _selected.Count > 0);
                 return true;
@@ -839,6 +922,17 @@ public sealed class EditorView
         ViewChanged?.Invoke();
     }
 
+    /// <summary>Fits every node into the part of the canvas that panels leave free (insets in screen pixels).</summary>
+    public void FitToView(double left, double top, double right, double bottom)
+    {
+        var full = ScreenSize;
+        ScreenSize = new Point(Math.Max(full.X - left - right, 100), Math.Max(full.Y - top - bottom, 100));
+        try { FitToView(); }
+        finally { ScreenSize = full; }
+        Viewport.Set(Viewport.Scale, Viewport.OffsetX + left, Viewport.OffsetY + top);
+        ViewChanged?.Invoke();
+    }
+
     public void FitToView(bool selectionOnly = false)
     {
         var nodes = selectionOnly ? Document.Graph.Nodes.Where(n => _selected.Contains(n.Id)) : Document.Graph.Nodes;
@@ -874,6 +968,29 @@ public sealed class EditorView
     public void Paste(Point at, bool keepExternalInputs = false)
     {
         if (_clipboard is not { Nodes.Count: > 0 } clip) return;
+        PasteClip(clip, at, keepExternalInputs);
+    }
+
+    /// <summary>Clone (the node menu's): copies of the nodes with the links among them, a step down and right, selected; the clipboard is left alone.</summary>
+    public void Duplicate(IReadOnlyCollection<int> ids)
+    {
+        var set = ids.Where(id => Document.Graph.FindNode(id) is not null).ToHashSet();
+        if (set.Count == 0) return;
+        var nodes = set.Select(Document.Graph.GetNode).Select(n => n.Clone()).ToList();
+        var links = Document.Graph.Links.Where(l => set.Contains(l.FromNode) && set.Contains(l.ToNode)).ToList();
+        PasteClip(new Clipboard(nodes, links, []), new Point(nodes.Min(n => n.X) + 30, nodes.Min(n => n.Y) + 30), keepExternalInputs: false);
+    }
+
+    /// <summary>Puts copies of nodes from elsewhere (a node template) with the links among them, top-left at <paramref name="at"/>, selected; one undo step.</summary>
+    public void PasteNodes(IReadOnlyCollection<EditorNode> nodes, IEnumerable<EditorLink> links, Point at)
+    {
+        if (nodes.Count == 0) return;
+        var ids = nodes.Select(n => n.Id).ToHashSet();
+        PasteClip(new Clipboard([.. nodes.Select(n => n.Clone())], [.. links.Where(l => ids.Contains(l.FromNode) && ids.Contains(l.ToNode))], []), at, keepExternalInputs: false);
+    }
+
+    void PasteClip(Clipboard clip, Point at, bool keepExternalInputs)
+    {
         double minX = clip.Nodes.Min(n => n.X), minY = clip.Nodes.Min(n => n.Y);
         var map = new Dictionary<int, int>();
         var created = new List<int>();
@@ -888,6 +1005,8 @@ public sealed class EditorView
                 if (original.Mode != NodeMode.Always) Document.SetMode(added.Id, original.Mode);
                 if (original.Width is { } w) Document.SetWidth(added.Id, w);
                 if (original.Collapsed) Document.SetCollapsed(added.Id, true);
+                if (original.Color is not null || original.BgColor is not null) Document.SetNodeColor(added.Id, original.Color, original.BgColor);
+                if (original.Shape is { } shape) Document.SetShape(added.Id, shape);
                 map[original.Id] = added.Id;
                 created.Add(added.Id);
             }
@@ -911,3 +1030,6 @@ public sealed class EditorView
         ViewChanged?.Invoke();
     }
 }
+
+/// <summary>What a click on the canvas picks in the App Builder.</summary>
+public enum PickTarget { None, Widgets, Nodes }

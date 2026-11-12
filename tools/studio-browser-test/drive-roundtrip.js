@@ -74,7 +74,7 @@ function pngText(buf) {
   await page.screenshot({ path: path.join(OUT, 'roundtrip-after-drop.png') });
 
   // 4. The restored graph is the one that made the picture: same seed.
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
   await download.saveAs(path.join(OUT, 'restored.json'));
   const restored = JSON.parse(fs.readFileSync(path.join(OUT, 'restored.json'), 'utf8')).nodes.find(n => n.type === 'KSampler');
   check('the restored KSampler has the same seed', restored.widgets_values[0] === seed, `${restored.widgets_values[0]} vs ${seed}`);

@@ -36,19 +36,48 @@ public sealed class ImageBatch : HostTensor
     public int Channels => Shape[3];
 }
 
-/// <summary>A batch of latents, NCHW (same layout as ComfyUI's LATENT "samples").</summary>
+/// <summary>
+/// A batch of latents, NCHW, or NCFHW for a video model's latents (frames between channels and height), the same layouts as ComfyUI's LATENT "samples".
+/// Only nodes marked <see cref="VideoLatentsAttribute"/> are given a video latent; the others refuse it before they run.
+/// </summary>
 [Socket("LATENT")]
 public sealed class LatentBatch : HostTensor
 {
     public LatentBatch(int batch, int channels, int height, int width, float[]? data = null)
         : base([batch, channels, height, width], data) { }
 
+    /// <summary>A video latent [batch, channels, frames, height, width].</summary>
+    public LatentBatch(int batch, int channels, int frames, int height, int width, float[]? data = null)
+        : base([batch, channels, frames, height, width], data) { }
+
     public int Batch => Shape[0];
     public int Channels => Shape[1];
-    public int Height => Shape[2];
-    public int Width => Shape[3];
+    public int Height => Shape[^2];
+    public int Width => Shape[^1];
 
-    /// <summary>Optional inpainting mask at latent size (batch, h, w): 1 = this area is regenerated, 0 = it is kept. Set by Set Latent Noise Mask.</summary>
+    /// <summary>Whether this is a video latent (5-D, with a frames dimension).</summary>
+    public bool IsVideo => Shape.Length == 5;
+
+    /// <summary>The latent frames of a video latent; 1 for a picture latent.</summary>
+    public int Frames => IsVideo ? Shape[2] : 1;
+
+    /// <summary>One batch item's values: channels x frames x height x width.</summary>
+    public int ItemSize => Channels * Frames * Height * Width;
+
+    /// <summary>An empty latent shaped like <paramref name="template"/> (picture or video) with another batch size and these values.</summary>
+    public static LatentBatch Shaped(LatentBatch template, int batch, float[]? data = null) => template.IsVideo
+        ? new LatentBatch(batch, template.Channels, template.Frames, template.Height, template.Width, data)
+        : new LatentBatch(batch, template.Channels, template.Height, template.Width, data);
+
+    /// <summary>A copy of these values with <paramref name="source"/>'s noise mask and batch indexes.</summary>
+    public LatentBatch With(LatentBatch source) =>
+        IsVideo ? new LatentBatch(Batch, Channels, Frames, Height, Width, Data) { NoiseMask = source.NoiseMask, BatchIndex = source.BatchIndex }
+                : new LatentBatch(Batch, Channels, Height, Width, Data) { NoiseMask = source.NoiseMask, BatchIndex = source.BatchIndex };
+
+    /// <summary>
+    /// Optional inpainting mask at latent size (batch, h, w): 1 = this area is regenerated, 0 = it is kept. Set by Set Latent Noise Mask. A video
+    /// latent's has its frames stacked (batch, frames x h, w), as ComfyUI's [batch, 1, frames, h, w].
+    /// </summary>
     public MaskBatch? NoiseMask { get; init; }
 
     /// <summary>

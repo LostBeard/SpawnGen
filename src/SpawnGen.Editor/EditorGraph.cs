@@ -6,11 +6,25 @@ namespace SpawnGen.Editor;
 public enum NodeMode
 {
     Always = 0,
+    /// <summary>LiteGraph's event mode, kept from a workflow and offered in the Mode menu as ComfyUI does; a run treats it as Always (measured: ComfyUI's
+    /// frontend sends such a node like an Always one).</summary>
+    OnEvent = 1,
     /// <summary>Muted: the node and everything that depends only on it is skipped.</summary>
     Never = 2,
+    /// <summary>LiteGraph's trigger mode: kept and run as Always, like <see cref="OnEvent"/>.</summary>
+    OnTrigger = 3,
     /// <summary>Bypassed: the node is skipped and its inputs pass through to matching outputs.</summary>
     Bypass = 4,
 }
+
+public static class NodeModes
+{
+    /// <summary>Whether a node in this mode runs: every mode but Never (muted) and Bypass.</summary>
+    public static bool Runs(this NodeMode mode) => mode is not (NodeMode.Never or NodeMode.Bypass);
+}
+
+/// <summary>A node's outline, as ComfyUI saves it (<c>shape</c>: 1 box, 2 round, 4 card): box has square corners, card rounds only the top ones.</summary>
+public enum NodeShape { Box = 1, Round = 2, Card = 4 }
 
 public sealed class EditorNode
 {
@@ -27,6 +41,8 @@ public sealed class EditorNode
     public bool Collapsed { get; set; }
     /// <summary>A pinned node stays where it is: it cannot be dragged, resized, collapsed or deleted from the canvas (ComfyUI's <c>flags.pinned</c>).</summary>
     public bool Pinned { get; set; }
+    /// <summary>The outline the user picked (the node menu's Shape); null = the default, drawn round and not saved.</summary>
+    public NodeShape? Shape { get; set; }
     public NodeMode Mode { get; set; }
     /// <summary>Drawing and hit-test order, higher is on top. View state: not undoable, not part of the saved workflow's meaning.</summary>
     public int ZIndex { get; set; }
@@ -47,7 +63,7 @@ public sealed class EditorNode
 
     public EditorNode Clone(int? newId = null) => new()
     {
-        Id = newId ?? Id, ClassType = ClassType, Title = Title, Color = Color, BgColor = BgColor, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Pinned = Pinned, Mode = Mode,
+        Id = newId ?? Id, ClassType = ClassType, Title = Title, Color = Color, BgColor = BgColor, X = X, Y = Y, Width = Width, Collapsed = Collapsed, Pinned = Pinned, Shape = Shape, Mode = Mode,
         Widgets = new Dictionary<string, object?>(Widgets, StringComparer.Ordinal),
         Properties = (System.Text.Json.Nodes.JsonObject)Properties.DeepClone(),
     };

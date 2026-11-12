@@ -19,7 +19,7 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   const tabNames = async () => (await page.locator('.tabs .tab span').allTextContents()).map(s => s.trim());
   const activeName = async () => ((await page.locator('.tabs .tab.active span').first().textContent()) || '').trim();
   const saved = async () => {
-    const [download] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Save")')]);
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('.toolbar button:has-text("Export")')]);
     const p = path.join(OUT, 'tabs-saved.json');
     await download.saveAs(p);
     return JSON.parse(fs.readFileSync(p, 'utf8'));

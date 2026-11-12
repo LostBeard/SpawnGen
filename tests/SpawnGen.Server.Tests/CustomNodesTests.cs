@@ -29,7 +29,7 @@ public class CustomNodesTests
         File.WriteAllText(Path.Combine(_dir, "custom_nodes", "broken.dll"), "this is not an assembly");
         _app = ServerApp.Build(
             ["--urls", "http://127.0.0.1:0", $"--SpawnGen:ModelsPath={_dir}/models", $"--SpawnGen:OutputPath={_dir}/output", $"--SpawnGen:InputPath={_dir}/input",
-             $"--SpawnGen:TempPath={_dir}/temp", $"--SpawnGen:CustomNodesPath={_dir}/custom_nodes", "--environment", "Development"]);
+             $"--SpawnGen:TempPath={_dir}/temp", $"--SpawnGen:UserPath={_dir}/user", $"--SpawnGen:CustomNodesPath={_dir}/custom_nodes", "--environment", "Development"]);
         await _app.StartAsync();
         var address = _app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
         _http = new HttpClient { BaseAddress = new Uri(address) };

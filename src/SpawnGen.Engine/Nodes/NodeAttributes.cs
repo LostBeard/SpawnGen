@@ -133,3 +133,10 @@ public sealed class SocketAttribute(string name) : Attribute
 {
     public string Name { get; } = name;
 }
+
+/// <summary>
+/// The node handles video latents (5-D LATENT, with a frames dimension). The others are refused one before they run, so a picture-only node never
+/// misreads a video latent's layout.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
+public sealed class VideoLatentsAttribute : Attribute { }

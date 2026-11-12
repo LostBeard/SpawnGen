@@ -16,6 +16,12 @@ public sealed record TextEncoding(float[] Context, int[] Shape, float[]? Pooled)
 /// <summary>One sampling run on a model's UNet: predictions for a conditioning entry at a timestep. Holds per-run GPU buffers until disposed.</summary>
 public abstract class UNetRun : IDisposable
 {
+    /// <summary>A video model's latent frames: the inputs' rows are that many frames stacked (set by the sampler before the first call; 1 for pictures).</summary>
+    public int Frames { get; set; } = 1;
+
+    /// <summary>Image to video: the first latent frame is the start picture, kept (a video model runs its tokens at timestep 0). Set per batch item.</summary>
+    public bool FirstFrameClean { get; set; }
+
     /// <summary>The extra input channels an inpainting UNet takes besides the latent (0 for an ordinary one).</summary>
     public virtual int ConcatChannels => 0;
 

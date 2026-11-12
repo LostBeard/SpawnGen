@@ -23,6 +23,7 @@ public sealed class DisableNoise
     public NoiseChoice Execute() => new(0, false);
 }
 
+[VideoLatents]
 [Node("AddNoise", Category = "model/sampling/noise", DisplayName = "AddNoise")]
 public sealed class AddNoise
 {
@@ -49,8 +50,7 @@ public sealed class AddNoise
         return Copy(latentImage, r);
     }
 
-    static LatentBatch Copy(LatentBatch like, float[] data) =>
-        new(like.Batch, like.Channels, like.Height, like.Width, data) { NoiseMask = like.NoiseMask, BatchIndex = like.BatchIndex };
+    static LatentBatch Copy(LatentBatch like, float[] data) => LatentBatch.Shaped(like, like.Batch, data).With(like);
 }
 
 [Node("BasicGuider", Category = "model/sampling/guiders", DisplayName = "Basic Guider")]
@@ -66,6 +66,7 @@ public sealed class CFGGuider
         new CfgGuider(model, positive, negative, cfg);
 }
 
+[VideoLatents]
 [Node("SamplerCustom", Category = "model/sampling/custom", DisplayName = "SamplerCustom", OutputNames = ["output", "denoised_output"])]
 public sealed class SamplerCustom
 {
@@ -77,6 +78,7 @@ public sealed class SamplerCustom
             latentImage, context, services);
 }
 
+[VideoLatents]
 [Node("SamplerCustomAdvanced", Category = "model/sampling/custom", DisplayName = "SamplerCustomAdvanced", OutputNames = ["output", "denoised_output"])]
 public sealed class SamplerCustomAdvanced
 {

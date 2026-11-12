@@ -1,5 +1,6 @@
 ﻿using System.Reflection;
 using System.Runtime.CompilerServices;
+using SpawnGen.Engine.Types;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace SpawnGen.Engine.Nodes;
@@ -53,6 +54,9 @@ public sealed class RegisteredNode
     internal Type Type { get; init; } = default!;
     internal MethodInfo Method { get; init; } = default!;
     internal ParamBinding[] Params { get; init; } = default!;
+    bool? _takesVideoLatents;
+    /// <summary>Whether the node's class is marked <see cref="VideoLatentsAttribute"/>.</summary>
+    bool TakesVideoLatents => _takesVideoLatents ??= Type.IsDefined(typeof(VideoLatentsAttribute), false);
     internal Type[] OutputTypes { get; init; } = default!;
     internal bool ReturnsTuple { get; init; } = default!;
     internal int UiIndex { get; init; } = default!;
@@ -154,6 +158,8 @@ public sealed class RegisteredNode
                         if (!ValueCoercion.TryCoerce(raw, p.Info.ParameterType, out var typed))
                             throw new InvalidCastException(
                                 $"Input '{p.InputName}' expects {p.Info.ParameterType.Name} but got {raw.GetType().Name}.");
+                        if (typed is LatentBatch { IsVideo: true } && p.Info.ParameterType == typeof(LatentBatch) && !TakesVideoLatents)
+                            throw new NotSupportedException($"{Schema.DisplayName} does not take video latents (input '{p.InputName}') in SpawnGen yet.");
                         args[i] = typed;
                     }
                     else

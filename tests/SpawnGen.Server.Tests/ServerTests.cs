@@ -302,6 +302,8 @@ public class ServerTests
         Assert.That(messages[1]![1]!["nodes"]!.ToJsonString(), Is.EqualTo("[]"));
         Assert.That(messages.All(m => (long?)m![1]!["timestamp"] > 0));
         Assert.That(first["meta"]!["9"]!.ToJsonString(), Is.EqualTo("""{"node_id":"9","display_node":"9","parent_node":null,"real_node_id":"9"}"""));
+        Assert.That(first["outputs"]!["9"]!["images"]![0]!["metadata"]!.ToJsonString(), Is.EqualTo("""{"kind":"image","width":16,"height":16}"""),
+            "ComfyUI's metadata on a saved picture");
 
         var again = await RunAsync();
         var cached = again["status"]!["messages"]!.AsArray()[1]!;

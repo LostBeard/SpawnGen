@@ -37,7 +37,7 @@ public sealed class SaveAnimatedPNG
         var chunks = Results.Metadata(context).Select(kv => ("comf", Encoding.Latin1.GetBytes($"{kv.Key}\0{AsciiJson.Escape(kv.Value)}"))).ToList();
         var png = PngWriter.EncodeAnimated(images, (int)(1000.0 / fps), (int)compressLevel, chunks);
         var prefix = SavePrefix.ComputeVars(filenamePrefix, images.Width, images.Height, DateTime.Now);
-        var file = await Results.For(services).SaveAsync("output", prefix, png);
+        var file = (await Results.For(services).SaveAsync("output", prefix, png)).AsImage(images.Width, images.Height);
         var ui = new UiOutput("images", new object[] { file });
         if (IsAnimated(png)) ui["animated"] = new object[] { true };
         return (images, ui);

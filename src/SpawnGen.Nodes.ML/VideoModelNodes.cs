@@ -24,7 +24,7 @@ public sealed class SaveAnimatedWEBP
     {
         var webp = await EncodeAsync(images, fps, (int)quality, services);
         var prefix = SavePrefix.ComputeVars(filenamePrefix, images.Width, images.Height, DateTime.Now);
-        var file = await Results.For(services).SaveAsync("output", prefix, webp, "webp");
+        var file = (await Results.For(services).SaveAsync("output", prefix, webp, "webp")).AsImage(images.Width, images.Height);
         var ui = new UiOutput("images", new object[] { file });
         ui["animated"] = new object[] { images.Batch > 1 };
         return (images, ui);

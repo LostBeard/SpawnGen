@@ -68,7 +68,7 @@ public sealed class GLSLShader
             ?? new DiskResultStore(services.GetService(typeof(OutputOptions)) as OutputOptions ?? new OutputOptions());
         var prefix = "ComfyUI_temp_" + string.Create(5, 0, (span, _) => { for (int i = 0; i < span.Length; i++) span[i] = (char)('a' + Random.Shared.Next(26)); });
         var previews = new List<object>();
-        for (int b = 0; b < batch; b++) previews.Add(await store.SaveAsync("temp", prefix, PngWriter.Encode(outputs[0], b)));
+        for (int b = 0; b < batch; b++) previews.Add((await store.SaveAsync("temp", prefix, PngWriter.Encode(outputs[0], b))).AsImage(outputs[0].Width, outputs[0].Height));
         return (outputs[0], outputs[1], outputs[2], outputs[3], new UiOutput("images", previews));
     }
 

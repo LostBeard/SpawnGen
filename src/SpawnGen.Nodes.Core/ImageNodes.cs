@@ -68,7 +68,7 @@ internal static class Results
         var store = For(services);
         var files = new List<object>();
         for (int i = 0; i < Math.Min(images.Batch, count ?? images.Batch); i++)
-            files.Add(await store.SaveAsync("temp", prefix, PngWriter.Encode(images, i, metadata)));
+            files.Add((await store.SaveAsync("temp", prefix, PngWriter.Encode(images, i, metadata))).AsImage(images.Width, images.Height));
         return files;
     }
 
@@ -90,7 +90,7 @@ internal static class Results
         if (!prefix.Contains("%batch_num%", StringComparison.Ordinal))
         {
             for (int i = 0; i < images.Batch; i++)
-                files.Add(await store.SaveAsync(type, prefix, PngWriter.Encode(images, i, metadata)));
+                files.Add((await store.SaveAsync(type, prefix, PngWriter.Encode(images, i, metadata))).AsImage(images.Width, images.Height));
             return files;
         }
         var (folder, name) = SavePrefix.Split(prefix);
@@ -99,7 +99,7 @@ internal static class Results
         for (int i = 0; i < images.Batch; i++)
         {
             var file = SavePrefix.FileName(name.Replace("%batch_num%", i.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal), counter + i, "png");
-            files.Add(await store.WriteAsync(type, folder, file, PngWriter.Encode(images, i, metadata)));
+            files.Add((await store.WriteAsync(type, folder, file, PngWriter.Encode(images, i, metadata))).AsImage(images.Width, images.Height));
         }
         return files;
     }

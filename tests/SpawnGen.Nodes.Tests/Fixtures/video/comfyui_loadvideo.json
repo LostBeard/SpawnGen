@@ -1,0 +1,74 @@
+{
+ "source": "ComfyUI bef11fc LoadVideo -> GetVideoComponents, black-box dumps (float32 little-endian NHWC frames, (C, S) audio)",
+ "files": {
+  "comfyui_vp9_512x512_crf32.webm": {
+   "frames_shape": [
+    48,
+    512,
+    512,
+    3
+   ],
+   "frames_sha256": "945dcf782d1c97da64f29cf9d15b246c2bd44058610c4aa080c8d70a6228ad23",
+   "fps": 24.0,
+   "frames_mean": 0.5000761291060641
+  },
+  "comfyui_vp9_rgba_512x320_crf32.webm": {
+   "frames_shape": [
+    12,
+    320,
+    512,
+    3
+   ],
+   "frames_sha256": "35b3fb5c154c188c0c0966bfe7884e5586d9b47124c1b540daf3ef40ba24808c",
+   "fps": 24.0,
+   "frames_mean": 0.502873253070227
+  },
+  "comfyui_webm_with_opus.webm": {
+   "frames_shape": [
+    48,
+    512,
+    512,
+    3
+   ],
+   "frames_sha256": "7cb5519efffd524d73b8745026d386ee8cca21a96f52e83fa43260737078e8b0",
+   "fps": 24.0,
+   "frames_mean": 0.496357463216168,
+   "audio_shape": [
+    1,
+    2,
+    96000
+   ],
+   "sample_rate": 48000,
+   "audio_head": [
+    -0.013027637265622616,
+    0.01293101068586111,
+    0.043553274124860764,
+    0.06995031982660294,
+    0.09917771071195602,
+    0.12591704726219177,
+    0.15317320823669434,
+    0.1799679547548294,
+    -0.00313756475225091,
+    0.020426303148269653,
+    0.04817431792616844,
+    0.07197054475545883,
+    0.09793905913829803,
+    0.12131577730178833,
+    0.14456090331077576,
+    0.1667485535144806
+   ],
+   "audio_rms": 0.291451023328001
+  },
+  "comfyui_vp9_1024x576_crf32.webm": {
+   "frames_shape": [
+    48,
+    576,
+    1024,
+    3
+   ],
+   "frames_sha256": "2d875b30a066d0ae539f5a37db7896bc77ab653a782ba4627cc68f87fd671f4a",
+   "fps": 24.0,
+   "frames_mean": 0.49663643283503384
+  }
+ }
+}

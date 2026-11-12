@@ -280,3 +280,25 @@ body { background: var(--bg-2); color: var(--fg); font-family: system-ui, "Segoe
 .save-dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
 .save-dialog button { background: var(--ctl); color: var(--fg); border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 14px; cursor: pointer; font: inherit; }
 .save-dialog button.primary { background: #2f5fa8; border-color: #3d73c4; color: #fff; }
+
+/* ---- Keyboard shortcuts ---- */
+.settings .set-button { background: var(--ctl); color: var(--fg); border: 1px solid var(--line-2); border-radius: 5px; padding: 4px 10px; cursor: pointer; font: inherit; }
+.shortcuts { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 80px); box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 10px 40px #000a; font-size: 13px; }
+.shortcuts .set-head { display: flex; justify-content: space-between; align-items: center; color: var(--fg-strong); font-weight: 600; }
+.shortcuts .set-head button { background: none; border: 0; color: var(--fg-mid); font-size: 18px; cursor: pointer; }
+.shortcuts .sc-filter { padding: 6px 10px; background: var(--bg-1); color: var(--fg-strong); border: 1px solid var(--line-2); border-radius: 5px; font: inherit; outline: none; }
+.shortcuts .sc-filter:focus { border-color: #4f8fe8; }
+.shortcuts .sc-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.shortcuts .sc-row { display: flex; align-items: center; gap: 6px; padding: 4px 4px; border-bottom: 1px solid var(--line); }
+.shortcuts .sc-row.changed .sc-name { color: #7fb4ff; }
+.shortcuts .sc-name { flex: 1; min-width: 0; color: var(--fg); }
+.shortcuts .sc-keys { min-width: 170px; display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-start; background: none; border: 1px solid transparent; border-radius: 5px; padding: 3px 5px; cursor: pointer; color: var(--fg); font: inherit; }
+.shortcuts .sc-keys:hover { border-color: var(--line-2); }
+.shortcuts .sc-keys.capturing { border-color: #4f8fe8; color: #7fb4ff; outline: none; }
+.shortcuts kbd { background: var(--bg-1); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 0 6px; font-family: inherit; font-size: 12px; line-height: 18px; color: var(--fg-strong); }
+.shortcuts .sc-none { color: var(--fg-dim); }
+.shortcuts .sc-act { background: none; border: 0; color: var(--fg-mid); cursor: pointer; font-size: 15px; padding: 0 4px; }
+.shortcuts .sc-act:disabled { opacity: 0.3; cursor: default; }
+.shortcuts .sc-foot { display: flex; align-items: center; gap: 10px; color: var(--fg-mid); }
+.shortcuts .sc-foot span { flex: 1; }
+.shortcuts .sc-foot button { background: var(--ctl); color: var(--fg); border: 1px solid var(--line-2); border-radius: 5px; padding: 4px 12px; cursor: pointer; font: inherit; }

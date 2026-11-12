@@ -161,6 +161,11 @@
                 })),
             };
         })();
+        // Ctrl+O: the toolbar's Open file picker (called while the key press still counts as the user's action).
+        window.spawngenOpenWorkflowFile = function () {
+            const input = document.querySelector('.toolbar input[type=file][accept=".json,.png"]');
+            if (input) input.click();
+        };
         // Saves a picture (a data or same-origin URL) as a file download.
         window.spawngenDownloadUrl = function (name, url) {
             const a = document.createElement("a");

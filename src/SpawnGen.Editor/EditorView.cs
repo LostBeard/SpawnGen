@@ -537,6 +537,25 @@ public sealed class EditorView
         ViewChanged?.Invoke();
     }
 
+    /// <summary>Alt+C: collapses the selected nodes, or expands them when they all are collapsed (pinned ones stay); one undo step.</summary>
+    public bool ToggleCollapseSelection()
+    {
+        var nodes = _selected.Select(Document.Graph.FindNode).OfType<EditorNode>().Where(n => !n.Pinned).ToList();
+        if (nodes.Count == 0) return false;
+        bool collapse = nodes.Any(n => !n.Collapsed);
+        Document.Group(() => { foreach (var n in nodes) Document.SetCollapsed(n.Id, collapse); });
+        Document.EndGesture();
+        ViewChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>Zoom In / Zoom Out from the keyboard: about the middle of the canvas, a wheel notch's worth (1.1x).</summary>
+    public void ZoomStep(bool zoomIn)
+    {
+        Viewport.ZoomAt(new Point(ScreenSize.X / 2, ScreenSize.Y / 2), zoomIn ? 1.1 : 1 / 1.1);
+        ViewChanged?.Invoke();
+    }
+
     public void Wheel(Point screen, double deltaY, Modifiers mods = Modifiers.None)
     {
         Viewport.ZoomAt(screen, Math.Pow(1.001, -deltaY));
@@ -668,8 +687,9 @@ public sealed class EditorView
                 DeleteSelection();
                 return true;
             case "escape":
-                if (Draft is not null) { Draft = null; _mode = Mode.Idle; ViewChanged?.Invoke(); }
-                else ClearSelection();
+                if (Draft is not null) { Draft = null; _mode = Mode.Idle; ViewChanged?.Invoke(); return true; }
+                if (_selected.Count == 0 && SelectedLink is null && SelectedGroup is null) return false; // nothing to clear: the Studio's (leave a subgraph ...)
+                ClearSelection();
                 return true;
             case "z" when ctrl && !shift:
                 Document.Undo();
@@ -699,6 +719,8 @@ public sealed class EditorView
                 return true;
             case "p" when !ctrl && !shift:
                 return TogglePin();
+            case "c" when mods.HasFlag(Modifiers.Alt) && !ctrl:
+                return ToggleCollapseSelection();
             case "f" or "home" when !ctrl:
                 FitToView(selectionOnly: _selected.Count > 0);
                 return true;

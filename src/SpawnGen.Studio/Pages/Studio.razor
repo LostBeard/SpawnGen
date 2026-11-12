@@ -389,6 +389,7 @@
                 </label>
                 <label class="row"><input type="checkbox" checked="@_settings.ShowNodeIds" @onchange="e => { _settings.ShowNodeIds = (bool)(e.Value ?? false); ApplySettings(); }" /> Show node ids (#12) in the title bars</label>
                 <label class="row"><input type="checkbox" checked="@_settings.ShowMinimap" @onchange="e => { _settings.ShowMinimap = (bool)(e.Value ?? false); ApplySettings(); }" /> Show the minimap</label>
+                <button class="set-button" title="Every keyboard shortcut; change, remove or reset them (Ctrl+Shift+K)" @onclick="ToggleShortcuts">Keyboard shortcuts...</button>
                 <label title="How samplers preview while they work: latent2rgb is a quick colour guess; taesd runs the tiny VAE (taesd_decoder / taesdxl_decoder in models/vae_approx) and looks close to the final picture">Sampler preview
                     <select @onchange="OnPreviewMethodChosen">
                         @foreach (var method in StudioSettings.PreviewMethods)
@@ -397,6 +398,48 @@
                         }
                     </select>
                 </label>
+            </div>
+        }
+
+        @if (_shortcutsOpen)
+        {
+            <div class="modal-back" @onclick="ToggleShortcuts">
+                <div class="shortcuts" @onclick:stopPropagation="true">
+                    <div class="set-head"><span>Keyboard shortcuts</span><button title="Close" @onclick="ToggleShortcuts">&times;</button></div>
+                    <input class="sc-filter" placeholder="Search shortcuts..." value="@_shortcutFilter" @oninput="OnShortcutFilter" />
+                    <div class="sc-list">
+                        @foreach (var c in ShortcutsShown())
+                        {
+                            var command = c;
+                            var keys = _bindings.Keys(command.Id);
+                            bool changed = _bindings.IsChanged(command.Id);
+                            <div class="sc-row @(changed ? "changed" : "")">
+                                <span class="sc-name">@command.Label</span>
+                                @if (_capturing == command.Id)
+                                {
+                                    <button class="sc-keys capturing" @ref="_captureRef" @onkeydown="e => OnCaptureKey(e, command.Id)" @onkeydown:preventDefault="true"
+                                            @onblur="() => _capturing = null">Press keys...</button>
+                                }
+                                else
+                                {
+                                    <button class="sc-keys" title="Change: click, then press the new keys" @onclick="() => StartCapture(command.Id)">
+                                        @if (keys.Count == 0)
+                                        {
+                                            <span class="sc-none">none</span>
+                                        }
+                                        @foreach (var k in keys)
+                                        {
+                                            <kbd>@k</kbd>
+                                        }
+                                    </button>
+                                }
+                                <button class="sc-act" title="No keys for this command" disabled="@(keys.Count == 0)" @onclick="() => UnbindShortcut(command.Id)">&times;</button>
+                                <button class="sc-act" title="Back to the default keys" disabled="@(!changed)" @onclick="() => ResetShortcut(command.Id)">&#x21BA;</button>
+                            </div>
+                        }
+                    </div>
+                    <div class="sc-foot"><span>@_shortcutNote</span><button @onclick="ResetAllShortcuts">Reset all</button></div>
+                </div>
             </div>
         }
 
@@ -765,6 +808,7 @@
             _view.GridSize = _settings.GridSize;
             _view.MinimapVisible = _settings.ShowMinimap;
             _view.ShowNodeIds = _settings.ShowNodeIds;
+            _studio.Bindings = _bindings = KeyBindings.FromJson(_settings.Shortcuts);
             Theme.Use(_settings.Palette); // the page itself was already themed by index.html before the app booted
             await RestoreTabsAsync();
             _doc.Changed += ScheduleAutosave;
@@ -781,6 +825,13 @@
             catch (Microsoft.JSInterop.JSException) { } // the editor was closed (a quick pick) before it could take focus
         }
         if (_focusSearch) { _focusSearch = false; await Task.Delay(40); await _searchRef.FocusAsync(); }
+        if (_focusCapture)
+        {
+            _focusCapture = false;
+            await Task.Delay(30);
+            try { await _captureRef.FocusAsync(); }
+            catch (Microsoft.JSInterop.JSException) { }
+        }
         if (_focusLibraryInput is { } which)
         {
             _focusLibraryInput = null;
@@ -1654,6 +1705,7 @@
 
     void ApplySettings()
     {
+        if (_studio is not null) _studio.Bindings = _bindings = KeyBindings.FromJson(_settings.Shortcuts);
         LinkGeometry.Style = _settings.LinkStyle;
         _view.SnapToGrid = _settings.SnapToGrid;
         _view.GridSize = _settings.GridSize;
@@ -1733,18 +1785,45 @@
         _studio?.Focus();
     }
 
+    /// <summary>The Studio's shortcuts, by their default keys (the canvas turns a key the user rebound into its command's default first).</summary>
     bool OnShortcut(string key, Modifiers mods)
     {
-        if (key == "n" && mods == Modifiers.None) { ToggleLibrary(); InvokeAsync(StateHasChanged); return true; }
-        if (key == "w" && mods == Modifiers.None) { _ = InvokeAsync(() => ToggleWorkflowsAsync(_appsTab)); return true; }
-        if (key == "s" && mods == Modifiers.Ctrl) { _ = InvokeAsync(SaveToLibraryAsync); return true; }
-        if (key == "h" && mods == Modifiers.None) { ToggleHistory(); InvokeAsync(StateHasChanged); return true; }
-        if (key == "i" && mods == Modifiers.None) { ToggleProperties(); InvokeAsync(StateHasChanged); return true; }
-        if (key == "escape" && _lightbox is not null) { _lightbox = null; InvokeAsync(StateHasChanged); return true; }
-        if (key != "enter" || !mods.HasFlag(Modifiers.Ctrl)) return false;
-        _ = QueueAsync(front: mods.HasFlag(Modifiers.Shift));
+        const Modifiers Ctrl = Modifiers.Ctrl, Shift = Modifiers.Shift, Alt = Modifiers.Alt, None = Modifiers.None;
+        Action? action = (key, mods & (Ctrl | Shift | Alt)) switch
+        {
+            ("n", None) => ToggleLibrary,
+            ("w", None) => () => _ = ToggleWorkflowsAsync(_appsTab),
+            ("h", None) => ToggleHistory,
+            ("i", None) => ToggleProperties,
+            ("m", None) => ToggleModels,
+            ("s", Ctrl) => () => _ = SaveToLibraryAsync(),
+            // The file picker opens while the key press still counts as the user's action (browsers allow it only then).
+            ("o", Ctrl) => () => ((IJSInProcessRuntime)Interop).InvokeVoid("spawngenOpenWorkflowFile"),
+            ("enter", Ctrl) => () => _ = QueueAsync(),
+            ("enter", Ctrl | Shift) => () => _ = QueueAsync(front: true),
+            ("enter", Ctrl | Alt) => () => _ = InterruptAsync(),
+            ("=", Alt) => () => _view.ZoomStep(zoomIn: true),
+            ("-", Alt) => () => _view.ZoomStep(zoomIn: false),
+            ("m", Alt | Shift) => () => { _settings.ShowMinimap = !_settings.ShowMinimap; ApplySettings(); },
+            ("m", Alt) => ToggleAppMode,
+            (",", Ctrl) => () => _settingsOpen = !_settingsOpen,
+            ("k", Ctrl | Shift) => ToggleShortcuts,
+            ("escape", _) => EscapeAction(),
+            _ => null,
+        };
+        if (action is null) return false;
+        action();
+        InvokeAsync(StateHasChanged);
         return true;
     }
+
+    /// <summary>Escape after the editor had nothing to clear: closes the picture or the shortcuts list, else steps out of a subgraph (as ComfyUI's Exit Subgraph).</summary>
+    Action? EscapeAction() =>
+        _lightbox is not null ? () => _lightbox = null
+        : _shortcutsOpen ? () => _shortcutsOpen = false
+        : _settingsOpen ? () => _settingsOpen = false
+        : _subgraphStack.Count > 0 ? () => ExitSubgraphTo(_subgraphStack.Count - 1)
+        : null;
 
     void ShowMessage(string text)
     {

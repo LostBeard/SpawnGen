@@ -103,6 +103,8 @@ public sealed class StudioCanvas : IDisposable
 
     /// <summary>A key the editor did not use (Ctrl+Enter to queue, for instance): return true when it was handled.</summary>
     public event Func<string, Modifiers, bool>? Shortcut;
+    /// <summary>The user's keyboard shortcuts (Settings, Keyboard shortcuts); null uses the defaults.</summary>
+    public KeyBindings? Bindings { get; set; }
 
     // ---- input ----
 
@@ -181,6 +183,13 @@ public sealed class StudioCanvas : IDisposable
             var key = e.Key.ToLowerInvariant();
             if (key == " ") { _space = true; e.PreventDefault(); return; }
             var mods = Mods(e, _space);
+            if (KeyChord.IsModifierKey(key)) return;
+            // The user's shortcuts: a rebound key becomes its command's default key, which is what the editor and the Studio handle.
+            if (Bindings is { } bindings)
+            {
+                if (bindings.Translate(KeyChord.Of(key, mods)) is not { } chord) return; // a default key whose command was moved: the browser keeps it
+                (key, mods) = (chord.Key, chord.Mods | (mods & Modifiers.Space));
+            }
             if (_view.Key(key, mods) || Shortcut?.Invoke(key, mods) == true) e.PreventDefault();
         }
         finally { e.Dispose(); }

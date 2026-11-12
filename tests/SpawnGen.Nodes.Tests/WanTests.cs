@@ -22,7 +22,7 @@ public class WanTests
         var video = await pipeline.GenerateAsync(request);
         var report = new System.Text.StringBuilder();
         report.AppendLine($"device: {runtime.Accelerator.Name} ({runtime.Accelerator.AcceleratorType}); {(DateTime.Now - started).TotalSeconds:F1} s");
-        report.AppendLine("request: 640x352, 9 frames, 50 steps, cfg 5, shift 5, seed 42, UniPC, default negative (null), DiT q8, umT5 q8, VAE f16, ML 5.8.15");
+        report.AppendLine("request: 640x352, 9 frames, 50 steps, cfg 5, shift 5, seed 42, UniPC, default negative (null), DiT q8, umT5 q8, VAE f16, ML 5.8.16-local.2");
 
         var latent = video.Latent;
         int channels = 48, per = latent.Length / channels;
@@ -83,6 +83,39 @@ public class WanTests
             foreach (var line in log.ToString().Split('\n').Where(l => l.Contains("[Wan]"))) report.AppendLine("    " + line.Trim());
         }
         var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, "wan_timing.txt");
+        File.WriteAllText(path, report.ToString());
+        TestContext.Out.WriteLine(report.ToString());
+    }
+
+    [Test, Explicit("Needs SPAWNGEN_MODELS, a GPU and the Wan Turbo files. One process: a warm-up run, then untiled and tiled decode, both warm and traced. Writes wan_decode_ab.txt (env WAN_ATTN_GEMM as set).")]
+    public async Task Wan_turbo_warm_untiled_vs_tiled_decode_at_720p()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS is not set.");
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var pipeline = new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo, Wan22Paths.InRepo(Wan22Paths.DitFile("turbo_q8")));
+        var report = new System.Text.StringBuilder();
+        report.AppendLine($"device: {runtime.Accelerator.Name} ({runtime.Accelerator.AcceleratorType}); WAN_ATTN_GEMM={Environment.GetEnvironmentVariable("WAN_ATTN_GEMM") ?? "(unset)"}");
+        var console = Console.Out;
+        foreach (var (label, tiled, trace) in new[] { ("warm-up", false, false), ("untiled", false, true), ("tiled", true, true) })
+        {
+            var log = new StringWriter();
+            Console.SetOut(log);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            double decodeStart = 0;
+            var progress = new SyncProgress(p => { if (decodeStart == 0 && p.Stage.ToString().Contains("ecod")) decodeStart = clock.Elapsed.TotalSeconds; });
+            await pipeline.GenerateAsync(new WanRequest
+            {
+                Prompt = "A red apple slowly rotates on a wooden table, soft morning light", NegativePrompt = null!,
+                Width = 1280, Height = 704, Frames = 9, Steps = 4, GuidanceScale = 1, Shift = 5, Seed = 42, Sampler = WanSampler.FewStep,
+                RgbaFrames = true, Trace = trace, TiledDecode = tiled,
+            }, progress);
+            Console.SetOut(console);
+            double total = clock.Elapsed.TotalSeconds;
+            report.AppendLine($"{label}: total {total:F1} s, decode (from its first progress report) {total - decodeStart:F1} s");
+            foreach (var line in log.ToString().Split('\n').Where(l => l.Contains("[Wan]"))) report.AppendLine("    " + line.Trim());
+        }
+        var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"wan_decode_ab_gemm{Environment.GetEnvironmentVariable("WAN_ATTN_GEMM") ?? "default"}.txt");
         File.WriteAllText(path, report.ToString());
         TestContext.Out.WriteLine(report.ToString());
     }

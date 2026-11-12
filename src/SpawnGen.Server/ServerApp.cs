@@ -150,7 +150,7 @@ public static class ServerApp
                 // ComfyUI's frontend sends its preview setting as extra_data.preview_method (auto, latent2rgb, taesd, none, default).
                 var item = queue.Enqueue(graph, (string?)body["client_id"], extra, front: (bool?)body["front"] == true,
                     previewMethod: body["extra_data"]?["preview_method"] is JsonValue pm && pm.TryGetValue<string>(out var method) ? method : null,
-                    targets: Targets(body["partial_execution_targets"]));
+                    targets: Targets(body["partial_execution_targets"]), extraData: body["extra_data"] as JsonObject);
                 // Output nodes left out (what they need does not validate) are reported while the rest runs, as ComfyUI does.
                 return Results.Json(new JsonObject { ["prompt_id"] = item.Id, ["number"] = item.Number, ["node_errors"] = NodeErrors(item.Skipped, graph) });
             }
@@ -293,11 +293,9 @@ public static class ServerApp
         };
     }
 
+    /// <summary>A queue item as ComfyUI lists it: [number, id, prompt, extra_data, outputs to execute].</summary>
     static JsonArray QueueItem(QueuedPrompt p) =>
-        new(p.Number, p.Id, JsonNode.Parse(PromptJson.ToJson(p.Graph)), new JsonObject { ["client_id"] = p.ClientId },
-            new JsonArray(p.Graph.Nodes.Where(n => IsOutput(n.Value.ClassType)).Select(n => (JsonNode)n.Key).ToArray()));
-
-    static bool IsOutput(string classType) => classType is "SaveImage" or "PreviewImage";
+        new(p.Number, p.Id, JsonNode.Parse(PromptJson.ToJson(p.Graph)), p.ExtraData.DeepClone(), new JsonArray([.. p.Outputs.Select(o => (JsonNode)o)]));
 
     static JsonObject HistoryJson(IEnumerable<HistoryEntry> entries)
     {
@@ -308,15 +306,18 @@ public static class ServerApp
             foreach (var (node, output) in h.Outputs) outputs[node] = output.DeepClone();
             root[h.Id] = new JsonObject
             {
-                ["prompt"] = new JsonArray(h.Number, h.Id, JsonNode.Parse(PromptJson.ToJson(h.Graph)), new JsonObject(), new JsonArray()),
+                ["prompt"] = new JsonArray(h.Number, h.Id, JsonNode.Parse(PromptJson.ToJson(h.Graph)), h.ExtraData.DeepClone(),
+                    new JsonArray([.. h.OutputNodes.Select(o => (JsonNode)o)])),
                 ["outputs"] = outputs,
                 ["status"] = new JsonObject
                 {
                     ["status_str"] = h.Status == "success" ? "success" : "error", ["completed"] = h.Status == "success",
-                    ["messages"] = new JsonArray(),
-                    ["error"] = h.ErrorMessage, ["error_node"] = h.ErrorNodeId, ["interrupted"] = h.Status == "interrupted",
-                    ["seconds"] = Math.Round(h.Seconds, 2),
+                    ["messages"] = new JsonArray([.. h.Messages.Select(m => (JsonNode)new JsonArray(m.Event, m.Data.DeepClone()))]),
                 },
+                ["meta"] = new JsonObject([.. h.Outputs.Keys.Select(node => new KeyValuePair<string, JsonNode?>(node, new JsonObject
+                {
+                    ["node_id"] = node, ["display_node"] = node, ["parent_node"] = null, ["real_node_id"] = node,
+                }))]),
             };
         }
         return root;

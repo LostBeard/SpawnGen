@@ -267,6 +267,50 @@ public class ServerTests
     }
 
     [Test]
+    public async Task A_finished_run_is_kept_in_history_as_ComfyUI_keeps_it()
+    {
+        // Measured against ComfyUI's /history: prompt = [number, id, prompt, extra_data (as sent, then client_id, create_time), outputs to execute];
+        // status.messages = execution_start, one execution_cached (every cached node, prompt order), execution_success, all timestamped; meta per output.
+        await ConnectAsync();
+        var image = WriteInputPng("hist.png");
+        var body = new JsonObject
+        {
+            ["prompt"] = new JsonObject
+            {
+                ["1"] = new JsonObject { ["class_type"] = "LoadImage", ["inputs"] = new JsonObject { ["image"] = image } },
+                ["2"] = new JsonObject { ["class_type"] = "ImageInvert", ["inputs"] = new JsonObject { ["image"] = new JsonArray("1", 0) } },
+                ["9"] = new JsonObject { ["class_type"] = "SaveImage", ["inputs"] = new JsonObject { ["images"] = new JsonArray("2", 0) } },
+            },
+            ["client_id"] = "test",
+            ["extra_data"] = new JsonObject { ["extra_pnginfo"] = new JsonObject { ["workflow"] = new JsonObject { ["version"] = 0.4 } }, ["custom"] = 5 },
+        };
+        async Task<JsonObject> RunAsync()
+        {
+            var id = (string)(await (await _http.PostAsJsonAsync("/prompt", body)).Content.ReadFromJsonAsync<JsonObject>())!["prompt_id"]!;
+            await WaitForAsync(m => (string?)m["type"] == "execution_success" && (string?)m["data"]!["prompt_id"] == id);
+            for (int i = 0; i < 100 && !(await _http.GetStringAsync("/history")).Contains(id); i++) await Task.Delay(25);
+            return JsonNode.Parse(await _http.GetStringAsync($"/history/{id}"))!.AsObject()[id]!.AsObject();
+        }
+
+        var first = await RunAsync();
+        var extra = first["prompt"]![3]!.AsObject();
+        Assert.That(extra.Select(kv => kv.Key), Is.EqualTo(new[] { "extra_pnginfo", "custom", "client_id", "create_time" }));
+        Assert.That((string?)extra["client_id"], Is.EqualTo("test"));
+        Assert.That(first["prompt"]![4]!.ToJsonString(), Is.EqualTo("""["9"]"""));
+        var messages = first["status"]!["messages"]!.AsArray();
+        Assert.That(messages.Select(m => (string?)m![0]), Is.EqualTo(new[] { "execution_start", "execution_cached", "execution_success" }));
+        Assert.That(messages[1]![1]!["nodes"]!.ToJsonString(), Is.EqualTo("[]"));
+        Assert.That(messages.All(m => (long?)m![1]!["timestamp"] > 0));
+        Assert.That(first["meta"]!["9"]!.ToJsonString(), Is.EqualTo("""{"node_id":"9","display_node":"9","parent_node":null,"real_node_id":"9"}"""));
+
+        var again = await RunAsync();
+        var cached = again["status"]!["messages"]!.AsArray()[1]!;
+        Assert.That((string?)cached[0], Is.EqualTo("execution_cached"));
+        Assert.That(cached[1]!["nodes"]!.ToJsonString(), Is.EqualTo("""["1","2","9"]"""), "one message, every cached node in the prompt's order");
+        Assert.That(Messages().Count(m => (string?)m["type"] == "execution_cached" && (string?)m["data"]!["prompt_id"] == again["prompt"]![1]!.ToString()), Is.EqualTo(1));
+    }
+
+    [Test]
     public async Task A_prompt_that_cannot_run_is_refused_with_errors_per_node_and_nothing_is_queued()
     {
         var bad = new JsonObject
@@ -390,7 +434,11 @@ public class ServerTests
         await WaitForAsync(m => (string?)m["type"] == "execution_success" && (string?)m["data"]!["prompt_id"] == second);
 
         var history = JsonNode.Parse(await _http.GetStringAsync("/history"))!.AsObject();
-        Assert.That((bool?)history[first]!["status"]!["interrupted"], Is.True);
+        var firstStatus = history[first]!["status"]!;
+        Assert.That(((string?)firstStatus["status_str"], (bool?)firstStatus["completed"]), Is.EqualTo(("error", false)), "ComfyUI's interrupted run");
+        var interrupted = firstStatus["messages"]!.AsArray()[^1]!.AsArray();
+        Assert.That((string?)interrupted[0], Is.EqualTo("execution_interrupted"));
+        Assert.That(interrupted[1]!["node_id"], Is.Not.Null);
         Assert.That((string?)history[second]!["status"]!["status_str"], Is.EqualTo("success"));
     }
 
@@ -510,7 +558,11 @@ public class ServerTests
         for (int i = 0; i < 100 && !(await _http.GetStringAsync("/history")).Contains(id); i++) await Task.Delay(25);
         var history = JsonNode.Parse(await _http.GetStringAsync($"/history/{id}"))!.AsObject();
         Assert.That((string?)history[id]!["status"]!["status_str"], Is.EqualTo("error"));
-        Assert.That((string?)history[id]!["status"]!["error"], Does.Contain("always fails"));
+        var last = history[id]!["status"]!["messages"]!.AsArray()[^1]!.AsArray();
+        Assert.That((string?)last[0], Is.EqualTo("execution_error"));
+        Assert.That((string?)last[1]!["exception_message"], Does.Contain("always fails"));
+        Assert.That((string?)last[1]!["node_type"], Is.EqualTo("FailNode"));
+        Assert.That((long?)last[1]!["timestamp"], Is.GreaterThan(0));
 
         lock (_lock) _messages.Clear();
         await PostPrompt(Prompt(image));

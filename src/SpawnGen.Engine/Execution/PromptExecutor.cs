@@ -58,6 +58,7 @@ public sealed class PromptExecutor
             observer?.OnStart(promptId, validation.Plan);
 
             var run = new Run(this, graph, options, observer, cancellationToken, validation.Loops);
+            observer?.OnCachedNodes(run.CachedUpFront(validation.Plan));
             // An output node inside a loop body runs once per iteration, through the loop (ComfyUI inhibits the original).
             var inLoops = validation.Loops.Values.SelectMany(l => l.Body).ToHashSet(StringComparer.Ordinal);
             try
@@ -325,6 +326,21 @@ public sealed class PromptExecutor
                 }
                 ResendUi(id, cached!);
             }
+        }
+
+        /// <summary>
+        /// The needed nodes whose results are in the cache, in the prompt's order: what ComfyUI lists in its one execution_cached message right after
+        /// execution_start (measured). Signatures come from the graph alone, so this is known before anything runs.
+        /// </summary>
+        public List<string> CachedUpFront(IReadOnlyList<string> plan)
+        {
+            var needed = plan.ToHashSet(StringComparer.Ordinal);
+            var cached = new List<string>();
+            foreach (var (id, node) in graph.Nodes)
+                if (needed.Contains(id) && owner._registry.TryGet(node.ClassType, out var reg) && !AlwaysRuns(node, reg.Schema)
+                    && owner.Cache.TryGet(Signature(id), out _))
+                    cached.Add(id);
+            return cached;
         }
 
         static bool AlwaysRuns(PromptNode node, NodeSchema schema) =>

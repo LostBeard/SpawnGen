@@ -66,6 +66,9 @@ public sealed class ExecutionResult
 public interface IExecutionObserver
 {
     void OnStart(string promptId, IReadOnlyList<string> plan) { }
+    /// <summary>Right after <see cref="OnStart"/>: the needed nodes whose results are cached, in the prompt's order (ComfyUI's execution_cached).</summary>
+    void OnCachedNodes(IReadOnlyList<string> nodeIds) { }
+    /// <summary>A node is served from the cache as the run reaches it (or a cached node's cached upstream).</summary>
     void OnNodeCached(string nodeId) { }
     void OnNodeExecuting(string nodeId) { }
     void OnNodeProgress(string nodeId, double value, double max, string? message) { }

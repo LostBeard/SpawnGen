@@ -194,37 +194,56 @@ internal sealed class Flux2DiffusionModel(MlRuntime runtime, string name, string
     sealed class Flux2Run(Flux2DiffusionModel model, Accelerator acc) : UNetRun
     {
         Flux2Transformer? _transformer;
-        (int H, int W) _grid;
+        string _layout = "";
         readonly Dictionary<CondEntry, MemoryBuffer1D<float, Stride1D.Dense>> _text = new(ReferenceEqualityComparer.Instance);
         MemoryBuffer1D<float, Stride1D.Dense>? _latent;
         Flux2Kernels? _kernels;
 
+        /// <summary>
+        /// The picture's tokens, then each reference latent's (Set Reference Latent: ComfyUI hands the model its LATENTs as ref_latents, measured),
+        /// placed as the library's pipeline places them: reference i at time position 10 + 10 i on its own row / column grid.
+        /// </summary>
         public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
             UNetOptions options, float[]? concat, CancellationToken cancellationToken)
         {
             if (controls is { Count: > 0 }) throw new NotSupportedException("ControlNets do not apply to FLUX.2.");
             if (entry.Shape[^1] != Flux2TextEncoder.EmbedWidth || entry.Shape[^2] != Flux2TextEncoderModel.Length)
                 throw new ArgumentException($"FLUX.2 takes its Qwen3 text ([1, 512, {Flux2TextEncoder.EmbedWidth}]); this conditioning is [{string.Join(", ", entry.Shape)}]. Encode the prompt with Load CLIP type flux2.");
-            if (entry.ReferenceLatents is { Count: > 0 })
-                throw new NotSupportedException("Reference latents (FLUX.2 editing) are not wired in SpawnGen yet.");
-            int n = Flux2VaeModel.LatentChannels * h * w;
-            if (input.Length != n) throw new ArgumentException($"A FLUX.2 latent is {Flux2VaeModel.LatentChannels} channels; this one has {input.Length / (h * w)}.");
+            int c = Flux2VaeModel.LatentChannels, n = c * h * w;
+            if (input.Length != n) throw new ArgumentException($"A FLUX.2 latent is {c} channels; this one has {input.Length / (h * w)}.");
+            var refs = entry.ReferenceLatents ?? [];
+            if (refs.Count > Flux2Pipeline.MaxReferences) throw new NotSupportedException($"FLUX.2 takes at most {Flux2Pipeline.MaxReferences} reference latents; this conditioning has {refs.Count}.");
+            foreach (var r in refs)
+                if (r.Channels != c || r.IsVideo) throw new ArgumentException($"A reference latent for FLUX.2 must be a FLUX.2 LATENT ({c} channels); this one is [{string.Join(", ", r.Shape)}]. Encode it with FLUX.2's VAE.");
             var weights = await model.WeightsAsync(cancellationToken);
             _kernels ??= new Flux2Kernels(acc);
-            if (_transformer is null || _grid != (h, w))
+            var layout = $"{h}x{w}|" + string.Join(",", refs.Select(r => $"{r.Height}x{r.Width}:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(r)}"));
+            if (_transformer is null || _layout != layout)
             {
                 _transformer?.Dispose();
-                _transformer = new Flux2Transformer(acc, weights, Flux2TextEncoderModel.Length, h * w);
-                _transformer.SetPositions(Flux2Pipeline.ImageIds(h, w), Flux2Pipeline.TextIds(Flux2TextEncoderModel.Length));
-                _grid = (h, w);
+                int nRef = refs.Sum(r => r.Height * r.Width);
+                _transformer = new Flux2Transformer(acc, weights, Flux2TextEncoderModel.Length, h * w + nRef);
+                var ids = new List<int>(Flux2Pipeline.ImageIds(h, w));
+                for (int i = 0; i < refs.Count; i++) ids.AddRange(Flux2Pipeline.ImageIds(refs[i].Height, refs[i].Width, 10 + 10 * i));
+                _transformer.SetPositions([.. ids], Flux2Pipeline.TextIds(Flux2TextEncoderModel.Length));
+                // The references' tokens go in once per layout: they do not change between steps.
+                long offset = (long)h * w * c;
+                foreach (var r in refs)
+                {
+                    using var refLatent = acc.Allocate1D(r.Data.AsSpan(0, c * r.Height * r.Width).ToArray());
+                    _kernels.LatentToTokens(refLatent.View, _transformer.InputLatents.SubView(offset, (long)r.Height * r.Width * c), r.Height, r.Width);
+                    await acc.SynchronizeAsync();
+                    offset += (long)r.Height * r.Width * c;
+                }
+                _layout = layout;
                 _latent?.Dispose();
                 _latent = acc.Allocate1D<float>(n);
             }
             if (!_text.TryGetValue(entry, out var text)) _text[entry] = text = acc.Allocate1D(entry.Embeddings);
             _latent!.View.CopyFromCPU(input);
-            _kernels.LatentToTokens(_latent.View, _transformer.InputLatents, h, w);
+            _kernels.LatentToTokens(_latent.View, _transformer.InputLatents.SubView(0, n), h, w);
             _transformer.Forward(_transformer.InputLatents, text.View, timestep);
-            _kernels.TokensToLatent(_transformer.Output, _latent.View, h, w);
+            _kernels.TokensToLatent(_transformer.Output.SubView(0, n), _latent.View, h, w);
             await acc.SynchronizeAsync();
             return await _latent.CopyToHostAsync(0, n);
         }

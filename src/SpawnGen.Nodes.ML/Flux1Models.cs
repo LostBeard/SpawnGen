@@ -21,10 +21,13 @@ internal static class Flux1Checkpoint
 
     public static bool Is(IReadOnlyCollection<string> names) => names.Contains(TransformerMarker) && names.Any(n => n.StartsWith(T5Prefix, StringComparison.Ordinal));
 
+    /// <summary>A FLUX.1 transformer on its own (Load Diffusion Model: flux1-dev.safetensors, the fp8_scaled files): its first double block, any prefix.</summary>
+    public static bool IsTransformer(IReadOnlyCollection<string> names) => names.Any(n => n.EndsWith("double_blocks.0.img_attn.qkv.weight", StringComparison.Ordinal));
+
     public static async Task<(ModelHandle, ClipHandle, VaeHandle)> LoadAsync(MlRuntime runtime, string name, string repo, string file)
     {
         var model = await runtime.GetOrLoadAsync($"flux1:{repo}/{file}", () => Task.FromResult(new Flux1DiffusionModel(runtime, name, repo, file)));
-        var clip = await runtime.GetOrLoadAsync($"flux1-text:{repo}/{file}", () => Task.FromResult(new Flux1TextEncoderModel(runtime, name, repo, file)));
+        var clip = await runtime.GetOrLoadAsync($"flux1-text:{repo}/{file}", () => Task.FromResult(new Flux1TextEncoderModel(runtime, name, (repo, file), (repo, file))));
         var vae = await runtime.GetOrLoadAsync<IDisposable>($"vae:{repo}/{file}", async () => new StandaloneVae(name, await SdVae.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file)));
         return (new ModelHandle(model), new ClipHandle(clip), new VaeHandle((IVaeModel)vae));
     }
@@ -33,9 +36,11 @@ internal static class Flux1Checkpoint
 /// <summary>
 /// FLUX.1's text conditioning from the checkpoint's own encoders: T5-XXL's rows for the prompt, padded to 256 with id 0 and all attended (no mask), and
 /// CLIP-L's pooled vector (the final-norm end-token row, not projected). Measured with ComfyUI (2026-11-14, flux1-dev-fp8.safetensors, gated in the
-/// library): T5 [1, 256, 4096], pooled [1, 768]; an empty prompt is the end token alone.
+/// library): T5 [1, 256, 4096], pooled [1, 768]; an empty prompt is the end token alone. The two encoders come from one all-in-one checkpoint
+/// (Load Checkpoint) or from their own files (DualCLIPLoader type flux: clip_l and a t5xxl file, fp16 or fp8 with scales).
 /// </summary>
-internal sealed class Flux1TextEncoderModel(MlRuntime runtime, string name, string repo, string file) : ITextEncoderModel, IPromptTextEncoder, IDisposable
+internal sealed class Flux1TextEncoderModel(MlRuntime runtime, string name, (string Repo, string File) t5, (string Repo, string File) clipL)
+    : ITextEncoderModel, IPromptTextEncoder, IDisposable
 {
     public const int Rows = 256, Width = 4096, PooledWidth = 768;
 
@@ -57,17 +62,17 @@ internal sealed class Flux1TextEncoderModel(MlRuntime runtime, string name, stri
             await using var json = await runtime.ModelSource.OpenAsync(LtxPipeline.DefaultRepo, LtxPaths.InRepo(LtxPaths.DitFile("q8")).Tokenizer, cancellationToken);
             _t5Tokenizer = UnigramTokenizer.FromTokenizerJson(json);
         }
-        var t5 = _t5Tokenizer.Encode(text, true);
-        if (t5.Length > Rows) t5 = t5[..Rows];
+        var t5Ids = _t5Tokenizer.Encode(text, true);
+        if (t5Ids.Length > Rows) t5Ids = t5Ids[..Rows];
         var ids = new int[Rows];
-        Array.Copy(t5, ids, t5.Length);
+        Array.Copy(t5Ids, ids, t5Ids.Length);
         float[] rows;
-        using (var encoder = await UmT5Encoder.CreateAsync(acc, runtime.ModelSource, repo, file, cancellationToken))
+        using (var encoder = await UmT5Encoder.CreateAsync(acc, runtime.ModelSource, t5.Repo, t5.File, cancellationToken))
             rows = await encoder.EncodeAsync(ids, cancellationToken);
 
         _clipTokenizer ??= await Checkpoint.LoadClipTokenizerAsync(runtime.ModelSource, Checkpoint.ClipTokenizerRepo, "", null);
         float[] pooled;
-        using (var clip = await SdTextEncoder.LoadAsync(acc, runtime.ModelSource, repo, file, null, cancellationToken))
+        using (var clip = await SdTextEncoder.LoadAsync(acc, runtime.ModelSource, clipL.Repo, clipL.File, null, cancellationToken))
             pooled = await clip.PooledAsync(ClipIds(_clipTokenizer, text), false, cancellationToken);
         return new TextEncoding(rows, [1, Rows, Width], pooled);
     }

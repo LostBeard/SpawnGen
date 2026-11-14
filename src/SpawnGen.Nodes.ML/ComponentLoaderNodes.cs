@@ -131,6 +131,8 @@ public sealed class UNETLoader
         var names = await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file);
         if (names.Contains(Flux2DiffusionModel.MarkerTensor))
             return new ModelHandle(await runtime.GetOrLoadAsync($"flux2:{repo}/{file}", () => Task.FromResult(new Flux2DiffusionModel(runtime, unetName, repo, file))));
+        if (Flux1Checkpoint.IsTransformer(names))
+            return new ModelHandle(await runtime.GetOrLoadAsync($"flux1:{repo}/{file}", () => Task.FromResult(new Flux1DiffusionModel(runtime, unetName, repo, file))));
         if (names.Contains(ZImageDiffusionModel.MarkerTensor))
             return new ModelHandle(await runtime.GetOrLoadAsync($"zimage:{repo}/{file}", () => Task.FromResult(new ZImageDiffusionModel(runtime, unetName, repo, file))));
         if (WanFiles.IsOriginalLayoutDit(names))
@@ -220,11 +222,19 @@ public sealed class DualCLIPLoader
         [Input(OptionsProvider = nameof(Types))] string type, NodeContext context, IServiceProvider services,
         [Input(OptionsProvider = nameof(Devices), Optional = true)] string device = "default")
     {
-        if (type != "sdxl")
-            throw new NotSupportedException($"Dual CLIP type '{type}' is not available: SpawnGen runs SDXL's two text encoders; choose 'sdxl'.");
+        if (type != "sdxl" && type != "flux")
+            throw new NotSupportedException($"Dual CLIP type '{type}' is not available: SpawnGen runs SDXL's two text encoders and FLUX.1's CLIP-L + T5-XXL; choose 'sdxl' or 'flux'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var first = ModelFolders.Locate(ModelFolders.TextEncoders, clipName1);
         var second = ModelFolders.Locate(ModelFolders.TextEncoders, clipName2);
+        if (type == "flux")
+        {
+            // FLUX.1: CLIP-L and T5-XXL in either order (the T5 file is the one with T5's shared embedding table).
+            var firstIsT5 = (await SafetensorsHeader.NamesAsync(runtime.ModelSource, first.Repo, first.File)).Any(n => n.EndsWith("shared.weight", StringComparison.Ordinal));
+            var (t5, clipL) = firstIsT5 ? (first, second) : (second, first);
+            return new ClipHandle(await runtime.GetOrLoadAsync($"flux1-text:{t5.Repo}/{t5.File}|{clipL.Repo}/{clipL.File}",
+                () => Task.FromResult(new Flux1TextEncoderModel(runtime, $"{clipName1} + {clipName2}", (t5.Repo, t5.File), (clipL.Repo, clipL.File)))));
+        }
         var model = await runtime.GetOrLoadAsync($"clip2:{first.Repo}/{first.File}|{second.Repo}/{second.File}", async () =>
         {
             var source = runtime.ModelSource;

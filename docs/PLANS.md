@@ -75,7 +75,16 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
 ## SpawnGen work that needs no library (after Now)
 
 1. Save 3D (Advanced), Load 3D, Preview 3D: ComfyUI's 3D viewport widget (LOAD_3D: camera, model info, render size).
-2. ComfyUI's frontend editors SpawnGen still shows as JSON text: crop editor, bounding-box canvas, compositor editor; Painter (5 templates).
+2. ComfyUI's frontend editors SpawnGen still shows as JSON text (the curve editor is done): crop editor, bounding-box canvas, compositor
+   editor; Painter (5 templates). **In progress: the bounding-box canvas** (Create Bounding Boxes, 11 templates). ComfyUI's editor measured
+   black-box in its Node 2.0 view (`tools/studio-browser-test/probe-comfy-bboxes*.js`, 2026-11-14): a canvas at the boxes' aspect, a Grid
+   toggle (on) and Clear all (no confirmation); dragging draws a box (any direction, stored normalised), with Grid on its corners snap to a
+   32 canvas-pixel grid at any canvas size (round to nearest), off they round to whole pixels; dragging inside a box moves it, a corner resizes
+   it, by the drag rounded the same way; a click selects, Delete removes the selected box; boxes carry a "01" number tag. The selected box's
+   panel: obj / text toggle (text adds a "text to render (verbatim)" field), a description field, color_palette swatches with "+" (adds
+   #ffffff; a click opens a colour picker with a hex field; right-click removes). Steps: the logic in SpawnGen.Editor (BoxesWidget) with tests
+   from these measurements, the row in NodeLayout, pointer modes in EditorView, drawing in NodeRenderer (background from the node's ui
+   background_images), the text / colour fields in Studio.razor, and a browser test that repeats the probe's actions and expects ComfyUI's states.
 3. Text Overlay (a font engine; also the labels of Create Bounding Boxes' preview and Draw BBoxes).
 4. ComfyUI's templates browser; an installer (signing only if free); translations last.
 

@@ -16,7 +16,7 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
 1. **FLUX.1 / Z-Image, SpawnGen's side, before the library's models land** (FLUX.1: 8 templates need no other node; Z-Image: 6):
    - ~~Load VAE / VAE Encode / VAE Decode with ComfyUI's ae.safetensors~~ done (1233d7d, ML 5.8.17; encode differs at a few single latent
      cells, invisible after decoding, sent to Tuvok _DevComms 2026-11-14-0700).
-   - InstructPixToPixConditioning (4 templates: FLUX.1 canny / depth, HiDream E1): measured against ComfyUI with ae.
+   - ~~InstructPixToPixConditioning~~ done (4 templates: FLUX.1 canny / depth, HiDream E1; measured against ComfyUI with ae).
    - CLIPTextEncodeFlux (flux_schnell_full_text_to_image): schema and conditioning layout now, runs when the library's T5 / CLIP-L land.
    - Then, as Tuvok lands them: the FLUX.1 transformer through Load Diffusion Model / DualCLIPLoader (dumps sent 2026-11-14-0300), then
      Z-Image (2026-11-14-0400).

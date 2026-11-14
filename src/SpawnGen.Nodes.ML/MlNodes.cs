@@ -318,6 +318,24 @@ public sealed class InpaintModelConditioning
     }
 }
 
+/// <summary>
+/// InstructPixToPixConditioning (ComfyUI's schema), for models that take the source picture as extra input channels (FLUX.1 Canny / Depth, HiDream
+/// E1, InstructPix2Pix). Measured with ComfyUI (2026-11-14, ae.safetensors, pictures of 256 x 192, 205 x 125 and a batch of two): both
+/// conditionings get the pictures' VAE Encode (the same latent, VAE Encode's centred crop included) as their concat latent, everything else in
+/// them unchanged; the latent is zeros the shape of that encode.
+/// </summary>
+[Node("InstructPixToPixConditioning", Category = "model/conditioning/instructpix2pix", DisplayName = "InstructPixToPixConditioning", OutputNames = ["positive", "negative", "latent"])]
+public sealed class InstructPixToPixConditioning
+{
+    public async Task<(Conditioning Positive, Conditioning Negative, LatentBatch Latent)> ExecuteAsync(Conditioning positive, Conditioning negative,
+        VaeHandle vae, ImageBatch pixels, NodeContext context, IServiceProvider services)
+    {
+        var concat = await VaePictures.EncodeAsync(vae.Vae, pixels, context.CancellationToken);
+        var latent = new LatentBatch(concat.Batch, concat.Channels, concat.Height, concat.Width, new float[concat.Data.Length]);
+        return (positive.Map(e => e with { ConcatLatent = concat }), negative.Map(e => e with { ConcatLatent = concat }), latent);
+    }
+}
+
 /// <summary>Decoding and encoding in overlapping tiles, blended with linear ramps over the overlaps (SpawnGen's own tiling; seams can differ from ComfyUI's).</summary>
 static class Tiles
 {

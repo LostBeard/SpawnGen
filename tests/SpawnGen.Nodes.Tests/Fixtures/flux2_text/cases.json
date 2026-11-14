@@ -1,0 +1,20 @@
+{
+ "source": "ComfyUI bef11fc CPU float32: CLIPLoader(qwen_3_4b.safetensors, flux2) -> CLIPTextEncode; cond [1, 512, 7680] + attention_mask; rows 0..33 kept",
+ "cases": {
+  "apple": {
+   "prompt": "a red apple on a wooden table",
+   "tokens": 19,
+   "file": "cond_apple_rows0-33_f32_34x7680.raw"
+  },
+  "empty": {
+   "prompt": "",
+   "tokens": 12,
+   "file": "cond_empty_rows0-33_f32_34x7680.raw"
+  },
+  "accents": {
+   "prompt": "Café crème, naïve façade — 東京の夜景 🍎",
+   "tokens": 32,
+   "file": "cond_accents_rows0-33_f32_34x7680.raw"
+  }
+ }
+}

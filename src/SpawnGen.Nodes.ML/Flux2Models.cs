@@ -65,3 +65,55 @@ internal sealed class Flux2VaeModel(string name, SdVae vae, Flux2VaeNorm norm, A
         SdVae.Dispose();
     }
 }
+
+/// <summary>
+/// FLUX.2 Klein's text encoder (Load CLIP type "flux2": ComfyUI's qwen_3_4b.safetensors): the prompt in Qwen3's chat template (thinking off),
+/// right-padded to 512 tokens, encoded to [1, 512, 7680] (hidden states 9, 18 and 27 side by side). Measured with ComfyUI (2026-11-13): its
+/// CONDITIONING is [1, 512, 7680] with an attention mask over the real tokens (an empty prompt is 12 template tokens, "a red apple on a wooden table"
+/// 19) and no pooled output; the padding rows are not zero. The weights (6.2 GB of the file's 8 GB) are loaded for each encode and freed after it,
+/// so the transformer has the device afterwards.
+/// </summary>
+internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, string repo, string file) : ITextEncoderModel, IPromptTextEncoder, IDisposable
+{
+    /// <summary>Where the Qwen tokenizer comes from (ComfyUI's file carries none): the library's hosted FLUX.2 klein export.</summary>
+    public const string TokenizerRepo = "LostBeard/FLUX.2-klein-4B-q4-ILGPU";
+    public const int Length = 512;
+
+    Qwen2Tokenizer? _tokenizer;
+
+    public string Name => name;
+    public SdFamily Family => SdFamily.SD1;
+    public SpawnDev.ILGPU.ML.Preprocessing.BPETokenizer Tokenizer => throw new NotSupportedException("FLUX.2's Qwen3 has no CLIP tokenizer.");
+    public int FirstTowerWidth => Flux2TextEncoder.EmbedWidth;
+    public SdTextEncoder? TextEncoder => null;
+
+    /// <summary>The prompt's ids as ComfyUI's flux2 CLIP feeds them: chat-templated, padded to 512; and the real token count.</summary>
+    public async Task<(int[] Ids, int Real)> TokenizeAsync(string text, CancellationToken cancellationToken)
+    {
+        _tokenizer ??= new Qwen2Tokenizer(System.Text.Encoding.UTF8.GetString(await runtime.ModelSource.FetchBytesAsync(TokenizerRepo, Flux2Pipeline.TokenizerFile, cancellationToken)));
+        return _tokenizer.EncodePadded(text, Length);
+    }
+
+    public async Task<TextEncoding> EncodePromptAsync(string text, CancellationToken cancellationToken)
+    {
+        var (ids, real) = await TokenizeAsync(text, cancellationToken);
+        var acc = runtime.Accelerator;
+        using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, cancellationToken);
+        using var encoder = new Flux2TextEncoder(acc, weights);
+        var rows = encoder.Encode(ids, real);
+        await acc.SynchronizeAsync();
+        var context = new float[Length * Flux2TextEncoder.EmbedWidth];
+        rows.SubView(0, context.Length).CopyToCPU(context);
+        return new TextEncoding(context, [1, Length, Flux2TextEncoder.EmbedWidth], null);
+    }
+
+    public Task<TextEncoding> EncodeAsync(int[] ids, int[]? ids2 = null, int? layer = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("FLUX.2's Qwen3 encodes prompts as text (CLIP Text Encode); CLIP token chunks do not apply.");
+
+    public Task<TextEncoding> EmptyPromptAsync(int? layer, IReadOnlyList<WeightStep> weights) => EncodePromptAsync("", CancellationToken.None);
+
+    public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) =>
+        weights.Count == 0 ? Task.CompletedTask : throw new NotSupportedException("LoRAs on FLUX.2's text encoder are not available yet.");
+
+    public void Dispose() { }
+}

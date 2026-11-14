@@ -168,8 +168,14 @@ public sealed class CLIPLoader
             var rt = await GpuHelpers.RuntimeAsync(services);
             return new ClipHandle(await rt.GetOrLoadAsync($"wan-umt5:{WanFiles.Repo}/{clipName}", () => Task.FromResult(new WanTextEncoderModel(rt, clipName))));
         }
+        if (type == "flux2")
+        {
+            var rt = await GpuHelpers.RuntimeAsync(services);
+            var (qwenRepo, qwenFile) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
+            return new ClipHandle(await rt.GetOrLoadAsync($"flux2-qwen:{qwenRepo}/{qwenFile}", () => Task.FromResult(new Flux2TextEncoderModel(rt, clipName, qwenRepo, qwenFile))));
+        }
         if (type != "stable_diffusion")
-            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders and Wan's umT5; choose 'stable_diffusion' or 'wan'.");
+            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders, Wan's umT5 and FLUX.2's Qwen3; choose 'stable_diffusion', 'wan' or 'flux2'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var (repo, file) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
         var model = await runtime.GetOrLoadAsync($"clip:{repo}/{file}", async () =>

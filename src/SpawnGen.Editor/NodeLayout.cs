@@ -14,6 +14,9 @@ public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds)
     /// <summary>A CURVE widget: a plot the pointer edits (<see cref="CurveWidget"/>), not a one-line value.</summary>
     public bool IsCurve { get; init; }
 
+    /// <summary>Crop Image's crop region (a BOUNDING_BOX widget): the input picture with the rectangle, the ratio and the fields (<see cref="CropWidget"/>).</summary>
+    public bool IsCrop { get; init; }
+
     /// <summary>A BOUNDING_BOXES widget: the canvas the boxes are drawn on (<see cref="BoxesWidget"/>), with its toolbar and the selected box's panel.</summary>
     public bool IsBoxes { get; init; }
 
@@ -126,13 +129,15 @@ public static class NodeLayout
         var widgets = new List<WidgetRow>();
         foreach (var spec in widgetInputs)
         {
-            bool curve = spec.Type.Name == CurveWidget.TypeName, boxes = spec.Type.Name == BoxesWidget.TypeName;
+            bool curve = spec.Type.Name == CurveWidget.TypeName, boxes = spec.Type.Name == BoxesWidget.TypeName,
+                crop = spec.Type.Name == CropWidget.TypeName && spec.Widget!.Kind == WidgetKind.Json;
             var (canvasW, canvasH) = boxes ? BoxesWidget.CanvasSize(node.Widgets) : (1, 1);
             double h = curve ? Math.Clamp((width - 2 * Padding) * 0.8, 120, 320)
                 : boxes ? BoxesWidget.RowHeight(width - 2 * Padding, canvasW, canvasH) + 4
+                : crop ? CropWidget.Height(width - 2 * Padding) + 4
                 : spec.Widget!.Multiline ? MultilineWidgetHeight : WidgetRowHeight;
             var bounds = new Rect(node.X + Padding, y, width - 2 * Padding, h - 4);
-            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, IsBoxes = boxes, Label = spec.DynamicParent is null ? spec.Name : Label(spec.Name) });
+            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, IsBoxes = boxes, IsCrop = crop, Label = spec.DynamicParent is null ? spec.Name : Label(spec.Name) });
             // The drop target for linking a value into this widget: the left edge of its row.
             inputs.Add(new SlotGeometry(SlotKind.Input, spec.Name, inputs.Count, spec.Type, new Point(node.X, bounds.Center.Y), true, false));
             y += h;

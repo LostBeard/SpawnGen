@@ -35,7 +35,7 @@ public sealed class LinkDraft
 /// </summary>
 public sealed class EditorView
 {
-    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap, DraggingCurvePoint, DraggingBox }
+    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap, DraggingCurvePoint, DraggingBox, DraggingCrop }
 
     const double DragThresholdPixels = 3;
 
@@ -229,6 +229,89 @@ public sealed class EditorView
         double lo = drag.Index > 0 ? points[drag.Index - 1].X : 0, hi = drag.Index < points.Count - 1 ? points[drag.Index + 1].X : 1;
         points[drag.Index] = (Math.Clamp(x, lo, hi), y);
         Document.SetWidget(drag.NodeId, drag.Name, CurveWidget.Make(points, CurveWidget.Interpolation(value)));
+    }
+
+    // ---- crop regions (Crop Image) ----
+
+    readonly Dictionary<(int, string), string> _cropRatio = [];
+    readonly HashSet<(int, string)> _cropLock = [];
+    /// <summary>The ratio a crop region keeps ("Custom" until one is chosen; view state, as in ComfyUI's editor).</summary>
+    public string CropRatio(int nodeId, string name) => _cropRatio.GetValueOrDefault((nodeId, name), "Custom");
+    /// <summary>Whether a crop region keeps its current aspect when a corner is dragged (the lock button).</summary>
+    public bool CropLocked(int nodeId, string name) => _cropLock.Contains((nodeId, name));
+    /// <summary>The size in pixels of the picture a Crop Image node shows (its input's), or null when there is none yet: the UI supplies it.</summary>
+    public Func<int, (double W, double H)?>? CropPictureSize { get; set; }
+    /// <summary>A crop field was clicked: the UI edits it in place ("x", "y", "width", "height", or "ratio" for the ratio choice), then calls <see cref="SetCropField"/>.</summary>
+    public event Action<int, string, string>? CropFieldActivated;
+
+    sealed record CropDrag(int NodeId, string Name, Rect Picture, double PW, double PH, CropWidget.Corner Corner, Point Start, CropWidget.Region Before, (double W, double H)? Aspect);
+    CropDrag? _cropDrag;
+
+    WidgetRow? CropRow(Hit hit) =>
+        Document.Graph.FindNode(hit.NodeId) is { } n ? Hits.Geometry(n).Widgets.FirstOrDefault(w => w.Name == hit.Name && w.IsCrop) : null;
+
+    void PressCrop(int nodeId, WidgetRow row, Point world)
+    {
+        var lay = CropWidget.Lay(row.Bounds);
+        if (lay.LockButton.Contains(world))
+        {
+            if (!_cropLock.Add((nodeId, row.Name))) _cropLock.Remove((nodeId, row.Name));
+            ViewChanged?.Invoke();
+            return;
+        }
+        if (lay.RatioButton.Contains(world)) { CropFieldActivated?.Invoke(nodeId, row.Name, "ratio"); return; }
+        foreach (var (field, _, value) in lay.FieldRows)
+            if (value.Contains(world)) { CropFieldActivated?.Invoke(nodeId, row.Name, field); return; }
+        if (!lay.PictureBox.Contains(world) || CropPictureSize?.Invoke(nodeId) is not { } size || size.W <= 0 || size.H <= 0) return;
+        var region = CropWidget.Read(Document.Graph.GetNode(nodeId).Widgets.GetValueOrDefault(row.Name));
+        var picture = CropWidget.Fit(lay.PictureBox, size.W, size.H);
+        var rect = CropWidget.RegionRect(picture, size.W, size.H, region);
+        var corner = CropWidget.CornerAt(rect, world);
+        // A drag outside the rectangle does nothing (ComfyUI draws no new one).
+        if (corner == CropWidget.Corner.None && !rect.Contains(world)) return;
+        var ratio = CropRatio(nodeId, row.Name);
+        var aspect = CropWidget.Aspect(ratio) ?? (CropLocked(nodeId, row.Name) && region.W > 0 && region.H > 0 ? (region.W, region.H) : null);
+        _cropDrag = new CropDrag(nodeId, row.Name, picture, size.W, size.H, corner, world, region, aspect);
+        _mode = Mode.DraggingCrop;
+        SetCursor(corner == CropWidget.Corner.None ? "move" : "crosshair");
+    }
+
+    void DragCrop(CropDrag d, Point world)
+    {
+        double dx = (world.X - d.Start.X) / d.Picture.Width * d.PW, dy = (world.Y - d.Start.Y) / d.Picture.Height * d.PH;
+        var r = d.Corner == CropWidget.Corner.None ? CropWidget.Move(d.Before, dx, dy, d.PW, d.PH) : CropWidget.Resize(d.Before, d.Corner, dx, dy, d.Aspect, d.PW, d.PH);
+        Document.SetWidget(d.NodeId, d.Name, CropWidget.Make(r));
+    }
+
+    /// <summary>
+    /// A crop field typed in (stored as typed, within the field's range: x, y 0..8192, width, height 1..8192), or the ratio chosen (its height then
+    /// follows the width).
+    /// </summary>
+    public void SetCropField(int nodeId, string name, string field, string value)
+    {
+        if (Document.Graph.FindNode(nodeId) is not { } node) return;
+        var r = CropWidget.Read(node.Widgets.GetValueOrDefault(name));
+        if (field == "ratio")
+        {
+            if (!CropWidget.Ratios.Contains(value)) return;
+            _cropRatio[(nodeId, name)] = value;
+            var applied = CropWidget.ApplyRatio(r, value);
+            if (applied != r) { Document.SetWidget(nodeId, name, CropWidget.Make(applied)); Document.EndGesture(); }
+            ViewChanged?.Invoke();
+            return;
+        }
+        if (!double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) return;
+        v = Math.Round(v);
+        r = field switch
+        {
+            "x" => r with { X = Math.Clamp(v, 0, 8192) },
+            "y" => r with { Y = Math.Clamp(v, 0, 8192) },
+            "width" => r with { W = Math.Clamp(v, 1, 8192) },
+            "height" => r with { H = Math.Clamp(v, 1, 8192) },
+            _ => r,
+        };
+        Document.SetWidget(nodeId, name, CropWidget.Make(r));
+        Document.EndGesture();
     }
 
     // ---- bounding-box canvases ----
@@ -480,6 +563,11 @@ public sealed class EditorView
                 Document.EndGesture();
                 break;
 
+            case HitKind.Widget when CropRow(hit) is { } cropRow:
+                SelectOnly(hit.NodeId);
+                PressCrop(hit.NodeId, cropRow, world);
+                break;
+
             case HitKind.Widget when BoxesRow(hit) is { } boxesRow:
                 SelectOnly(hit.NodeId);
                 PressBoxes(hit.NodeId, boxesRow, world);
@@ -604,6 +692,10 @@ public sealed class EditorView
                 DragBox(boxDrag, world);
                 break;
 
+            case Mode.DraggingCrop when _cropDrag is { } cropDrag:
+                DragCrop(cropDrag, world);
+                break;
+
             case Mode.Panning:
                 Viewport.Pan(screen.X - _lastScreen.X, screen.Y - _lastScreen.Y);
                 ViewChanged?.Invoke();
@@ -702,6 +794,10 @@ public sealed class EditorView
                 break;
             case Mode.DraggingBox when _boxDrag is { } boxDrag:
                 ReleaseBox(boxDrag);
+                break;
+            case Mode.DraggingCrop:
+                Document.EndGesture();
+                _cropDrag = null;
                 break;
             case Mode.PressedWidget:
                 if (_moved && _number is not null) Document.EndGesture();

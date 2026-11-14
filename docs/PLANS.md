@@ -19,8 +19,28 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
      then tighten AeVaeTests' A and C bounds to 2e-3).
    - ~~InstructPixToPixConditioning~~ done (4 templates: FLUX.1 canny / depth, HiDream E1; measured against ComfyUI with ae).
    - CLIPTextEncodeFlux (flux_schnell_full_text_to_image): schema and conditioning layout now, runs when the library's T5 / CLIP-L land.
-   - Then, as Tuvok lands them: the FLUX.1 transformer through Load Diffusion Model / DualCLIPLoader (dumps sent 2026-11-14-0300), then
-     Z-Image (2026-11-14-0400).
+   - **In progress on branch `ml-local-flux1`** (worktree `_scratch/wt-flux1`, SpawnDev.ILGPU.ML 5.8.18-local.1 = ML master 33128b23, which
+     has FLUX.1 dev, Z-Image Turbo and Generate Text from ComfyUI's files, gated by Tuvok on CUDA against SpawnGen's dumps; calls in the
+     library's Docs/flux1.md). Order: Z-Image (8 templates; its 6B transformer suits 8 GB), Generate Text (qwen_3_4b), FLUX.1 (12B, blocks
+     stream past a VRAM budget). Each measured against ComfyUI on the RX 590 (the first AMD numbers). Merge when the ML release is out.
+     - Z-Image done on the branch (5a246db): = ComfyUI on the RX 590 (conditioning 3.9e-6, model calls 1.9e-5, the template graph's picture
+       68.6 dB at 256 px, 121 s). Those AMD figures showed CUDA's tensor-core path rounding activations to bf16 (5.6e-3 there): Tuvok fixes it
+       in the shared GEMM (hi + lo bf16 halves). Waiting: -local.2 with the per-call caption length (cfg above 1 without reopening).
+     - Generate Text waits for the library's 8-bit load option (bf16 -> Q8_0 on the device, ~4.3 GB): qwen_3_4b's 8.05 GB of bf16 does not
+       fit an 8 GB card.
+     - FLUX.1 dev done on the branch (eca3faf): Load Checkpoint takes ComfyUI's all-in-one flux1-dev-fp8.safetensors; = ComfyUI on the RX 590
+       (T5 1.4e-5, pooled CLIP-L 1.4e-6, model calls 4.7e-6 / 8.5e-6, the checkpoint graph's picture 69.4 dB at 256 px, 45 s).
+     - Qwen-Image dumps sent (_DevComms 2026-11-14-0800): LATENT [b, 16, 1, H/8, W/8]; a system-prompt template whose first 34 tokens
+       ComfyUI drops; cond and uncond as separate calls. Tuvok ports it next.
+     - When -local.2 comes (Tuvok, 2026-11-14): (a) Z-Image: open the transformer once with maxCaptionTokens and pass each call's length;
+       set Flux2TextEncoder.PreciseActivations = true for the lumina2 encoder (CUDA; OpenCL is fp32 already); (b) the split FLUX.1 graph's
+       fp8_scaled files (scale_weight read), and UmT5Encoder.PreciseActivations = true for FLUX.1's T5 (CUDA); (c) Generate Text with the automatic Q8_0 load (13 of 23 greedy tokens = ComfyUI's with thinking
+       off, 159 / 159 with it on: say so in the node's docs); (d) Qwen-Image: WanVae in Wan 2.1 mode (LATENT raw [16, 1, h, w], the VAE takes
+       the normalised latent: convert at the node, as Wan 2.2), text = Qwen2.5-VL's last hidden state after the final norm, rows from 34 on
+       (Flux2Weights / Flux2TextEncoder with layer 28 and finalNorm, PreciseActivations on), QwenImageTransformer (timestep sigma, output the
+       velocity, FLUX.1's patchify on the one frame; on 8 GB most blocks stream: expect minutes per step at 1328 px).
+     - Next on the branch: the split FLUX.1 graph (Load Diffusion Model + DualCLIPLoader flux + Load VAE ae: flux_dev_full_text_to_image and
+       the Krea / Fill / Kontext templates; T5 and CLIP-L from ComfyUI's own t5xxl / clip_l files), schnell, then Generate Text when Q8 lands.
 2. **Generate Text (ComfyUI's TextGenerate, 26 templates)**: a CLIP loader's text encoder file run as a language model (prompt
    enhancers in the FLUX 3, Qwen-Image 2.1, Krea 2, Moss, Ernie, HiDream O1 and Stable Audio 3 templates; four plain LLM templates). The library
    generates from GGUF files and Gemma4 only, so it is asked of Tuvok: generation from ComfyUI's own files, qwen_3_4b first (SpawnGen already
@@ -77,7 +97,19 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
 1. Save 3D (Advanced), Load 3D, Preview 3D: ComfyUI's 3D viewport widget (LOAD_3D: camera, model info, render size).
 2. ComfyUI's frontend editors SpawnGen still shows as JSON text (the curve editor is done): crop editor, bounding-box canvas, compositor
    editor; Painter (5 templates). **The bounding-box canvas is done** (Create Bounding Boxes, 11 templates; next: the crop editor, then the
-   compositor). ComfyUI's editor measured
+   compositor). **Crop editor done** (b8370f4 logic, then the Studio; next: the compositor). Its measurements: (probe-comfy-bboxes.js with NODE_TYPE=ImageCropV2, Node 2.0
+   view): the widget is the input picture with the crop rectangle on it ("No input image connected" without one), a Ratio dropdown (Custom and
+   presets) with a lock, and X / Y / Width / Height fields (min 0 / 0 / 1 / 1, max 8192, step 1); the value {x, y, width, height}. With a picture
+   (probe-comfy-crop.js, Load Image 768 x 768 -> Crop Image): the upstream picture shows at once (no run needed) with the rectangle and four
+   corner handles; a drag inside moves it by the drag in picture pixels, rounded (0.15 / 0.10 of the picture: +115, +77); a drag outside it
+   does nothing (no new rectangle); Ratio: 1:1, 3:4, 4:3, 16:9, 9:16, Custom; choosing one keeps the width and sets the height (512 -> 512 x
+   288 for 16:9); with a ratio a corner drag keeps it (the drag projected on the ratio's direction: (+50, +100) on 512 x 288 -> 593 x 334);
+   corners stop at a 16-pixel side (a top-left corner dragged past the other: 28 x 16 at 16:9). The lock (aria "Lock aspect ratio" ->
+   "Unlock aspect ratio" when on) keeps the current aspect for corner drags the same way ((+100, +10) on 400 x 200 -> 484 x 242: the drag
+   projected on the aspect, the height from the rounded width); typed values are taken as they are (not clamped to the picture, the lock
+   ignored: width 900 at x 100 on a 768 picture stays); drags stay inside the picture (a move past the edge stops at 768 - size, a corner at
+   the edge: width 668 from x 100). Measured 2026-11-14. Then: CropWidget logic and tests in SpawnGen.Editor, the row (the linked Load Image's picture), EditorView,
+   NodeRenderer, a browser test. ComfyUI's editor measured
    black-box in its Node 2.0 view (`tools/studio-browser-test/probe-comfy-bboxes*.js`, 2026-11-14): a canvas at the boxes' aspect, a Grid
    toggle (on) and Clear all (no confirmation); dragging draws a box (any direction, stored normalised), with Grid on its corners snap to a
    32 canvas-pixel grid at any canvas size (round to nearest), off they round to whole pixels; dragging inside a box moves it, a corner resizes
@@ -87,7 +119,13 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
    from these measurements, the row in NodeLayout, pointer modes in EditorView, drawing in NodeRenderer (background from the node's ui
    background_images), the text / colour fields in Studio.razor, and a browser test that repeats the probe's actions and expects ComfyUI's states.
 3. Text Overlay (a font engine; also the labels of Create Bounding Boxes' preview and Draw BBoxes).
-4. ComfyUI's templates browser; an installer (signing only if free); translations last.
+4. **ComfyUI's templates browser: done** (drive-workflow-templates.js: 761 templates in ComfyUI's 12 groups, thumbnails, search, opening one): ComfyUI's templates are MIT (Comfy-Org/workflow_templates; the comfyui_workflow_templates
+   packages say MIT): index.json (12 groups, ~640 templates with title, description, tags, models, size, openSource) and per template
+   <name>.json and <name>-1.webp. ComfyUI's server serves them at /templates/<file> (measured). SpawnGen: the server serves /templates/<file>,
+   fetched once from raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates/ and cached (file names checked); the browser engine
+   reads the raw URL; the Studio's Templates dialog: the groups, search, cards (thumbnail, title, description, an API mark for paid ones),
+   a click opens the template as a new tab. THIRD-PARTY-NOTICES gets the templates' MIT notice. Then: an installer (signing only if free);
+   translations last.
 
 ## Recently done
 

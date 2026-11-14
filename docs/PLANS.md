@@ -27,7 +27,7 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
      the 1024 x 1024 template once, then merge when ML 5.8.17 is on nuget.org.
 3. **Dumps for Tuvok** (his order; same format as the FLUX.2 VAE dumps: raw float32 files plus a note in _DevComms):
    1. ~~ae.safetensors (FLUX.1 / Z-Image VAE)~~ sent 2026-11-14 (_DevComms 2026-11-14-0005): [b, 16, H/8, W/8], values look raw, centred crop to 8.
-   2. FLUX.1 dev and schnell: conditioning (CLIP-L pooled, T5), FluxGuidance, sigmas for 20 steps at 1024x1024, one model call in and out.
+   2. ~~FLUX.1 dev~~ sent 2026-11-14 (_DevComms 2026-11-14-0300): T5 [1,256,4096] + pooled y [1,768], guidance, model space (raw - 0.1159) x 0.3611, timestep sigma, result = denoised. schnell on request.
    3. Z-Image turbo: conditioning from qwen_3_4b, sigmas, one model call in and out.
 
 ## Waiting on others

@@ -44,6 +44,12 @@ public sealed class LatentFormat(string name, float scaleFactor, float[][] rgbFa
     public static LatentFormat Flux2 { get; } = new("Flux2", 1f, [], null, null, 128);
 
     /// <summary>
+    /// FLUX.1 / Z-Image (ComfyUI's ae.safetensors): LATENT is the VAE's raw mean, 16 channels; on the way into the model 0.1159 is taken off and the
+    /// rest scaled by 0.3611 (measured with ComfyUI's model calls, 2026-11-14). No cheap RGB preview yet.
+    /// </summary>
+    public static LatentFormat Flux1 { get; } = new("Flux1", 0.3611f, [], null, null, 16, [.. Enumerable.Repeat(0.1159f, 16)], [.. Enumerable.Repeat(1f, 16)]);
+
+    /// <summary>
     /// Wan 2.2 (TI2V 5B): 48 channels, frames x h x w per channel, each channel normalised by its own mean and spread (scale factor 1).
     /// No cheap RGB preview.
     /// </summary>

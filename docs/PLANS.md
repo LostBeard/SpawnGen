@@ -9,7 +9,18 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 
 ## Now (in order)
 
-1. **Generate Text (ComfyUI's TextGenerate, 26 templates)**: a CLIP loader's text encoder file run as a language model (prompt
+Measured 2026-11-14 (`_scratch/count_missing_noapi.py`, the 254 templates without paid API nodes): what a template still lacks is almost
+always a model family (Tuvok) or Save / Load Video (Geordi's release); SpawnGen's own nodes unlock little alone. So the host side of the
+families Tuvok builds next is done ahead of him, measured against ComfyUI, and the rest waits.
+
+1. **FLUX.1 / Z-Image, SpawnGen's side, before the library's models land** (FLUX.1: 8 templates need no other node; Z-Image: 6):
+   - ~~Load VAE / VAE Encode / VAE Decode with ComfyUI's ae.safetensors~~ done (1233d7d, ML 5.8.17; encode differs at a few single latent
+     cells, invisible after decoding, sent to Tuvok _DevComms 2026-11-14-0700).
+   - InstructPixToPixConditioning (4 templates: FLUX.1 canny / depth, HiDream E1): measured against ComfyUI with ae.
+   - CLIPTextEncodeFlux (flux_schnell_full_text_to_image): schema and conditioning layout now, runs when the library's T5 / CLIP-L land.
+   - Then, as Tuvok lands them: the FLUX.1 transformer through Load Diffusion Model / DualCLIPLoader (dumps sent 2026-11-14-0300), then
+     Z-Image (2026-11-14-0400).
+2. **Generate Text (ComfyUI's TextGenerate, 26 templates)**: a CLIP loader's text encoder file run as a language model (prompt
    enhancers in the FLUX 3, Qwen-Image 2.1, Krea 2, Moss, Ernie, HiDream O1 and Stable Audio 3 templates; four plain LLM templates). The library
    generates from GGUF files and Gemma4 only, so it is asked of Tuvok: generation from ComfyUI's own files, qwen_3_4b first (SpawnGen already
    loads it for FLUX.2 Klein; all 36 layers and the final norm are in the file, the output head is tied to the embeddings). ComfyUI's behaviour
@@ -18,12 +29,9 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
    thinking text comes out on `thinking` without its tags and max_length counts it (160 tokens of thinking left generated_text empty).
    Token-exact references sent (prompt ids as templated, greedy ids, both modes; _DevComms 2026-11-14-0600 folder). Tuvok queued it after
    Z-Image, fed through his GGUF decode engine if the safetensors fit it. Then SpawnGen's node: the schema (sampling on / off as a dynamic combo, image / video / audio inputs refused until the model takes them).
-2. **ComfyUI's 3D nodes** (no library; the list measured 2026-11-14 from /object_info, 35 nodes missing in category 3d): the viewport
-   group (Load 3D, Load 3D (Advanced), Preview 3D, Preview 3D (Advanced), Save 3D (Advanced) 8 templates, splat / point-cloud preview and save)
-   needs ComfyUI's LOAD_3D viewport widget; the MESH group (Get 3D Components, Create 3D File (from Mesh), Rotate / Merge Meshes, Weld
-   Vertices, Get Mesh Info, Mesh Smooth Normals, Render Mesh, Voxel to Mesh 6 templates, ...) is host code measured against ComfyUI.
-3. As Tuvok lands FLUX.1, then Z-Image (dumps sent 2026-11-14: ae, FLUX.1 dev, Z-Image Turbo): SpawnGen's split-graph nodes for each,
-   measured against ComfyUI the way FLUX.2 was.
+3. **ComfyUI's 3D nodes**, after the families that use them: outside the paid-API templates the missing 3D nodes appear only in
+   Pixal3D / TRELLIS.2 from ComfyUI's split files (2 templates: Save 3D (Advanced), Preview 3D (Advanced) and the MESH chain), Hunyuan3D 2.x
+   (4: Voxel to Mesh) and TripoSplat (1: the splat nodes). The list of 35 missing nodes and their schemas: `/object_info` of the reference install.
 
 ## Waiting on others
 
@@ -54,7 +62,10 @@ ComfyUI's LATENT, conditioning and sigmas and sends the dumps before the library
 | HunyuanVideo | 9 | requested |
 | Z-Image | 8 | requested; with FLUX.1 (shared ae, qwen_3_4b) |
 | HiDream | 7 | requested |
-| Generate Text (TextGenerate) from ComfyUI's text encoder files | 26 | requested 2026-11-14: qwen_3_4b first (Now 1) |
+| Generate Text (TextGenerate) from ComfyUI's text encoder files | 26 | requested 2026-11-14: qwen_3_4b first (Now 2); Tuvok: after Z-Image |
+| Hunyuan3D 2.x (image to 3D, VAE to voxels) | 4 | not yet asked (Now 3) |
+| TRELLIS.2 / Pixal3D from ComfyUI's split files (SpawnGen has the library's one-node TRELLIS.2) | 2 | not yet asked (Now 3) |
+| TripoSplat (image to Gaussian splat) | 1 | not yet asked (Now 3) |
 | FLUX.2 Klein 9B, FLUX 3 (ComfyUI's files), FLUX.2 dev | 4, 4, 3 | after the above |
 
 Already in the library and in SpawnGen: SD 1.x / 2.x / SDXL (single file and split), SD-Turbo, FLUX.2 Klein 4B and FLUX 3 Klein (one node
@@ -70,7 +81,8 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
 ## Recently done
 
 2026-11-14: FLUX.2 Klein split graph merged to main on ML 5.8.17 (VAE 1.1e-4, conditioning 1.3e-6, text to image 36.9 dB, edit
-44.4 dB vs ComfyUI on the RX 590); LTX stage timing and the WebP encode timing (725af90).
+44.4 dB vs ComfyUI on the RX 590); LTX stage timing and the WebP encode timing (725af90); FLUX.1 / Z-Image VAE (ae.safetensors) measured
+against ComfyUI (1233d7d).
 
 2026-11-13: Empty SD3 Latent Image and the empty-latent channel rule (42b77d2); Save Image (Advanced) PNG 8/16 and EXR, per-option dynamic
 inputs, numeric combo options, tooltips in /object_info (411eb0f); FLUX utility nodes (dcf0d75); Trim Video (874e737); Save 3D Model as

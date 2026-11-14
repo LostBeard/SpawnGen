@@ -14,6 +14,12 @@ public class LtxVideoTests
         public object? GetService(Type serviceType) => instances.FirstOrDefault(serviceType.IsInstanceOfType);
     }
 
+    /// <summary>Reports on the caller's thread, so each stage is timed when it happens (Progress posts later).</summary>
+    sealed class SyncProgress(Action<SpawnDev.ILGPU.ML.Wan.WanProgress> report) : IProgress<SpawnDev.ILGPU.ML.Wan.WanProgress>
+    {
+        public void Report(SpawnDev.ILGPU.ML.Wan.WanProgress value) => report(value);
+    }
+
     static NodeRegistry Registry() => new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(LtxVideo).Assembly);
 
     [Test]
@@ -65,5 +71,38 @@ public class LtxVideoTests
         TestContext.Out.WriteLine(report + "\n" + outDir);
         Assert.That(Directory.GetFiles(outDir, "ltx_*.webp"), Is.Not.Empty);
         Assert.That(Directory.GetFiles(outDir, "ltx_frame_*.png"), Has.Length.EqualTo(50), "25 frames, two runs");
+    }
+
+    /// <summary>Per-stage timing of the library's LTX pipeline on this device, twice in one process (the second without downloads or first compiles). Writes ltx_stages.txt.</summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT, a GPU and the LTX-Video files (~8 GB, downloaded on first use).")]
+    public async Task Stage_timing_at_512x352()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var paths = SpawnDev.ILGPU.ML.Ltx.LtxPaths.InRepo(SpawnDev.ILGPU.ML.Ltx.LtxPaths.DitFile("q8"));
+        using var pipeline = new SpawnDev.ILGPU.ML.Ltx.LtxPipeline(runtime.Accelerator, runtime.ModelSource, SpawnDev.ILGPU.ML.Ltx.LtxPipeline.DefaultRepo, paths);
+        var report = new System.Text.StringBuilder();
+        report.AppendLine($"device: {runtime.Accelerator.Name} ({runtime.Accelerator.AcceleratorType})");
+        for (int run = 1; run <= 2; run++)
+        {
+            report.AppendLine($"run {run}: 512x352, 25 frames, q8 DiT + q8 T5, 7-step distilled, no upscale, seed {41 + run}");
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            double last = 0;
+            var progress = new SyncProgress(p =>
+            {
+                double now = clock.Elapsed.TotalSeconds;
+                report.AppendLine($"  {now,8:F1} s (+{now - last,7:F1})  {p.Stage} {p.Fraction:F3} {p.Message}");
+                last = now;
+            });
+            var video = await pipeline.GenerateAsync(new SpawnDev.ILGPU.ML.Ltx.LtxRequest
+            {
+                Prompt = "A red apple slowly rotates on a wooden table, soft morning light, the camera stays still",
+                Width = 512, Height = 352, Frames = 25, Seed = 41 + run, RgbaFrames = true,
+            }, progress);
+            report.AppendLine($"  total {clock.Elapsed.TotalSeconds:F1} s, {video.Frames} frames");
+        }
+        File.WriteAllText(Path.Combine(TestContext.CurrentContext.WorkDirectory, "ltx_stages.txt"), report.ToString());
+        TestContext.Out.WriteLine(report.ToString());
     }
 }

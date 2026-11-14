@@ -68,12 +68,18 @@ internal sealed class Flux1TextEncoderModel(MlRuntime runtime, string name, (str
         Array.Copy(t5Ids, ids, t5Ids.Length);
         float[] rows;
         using (var encoder = await UmT5Encoder.CreateAsync(acc, runtime.ModelSource, t5.Repo, t5.File, cancellationToken))
+        {
+            encoder.PreciseActivations = true; // the reference's fp32 (CUDA would round activations to bf16; OpenCL is fp32 already)
             rows = await encoder.EncodeAsync(ids, cancellationToken);
+        }
 
         _clipTokenizer ??= await Checkpoint.LoadClipTokenizerAsync(runtime.ModelSource, Checkpoint.ClipTokenizerRepo, "", null);
         float[] pooled;
         using (var clip = await SdTextEncoder.LoadAsync(acc, runtime.ModelSource, clipL.Repo, clipL.File, null, cancellationToken))
+        {
+            clip.ExactActivations = true;
             pooled = await clip.PooledAsync(ClipIds(_clipTokenizer, text), false, cancellationToken);
+        }
         return new TextEncoding(rows, [1, Rows, Width], pooled);
     }
 

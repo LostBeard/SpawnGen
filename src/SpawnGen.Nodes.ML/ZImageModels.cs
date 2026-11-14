@@ -38,7 +38,8 @@ internal sealed class ZImageTextEncoderModel(MlRuntime runtime, string name, str
         Flux2Residency.Release();
         ZImageResidency.Release();
         using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, Layer, cancellationToken);
-        using var encoder = new Flux2TextEncoder(acc, weights, [Layer]);
+        // Precise activations: the reference's fp32 (CUDA's tensor-core path would round them to bf16; OpenCL is fp32 already).
+        using var encoder = new Flux2TextEncoder(acc, weights, [Layer]) { PreciseActivations = true };
         var rows = encoder.Encode(ids, real);
         await acc.SynchronizeAsync();
         var context = new float[real * Width];
@@ -90,7 +91,10 @@ internal sealed class ZImageDiffusionModel(MlRuntime runtime, string name, strin
     public const string MarkerTensor = "cap_pad_token";
 
     ZImageTransformer? _transformer;
-    (int Rows, int Cols, int Caption) _layout;
+    (int Rows, int Cols) _layout;
+
+    /// <summary>The longest caption a run can pass (the text encoder's 512 rows): one open serves the prompt and its negative at their own lengths.</summary>
+    public const int MaxCaptionTokens = 512;
 
     public string Name => name;
     public SdFamily Family => SdFamily.SD1;
@@ -106,16 +110,13 @@ internal sealed class ZImageDiffusionModel(MlRuntime runtime, string name, strin
     /// <summary>The device memory the transformer keeps resident: all but 3 GB of the device (the rest of its blocks stream from the file).</summary>
     long ResidentBytes => Math.Max(1L << 30, runtime.Accelerator.MemorySize - (3L << 30));
 
-    /// <summary>
-    /// The transformer for this picture and caption size. The library opens it per layout, so a run alternating two caption lengths (cfg above 1
-    /// with prompts of different lengths) reopens it each call: asked of SpawnDev.ILGPU.ML (a weights / layout split as FLUX.1 has).
-    /// </summary>
-    public async Task<ZImageTransformer> TransformerAsync(int rows, int cols, int caption, CancellationToken ct)
+    /// <summary>The transformer for this picture size; each call passes its caption's length (the prompt and the negative differ).</summary>
+    public async Task<ZImageTransformer> TransformerAsync(int rows, int cols, CancellationToken ct)
     {
-        if (_transformer is not null && _layout == (rows, cols, caption)) return _transformer;
+        if (_transformer is not null && _layout == (rows, cols)) return _transformer;
         Unload();
-        _transformer = await ZImageTransformer.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, rows, cols, caption, ResidentBytes, ct);
-        _layout = (rows, cols, caption);
+        _transformer = await ZImageTransformer.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, rows, cols, MaxCaptionTokens, ResidentBytes, ct);
+        _layout = (rows, cols);
         ZImageResidency.Holding(this);
         return _transformer;
     }
@@ -150,7 +151,8 @@ internal sealed class ZImageDiffusionModel(MlRuntime runtime, string name, strin
             if (input.Length != n) throw new ArgumentException($"A Z-Image latent is {c} channels; this one has {input.Length / (h * w)}.");
             if (h % 2 != 0 || w % 2 != 0) throw new ArgumentException($"Z-Image needs an even latent size (pictures in multiples of 16); this latent is {w} x {h}.");
             int rows = h / 2, cols = w / 2, caption = entry.Shape[^2];
-            var transformer = await model.TransformerAsync(rows, cols, caption, cancellationToken);
+            if (caption > MaxCaptionTokens) throw new ArgumentException($"Z-Image takes at most {MaxCaptionTokens} caption rows; this conditioning has {caption}.");
+            var transformer = await model.TransformerAsync(rows, cols, cancellationToken);
             _kernels ??= new ZImageKernels(acc);
             if (_latent is null || _latent.Length != n)
             {
@@ -162,7 +164,7 @@ internal sealed class ZImageDiffusionModel(MlRuntime runtime, string name, strin
             }
             if (!_text.TryGetValue(entry, out var text)) _text[entry] = text = acc.Allocate1D(entry.Embeddings);
             _latent.View.CopyFromCPU(input);
-            await transformer.ForwardAsync(_latent.View, text.View, 1f - timestep, cancellationToken);
+            await transformer.ForwardAsync(_latent.View, text.View, 1f - timestep, caption, cancellationToken);
             // 0 - 1 x output, unpatchified: the velocity.
             _kernels.Denoised(_zeros!.View, transformer.Output, _velocity!.View, -1f, rows, cols);
             await acc.SynchronizeAsync();

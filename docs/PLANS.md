@@ -9,8 +9,8 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 
 ## Now (in order)
 
-1. **LTX-Video 2B node** (`LtxVideo`, on ML's `LtxPipeline`): built, schema and input tests pass; first GPU run on the RX 590 in progress.
-   Look at the frames, then commit to main.
+1. **LTX-Video 2B node**: done 2026-11-13 (verified by eye on the RX 590: 512x352 x 25 in 349 s warm). Follow-up: a per-stage timing run (T5 /
+   DiT steps / decode) for Tuvok; the warm run re-streams the T5 every time.
 2. **FLUX.2 Klein split graph** on a branch against SpawnDev.ILGPU.ML 5.8.17-local.1 (Tuvok: flux2-vae, Klein 4B bf16 / fp8, qwen_3_4b, and
    the LATENT kernels matching ComfyUI's layout: `VaeToLatent` / `LatentToVae` / `LatentToTokens`). Nodes: Load VAE (flux2-vae), VAE Encode /
    Decode for FLUX.2 LATENT ([b, 128, H/16, W/16], patchified and batch-normalised, centre crop to 16), Load Diffusion Model (Klein 4B), Load CLIP

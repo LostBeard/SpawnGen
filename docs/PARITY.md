@@ -86,7 +86,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**310 shared nodes, 306 identical** (2026-11-13); the 4 that differ do so by design: the background-removal model list (SpawnGen ships one),
+**311 shared nodes, 307 identical** (2026-11-13); the 4 that differ do so by design: the background-removal model list (SpawnGen ships one),
 RecordAudio's recorder widget, Resolution Selector's preview-only widget, and Compare Images' view widget, for which SpawnGen states the `{}` its
 editor sends (ComfyUI's frontend supplies it; both servers require the input and accept `{}`). Compare Images draws picture A with B over it right of
 a split that follows the pointer (tools/studio-browser-test/drive-compare.js). `tools/parity/apply_names.py` keeps names and categories in step.
@@ -97,6 +97,10 @@ common_upscale incl. Pillow's 8-bit Lanczos; bounding boxes, Crop Image (ImageCr
 merge, and the compositor: Pillow's rectangle drawing, bicubic rotate and premultiplied Lanczos, all 26 blend modes in numpy's float32, layer fingerprints
 and saved compositions), Python-exact string, regex, `str.format` and simpleeval ports (about 3,500 CPython vectors), torch's interpolate and bislerp
 for latents, and the sampling replay above.
+Trim Video ("Video Slice", VideoSliceTests): the frames ComfyUI keeps for 19 start / duration cases (start <= i / fps < start + duration, a
+negative start from the end, past-the-end failures with ComfyUI's message, no frames when starting after the last one; strict_duration changed nothing
+measured). Documented difference: ComfyUI re-encodes the trimmed clip (lossy frames, sound shifted by the codec's priming); SpawnGen cuts frames and
+samples as they are.
 The model-independent FLUX nodes, measured on ComfyUI with probe nodes (FluxNodeTests, Fixtures/flux): Flux2Scheduler (33 cases, every sigma
 within 2e-7: the published FLUX.2 empirical mu on width x height / 256 rounded half to even), FluxKontextImageScale (the 17 Kontext sizes, nearest
 aspect by |w/h - W/H| over 251 measured inputs, Lanczos after a centre crop pixel for pixel), Empty Flux 2 Latent (128 channels at 1/16), Trim Video

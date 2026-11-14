@@ -36,7 +36,8 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
        text encoders (604024a); the split FLUX.1 graph (Krea fp8_scaled + clip_l + t5 fp8_scaled) checked on the RX 590: calls 1.3e-3 / 2.6e-3,
        T5 4.7e-3, clip_l 1.35e-6, 55.6 dB, the library's two stated gaps (ILGPU's bf16 rounding in kernels, fixed in 5.4.33; the T5's
        folded scales), the bounds to tighten when they land; Generate Text (135e333, ebd178c): Q8 on the RX 590, ComfyUI's sentence with
-       one word changed, the thinking split as ComfyUI's; min_p / presence_penalty asked of the library. **Next: Qwen-Image (d) below.**
+       one word changed, the thinking split as ComfyUI's; min_p / presence_penalty asked of the library (on ML master 241611cb, in the next -local with ILGPU 5.4.33: then pass GenerationConfig.MinP and
+       PresencePenalty from sampling "on"; seeded draws use the library's RNG, not torch's). **Next: Qwen-Image (d) below.**
      - The -local.2 list (Tuvok, 2026-11-14), (a) to (c) done: (a) Z-Image: open the transformer once with maxCaptionTokens and pass each call's length;
        set Flux2TextEncoder.PreciseActivations = true for the lumina2 encoder (CUDA; OpenCL is fp32 already); (b) the split FLUX.1 graph's
        fp8_scaled files (scale_weight read), and UmT5Encoder.PreciseActivations = true for FLUX.1's T5 (CUDA); (c) Generate Text with the automatic Q8_0 load (13 of 23 greedy tokens = ComfyUI's with thinking

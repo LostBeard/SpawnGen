@@ -218,4 +218,41 @@ public class Flux2KleinTests
         Assert.That(latent.Data, Has.All.Matches<float>(v => float.IsFinite(v)));
         Assert.That(std, Is.InRange(0.3, 3.0), "a picture's latent, not noise or a blank");
     }
+
+    /// <summary>
+    /// ComfyUI's distilled Klein template graph at its own settings: 1024 x 1024, 4 steps, the template's prompt. The size a user runs; on an
+    /// 8 GB card the transformer and the VAE decode share the device. Checked by eye (flux2_klein_1024_out/klein_1024_*.png).
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT with diffusion_models/flux-2-klein-4b-fp8.safetensors, text_encoders/qwen_3_4b.safetensors, vae/flux2-vae.safetensors and a GPU.")]
+    public async Task The_distilled_template_graph_runs_at_its_1024_size()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ModelFolders.Scan(root!);
+        var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "flux2_klein_1024_out", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outDir);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
+        var executor = new PromptExecutor(registry, new Services(runtime, new OutputOptions { Directory = outDir, TempDirectory = outDir }));
+        var g = new PromptGraph();
+        g.Add("unet", "UNETLoader", ("unet_name", "flux-2-klein-4b-fp8.safetensors"), ("weight_dtype", "default"));
+        g.Add("clip", "CLIPLoader", ("clip_name", "qwen_3_4b.safetensors"), ("type", "flux2"), ("device", "default"));
+        g.Add("vae", "VAELoader", ("vae_name", "flux2-vae.safetensors"));
+        g.Add("pos", "CLIPTextEncode", ("clip", PromptInput.Link("clip")), ("text", "A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic"));
+        g.Add("neg", "ConditioningZeroOut", ("conditioning", PromptInput.Link("pos")));
+        g.Add("guider", "CFGGuider", ("model", PromptInput.Link("unet")), ("positive", PromptInput.Link("pos")), ("negative", PromptInput.Link("neg")), ("cfg", 1.0));
+        g.Add("sampler", "KSamplerSelect", ("sampler_name", "euler"));
+        g.Add("sigmas", "Flux2Scheduler", ("steps", 4L), ("width", 1024L), ("height", 1024L));
+        g.Add("latent", "EmptyFlux2LatentImage", ("width", 1024L), ("height", 1024L), ("batch_size", 1L));
+        g.Add("noise", "RandomNoise", ("noise_seed", 7L));
+        g.Add("run", "SamplerCustomAdvanced", ("noise", PromptInput.Link("noise")), ("guider", PromptInput.Link("guider")), ("sampler", PromptInput.Link("sampler")),
+            ("sigmas", PromptInput.Link("sigmas")), ("latent_image", PromptInput.Link("latent")));
+        g.Add("dec", "VAEDecode", ("samples", PromptInput.Link("run")), ("vae", PromptInput.Link("vae")));
+        g.Add("save", "SaveImage", ("images", PromptInput.Link("dec")), ("filename_prefix", "klein_1024"));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await executor.ExecuteAsync(g);
+        var picture = PngReader.Decode(File.ReadAllBytes(Directory.GetFiles(outDir, "klein_1024_*.png").Single()));
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: {clock.Elapsed.TotalSeconds:F1} s; {picture.Width} x {picture.Height}; {outDir}");
+        Assert.That((picture.Width, picture.Height), Is.EqualTo((1024, 1024)));
+    }
 }

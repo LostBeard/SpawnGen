@@ -132,12 +132,13 @@ static class VaePictures
 
     public static async Task<LatentBatch> EncodeAsync(IVaeModel vae, ImageBatch pixels, CancellationToken ct)
     {
-        var cropped = VAEEncode.CropForVae(pixels);
+        int f = vae.Downscale;
+        var cropped = VAEEncode.CropForVae(pixels, f);
         int H = cropped.Height, W = cropped.Width;
         float[][] frames = new float[cropped.Batch][];
         for (int b = 0; b < cropped.Batch; b++) frames[b] = await vae.EncodeImageAsync(ToVae(cropped, b), H, W, ct);
-        int size = frames[0].Length, channels = size / ((H / 8) * (W / 8));
-        var latent = new LatentBatch(cropped.Batch, channels, H / 8, W / 8);
+        int size = frames[0].Length, channels = size / ((H / f) * (W / f));
+        var latent = new LatentBatch(cropped.Batch, channels, H / f, W / f);
         for (int b = 0; b < frames.Length; b++) Array.Copy(frames[b], 0, latent.Data, b * size, size);
         return latent;
     }
@@ -147,13 +148,13 @@ static class VaePictures
 [Node("VAEDecode", Category = "model/latent", DisplayName = "VAE Decode")]
 public sealed class VAEDecode
 {
-    /// <summary>Each latent decoded to a picture 8 times its size, (v + 1) / 2 clamped to 0..1; a video latent to its frames (every item's in turn).</summary>
+    /// <summary>Each latent decoded to a picture the VAE's downscale (8, FLUX.2's 16) times its size, (v + 1) / 2 clamped to 0..1; a video latent to its frames.</summary>
     public async Task<ImageBatch> ExecuteAsync(LatentBatch samples, VaeHandle vae, NodeContext context, IServiceProvider services)
     {
         if (samples.IsVideo) return await VideoVae.DecodeAsync(vae.Vae, samples, context.CancellationToken);
         if (vae.Vae is IVideoVaeModel) throw new NotSupportedException($"{vae.Vae.Name} is a video VAE; it decodes video latents.");
-        int h = samples.Height, w = samples.Width;
-        var image = new ImageBatch(samples.Batch, h * 8, w * 8, 3);
+        int h = samples.Height, w = samples.Width, f = vae.Vae.Downscale;
+        var image = new ImageBatch(samples.Batch, h * f, w * f, 3);
         for (int b = 0; b < samples.Batch; b++)
             VaePictures.FromVae(await vae.Vae.DecodeAsync(VaePictures.Frame(samples, b), h, w, context.CancellationToken), image, b);
         return image;
@@ -168,8 +169,12 @@ public sealed class VAEEncode
         vae.Vae is IVideoVaeModel video ? await VideoVae.EncodeAsync(video, pixels, context.CancellationToken)
             : await VaePictures.EncodeAsync(vae.Vae, pixels, context.CancellationToken);
 
-    /// <summary>The picture cut down to whole multiples of 8, the cut shared between both sides (the extra pixel at the far side), as measured.</summary>
-    public static ImageBatch CropForVae(ImageBatch pixels) => Inpaint.Crop(pixels, (pixels.Height / 8) * 8, (pixels.Width / 8) * 8);
+    /// <summary>
+    /// The picture cut down to whole multiples of the VAE's downscale (8; FLUX.2's 16), the cut shared between both sides (the extra pixel at the far
+    /// side), as measured (ComfyUI's FLUX.2 VAE Encode of 200 x 120 = its encode of the centred 192 x 112, exactly).
+    /// </summary>
+    public static ImageBatch CropForVae(ImageBatch pixels, int downscale = 8) =>
+        Inpaint.Crop(pixels, pixels.Height / downscale * downscale, pixels.Width / downscale * downscale);
 }
 
 /// <summary>The picture and mask preparation of the inpainting nodes (measured with ComfyUI, InpaintParityTests).</summary>
@@ -346,6 +351,7 @@ public sealed class VAEDecodeTiled
         [Input(Min = 64, Max = 4096, Step = 32)] int tileSize = 512, [Input(Min = 0, Max = 4096, Step = 32)] int overlap = 64,
         [Input(Min = 8, Max = 4096, Step = 4)] int temporalSize = 64, [Input(Min = 4, Max = 4096, Step = 4)] int temporalOverlap = 8)
     {
+        if (vae.Vae.Downscale != 8) throw new NotSupportedException($"VAE Decode (Tiled) takes 8x VAEs for now; {vae.Vae.Name} is {vae.Vae.Downscale}x. Use VAE Decode.");
         int lt = Math.Max(1, tileSize / 8), lo = Math.Min(overlap / 8, lt / 4), h = samples.Height, w = samples.Width, c = samples.Channels;
         var image = new ImageBatch(samples.Batch, h * 8, w * 8, 3);
         var ys = Tiles.Starts(h, Math.Min(lt, h), lo);
@@ -390,6 +396,7 @@ public sealed class VAEEncodeTiled
         [Input(Min = 64, Max = 4096, Step = 64)] int tileSize = 512, [Input(Min = 0, Max = 4096, Step = 32)] int overlap = 64,
         [Input(Min = 8, Max = 4096, Step = 4)] int temporalSize = 64, [Input(Min = 4, Max = 4096, Step = 4)] int temporalOverlap = 8)
     {
+        if (vae.Vae.Downscale != 8) throw new NotSupportedException($"VAE Encode (Tiled) takes 8x VAEs for now; {vae.Vae.Name} is {vae.Vae.Downscale}x. Use VAE Encode.");
         var cropped = VAEEncode.CropForVae(pixels);
         int H = cropped.Height, W = cropped.Width, h = H / 8, w = W / 8;
         int lt = Math.Max(1, tileSize / 8), lo = Math.Min(overlap / 8, lt / 4);

@@ -260,8 +260,14 @@ public sealed class VAELoader
             return new VaeHandle(tae);
         }
         var (vaeRepo, file) = ModelFolders.Locate(ModelFolders.Vae, vaeName);
-        var vae = await runtime.GetOrLoadAsync($"vae:{vaeRepo}/{file}", async () =>
-            new StandaloneVae(vaeName, await SdVae.LoadAsync(runtime.Accelerator, runtime.ModelSource, vaeRepo, file)));
-        return new VaeHandle(vae);
+        var vae = await runtime.GetOrLoadAsync<IDisposable>($"vae:{vaeRepo}/{file}", async () =>
+        {
+            var sd = await SdVae.LoadAsync(runtime.Accelerator, runtime.ModelSource, vaeRepo, file);
+            // FLUX.2's VAE (32 latent channels): its LATENT is ComfyUI's patchified, batch-normalised [128, H/16, W/16].
+            return sd.LatentChannels == 32
+                ? await Flux2VaeModel.CreateAsync(vaeName, sd, runtime.Accelerator, runtime.ModelSource, vaeRepo, file, context.CancellationToken)
+                : new StandaloneVae(vaeName, sd);
+        });
+        return new VaeHandle((IVaeModel)vae);
     }
 }

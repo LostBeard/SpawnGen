@@ -9,8 +9,9 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 
 ## Now (in order)
 
-1. **LTX-Video 2B node**: done 2026-11-13 (verified by eye on the RX 590: 512x352 x 25 in 349 s warm). Follow-up: a per-stage timing run (T5 /
-   DiT steps / decode) for Tuvok; the warm run re-streams the T5 every time.
+1. **LTX-Video 2B node**: done 2026-11-13 (verified by eye on the RX 590). Per-stage timing done 2026-11-14 (725af90, sent to Tuvok
+   _DevComms 2026-11-14-0430): the library takes 27.1 s warm for 512x352 x 25 (2.6 s a step, decode 7.5 s; the T5 is cached for the same
+   prompt). The node graph's 349 s was Save Animated WEBP's GPU encode (345 s for those 25 frames, libwebp 5.9 s): with Geordi, see below.
 2. **FLUX.2 Klein split graph** on a branch against SpawnDev.ILGPU.ML 5.8.17-local.1 (Tuvok: flux2-vae, Klein 4B bf16 / fp8, qwen_3_4b, and
    the LATENT kernels matching ComfyUI's layout: `VaeToLatent` / `LatentToVae` / `LatentToTokens`). Nodes: Load VAE (flux2-vae), VAE Encode /
    Decode for FLUX.2 LATENT ([b, 128, H/16, W/16], patchified and batch-normalised, centre crop to 16), Load Diffusion Model (Klein 4B), Load CLIP
@@ -40,6 +41,7 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 | SpawnDev.Codecs release on nuget.org | Geordi | merge `codecs-unreleased`: Load / Save Video, Save WEBM, Save Audio FLAC / Opus / MP3 (240 + 68 + 36 template uses) |
 | SpawnDev.ILGPU.ML 5.8.17 on nuget.org (the branch is on 5.8.17-local.2) | Tuvok | merge the FLUX.2 branch |
 | the model families below | Tuvok | SpawnGen's nodes for each, measured against ComfyUI |
+| GPU lossless animated WebP ~60x slower than libwebp on the RX 590 (25 x 512x352: 1.0.1 345 s, 1.0.2-local.18 373 s and 48% larger; libwebp 5.9 s); _DevComms 2026-11-14-0500 | Geordi, high: every video save | time his build on the RX 590 (`VideoNodeTests.Save_Animated_WEBP_encode_timing_for_a_clip`, frames in the _DevComms folder) |
 | AVIF writer (Save Image (Advanced) avif) | Geordi, low: no template uses it | the avif option |
 
 ## Model families asked of SpawnDev.ILGPU.ML

@@ -18,6 +18,22 @@ public sealed class EmptyLatentImage
 }
 
 /// <summary>
+/// Empty SD3 latent (also the empty latent of FLUX.1, Z-Image, Qwen-Image and the other 16-channel picture models): zeros
+/// [batch, 16, height / 8, width / 8]. Measured with ComfyUI (2026-11-13): 1024x1024 gives 128 x 128 cells, 100x36 gives 12 x 4 (rounded down as
+/// Empty Latent Image), all values 0. Sampling turns an all-zero latent into the model's channel count (see SamplingCore.ToModelChannels), so an
+/// SD 1.x model samples from this latent as from Empty Latent Image (measured: the same result to the last bit).
+/// </summary>
+[Node("EmptySD3LatentImage", Category = "model/latent/stable diffusion")]
+public sealed class EmptySD3LatentImage
+{
+    public LatentBatch Execute(
+        [Input(Min = 16, Max = 16384, Step = 16)] int width = 1024,
+        [Input(Min = 16, Max = 16384, Step = 16)] int height = 1024,
+        [Input(Min = 1, Max = 4096)] int batchSize = 1) =>
+        new(batchSize, 16, height / 8, width / 8);
+}
+
+/// <summary>
 /// Empty Hunyuan Video 1.0 Latent (also Wan 2.1's empty latent): zeros [batch, 16, (length - 1) / 4 + 1, height / 8, width / 8], as measured.
 /// </summary>
 [Node("EmptyHunyuanLatentVideo", Category = "model/latent/hunyuan video", DisplayName = "Empty Hunyuan Video 1.0 Latent")]

@@ -48,6 +48,7 @@ internal static class SamplingCore
         var diffusion = model.Model ?? throw new InvalidOperationException("The guider has no diffusion model to run.");
         var sampling = model.Sampling;
         var format = model.LatentFormat;
+        latent = ToModelChannels(latent, format);
         int batch = latent.Batch, ch = latent.Channels, h = StackedHeight(latent), w = latent.Width, plane = h * w, per = ch * plane;
         var runSigmas = sigmas.Select(v => (double)v).ToArray();
         var output = new float[latent.Data.Length];
@@ -85,6 +86,20 @@ internal static class SamplingCore
             format.ProcessOut(last ?? x).CopyTo(denoisedOut, b * per);
         }
         return (LatentBatch.Shaped(latent, batch, output).With(latent), LatentBatch.Shaped(latent, batch, denoisedOut).With(latent));
+    }
+
+    /// <summary>
+    /// An all-zero latent (an empty latent) with another channel count than the model's becomes the model's: zeros of the same size, with the noise
+    /// mask and batch indexes kept. Measured with ComfyUI (2026-11-13): SD 1.5 sampled from Empty SD3 Latent Image (16 channels) gives a 4-channel
+    /// result identical to the one from Empty Latent Image. A latent with any non-zero value is passed on unchanged.
+    /// </summary>
+    internal static LatentBatch ToModelChannels(LatentBatch latent, LatentFormat format)
+    {
+        if (latent.Channels == format.Channels || !Array.TrueForAll(latent.Data, v => v == 0f)) return latent;
+        var zeros = latent.IsVideo
+            ? new LatentBatch(latent.Batch, format.Channels, latent.Frames, latent.Height, latent.Width)
+            : new LatentBatch(latent.Batch, format.Channels, latent.Height, latent.Width);
+        return zeros.With(latent);
     }
 
     /// <summary>The latent's rows as the run sees them: a video latent's frames stacked (F x h), a picture latent's height.</summary>

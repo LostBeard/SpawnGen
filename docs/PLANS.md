@@ -24,7 +24,9 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
    - Load Diffusion Model (flux-2-klein-*) and its own schedule (ab58f40): ComfyUI's distilled text-to-image graph runs on the RX 590, the same
      picture as ComfyUI's (36.9 dB at 256 x 256, fp8 file; 30 s).
    - Reference latents / editing (51ada8c): ComfyUI's edit graph = ComfyUI's green apple on the RX 590 (44.4 dB).
-   - Next: the base model with cfg 5, the 1024 x 1024 template once, then merge when ML 5.8.17 is on nuget.org.
+   - The base model with cfg 5 (25bdce0) and the template at its own 1024 x 1024 (03ab9db, 157 s, fits 8 GB): checked by eye on the RX 590.
+   - Left: merge to main when ML 5.8.17 is on nuget.org (then remove the worktree). Klein 9B and FLUX 3 from ComfyUI's files are on the
+     library's list after the families below.
 3. **Dumps for Tuvok** (his order; same format as the FLUX.2 VAE dumps: raw float32 files plus a note in _DevComms):
    1. ~~ae.safetensors (FLUX.1 / Z-Image VAE)~~ sent 2026-11-14 (_DevComms 2026-11-14-0005): [b, 16, H/8, W/8], values look raw, centred crop to 8.
    2. ~~FLUX.1 dev~~ sent 2026-11-14 (_DevComms 2026-11-14-0300): T5 [1,256,4096] + pooled y [1,768], guidance, model space (raw - 0.1159) x 0.3611, timestep sigma, result = denoised. schnell on request.
@@ -50,7 +52,7 @@ ComfyUI's LATENT, conditioning and sigmas and sends the dumps before the library
 
 | family | templates | status |
 |---|---|---|
-| FLUX.2 Klein 4B (split graph) | 5 | library done (5.8.17-local.1); SpawnGen nodes: Now 2 |
+| FLUX.2 Klein 4B (split graph) | 5 | done on branch ml-local-flux2 (text to image, editing, base cfg, 1024): merges with ML 5.8.17 |
 | Qwen-Image | 43 | requested; Tuvok's 2nd |
 | Wan 2.1 / 2.2 14B | 24 | requested; Tuvok's 3rd, with CLIP vision |
 | CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | requested; with Wan 14B |

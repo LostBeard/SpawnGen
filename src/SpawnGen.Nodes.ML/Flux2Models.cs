@@ -73,8 +73,10 @@ internal sealed class Flux2VaeModel(string name, SdVae vae, Flux2VaeNorm norm, A
 /// 19) and no pooled output; the padding rows are not zero. The weights (6.2 GB of the file's 8 GB) are loaded for each encode and freed after it,
 /// so the transformer has the device afterwards.
 /// </summary>
-internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, string repo, string file) : ITextEncoderModel, IPromptTextEncoder, IDisposable
+internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, string repo, string file) : ITextEncoderModel, IPromptTextEncoder, IQwen3File, IDisposable
 {
+    public (string Repo, string File) Qwen3File => (repo, file);
+
     /// <summary>Where the Qwen tokenizer comes from (ComfyUI's file carries none): the library's hosted FLUX.2 klein export.</summary>
     public const string TokenizerRepo = "LostBeard/FLUX.2-klein-4B-q4-ILGPU";
     public const int Length = 512;

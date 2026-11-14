@@ -15,8 +15,10 @@ namespace SpawnGen.Nodes.ML;
 /// SpawnGenDumpConditioning on the Z-Image Turbo template graph): 15 rows for a 7-word prompt, 8 for the empty one; the library's encoder gives
 /// both to 3.9e-3 (Tuvok's gate on these dumps).
 /// </summary>
-internal sealed class ZImageTextEncoderModel(MlRuntime runtime, string name, string repo, string file) : ITextEncoderModel, IPromptTextEncoder, IDisposable
+internal sealed class ZImageTextEncoderModel(MlRuntime runtime, string name, string repo, string file) : ITextEncoderModel, IPromptTextEncoder, IQwen3File, IDisposable
 {
+    public (string Repo, string File) Qwen3File => (repo, file);
+
     /// <summary>The Qwen3 layer whose output is the conditioning (1-based): ComfyUI's lumina2 reads hidden_states[-2].</summary>
     public const int Layer = 35;
     public const int Width = 2560;

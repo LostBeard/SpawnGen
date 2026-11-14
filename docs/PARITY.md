@@ -223,8 +223,11 @@ Still missing, by kind:
    Merge List of Tiles to Image, Add Layer, Layers From Bounding Boxes and Create Layered Image. The Studio draws Create Bounding Boxes' canvas and edits
    it as ComfyUI's editor does (measured black-box in its Node 2.0 view; BoxesWidgetTests, BoxesEditingTests, drive-bboxes.js): drawing in any direction,
    Grid snapping to 32 canvas pixels, moving and resizing by the rounded drag, Delete, obj / text, the text and description, the palette, Clear all, the
-   last run's background behind the boxes, and an upstream bboxes value setting the canvas when it is new; the crop editor and the compositor
-   editor still show JSON text (todo).
+   last run's background behind the boxes, and an upstream bboxes value setting the canvas when it is new. Crop Image's crop region is
+   ComfyUI's crop editor too (measured the same way; CropWidgetTests, CropEditingTests, drive-crop.js): the input picture shown before any run
+   (the linked node's last result, or Load Image's file), the rectangle moved and resized by its corners inside the picture with a 16-pixel
+   least side, the Ratio choice (1:1, 3:4, 4:3, 16:9, 9:16, Custom) and the aspect lock, the X / Y / Width / Height fields. The compositor
+   editor still shows JSON text (todo).
 
 ## 5. Platform
 

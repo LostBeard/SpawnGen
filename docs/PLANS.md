@@ -97,7 +97,7 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
 1. Save 3D (Advanced), Load 3D, Preview 3D: ComfyUI's 3D viewport widget (LOAD_3D: camera, model info, render size).
 2. ComfyUI's frontend editors SpawnGen still shows as JSON text (the curve editor is done): crop editor, bounding-box canvas, compositor
    editor; Painter (5 templates). **The bounding-box canvas is done** (Create Bounding Boxes, 11 templates; next: the crop editor, then the
-   compositor). **Crop editor (Crop Image, ImageCropV2), probing ComfyUI's** (probe-comfy-bboxes.js with NODE_TYPE=ImageCropV2, Node 2.0
+   compositor). **Crop editor done** (b8370f4 logic, then the Studio; next: the compositor). Its measurements: (probe-comfy-bboxes.js with NODE_TYPE=ImageCropV2, Node 2.0
    view): the widget is the input picture with the crop rectangle on it ("No input image connected" without one), a Ratio dropdown (Custom and
    presets) with a lock, and X / Y / Width / Height fields (min 0 / 0 / 1 / 1, max 8192, step 1); the value {x, y, width, height}. With a picture
    (probe-comfy-crop.js, Load Image 768 x 768 -> Crop Image): the upstream picture shows at once (no run needed) with the rectangle and four

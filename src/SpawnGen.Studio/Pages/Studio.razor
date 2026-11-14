@@ -783,6 +783,8 @@
         public required string Text { get; set; }
         /// <summary>A field of a bounding box being edited (Create Bounding Boxes' panel): the box and "text", "desc" or "palette:&lt;i&gt;".</summary>
         public (int Index, string Field)? Box { get; init; }
+        /// <summary>A crop region's field being edited (Crop Image): "x", "y", "width", "height" or "ratio".</summary>
+        public string? Crop { get; init; }
     }
 
     sealed class SearchState
@@ -826,6 +828,9 @@
         _doc = new EditorDocument(Registry);
         _view = new EditorView(_doc, text => _renderer!.MeasureText(text));
         _renderer = new NodeRenderer(_view, _visuals, _images);
+        _renderer.CropPictureUrl = CropPictureUrl;
+        _view.CropPictureSize = id => _doc.Graph.FindNode(id) is { } cropped && CropPictureUrl(cropped) is { } url && _renderer.PictureSizes.TryGetValue(url, out var size)
+            ? size : null;
         Server.EventReceived += OnServerEvent;
         Browser.EventReceived += OnServerEvent;
         Server.ConnectionChanged += RefreshUi;
@@ -835,6 +840,7 @@
         _view.ViewChanged += RefreshUi;
         _view.WidgetActivated += OnWidgetActivated;
         _view.BoxFieldActivated += OnBoxFieldActivated;
+        _view.CropFieldActivated += OnCropFieldActivated;
         _view.WidgetPicked += OnAppWidgetPicked;
         _view.NodePicked += OnAppNodePicked;
         _view.GroupTitleEditRequested += OnGroupTitleEdit;
@@ -1331,6 +1337,52 @@
         StateHasChanged();
     }
 
+    /// <summary>
+    /// The picture a Crop Image node shows: what is linked into its image input, from that node's last result or, for Load Image, its chosen file
+    /// (as ComfyUI's editor shows it before any run).
+    /// </summary>
+    string? CropPictureUrl(EditorNode crop)
+    {
+        if (_doc.Graph.LinkInto(crop.Id, "image") is not { } link || _doc.Graph.FindNode(link.FromNode) is not { } source) return null;
+        if (source.Previews.Count > 0) return source.Previews[0].Url;
+        if (_engine is null || source.Widgets.GetValueOrDefault("image") is not string { Length: > 0 } file) return null;
+        string? type = source.ClassType switch { "LoadImage" or "LoadImageMask" => "input", "LoadImageOutput" => "output", _ => null };
+        if (type is null) return null;
+        // An annotated name ("x.png [output]") names its folder; a path's folder part is the subfolder.
+        if (file.EndsWith(" [output]", StringComparison.Ordinal)) { file = file[..^9]; type = "output"; }
+        else if (file.EndsWith(" [input]", StringComparison.Ordinal)) file = file[..^8];
+        int slash = file.LastIndexOf('/');
+        return _engine.ViewUrl(slash < 0 ? file : file[(slash + 1)..], slash < 0 ? "" : file[..slash], type);
+    }
+
+    /// <summary>Crop Image: a field in a number box over it, the ratio in a list.</summary>
+    void OnCropFieldActivated(int nodeId, string name, string field)
+    {
+        var node = _doc.Graph.GetNode(nodeId);
+        var row = _view.Hits.Geometry(node).Widgets.First(w => w.Name == name);
+        var lay = CropWidget.Lay(row.Bounds);
+        var at = field == "ratio" ? lay.RatioButton : lay.FieldRows.First(f => f.Field == field).Value;
+        var region = CropWidget.Read(node.Widgets.GetValueOrDefault(name));
+        var topLeft = _view.Viewport.WorldToScreen(new Point(at.X, at.Y));
+        var scale = _view.Viewport.Scale;
+        _edit = new EditState
+        {
+            NodeId = nodeId, Name = name, Crop = field,
+            Spec = field == "ratio" ? new WidgetSpec(WidgetKind.Combo) { Options = CropWidget.Ratios } : new WidgetSpec(WidgetKind.Int) { Min = field is "x" or "y" ? 0 : 1, Max = 8192 },
+            Bounds = new Rect(topLeft.X, topLeft.Y, Math.Max(at.Width * scale, 110), Math.Max(at.Height * scale, 28)),
+            Text = field switch
+            {
+                "ratio" => _view.CropRatio(nodeId, name),
+                "x" => region.X.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "y" => region.Y.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "width" => region.W.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                _ => region.H.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            },
+        };
+        _focusEdit = true;
+        StateHasChanged();
+    }
+
     void OnTitleEdit(int nodeId)
     {
         var node = _doc.Graph.GetNode(nodeId);
@@ -1369,6 +1421,12 @@
         text ??= "";
         // The node (or group) can be gone by the time the editor closes: packed into a subgraph, deleted, another workflow opened.
         if (e.IsGroup ? _doc.Graph.Groups.All(g => g.Id != e.NodeId) : _doc.Graph.FindNode(e.NodeId) is null) return;
+        if (e.Crop is { } cropField && e.Name is { } cropName)
+        {
+            _view.SetCropField(e.NodeId, cropName, cropField, text);
+            _studio?.Focus();
+            return;
+        }
         if (e.Box is { } boxField && e.Name is { } boxesName)
         {
             _view.SetBoxField(e.NodeId, boxesName, boxField.Index, boxField.Field, text);

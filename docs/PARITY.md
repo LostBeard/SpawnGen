@@ -188,6 +188,7 @@ a half (0.5 times an odd count); ComfyUI decides that tie by scipy's last-bit er
 0.1, 0.5, 0.6, 1.5, 2.0, and every shape scipy gets exactly); another symmetric shape can land one timestep away from ComfyUI's at that one step.
 
 Still missing, by kind:
+0. **Model families asked of SpawnDev.ILGPU.ML**: the ranked list and each one's status are in [PLANS.md](PLANS.md).
 1. **Need the library**: CLIP vision, model families (SD3, FLUX.1, LTX, Wan, Hunyuan, Qwen, Cosmos ...). Most ComfyUI templates and blueprints use
    these. Done: single-file checkpoints, LoRA, and the split loaders (Load Diffusion Model, Load VAE, Load CLIP, Load CLIP (Dual)) for
    SD 1.x / SDXL from `<models>/diffusion_models|unet`, `vae`, `text_encoders|clip`, verified against ComfyUI with its own saved component files (SD 1.5 0.19%,

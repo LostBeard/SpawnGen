@@ -99,8 +99,14 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
    editor; Painter (5 templates). **The bounding-box canvas is done** (Create Bounding Boxes, 11 templates; next: the crop editor, then the
    compositor). **Crop editor (Crop Image, ImageCropV2), probing ComfyUI's** (probe-comfy-bboxes.js with NODE_TYPE=ImageCropV2, Node 2.0
    view): the widget is the input picture with the crop rectangle on it ("No input image connected" without one), a Ratio dropdown (Custom and
-   presets) with a lock, and X / Y / Width / Height fields (min 0 / 0 / 1 / 1, max 8192, step 1); the value {x, y, width, height}. Next: the
-   probe with a Load Image connected (the rectangle's drag and resize, the ratio presets and the lock), then BoxesWidget-style logic and tests. ComfyUI's editor measured
+   presets) with a lock, and X / Y / Width / Height fields (min 0 / 0 / 1 / 1, max 8192, step 1); the value {x, y, width, height}. With a picture
+   (probe-comfy-crop.js, Load Image 768 x 768 -> Crop Image): the upstream picture shows at once (no run needed) with the rectangle and four
+   corner handles; a drag inside moves it by the drag in picture pixels, rounded (0.15 / 0.10 of the picture: +115, +77); a drag outside it
+   does nothing (no new rectangle); Ratio: 1:1, 3:4, 4:3, 16:9, 9:16, Custom; choosing one keeps the width and sets the height (512 -> 512 x
+   288 for 16:9); with a ratio a corner drag keeps it (the drag projected on the ratio's direction: (+50, +100) on 512 x 288 -> 593 x 334);
+   corners stop at a 16-pixel side (a top-left corner dragged past the other: 28 x 16 at 16:9). Still to measure: the lock button, typing in
+   the fields, the picture edge. Then: CropWidget logic and tests in SpawnGen.Editor, the row (the linked Load Image's picture), EditorView,
+   NodeRenderer, a browser test. ComfyUI's editor measured
    black-box in its Node 2.0 view (`tools/studio-browser-test/probe-comfy-bboxes*.js`, 2026-11-14): a canvas at the boxes' aspect, a Grid
    toggle (on) and Clear all (no confirmation); dragging draws a box (any direction, stored normalised), with Grid on its corners snap to a
    32 canvas-pixel grid at any canvas size (round to nearest), off they round to whole pixels; dragging inside a box moves it, a corner resizes

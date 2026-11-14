@@ -187,3 +187,9 @@ Against ComfyUI's own results (Fixtures/flux2_vae): encode 5.75e-4 / 9.30e-4 rel
 3.0e-1, green pulled down (channel means 0.504 / 0.462 / 0.510 vs 0.505 / 0.507 / 0.509). A plain `SdVae` encode then decode of the same picture
 on the same device is 18.8 dB (ComfyUI's round trip: 38.2 dB), so the decoder itself is at fault there. SD 1.5 / SDXL VAEs decode correctly on
 the same card. Also: `SdVae` does not run on the CPU accelerator (group size 256 > 64). Repro: `Flux2VaeTests.Encode_and_decode_match_ComfyUIs_FLUX2_VAE`.
+
+**Cause (proven 2026-11-14 with Tuvok's decoder taps):** the first wrong stage is the decoder's first nearest x2 upsample. Its neighbour table
+divides on the device, and AMD OpenCL's float division is not correctly rounded (OpenCL allows 2.5 ulp): `(float)24 / 48` = 0.49999997
+(0x3EFFFFFF) on the RX 590, so 13,110 of 27,648 table entries point at the wrong pixel. Power-of-two ratios divide exactly, so SD's 512 px
+decodes never showed it. Fix in ML (Tuvok): divide on the host, multiply on the device (5.8.17-local.2). Raised with Data for ILGPU's
+OpenCL backend: `-cl-fp32-correctly-rounded-divide-sqrt` would make every kernel's `/` match .NET.

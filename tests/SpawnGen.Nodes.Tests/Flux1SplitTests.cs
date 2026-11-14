@@ -14,8 +14,7 @@ namespace SpawnGen.Nodes.Tests;
 /// </summary>
 /// <remarks>
 /// Two known gaps, both in SpawnDev.ILGPU.ML 5.8.18-local.2's CHANGELOG: the scaled 8-bit transformer is ~1.3e-3 from ComfyUI (an ILGPU float to
-/// bfloat16 rounding bug in kernels, fixed in SpawnDev.ILGPU 5.4.33), and the scaled T5 folds its scales into a bf16 decode (~4e-3, the exact form is
-/// on the library's list). The bounds below hold today's figures; they tighten when those land. ComfyUI's own Linear on this file is plain fp32
+/// bfloat16 rounding bug in kernels, fixed in SpawnDev.ILGPU 5.4.33); the scaled T5 runs exact since ML -local.3 (6.5e-6). The bounds below hold today's figures; they tighten when those land. ComfyUI's own Linear on this file is plain fp32
 /// (measured one layer at 5e-8: _DevComms 2026-11-14-1000).
 /// </remarks>
 public class Flux1SplitTests
@@ -82,9 +81,9 @@ public class Flux1SplitTests
         double t5Empty = RelRms(empty.Embeddings.AsSpan(0, 32 * 4096), Raw("f1s_cond_empty_rows0to31_f32_1x32x4096.raw"));
         double pooled = RelRms(pos.Pooled!, Raw("f1s_cond_0_pooled_output_f32_1x768.raw")), pooledEmpty = RelRms(empty.Pooled!, Raw("f1s_cond_empty_0_pooled_output_f32_1x768.raw"));
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: T5 (fp8_scaled) prompt rows {t5Prompt:E2}, all 256 {t5All:E2}, empty {t5Empty:E2}; clip_l pooled {pooled:E2}, empty {pooledEmpty:E2}");
-        Assert.That(t5Prompt, Is.LessThan(2e-2), "the scaled T5's folded decode (library gap)");
-        Assert.That(t5All, Is.LessThan(3e-2));
-        Assert.That(t5Empty, Is.LessThan(3e-2));
+        Assert.That(t5Prompt, Is.LessThan(1e-4), "6.5e-6 on the RX 590 with ML -local.3 (the exact scaled path)");
+        Assert.That(t5All, Is.LessThan(1e-4));
+        Assert.That(t5Empty, Is.LessThan(1e-4));
         Assert.That(pooled, Is.LessThan(1e-3));
         Assert.That(pooledEmpty, Is.LessThan(1e-3));
     }

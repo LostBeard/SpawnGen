@@ -19,8 +19,10 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
      then tighten AeVaeTests' A and C bounds to 2e-3).
    - ~~InstructPixToPixConditioning~~ done (4 templates: FLUX.1 canny / depth, HiDream E1; measured against ComfyUI with ae).
    - CLIPTextEncodeFlux (flux_schnell_full_text_to_image): schema and conditioning layout now, runs when the library's T5 / CLIP-L land.
-   - Then, as Tuvok lands them: the FLUX.1 transformer through Load Diffusion Model / DualCLIPLoader (dumps sent 2026-11-14-0300), then
-     Z-Image (2026-11-14-0400).
+   - **In progress on branch `ml-local-flux1`** (worktree `_scratch/wt-flux1`, SpawnDev.ILGPU.ML 5.8.18-local.1 = ML master 33128b23, which
+     has FLUX.1 dev, Z-Image Turbo and Generate Text from ComfyUI's files, gated by Tuvok on CUDA against SpawnGen's dumps; calls in the
+     library's Docs/flux1.md). Order: Z-Image (8 templates; its 6B transformer suits 8 GB), Generate Text (qwen_3_4b), FLUX.1 (12B, blocks
+     stream past a VRAM budget). Each measured against ComfyUI on the RX 590 (the first AMD numbers). Merge when the ML release is out.
 2. **Generate Text (ComfyUI's TextGenerate, 26 templates)**: a CLIP loader's text encoder file run as a language model (prompt
    enhancers in the FLUX 3, Qwen-Image 2.1, Krea 2, Moss, Ernie, HiDream O1 and Stable Audio 3 templates; four plain LLM templates). The library
    generates from GGUF files and Gemma4 only, so it is asked of Tuvok: generation from ComfyUI's own files, qwen_3_4b first (SpawnGen already

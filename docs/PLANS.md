@@ -18,9 +18,8 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
    Check against ComfyUI on the reference install, then the template `image_flux2_klein_text_to_image` end to end on the RX 590.
    Merge to main when ML 5.8.17 is on nuget.org.
    Status (branch `ml-local-flux2`, worktree `_scratch/wt-flux2`):
-   - Load VAE / VAE Encode / Decode (16b2e01): encode = ComfyUI's on the RX 590; decode wrong on AMD OpenCL. Cause proven 2026-11-14: AMD OpenCL's
-     float division is not correctly rounded ((float)24/48 = 0.49999997), so ML's nearest-upsample table picks wrong pixels. Tuvok: fix in ML
-     5.8.17-local.2 (rerun Flux2VaeTests then). Data: asked about correctly rounded division in ILGPU's OpenCL backend (_DevComms 2026-11-14-0140).
+   - Load VAE / VAE Encode / Decode: = ComfyUI's on the RX 590 with ML 5.8.17-local.2 (2d3a202: decode 1.1e-4). The local.1 decode was wrong on
+     AMD OpenCL (inexact float division in the upsample table): fixed in ML (Tuvok) and, for every kernel, in ILGPU 5.4.32 (Data, proven on the RX 590).
    - Load CLIP type flux2 (2c71ffe): = ComfyUI's conditioning on the RX 590 (1.3e-6 relative RMS).
    - Next: one ComfyUI model call of flux-2-klein-4b (probe SpawnGenDumpModelCall; the file is downloading into the reference), then the diffusion
      model adapter (Load Diffusion Model) and the template end to end.
@@ -34,7 +33,7 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 | what | who | then |
 |---|---|---|
 | SpawnDev.Codecs release on nuget.org | Geordi | merge `codecs-unreleased`: Load / Save Video, Save WEBM, Save Audio FLAC / Opus / MP3 (240 + 68 + 36 template uses) |
-| SpawnDev.ILGPU.ML 5.8.17 on nuget.org | Tuvok (sweep tonight, 2026-11-13) | merge the FLUX.2 branch |
+| SpawnDev.ILGPU.ML 5.8.17 on nuget.org (the branch is on 5.8.17-local.2) | Tuvok | merge the FLUX.2 branch |
 | the model families below | Tuvok | SpawnGen's nodes for each, measured against ComfyUI |
 | AVIF writer (Save Image (Advanced) avif) | Geordi, low: no template uses it | the avif option |
 

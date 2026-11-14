@@ -7,6 +7,21 @@ work that changes it. What is already done and how well it matches ComfyUI is in
 browser, with no Python. SpawnGen also works out the SpawnDev libraries on a real project: what SpawnGen needs from SpawnDev.ILGPU.ML
 (Tuvok) or SpawnDev.Codecs (Geordi) is asked of them, ranked by what it unlocks, never worked around and never treated as a stop.
 
+## Resume here (state at 2026-11-14 end of day)
+
+- main = this commit: the box canvas, the crop editor, the templates browser, AeVae / InstructPixToPix, PLANS. All suites pass.
+- Branch `ml-local-flux1` (worktree `_scratch/wt-flux1`) = 70b6802 on SpawnDev.ILGPU.ML 5.8.18-local.3 + SpawnDev.ILGPU 5.4.32: Z-Image,
+  FLUX.1 (checkpoint and split), Generate Text, measured on the RX 590 (Flux1Tests, Flux1SplitTests, ZImageTests, TextGenerateTests,
+  AeVaeTests tightened). Next there: **Qwen-Image** ((d) in the -local.2 list below; Tuvok's API in his messages / Docs; dumps in
+  _DevComms 2026-11-14-0800); then MinP / PresencePenalty when the next -local (ILGPU 5.4.33) lands, and Krea's bounds tighten then.
+  Merge to main when ML 5.8.18 is on nuget.org.
+- Branch `codecs-unreleased` (worktree `_scratch/wt-codecs`) = e889bfa: main merged, Codecs 1.0.2-local.19 + ILGPU 5.4.32, suites pass.
+  Merge when SpawnDev.Codecs is released.
+- Models for the GPU tests: SPAWNGEN_MODELS_ROOT = the ComfyUI reference install's models folder (_scratch/comfyui-ref/models: Z-Image,
+  FLUX.1 checkpoint, Krea, Qwen-Image files, qwen_3_4b, clip_l, t5 fp8_scaled, ae); FLUX.2 / LTX use SpawnGen's own models folder.
+- The ComfyUI reference server is stopped; restart it for probes (reference-comfyui-ref-tooling memory). Probe nodes in
+  comfyui-ref/custom_nodes/spawngen_dump.py now include SpawnGenHookTokenIds, SpawnGenHookVaeModules and SpawnGenHookModelModules.
+
 ## Now (in order)
 
 Measured 2026-11-14 (`_scratch/count_missing_noapi.py`, the 254 templates without paid API nodes): what a template still lacks is almost

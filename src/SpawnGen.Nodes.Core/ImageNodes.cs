@@ -82,15 +82,25 @@ internal static class Results
     /// in the prefix becomes the picture's index, while the counter is the one for the prefix as written (so such names start at 00001 on every run,
     /// replacing the earlier files) and goes up by one per picture: bn_0_00001_, bn_1_00002_, ...
     /// </summary>
-    internal static async Task<List<object>> SaveImagesAsync(ImageBatch images, NodeContext? context, IServiceProvider services, string type, string prefix)
+    internal static Task<List<object>> SaveImagesAsync(ImageBatch images, NodeContext? context, IServiceProvider services, string type, string prefix)
+    {
+        var metadata = Metadata(context);
+        return SaveEachAsync(images, services, type, prefix, i => PngWriter.Encode(images, i, metadata), "png", trailingUnderscore: true);
+    }
+
+    /// <summary>
+    /// <see cref="SaveImagesAsync"/>'s naming with any file format: <paramref name="encode"/> gives picture i's file. Save Image (Advanced) names its
+    /// files without the "_" before the dot (<c>{prefix}_00001.png</c>); its counter and Save Image's are one (measured: each continues after the other's).
+    /// </summary>
+    internal static async Task<List<object>> SaveEachAsync(ImageBatch images, IServiceProvider services, string type, string prefix, Func<int, byte[]> encode,
+        string extension, bool trailingUnderscore)
     {
         var store = For(services);
-        var metadata = Metadata(context);
         var files = new List<object>();
         if (!prefix.Contains("%batch_num%", StringComparison.Ordinal))
         {
             for (int i = 0; i < images.Batch; i++)
-                files.Add((await store.SaveAsync(type, prefix, PngWriter.Encode(images, i, metadata))).AsImage(images.Width, images.Height));
+                files.Add((await store.SaveAsync(type, prefix, encode(i), extension, trailingUnderscore)).AsImage(images.Width, images.Height));
             return files;
         }
         var (folder, name) = SavePrefix.Split(prefix);
@@ -98,8 +108,8 @@ internal static class Results
         var counter = SavePrefix.NextCounter(store.List(type, folder) ?? [], name);
         for (int i = 0; i < images.Batch; i++)
         {
-            var file = SavePrefix.FileName(name.Replace("%batch_num%", i.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal), counter + i, "png");
-            files.Add((await store.WriteAsync(type, folder, file, PngWriter.Encode(images, i, metadata))).AsImage(images.Width, images.Height));
+            var file = SavePrefix.FileName(name.Replace("%batch_num%", i.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal), counter + i, extension, trailingUnderscore);
+            files.Add((await store.WriteAsync(type, folder, file, encode(i))).AsImage(images.Width, images.Height));
         }
         return files;
     }

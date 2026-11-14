@@ -99,7 +99,7 @@ public static class PromptValidator
             }
             else if (!registered.Schema.ValidatesOwnInputs)
             {
-                var problem = CheckLiteral(registered, spec, input.Literal!);
+                var problem = CheckLiteral(registered, ChosenVariant(registered.Schema, spec, node), input.Literal!);
                 if (problem is not null)
                     errors.Add(new(id, spec.Name, "bad_value", $"Node {id} ({node.ClassType}) input '{spec.Name}': {problem}"));
             }
@@ -107,6 +107,16 @@ public static class PromptValidator
 
         state[id] = Visit.Done;
         plan.Add(id);
+    }
+
+    /// <summary>A dynamic combo input as the option chosen in this prompt (or the combo's default) brings it.</summary>
+    static InputSpec ChosenVariant(NodeSchema schema, InputSpec spec, PromptNode node)
+    {
+        if (spec.Variants is null || spec.DynamicParent is not { } parent) return spec;
+        var chosen = node.Inputs.TryGetValue(parent, out var value) && !value.IsLink && value.Literal is string text
+            ? text
+            : schema.FindInput(parent)?.Widget?.Default as string;
+        return spec.ForOption(chosen);
     }
 
     static Type MemberClr(SocketType type) => type.Name switch { "INT" => typeof(long), "FLOAT" => typeof(double), "BOOLEAN" => typeof(bool), _ => typeof(string) };

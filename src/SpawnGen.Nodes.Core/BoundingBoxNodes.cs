@@ -86,7 +86,7 @@ internal static class BBoxInput
 /// text; SpawnGen draws no text yet.
 /// </para>
 /// </summary>
-[Node("CreateBoundingBoxes", Category = "image/detection", DisplayName = "Create Bounding Boxes", IsOutput = true,
+[Node("CreateBoundingBoxes", Category = "utilities", DisplayName = "Create Bounding Boxes", IsOutput = true,
     Description = "Draw bounding boxes in a canvas. Outputs Ideogram prompt elements, pixel-space bounding boxes, and a preview image.",
     OutputNames = ["preview", "bboxes", "elements"], OutputTypes = [null, "BOUNDING_BOX", "ARRAY"])]
 public sealed class CreateBoundingBoxes

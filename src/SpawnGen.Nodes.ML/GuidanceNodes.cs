@@ -28,7 +28,7 @@ public sealed class APG
 public sealed class CFGNorm
 {
     public ModelHandle Execute(ModelHandle model, [Input(Min = 0.0, Max = 100.0, Step = 0.01)] double strength = 1.0,
-        [Input(Tooltip = "If true, rescale the combined noise BEFORE the sampler's CFG combine, without clamping (can amplify). Matches the norm-scaled CFG used by models like Lens. Default false keeps the original post-CFG x0-space attenuate-only behavior.")]
+        [Input(Optional = true, Tooltip = "If true, rescale the combined noise BEFORE the sampler's CFG combine, without clamping (can amplify). Matches the norm-scaled CFG used by models like Lens. Default false keeps the original post-CFG x0-space attenuate-only behavior.")]
         bool preCfg = false) =>
         preCfg
             ? model.WithPatches(p => p.WithCfgFunction(Patch.Once<Func<CfgFunctionArgs, Task<float[]>>>(a => Task.FromResult(GuidancePatches.CfgNormPre(a, strength)))))

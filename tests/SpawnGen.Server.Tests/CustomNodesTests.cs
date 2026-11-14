@@ -109,6 +109,36 @@ public class CustomNodesTests
     }
 
     [Test]
+    public async Task Tooltips_and_numeric_combo_options_are_in_the_catalogue_as_ComfyUI_lists_them()
+    {
+        var info = JsonNode.Parse(await _http.GetStringAsync("/object_info"))!.AsObject();
+        // ComfyUI (2026-11-13): Create Video's bit_depth is ["auto", 8, 10], numbers; every input carries its tooltip in its config.
+        var bitDepth = info["CreateVideo"]!["input"]!["optional"]!["bit_depth"]!.AsArray();
+        Assert.That(bitDepth[0]!.ToJsonString(), Is.EqualTo("[\"auto\",8,10]"));
+        Assert.That((string?)bitDepth[1]!["default"], Is.EqualTo("auto"));
+        Assert.That((string?)bitDepth[1]!["tooltip"], Does.StartWith("Auto uses 8-bit for sRGB"));
+        var preCfg = info["CFGNorm"]!["input"]!["optional"]!["pre_cfg"]!.AsArray();
+        Assert.That((string?)preCfg[1]!["tooltip"], Does.StartWith("If true, rescale the combined noise"));
+        Assert.That(info["CFGNorm"]!["input"]!["required"]!.AsObject().ContainsKey("pre_cfg"), Is.False, "optional, as in ComfyUI");
+
+        var schemas = NodeSchemaJson.FromObjectInfo(info).ToDictionary(s => s.Id);
+        var read = schemas["CreateVideo"].FindInput("bit_depth")!;
+        Assert.That(read.Widget!.Options, Is.EqualTo(new[] { "auto", "8", "10" }));
+        Assert.That(read.Widget.NumericOptions, Is.True);
+        Assert.That(read.Tooltip, Does.StartWith("Auto uses 8-bit for sRGB"));
+        Assert.That(schemas["KSampler"].FindInput("sampler_name")!.Widget!.NumericOptions, Is.False);
+
+        // Save Image (Advanced)'s bit_depth: one input, each format's own choices (dynamic_variants), read back per format.
+        var shared = info["SaveImageAdvanced"]!["input"]!["required"]!["format.bit_depth"]!.AsArray();
+        Assert.That(shared[1]!["dynamic_variants"]!["exr"]![0]!.ToJsonString(), Is.EqualTo("[\"32-bit float\",\"16-bit float\"]"));
+        Assert.That((string?)shared[1]!["dynamic_variants"]!["exr"]![1]!["default"], Is.EqualTo("16-bit float"));
+        var bits = schemas["SaveImageAdvanced"].FindInput("format.bit_depth")!;
+        Assert.That(bits.ForOption("avif").Widget!.Options, Is.EqualTo(new[] { "auto", "8-bit YUV420", "10-bit YUV420" }));
+        Assert.That(bits.ForOption("avif").Tooltip, Does.StartWith("Auto uses 8-bit YUV420"));
+        Assert.That(bits.ForOption("png").Widget!.Options, Is.EqualTo(new[] { "8-bit", "16-bit" }));
+    }
+
+    [Test]
     public async Task Match_type_force_input_and_dev_only_read_back_from_the_catalogue()
     {
         var info = JsonNode.Parse(await _http.GetStringAsync("/object_info"))!.AsObject();

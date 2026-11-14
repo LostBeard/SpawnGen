@@ -46,7 +46,7 @@ public sealed record LayerItem(ImageBatch Image)
 /// mask, a non-empty name, opacity other than 1, a blend mode other than normal, a rotation other than 0 (in radians), a width / height other than 0
 /// and the flips only when set.
 /// </summary>
-[Node("AddLayer", Category = "image/compositing", DisplayName = "Add Layer", OutputNames = ["LAYERS"])]
+[Node("AddLayer", Category = "image", DisplayName = "Add Layer", OutputNames = ["LAYERS"])]
 public sealed class AddLayer
 {
     public static IEnumerable<string> BlendModes() => CompositorBlend.ModeNames;
@@ -93,7 +93,7 @@ public sealed class AddLayer
 /// crops the frame and mask and moves the layer by the rect's offset, its size then the cropped one. Frames without a box sit at the origin. z_index
 /// defaults to one above the stack's highest (0 for a new stack) plus the frame index. A mask batch of 1 applies to every frame, otherwise frame by frame.
 /// </summary>
-[Node("LayersFromBoundingBoxes", Category = "image/compositing", DisplayName = "Layers From Bounding Boxes", OutputNames = ["LAYERS"],
+[Node("LayersFromBoundingBoxes", Category = "image", DisplayName = "Layers From Bounding Boxes", OutputNames = ["LAYERS"],
     Description = "Turn an image batch plus its bounding boxes into a layer stack, one layer per frame, each placed by its own box. Use this when a node emits layers as a batch - a batch carries a single placement for every frame, so the individual positions are otherwise lost.")]
 public sealed class LayersFromBoundingBoxes
 {
@@ -222,7 +222,7 @@ public sealed class LayersFromBoundingBoxes
 /// composition is drawn.
 /// </para>
 /// </summary>
-[Node("ImageCompositor", Category = "image/compositing", DisplayName = "Create Layered Image", IsOutput = true, HasIntermediateOutput = true,
+[Node("ImageCompositor", Category = "image", DisplayName = "Create Layered Image", IsOutput = true, HasIntermediateOutput = true,
     OutputNames = ["IMAGE", "MASK"])]
 public sealed class ImageCompositor
 {

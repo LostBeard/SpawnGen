@@ -13,6 +13,12 @@ public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds)
 {
     /// <summary>A CURVE widget: a plot the pointer edits (<see cref="CurveWidget"/>), not a one-line value.</summary>
     public bool IsCurve { get; init; }
+
+    /// <summary>
+    /// What the row shows: a dynamic combo option's input shows its own part (<c>bit_depth</c> for <c>format.bit_depth</c>), as ComfyUI's frontend
+    /// labels it (measured 2026-11-13: Save Image (Advanced) and Save Video); any other widget its name.
+    /// </summary>
+    public string Label { get; init; } = Name;
 }
 
 /// <summary>Everything the renderer and hit tester need to know about where one node's parts are, in world units.</summary>
@@ -116,7 +122,7 @@ public static class NodeLayout
             bool curve = spec.Type.Name == CurveWidget.TypeName;
             double h = curve ? Math.Clamp((width - 2 * Padding) * 0.8, 120, 320) : spec.Widget!.Multiline ? MultilineWidgetHeight : WidgetRowHeight;
             var bounds = new Rect(node.X + Padding, y, width - 2 * Padding, h - 4);
-            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve });
+            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, Label = spec.DynamicParent is null ? spec.Name : Label(spec.Name) });
             // The drop target for linking a value into this widget: the left edge of its row.
             inputs.Add(new SlotGeometry(SlotKind.Input, spec.Name, inputs.Count, spec.Type, new Point(node.X, bounds.Center.Y), true, false));
             y += h;
@@ -235,7 +241,7 @@ public static class NodeLayout
             : schema.Inputs.Where(i => i.DynamicParent == input.Name && i.DynamicOptions.Contains(chosen)); // a remote schema: schema order
         foreach (var n in nested)
             if (n is not null)
-                foreach (var shown in WithChosen(schema, n, widgets)) yield return shown;
+                foreach (var shown in WithChosen(schema, n.ForOption(chosen), widgets)) yield return shown;
     }
 
     /// <summary>The name a slot shows: a member of a group or of a dynamic combo shows its own part (<c>image0</c> for <c>images.image0</c>).</summary>

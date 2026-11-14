@@ -66,16 +66,26 @@ public static class NodeSchemaJson
     static InputSpec Input(string name, JsonArray entry, bool required)
     {
         var config = entry.Count > 1 ? entry[1] as JsonObject : null;
-        return Plain(name, entry, required, config) with { Lazy = config?["lazy"] is JsonValue lazy && lazy.TryGetValue<bool>(out var isLazy) && isLazy, Optional = !required,
+        return Plain(name, entry, required, config) with { Tooltip = (string?)config?["tooltip"], Lazy = config?["lazy"] is JsonValue lazy && lazy.TryGetValue<bool>(out var isLazy) && isLazy, Optional = !required,
             Group = (string?)config?["autogrow_group"], GroupMin = (int?)config?["autogrow_min"] ?? 0,
             DynamicParent = (string?)config?["dynamic_parent"],
-            DynamicOptions = config?["dynamic_options"] is JsonArray options ? options.Select(o => (string)o!).ToList() : [] };
+            DynamicOptions = config?["dynamic_options"] is JsonArray options ? options.Select(o => (string)o!).ToList() : [],
+            Variants = config?["dynamic_variants"] is JsonObject variants
+                ? variants.Where(v => v.Value is JsonArray).ToDictionary(v => v.Key, v =>
+                {
+                    var entryOf = (JsonArray)v.Value!;
+                    var read = Plain(name, entryOf, required, entryOf.Count > 1 ? entryOf[1] as JsonObject : null);
+                    return new InputVariant(read.Widget, (string?)(entryOf.Count > 1 ? entryOf[1]?["tooltip"] : null));
+                }, StringComparer.Ordinal)
+                : null };
     }
 
     static InputSpec Plain(string name, JsonArray entry, bool required, JsonObject? config)
     {
         if (entry[0] is JsonArray options)
-            return new InputSpec(name, SocketType.String, required, new WidgetSpec(WidgetKind.Combo) { Options = options.Select(o => (string)o!).ToList(), Default = options.Count > 0 ? (string?)options[0] : null });
+            // ComfyUI's options can be numbers (Create Video's bit_depth: "auto", 8, 10): their text is the option.
+            return new InputSpec(name, SocketType.String, required, new WidgetSpec(WidgetKind.Combo) { Options = options.Select(OptionText).ToList(), Default = options.Count > 0 ? OptionText(options[0]) : null,
+                NumericOptions = options.Any(o => o is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number) });
         var type = (string)entry[0]!;
         if (config is null) return new InputSpec(name, new SocketType(type), required);
         if (type == MatchTypeName)
@@ -101,6 +111,8 @@ public static class NodeSchemaJson
             Multiline = (bool?)config["multiline"] ?? false,
         });
     }
+
+    static string OptionText(JsonNode? o) => o is JsonValue v && v.TryGetValue<string>(out var text) ? text : o?.ToJsonString() ?? "";
 
     static object? Value(WidgetKind kind, JsonNode? node)
     {

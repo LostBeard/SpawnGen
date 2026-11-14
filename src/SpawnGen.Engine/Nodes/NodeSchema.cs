@@ -23,7 +23,17 @@ public sealed record WidgetSpec(WidgetKind Kind)
     /// <summary>A widget the editor keeps, saves and sends but does not draw (ComfyUI's hidden widgets: Custom Combo's index).</summary>
     public bool Hidden { get; init; }
 
+    /// <summary>
+    /// ComfyUI lists some combo options as numbers (Create Video's bit_depth: "auto", 8, 10). The editor keeps every option as text; with this set,
+    /// an option that reads as an integer is a number in object_info, in prompts and in saved workflows, as ComfyUI's frontend sends it.
+    /// </summary>
+    public bool NumericOptions { get; init; }
+
     public IReadOnlyList<string> ResolveOptions() => OptionsProvider?.Invoke() ?? Options ?? [];
+
+    /// <summary>A combo value as ComfyUI has it: the integer for a <see cref="NumericOptions"/> option that reads as one, else the text.</summary>
+    public object OptionValue(string text) =>
+        NumericOptions && long.TryParse(text, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : text;
 }
 
 public sealed record InputSpec(string Name, SocketType Type, bool Required, WidgetSpec? Widget = null, string? Tooltip = null)
@@ -42,6 +52,15 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
     public string? DynamicParent { get; init; }
     /// <summary>For an input of a dynamic combo option: the options that bring it (shown, saved and sent only while one of them is chosen).</summary>
     public IReadOnlyList<string> DynamicOptions { get; init; } = [];
+    /// <summary>
+    /// For an input several options bring with different widgets (Save Image (Advanced)'s bit_depth: "8-bit" / "16-bit" for png, "32-bit float" /
+    /// "16-bit float" for exr): the widget and tooltip per option key. <see cref="Widget"/> and <see cref="Tooltip"/> are the first option's.
+    /// </summary>
+    public IReadOnlyDictionary<string, InputVariant>? Variants { get; init; }
+
+    /// <summary>This input as option <paramref name="option"/> of its dynamic combo brings it (itself when it has no variant for that option).</summary>
+    public InputSpec ForOption(string? option) =>
+        option is not null && Variants is { } variants && variants.TryGetValue(option, out var v) ? this with { Widget = v.Widget, Tooltip = v.Tooltip } : this;
     /// <summary>ComfyUI's MatchType: the template id this any-type input shares with other inputs and outputs of the node.</summary>
     public string? MatchTemplate { get; init; }
     /// <summary>ComfyUI's forceInput: a primitive that is only a socket.</summary>
@@ -53,6 +72,9 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
     /// not declared optional (ComfyUI lists the whole group in its declared section).</summary>
     public bool ListedAsRequired => !Optional && (Required || Widget is not null || Group is not null);
 }
+
+/// <summary>The widget and tooltip one option of a dynamic combo gives an input it shares with other options (see <see cref="InputSpec.Variants"/>).</summary>
+public sealed record InputVariant(WidgetSpec? Widget, string? Tooltip);
 
 public sealed record OutputSpec(string Name, SocketType Type, string? Tooltip = null)
 {

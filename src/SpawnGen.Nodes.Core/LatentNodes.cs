@@ -23,7 +23,7 @@ public sealed class EmptyLatentImage
 /// Empty Latent Image), all values 0. Sampling turns an all-zero latent into the model's channel count (see SamplingCore.ToModelChannels), so an
 /// SD 1.x model samples from this latent as from Empty Latent Image (measured: the same result to the last bit).
 /// </summary>
-[Node("EmptySD3LatentImage", Category = "model/latent/stable diffusion")]
+[Node("EmptySD3LatentImage", Category = "model/latent/stable diffusion", DisplayName = "EmptySD3LatentImage")]
 public sealed class EmptySD3LatentImage
 {
     public LatentBatch Execute(

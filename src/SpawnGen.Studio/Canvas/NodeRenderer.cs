@@ -562,7 +562,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.Font = Theme.Font;
         ctx.TextBaseline = "middle";
         ctx.FillStyle = Theme.LabelText;
-        ctx.FillText(w.Name, w.Bounds.X + 8, w.Bounds.Y + (CurveWidget.LabelHeight - 6) / 2 + 1);
+        ctx.FillText(w.Label, w.Bounds.X + 8, w.Bounds.Y + (CurveWidget.LabelHeight - 6) / 2 + 1);
         ctx.FillStyle = Theme.ValueText;
         ctx.TextAlign = "right";
         ctx.FillText(interpolation == "linear" ? "linear" : "monotone cubic", w.Bounds.Right - 8, w.Bounds.Y + (CurveWidget.LabelHeight - 6) / 2 + 1);
@@ -641,7 +641,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         if (w.Spec.Multiline)
         {
             ctx.FillStyle = Theme.LabelText;
-            ctx.FillText(w.Name, r.X + 8, cy);
+            ctx.FillText(w.Label, r.X + 8, cy);
             ctx.FillStyle = Theme.ValueText;
             // The first lines of the text, clipped to the box.
             ctx.Save();
@@ -661,7 +661,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
             var hex = value as string ?? "#ffffff";
             ctx.FillStyle = Theme.LabelText;
             ctx.TextAlign = "left";
-            ctx.FillText(Ellipsize(w.Name, Math.Max(24, r.Width - 110)), r.X + 10, cy);
+            ctx.FillText(Ellipsize(w.Label, Math.Max(24, r.Width - 110)), r.X + 10, cy);
             ctx.FillStyle = Theme.ValueText;
             ctx.TextAlign = "right";
             ctx.FillText(hex, r.Right - 34, cy);
@@ -685,7 +685,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         double avail = r.Width - 34, valueWidth = Math.Min(MeasureText(text), avail * 0.65);
         ctx.FillStyle = Theme.LabelText;
         ctx.TextAlign = "left";
-        ctx.FillText(Ellipsize(w.Name, Math.Max(24, avail - valueWidth - 8)), r.X + 10, cy);
+        ctx.FillText(Ellipsize(w.Label, Math.Max(24, avail - valueWidth - 8)), r.X + 10, cy);
         ctx.FillStyle = Theme.ValueText;
         ctx.TextAlign = "right";
         ctx.FillText(Ellipsize(text, valueWidth), r.Right - 10, cy);

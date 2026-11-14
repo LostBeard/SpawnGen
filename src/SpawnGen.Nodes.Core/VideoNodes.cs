@@ -13,7 +13,7 @@ public sealed class CreateVideo
         [Input(Tooltip = "The images to create a video from.")] ImageBatch images,
         [Input(Min = 1.0, Max = 120.0, Step = 1.0)] double fps = 30.0,
         [Input(Optional = true, Tooltip = "The audio to add to the video.")] AudioClip? audio = null,
-        [Input(Optional = true, Options = ["auto", "8", "10"], Tooltip = "Auto uses 8-bit for sRGB and 10-bit for HDR. Explicit 8-bit and 10-bit choices are independent of colorspace.")] string bitDepth = "auto",
+        [Input(Optional = true, Options = ["auto", "8", "10"], NumericOptions = true, Tooltip = "Auto uses 8-bit for sRGB and 10-bit for HDR. Explicit 8-bit and 10-bit choices are independent of colorspace.")] string bitDepth = "auto",
         [Input(Optional = true, Options = ["sRGB", "HDR", "HDR PQ"], Tooltip = "Colorspace of the input images. HDR selects BT.2020/HLG and HDR PQ selects BT.2020/PQ.")] string colorSpace = "sRGB",
         [Input(Optional = true, Options = ["none", "auto", "h264", "av1"], Tooltip = "Optionally encode the video immediately. None keeps the images in tensor form; Auto uses H.264.")] string codec = "none")
         => new(images, fps, audio, bitDepth, colorSpace);

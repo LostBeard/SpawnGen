@@ -35,7 +35,7 @@ public sealed class LinkDraft
 /// </summary>
 public sealed class EditorView
 {
-    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap, DraggingCurvePoint }
+    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap, DraggingCurvePoint, DraggingBox }
 
     const double DragThresholdPixels = 3;
 
@@ -231,6 +231,173 @@ public sealed class EditorView
         Document.SetWidget(drag.NodeId, drag.Name, CurveWidget.Make(points, CurveWidget.Interpolation(value)));
     }
 
+    // ---- bounding-box canvases ----
+
+    /// <summary>The box selected on a canvas (node, widget, index): drawn highlighted, its panel shows its fields, Delete removes it.</summary>
+    public (int NodeId, string Name, int Index)? SelectedBox { get; private set; }
+    readonly HashSet<(int, string)> _boxGridOff = [];
+    /// <summary>Whether a canvas snaps to its grid (on until its Grid button is pressed; view state, as in ComfyUI's editor).</summary>
+    public bool BoxGrid(int nodeId, string name) => !_boxGridOff.Contains((nodeId, name));
+    /// <summary>The box being drawn, in canvas pixels as it would be stored, while a drag on an empty part of a canvas goes on.</summary>
+    public (int NodeId, string Name, double X, double Y, double W, double H)? DraftBox { get; private set; }
+    /// <summary>A field of the selected box was clicked: the UI edits it in place ("text", "desc" or "palette:&lt;i&gt;"), then calls <see cref="SetBoxField"/>.</summary>
+    public event Action<int, string, int, string>? BoxFieldActivated;
+
+    enum BoxAction { Draw, Move, Resize }
+    sealed record BoxDrag(int NodeId, string Name, Rect Canvas, double W, double H, BoxAction Action, int Index, BoxesWidget.Corner Corner,
+        (double X, double Y) Start, List<BoxesWidget.Box> Before);
+    BoxDrag? _boxDrag;
+
+    WidgetRow? BoxesRow(Hit hit) =>
+        Document.Graph.FindNode(hit.NodeId) is { } n ? Hits.Geometry(n).Widgets.FirstOrDefault(w => w.Name == hit.Name && w.IsBoxes) : null;
+
+    int SelectedIndex(int nodeId, string name, int count) =>
+        SelectedBox is { } s && s.NodeId == nodeId && s.Name == name && s.Index < count ? s.Index : -1;
+
+    /// <summary>
+    /// A press on a box canvas: Grid toggles snapping, Clear all empties it; on the canvas a selected box's corner resizes it, a box is selected and
+    /// moved, empty canvas draws a new box; on the panel obj / text set the selected box's type, "+" adds a white palette colour, the text, the
+    /// description and a swatch are edited by the UI (<see cref="BoxFieldActivated"/>).
+    /// </summary>
+    void PressBoxes(int nodeId, WidgetRow row, Point world)
+    {
+        var node = Document.Graph.GetNode(nodeId);
+        var (w, h) = BoxesWidget.CanvasSize(node.Widgets);
+        var lay = BoxesWidget.Lay(row.Bounds, w, h);
+        var boxes = BoxesWidget.Boxes(node.Widgets.GetValueOrDefault(row.Name));
+        int sel = SelectedIndex(nodeId, row.Name, boxes.Count);
+        if (lay.GridButton.Contains(world))
+        {
+            if (!_boxGridOff.Add((nodeId, row.Name))) _boxGridOff.Remove((nodeId, row.Name));
+            ViewChanged?.Invoke();
+            return;
+        }
+        if (lay.ClearButton.Contains(world))
+        {
+            if (boxes.Count > 0) { Document.SetWidget(nodeId, row.Name, BoxesWidget.Make([])); Document.EndGesture(); }
+            SelectedBox = null;
+            ViewChanged?.Invoke();
+            return;
+        }
+        var corner = sel >= 0 ? BoxesWidget.CornerAt(BoxesWidget.BoxRect(lay.Canvas, w, h, boxes[sel]), world) : BoxesWidget.Corner.None;
+        if (lay.Canvas.Contains(world) || corner != BoxesWidget.Corner.None)
+        {
+            var p = BoxesWidget.ToCanvas(lay.Canvas, w, h, world);
+            int under = BoxesWidget.BoxAt(boxes, p);
+            var (action, index) = corner != BoxesWidget.Corner.None ? (BoxAction.Resize, sel) : under >= 0 ? (BoxAction.Move, under) : (BoxAction.Draw, -1);
+            SelectedBox = index >= 0 ? (nodeId, row.Name, index) : null;
+            _boxDrag = new BoxDrag(nodeId, row.Name, lay.Canvas, w, h, action, index, corner, p, boxes);
+            _mode = Mode.DraggingBox;
+            SetCursor(action == BoxAction.Move ? "move" : "crosshair");
+            ViewChanged?.Invoke();
+            return;
+        }
+        if (sel < 0) return;
+        var box = boxes[sel];
+        void Store(BoxesWidget.Box changed)
+        {
+            boxes[sel] = changed;
+            Document.SetWidget(nodeId, row.Name, BoxesWidget.Make(boxes));
+            Document.EndGesture();
+        }
+        if (lay.ObjButton.Contains(world)) { if (box.Type != "obj") Store(box.With("type", "obj")); return; }
+        if (lay.TextButton.Contains(world)) { if (box.Type != "text") Store(box.With("type", "text")); return; }
+        if (box.Type == "text" && lay.TextField.Contains(world)) { BoxFieldActivated?.Invoke(nodeId, row.Name, sel, "text"); return; }
+        if (lay.DescField.Contains(world)) { BoxFieldActivated?.Invoke(nodeId, row.Name, sel, "desc"); return; }
+        var palette = box.Palette;
+        int swatch = BoxesWidget.SwatchAt(lay.PaletteRow, palette.Count, world);
+        if (swatch >= 0) { BoxFieldActivated?.Invoke(nodeId, row.Name, sel, "palette:" + swatch); return; }
+        if (BoxesWidget.Plus(lay.PaletteRow, palette.Count).Contains(world))
+        {
+            palette.Add("#ffffff");
+            Store(box.With("palette", new SpawnGen.Engine.Types.ArrayValue(palette)));
+        }
+    }
+
+    void DragBox(BoxDrag d, Point world)
+    {
+        var p = BoxesWidget.ToCanvas(d.Canvas, d.W, d.H, world);
+        bool grid = BoxGrid(d.NodeId, d.Name);
+        double dx = p.X - d.Start.X, dy = p.Y - d.Start.Y;
+        if (d.Action == BoxAction.Draw)
+        {
+            DraftBox = BoxesWidget.Draw(d.Start, p, grid) is { } r ? (d.NodeId, d.Name, r.X, r.Y, r.W, r.H) : null;
+            ViewChanged?.Invoke();
+            return;
+        }
+        if (d.Index < 0 || d.Index >= d.Before.Count) return;
+        var boxes = new List<BoxesWidget.Box>(d.Before);
+        boxes[d.Index] = d.Action == BoxAction.Move ? BoxesWidget.Move(d.Before[d.Index], dx, dy, grid) : BoxesWidget.Resize(d.Before[d.Index], d.Corner, dx, dy, grid);
+        Document.SetWidget(d.NodeId, d.Name, BoxesWidget.Make(boxes));
+    }
+
+    void ReleaseBox(BoxDrag d)
+    {
+        if (d.Action == BoxAction.Draw)
+        {
+            if (DraftBox is { } r && r.NodeId == d.NodeId && r.Name == d.Name)
+            {
+                var boxes = new List<BoxesWidget.Box>(d.Before) { new(r.X, r.Y, r.W, r.H, BoxesWidget.NewMetadata()) };
+                Document.SetWidget(d.NodeId, d.Name, BoxesWidget.Make(boxes));
+                SelectedBox = (d.NodeId, d.Name, boxes.Count - 1);
+            }
+            DraftBox = null;
+        }
+        Document.EndGesture();
+        _boxDrag = null;
+        ViewChanged?.Invoke();
+    }
+
+    /// <summary>Sets a field of a box (the UI's in-place editing of <see cref="BoxFieldActivated"/>): "text", "desc" or "palette:&lt;i&gt;" (a colour).</summary>
+    public void SetBoxField(int nodeId, string name, int index, string field, string value)
+    {
+        if (Document.Graph.FindNode(nodeId) is not { } node) return;
+        var boxes = BoxesWidget.Boxes(node.Widgets.GetValueOrDefault(name));
+        if (index < 0 || index >= boxes.Count) return;
+        var box = boxes[index];
+        if (field is "text" or "desc") boxes[index] = box.With(field, value);
+        else if (field.StartsWith("palette:", StringComparison.Ordinal) && int.TryParse(field[8..], out int i) && box.Palette is { } palette && i < palette.Count)
+        {
+            palette[i] = value;
+            boxes[index] = box.With("palette", new SpawnGen.Engine.Types.ArrayValue(palette));
+        }
+        else return;
+        Document.SetWidget(nodeId, name, BoxesWidget.Make(boxes));
+        Document.EndGesture();
+    }
+
+    /// <summary>A right-click on a palette swatch of the selected box removes that colour (true when one was removed).</summary>
+    bool RemoveSwatch(Hit hit, Point world)
+    {
+        if (BoxesRow(hit) is not { } row || Document.Graph.FindNode(hit.NodeId) is not { } node) return false;
+        var boxes = BoxesWidget.Boxes(node.Widgets.GetValueOrDefault(row.Name));
+        int sel = SelectedIndex(hit.NodeId, row.Name, boxes.Count);
+        if (sel < 0) return false;
+        var (w, h) = BoxesWidget.CanvasSize(node.Widgets);
+        var palette = boxes[sel].Palette;
+        int i = BoxesWidget.SwatchAt(BoxesWidget.Lay(row.Bounds, w, h).PaletteRow, palette.Count, world);
+        if (i < 0) return false;
+        palette.RemoveAt(i);
+        boxes[sel] = boxes[sel].With("palette", new SpawnGen.Engine.Types.ArrayValue(palette));
+        Document.SetWidget(hit.NodeId, row.Name, BoxesWidget.Make(boxes));
+        Document.EndGesture();
+        return true;
+    }
+
+    /// <summary>Delete with a box selected removes the box, not the node (true when it did).</summary>
+    bool DeleteSelectedBox()
+    {
+        if (SelectedBox is not { } s || Document.Graph.FindNode(s.NodeId) is not { } node) return false;
+        var boxes = BoxesWidget.Boxes(node.Widgets.GetValueOrDefault(s.Name));
+        SelectedBox = null;
+        if (s.Index >= boxes.Count) return false;
+        boxes.RemoveAt(s.Index);
+        Document.SetWidget(s.NodeId, s.Name, BoxesWidget.Make(boxes));
+        Document.EndGesture();
+        ViewChanged?.Invoke();
+        return true;
+    }
+
     // ---- pointer ----
 
     public void PointerDown(Point screen, PointerButton button, Modifiers mods = Modifiers.None, int clickCount = 1)
@@ -256,8 +423,11 @@ public sealed class EditorView
         }
 
         var hit = Hits.Test(world);
+        // A press anywhere but the selected box's canvas lets the box go.
+        if (SelectedBox is { } held && !(hit.Kind == HitKind.Widget && hit.NodeId == held.NodeId && hit.Name == held.Name)) { SelectedBox = null; ViewChanged?.Invoke(); }
         if (button == PointerButton.Right)
         {
+            if (hit.Kind == HitKind.Widget && RemoveSwatch(hit, world)) return;
             if (hit.Kind is HitKind.NodeBody or HitKind.TitleBar or HitKind.Widget && !_selected.Contains(hit.NodeId)) SelectOnly(hit.NodeId);
             if (hit.Kind == HitKind.GroupTitle) { _selected.Clear(); SelectedLink = null; SelectedGroup = hit.NodeId; ViewChanged?.Invoke(); }
             ContextMenuRequested?.Invoke(hit, screen);
@@ -308,6 +478,11 @@ public sealed class EditorView
             case HitKind.CollapseButton:
                 Document.SetCollapsed(hit.NodeId, !Document.Graph.GetNode(hit.NodeId).Collapsed);
                 Document.EndGesture();
+                break;
+
+            case HitKind.Widget when BoxesRow(hit) is { } boxesRow:
+                SelectOnly(hit.NodeId);
+                PressBoxes(hit.NodeId, boxesRow, world);
                 break;
 
             case HitKind.Widget when CurveRow(hit) is { } curveRow:
@@ -425,6 +600,10 @@ public sealed class EditorView
                 MoveCurvePoint(drag, world);
                 break;
 
+            case Mode.DraggingBox when _boxDrag is { } boxDrag:
+                DragBox(boxDrag, world);
+                break;
+
             case Mode.Panning:
                 Viewport.Pan(screen.X - _lastScreen.X, screen.Y - _lastScreen.Y);
                 ViewChanged?.Invoke();
@@ -520,6 +699,9 @@ public sealed class EditorView
             case Mode.DraggingCurvePoint:
                 Document.EndGesture();
                 _curve = null;
+                break;
+            case Mode.DraggingBox when _boxDrag is { } boxDrag:
+                ReleaseBox(boxDrag);
                 break;
             case Mode.PressedWidget:
                 if (_moved && _number is not null) Document.EndGesture();
@@ -722,6 +904,8 @@ public sealed class EditorView
         bool ctrl = mods.HasFlag(Modifiers.Ctrl), shift = mods.HasFlag(Modifiers.Shift);
         switch (key)
         {
+            case "delete" or "backspace" when !ctrl && SelectedBox is not null:
+                return DeleteSelectedBox();
             case "delete" or "backspace" when !ctrl:
                 DeleteSelection();
                 return true;

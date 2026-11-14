@@ -28,7 +28,12 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
        in the shared GEMM (hi + lo bf16 halves). Waiting: -local.2 with the per-call caption length (cfg above 1 without reopening).
      - Generate Text waits for the library's 8-bit load option (bf16 -> Q8_0 on the device, ~4.3 GB): qwen_3_4b's 8.05 GB of bf16 does not
        fit an 8 GB card.
-     - FLUX.1 next.
+     - FLUX.1 dev done on the branch (eca3faf): Load Checkpoint takes ComfyUI's all-in-one flux1-dev-fp8.safetensors; = ComfyUI on the RX 590
+       (T5 1.4e-5, pooled CLIP-L 1.4e-6, model calls 4.7e-6 / 8.5e-6, the checkpoint graph's picture 69.4 dB at 256 px, 45 s).
+     - Qwen-Image dumps sent (_DevComms 2026-11-14-0800): LATENT [b, 16, 1, H/8, W/8]; a system-prompt template whose first 34 tokens
+       ComfyUI drops; cond and uncond as separate calls. Tuvok ports it next.
+     - Next on the branch: the split FLUX.1 graph (Load Diffusion Model + DualCLIPLoader flux + Load VAE ae: flux_dev_full_text_to_image and
+       the Krea / Fill / Kontext templates; T5 and CLIP-L from ComfyUI's own t5xxl / clip_l files), schnell, then Generate Text when Q8 lands.
 2. **Generate Text (ComfyUI's TextGenerate, 26 templates)**: a CLIP loader's text encoder file run as a language model (prompt
    enhancers in the FLUX 3, Qwen-Image 2.1, Krea 2, Moss, Ernie, HiDream O1 and Stable Audio 3 templates; four plain LLM templates). The library
    generates from GGUF files and Gemma4 only, so it is asked of Tuvok: generation from ComfyUI's own files, qwen_3_4b first (SpawnGen already

@@ -98,6 +98,7 @@ internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, stri
     {
         var (ids, real) = await TokenizeAsync(text, cancellationToken);
         var acc = runtime.Accelerator;
+        Flux2Residency.Release(); // the encoder's 6.2 GB and a loaded transformer do not fit an 8 GB card together
         using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, cancellationToken);
         using var encoder = new Flux2TextEncoder(acc, weights);
         var rows = encoder.Encode(ids, real);
@@ -116,4 +117,124 @@ internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, stri
         weights.Count == 0 ? Task.CompletedTask : throw new NotSupportedException("LoRAs on FLUX.2's text encoder are not available yet.");
 
     public void Dispose() { }
+}
+
+/// <summary>
+/// FLUX.2's big parts take turns on the device: the Qwen3 text encoder (6.2 GB) and the transformer (4.2 GB with the fp8 file, 7.8 GB bf16) do not
+/// fit an 8 GB card together. Loading the encoder unloads a loaded transformer; the transformer loads again when a sampler next needs it.
+/// </summary>
+internal static class Flux2Residency
+{
+    static Flux2DiffusionModel? _resident;
+
+    public static void Holding(Flux2DiffusionModel model) => _resident = model;
+
+    /// <summary>Frees the transformer if one is loaded (the text encoder is about to load).</summary>
+    public static void Release()
+    {
+        _resident?.Unload();
+        _resident = null;
+    }
+
+    public static void Forget(Flux2DiffusionModel model)
+    {
+        if (ReferenceEquals(_resident, model)) _resident = null;
+    }
+}
+
+/// <summary>
+/// FLUX.2 Klein's transformer as a MODEL (Load Diffusion Model: ComfyUI's flux-2-klein-*.safetensors, bf16 or fp8). Measured with ComfyUI
+/// (2026-11-14, SpawnGenDumpModelCall on its distilled Klein 4B graph): one model call per step with cfg 1; the model sees the LATENT as it is
+/// ([b, 128, h, w]) and all 512 rows of the text conditioning (no mask), at timestep sigma; its result gives the denoised latent x - sigma v
+/// (an Euler step from it reproduces ComfyUI's next input exactly). Its own schedule (BasicScheduler) is a flow with the shift e^2.02 at every
+/// size. The library's transformer takes timestep sigma x 1000 and gives v.
+/// </summary>
+internal sealed class Flux2DiffusionModel(MlRuntime runtime, string name, string repo, string file) : IDiffusionModel, IDisposable
+{
+    /// <summary>The tensor only FLUX.2's transformers carry (the double blocks share one modulation): how Load Diffusion Model tells FLUX.2 from FLUX.1.</summary>
+    public const string MarkerTensor = "double_stream_modulation_img.lin.weight";
+
+    /// <summary>Measured: ComfyUI's Klein schedule is e^mu / (e^mu + 1/t - 1) with mu = 2.02 at every resolution (simple, 20 steps: each sigma solves to mu 2.0200).</summary>
+    public const double Mu = 2.02;
+
+    Flux2Weights? _weights;
+
+    public string Name => name;
+    public SdFamily Family => SdFamily.SD1;
+    public LatentFormat LatentFormat => LatentFormat.Flux2;
+    public ModelSampling Sampling { get; } = new(ModelSigmas.Flow(ModelSigmas.Sd3Shift(Math.Exp(Mu)), 1000, entries: 10000), PredictionType.Const);
+    public SdUNet? UNet => null;
+
+    public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) =>
+        weights.Count == 0 ? Task.CompletedTask : throw new NotSupportedException("LoRAs and model merges on FLUX.2 are not available yet.");
+
+    public UNetRun BeginRun(Accelerator accelerator) => new Flux2Run(this, accelerator);
+
+    public async Task<Flux2Weights> WeightsAsync(CancellationToken ct)
+    {
+        if (_weights is not null) return _weights;
+        _weights = await Flux2Weights.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file, ct);
+        Flux2Residency.Holding(this);
+        return _weights;
+    }
+
+    public void Unload()
+    {
+        _weights?.Dispose();
+        _weights = null;
+    }
+
+    public void Dispose()
+    {
+        Flux2Residency.Forget(this);
+        Unload();
+    }
+
+    /// <summary>One sampling run: the transformer for this latent's size, each conditioning entry's text kept on the device for the run.</summary>
+    sealed class Flux2Run(Flux2DiffusionModel model, Accelerator acc) : UNetRun
+    {
+        Flux2Transformer? _transformer;
+        (int H, int W) _grid;
+        readonly Dictionary<CondEntry, MemoryBuffer1D<float, Stride1D.Dense>> _text = new(ReferenceEqualityComparer.Instance);
+        MemoryBuffer1D<float, Stride1D.Dense>? _latent;
+        Flux2Kernels? _kernels;
+
+        public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
+            UNetOptions options, float[]? concat, CancellationToken cancellationToken)
+        {
+            if (controls is { Count: > 0 }) throw new NotSupportedException("ControlNets do not apply to FLUX.2.");
+            if (entry.Shape[^1] != Flux2TextEncoder.EmbedWidth || entry.Shape[^2] != Flux2TextEncoderModel.Length)
+                throw new ArgumentException($"FLUX.2 takes its Qwen3 text ([1, 512, {Flux2TextEncoder.EmbedWidth}]); this conditioning is [{string.Join(", ", entry.Shape)}]. Encode the prompt with Load CLIP type flux2.");
+            if (entry.ReferenceLatents is { Count: > 0 })
+                throw new NotSupportedException("Reference latents (FLUX.2 editing) are not wired in SpawnGen yet.");
+            int n = Flux2VaeModel.LatentChannels * h * w;
+            if (input.Length != n) throw new ArgumentException($"A FLUX.2 latent is {Flux2VaeModel.LatentChannels} channels; this one has {input.Length / (h * w)}.");
+            var weights = await model.WeightsAsync(cancellationToken);
+            _kernels ??= new Flux2Kernels(acc);
+            if (_transformer is null || _grid != (h, w))
+            {
+                _transformer?.Dispose();
+                _transformer = new Flux2Transformer(acc, weights, Flux2TextEncoderModel.Length, h * w);
+                _transformer.SetPositions(Flux2Pipeline.ImageIds(h, w), Flux2Pipeline.TextIds(Flux2TextEncoderModel.Length));
+                _grid = (h, w);
+                _latent?.Dispose();
+                _latent = acc.Allocate1D<float>(n);
+            }
+            if (!_text.TryGetValue(entry, out var text)) _text[entry] = text = acc.Allocate1D(entry.Embeddings);
+            _latent!.View.CopyFromCPU(input);
+            _kernels.LatentToTokens(_latent.View, _transformer.InputLatents, h, w);
+            _transformer.Forward(_transformer.InputLatents, text.View, timestep);
+            _kernels.TokensToLatent(_transformer.Output, _latent.View, h, w);
+            await acc.SynchronizeAsync();
+            return await _latent.CopyToHostAsync(0, n);
+        }
+
+        public override void Dispose()
+        {
+            _transformer?.Dispose();
+            _latent?.Dispose();
+            foreach (var t in _text.Values) t.Dispose();
+            _text.Clear();
+        }
+    }
 }

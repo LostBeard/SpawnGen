@@ -128,7 +128,10 @@ public sealed class UNETLoader
         if (WanFiles.DiffusionModels.Contains(unetName))
             return new ModelHandle(await runtime.GetOrLoadAsync($"wan-dit:{WanFiles.Repo}/{unetName}", () => Task.FromResult(new WanDiffusionModel(runtime, unetName))));
         var (repo, file) = ModelFolders.Locate(ModelFolders.DiffusionModels, unetName);
-        if (WanFiles.IsOriginalLayoutDit(await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file)))
+        var names = await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file);
+        if (names.Contains(Flux2DiffusionModel.MarkerTensor))
+            return new ModelHandle(await runtime.GetOrLoadAsync($"flux2:{repo}/{file}", () => Task.FromResult(new Flux2DiffusionModel(runtime, unetName, repo, file))));
+        if (WanFiles.IsOriginalLayoutDit(names))
             throw new NotSupportedException($"'{unetName}' is a Wan transformer in its original layout (as ComfyUI's repackaged files ship it), which SpawnGen cannot load yet; pick {WanFiles.DiffusionModels[0]} (downloads on first use).");
         var model = await runtime.GetOrLoadAsync($"unet:{repo}/{file}", () => StandaloneDiffusionModel.LoadAsync(runtime, unetName, repo, file));
         return new ModelHandle(model);

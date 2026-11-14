@@ -17,6 +17,9 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
    type flux2 (qwen_3_4b), CLIP Text Encode, the model's sampling (Flux2Scheduler is done), Set Reference Latent in the model (edit).
    Check against ComfyUI on the reference install, then the template `image_flux2_klein_text_to_image` end to end on the RX 590.
    Merge to main when ML 5.8.17 is on nuget.org.
+   Status (branch `ml-local-flux2`, worktree `_scratch/wt-flux2`): Load VAE / VAE Encode / Decode done (16b2e01); encode = ComfyUI's on the RX 590,
+   decode blocked on a library bug (BUG-ML-FLUX2VAE-DECODE, sent to Tuvok 2026-11-14-0050). Next: measure ComfyUI's flux2 CLIPLoader conditioning
+   and one model call (qwen_3_4b and flux-2-klein-4b downloading into the reference), then the text encoder and diffusion model adapters.
 3. **Dumps for Tuvok** (his order; same format as the FLUX.2 VAE dumps: raw float32 files plus a note in _DevComms):
    1. ~~ae.safetensors (FLUX.1 / Z-Image VAE)~~ sent 2026-11-14 (_DevComms 2026-11-14-0005): [b, 16, H/8, W/8], values look raw, centred crop to 8.
    2. FLUX.1 dev and schnell: conditioning (CLIP-L pooled, T5), FluxGuidance, sigmas for 20 steps at 1024x1024, one model call in and out.

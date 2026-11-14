@@ -112,7 +112,13 @@ public class VideoNodeTests
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
             var webp = await SaveAnimatedWEBP.EncodeAsync(frames, 24, 80, runtime.Accelerator);
-            report.AppendLine($"node (WebPAnimEncoder) run {run}: {clock.Elapsed.TotalSeconds:F1} s, {webp.Length} bytes");
+            report.AppendLine($"node (WebPAnimEncoder) run {run}: {clock.Elapsed.TotalSeconds:F1} s, {webp.Length} bytes, SHA-256 {Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(webp))[..16]}");
+            // SPAWNGEN_WEBP_OUT: a folder to keep each run's file in (for the codec's authors).
+            if (Environment.GetEnvironmentVariable("SPAWNGEN_WEBP_OUT") is { Length: > 0 } keep)
+            {
+                Directory.CreateDirectory(keep);
+                File.WriteAllBytes(Path.Combine(keep, $"node_webpanimencoder_run{run}_{runtime.Accelerator.Name.Replace(' ', '_')}.webp"), webp);
+            }
         }
         // The full-frame call SpawnGen made with Codecs 1.0.1 (every frame whole, no sub-frame search), for comparison.
         var packed = new List<ReadOnlyMemory<byte>>();

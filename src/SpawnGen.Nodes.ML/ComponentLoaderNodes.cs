@@ -188,7 +188,7 @@ public sealed class CLIPLoader
             var (qwenRepo, qwenFile) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
             return new ClipHandle(await rt.GetOrLoadAsync($"zimage-qwen:{qwenRepo}/{qwenFile}", () => Task.FromResult(new ZImageTextEncoderModel(rt, clipName, qwenRepo, qwenFile))));
         }
-        if (type != "stable_diffusion")
+        if (type != "stable_diffusion" && ModelFolders.Names(ModelFolders.TextEncoders).Contains(clipName))
         {
             // A Qwen3 language model's file under another type (ComfyUI's llm_qwen3_text_gen loads qwen_3_4b as ltxv): for Generate Text.
             var lrt = await GpuHelpers.RuntimeAsync(services);

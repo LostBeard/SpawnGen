@@ -21,8 +21,10 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
    - Load VAE / VAE Encode / Decode: = ComfyUI's on the RX 590 with ML 5.8.17-local.2 (2d3a202: decode 1.1e-4). The local.1 decode was wrong on
      AMD OpenCL (inexact float division in the upsample table): fixed in ML (Tuvok) and, for every kernel, in ILGPU 5.4.32 (Data, proven on the RX 590).
    - Load CLIP type flux2 (2c71ffe): = ComfyUI's conditioning on the RX 590 (1.3e-6 relative RMS).
-   - Next: one ComfyUI model call of flux-2-klein-4b (probe SpawnGenDumpModelCall; the file is downloading into the reference), then the diffusion
-     model adapter (Load Diffusion Model) and the template end to end.
+   - Load Diffusion Model (flux-2-klein-*) and its own schedule (ab58f40): ComfyUI's distilled text-to-image graph runs on the RX 590, the same
+     picture as ComfyUI's (36.9 dB at 256 x 256, fp8 file; 30 s).
+   - Next: reference latents (the edit templates: measure ComfyUI's model call with Set Reference Latent first), the base model with cfg 5,
+     the 1024 x 1024 template once, then merge when ML 5.8.17 is on nuget.org.
 3. **Dumps for Tuvok** (his order; same format as the FLUX.2 VAE dumps: raw float32 files plus a note in _DevComms):
    1. ~~ae.safetensors (FLUX.1 / Z-Image VAE)~~ sent 2026-11-14 (_DevComms 2026-11-14-0005): [b, 16, H/8, W/8], values look raw, centred crop to 8.
    2. FLUX.1 dev and schnell: conditioning (CLIP-L pooled, T5), FluxGuidance, sigmas for 20 steps at 1024x1024, one model call in and out.

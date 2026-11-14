@@ -16,7 +16,8 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
    measured (black box, `_scratch/probe/textgen`): llm_qwen3_text_gen's graph, greedy (sampling_mode off), "Describe a red apple in one
    sentence." gives "A red apple is a round, juicy fruit with a smooth, shiny red skin and a sweet, tart flavor."; with thinking on, the
    thinking text comes out on `thinking` without its tags and max_length counts it (160 tokens of thinking left generated_text empty).
-   Then SpawnGen's node: the schema (sampling on / off as a dynamic combo, image / video / audio inputs refused until the model takes them).
+   Token-exact references sent (prompt ids as templated, greedy ids, both modes; _DevComms 2026-11-14-0600 folder). Tuvok queued it after
+   Z-Image, fed through his GGUF decode engine if the safetensors fit it. Then SpawnGen's node: the schema (sampling on / off as a dynamic combo, image / video / audio inputs refused until the model takes them).
 2. **ComfyUI's 3D nodes** (no library; the list measured 2026-11-14 from /object_info, 35 nodes missing in category 3d): the viewport
    group (Load 3D, Load 3D (Advanced), Preview 3D, Preview 3D (Advanced), Save 3D (Advanced) 8 templates, splat / point-cloud preview and save)
    needs ComfyUI's LOAD_3D viewport widget; the MESH group (Get 3D Components, Create 3D File (from Mesh), Rotate / Merge Meshes, Weld

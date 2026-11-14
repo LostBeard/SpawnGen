@@ -177,4 +177,45 @@ public class Flux2KleinTests
         }
         finally { InputFiles.Directory = previousInput; }
     }
+
+    /// <summary>
+    /// ComfyUI's base Klein template graph (image_flux2_klein_text_to_image, the base subgraph: CFG Guider 5 with the empty prompt as negative,
+    /// Flux2Scheduler 20 steps) at 512 x 512: two model calls a step (the prompt and the negative), the path the distilled graph never takes.
+    /// Checked by eye (Writes flux2_klein_base_out/klein_base_*.png) and by its run statistics.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT with diffusion_models/flux-2-klein-base-4b-fp8.safetensors, text_encoders/qwen_3_4b.safetensors, vae/flux2-vae.safetensors and a GPU.")]
+    public async Task The_base_template_graph_draws_with_real_cfg()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ModelFolders.Scan(root!);
+        var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "flux2_klein_base_out", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outDir);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
+        var executor = new PromptExecutor(registry, new Services(runtime, new OutputOptions { Directory = outDir, TempDirectory = outDir }));
+        var g = new PromptGraph();
+        g.Add("unet", "UNETLoader", ("unet_name", "flux-2-klein-base-4b-fp8.safetensors"), ("weight_dtype", "default"));
+        g.Add("clip", "CLIPLoader", ("clip_name", "qwen_3_4b.safetensors"), ("type", "flux2"), ("device", "default"));
+        g.Add("vae", "VAELoader", ("vae_name", "flux2-vae.safetensors"));
+        g.Add("pos", "CLIPTextEncode", ("clip", PromptInput.Link("clip")), ("text", "A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, flash photography"));
+        g.Add("neg", "CLIPTextEncode", ("clip", PromptInput.Link("clip")), ("text", ""));
+        g.Add("guider", "CFGGuider", ("model", PromptInput.Link("unet")), ("positive", PromptInput.Link("pos")), ("negative", PromptInput.Link("neg")), ("cfg", 5.0));
+        g.Add("sampler", "KSamplerSelect", ("sampler_name", "euler"));
+        g.Add("sigmas", "Flux2Scheduler", ("steps", 20L), ("width", 512L), ("height", 512L));
+        g.Add("latent", "EmptyFlux2LatentImage", ("width", 512L), ("height", 512L), ("batch_size", 1L));
+        g.Add("noise", "RandomNoise", ("noise_seed", 7L));
+        g.Add("run", "SamplerCustomAdvanced", ("noise", PromptInput.Link("noise")), ("guider", PromptInput.Link("guider")), ("sampler", PromptInput.Link("sampler")),
+            ("sigmas", PromptInput.Link("sigmas")), ("latent_image", PromptInput.Link("latent")));
+        g.Add("dec", "VAEDecode", ("samples", PromptInput.Link("run")), ("vae", PromptInput.Link("vae")));
+        g.Add("save", "SaveImage", ("images", PromptInput.Link("dec")), ("filename_prefix", "klein_base"));
+        var capture = new Capture();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await executor.ExecuteAsync(g, null, capture);
+        var latent = (LatentBatch)capture.Outputs["run"].Values[0]!;
+        double mean = latent.Data.Average(v => (double)v), std = Math.Sqrt(latent.Data.Average(v => (v - mean) * (v - mean)));
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: {clock.Elapsed.TotalSeconds:F1} s; final latent mean {mean:F3} std {std:F3}; {outDir}");
+        Assert.That(latent.Data, Has.All.Matches<float>(v => float.IsFinite(v)));
+        Assert.That(std, Is.InRange(0.3, 3.0), "a picture's latent, not noise or a blank");
+    }
 }

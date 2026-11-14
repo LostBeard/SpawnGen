@@ -23,6 +23,12 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
      has FLUX.1 dev, Z-Image Turbo and Generate Text from ComfyUI's files, gated by Tuvok on CUDA against SpawnGen's dumps; calls in the
      library's Docs/flux1.md). Order: Z-Image (8 templates; its 6B transformer suits 8 GB), Generate Text (qwen_3_4b), FLUX.1 (12B, blocks
      stream past a VRAM budget). Each measured against ComfyUI on the RX 590 (the first AMD numbers). Merge when the ML release is out.
+     - Z-Image done on the branch (5a246db): = ComfyUI on the RX 590 (conditioning 3.9e-6, model calls 1.9e-5, the template graph's picture
+       68.6 dB at 256 px, 121 s). Those AMD figures showed CUDA's tensor-core path rounding activations to bf16 (5.6e-3 there): Tuvok fixes it
+       in the shared GEMM (hi + lo bf16 halves). Waiting: -local.2 with the per-call caption length (cfg above 1 without reopening).
+     - Generate Text waits for the library's 8-bit load option (bf16 -> Q8_0 on the device, ~4.3 GB): qwen_3_4b's 8.05 GB of bf16 does not
+       fit an 8 GB card.
+     - FLUX.1 next.
 2. **Generate Text (ComfyUI's TextGenerate, 26 templates)**: a CLIP loader's text encoder file run as a language model (prompt
    enhancers in the FLUX 3, Qwen-Image 2.1, Krea 2, Moss, Ernie, HiDream O1 and Stable Audio 3 templates; four plain LLM templates). The library
    generates from GGUF files and Gemma4 only, so it is asked of Tuvok: generation from ComfyUI's own files, qwen_3_4b first (SpawnGen already

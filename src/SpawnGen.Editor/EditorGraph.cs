@@ -56,6 +56,8 @@ public sealed class EditorNode
     public IReadOnlyList<string> ResultModels { get; set; } = [];
     /// <summary>Curve Editor: the histogram of its last run (ui "histogram", one count per level), drawn behind the curve: view state like <see cref="Previews"/>.</summary>
     public IReadOnlyList<double>? ResultHistogram { get; set; }
+    /// <summary>Create Bounding Boxes: the background picture of its last run (ui "background_images"), drawn under the boxes: view state like <see cref="Previews"/>.</summary>
+    public NodePreview? BoxesBackground { get; set; }
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
     /// <summary>ComfyUI's per-node <c>properties</c> object ("Node name for S&amp;R", cnr_id, ver, ...): kept as read so a saved workflow loses nothing.</summary>

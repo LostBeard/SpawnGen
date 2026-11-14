@@ -38,6 +38,12 @@ public sealed class LatentFormat(string name, float scaleFactor, float[][] rgbFa
         [0.1084f, -0.0175f, -0.0011f], "taesdxl_decoder");
 
     /// <summary>
+    /// FLUX.2 (Klein): ComfyUI's LATENT is already the transformer's space (the VAE mean patchified 2 x 2 and batch-normalised by the VAE file's
+    /// statistics, measured), so nothing is taken off or scaled on the way in or out. 128 channels; no cheap RGB preview yet.
+    /// </summary>
+    public static LatentFormat Flux2 { get; } = new("Flux2", 1f, [], null, null, 128);
+
+    /// <summary>
     /// Wan 2.2 (TI2V 5B): 48 channels, frames x h x w per channel, each channel normalised by its own mean and spread (scale factor 1).
     /// No cheap RGB preview.
     /// </summary>

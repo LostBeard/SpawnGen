@@ -76,6 +76,7 @@ public static class ServerApp
         var registry = app.Services.GetRequiredService<NodeRegistry>();
         var options = app.Services.GetRequiredService<ServerOptions>();
         UserData.Map(app, options);
+        Templates.Map(app, options);
 
         app.MapGet("/object_info", () => Results.Content(ObjectInfo(registry).ToJsonString(), "application/json"));
 

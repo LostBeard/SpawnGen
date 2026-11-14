@@ -128,7 +128,10 @@ public sealed class UNETLoader
         if (WanFiles.DiffusionModels.Contains(unetName))
             return new ModelHandle(await runtime.GetOrLoadAsync($"wan-dit:{WanFiles.Repo}/{unetName}", () => Task.FromResult(new WanDiffusionModel(runtime, unetName))));
         var (repo, file) = ModelFolders.Locate(ModelFolders.DiffusionModels, unetName);
-        if (WanFiles.IsOriginalLayoutDit(await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file)))
+        var names = await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file);
+        if (names.Contains(Flux2DiffusionModel.MarkerTensor))
+            return new ModelHandle(await runtime.GetOrLoadAsync($"flux2:{repo}/{file}", () => Task.FromResult(new Flux2DiffusionModel(runtime, unetName, repo, file))));
+        if (WanFiles.IsOriginalLayoutDit(names))
             throw new NotSupportedException($"'{unetName}' is a Wan transformer in its original layout (as ComfyUI's repackaged files ship it), which SpawnGen cannot load yet; pick {WanFiles.DiffusionModels[0]} (downloads on first use).");
         var model = await runtime.GetOrLoadAsync($"unet:{repo}/{file}", () => StandaloneDiffusionModel.LoadAsync(runtime, unetName, repo, file));
         return new ModelHandle(model);
@@ -168,8 +171,14 @@ public sealed class CLIPLoader
             var rt = await GpuHelpers.RuntimeAsync(services);
             return new ClipHandle(await rt.GetOrLoadAsync($"wan-umt5:{WanFiles.Repo}/{clipName}", () => Task.FromResult(new WanTextEncoderModel(rt, clipName))));
         }
+        if (type == "flux2")
+        {
+            var rt = await GpuHelpers.RuntimeAsync(services);
+            var (qwenRepo, qwenFile) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
+            return new ClipHandle(await rt.GetOrLoadAsync($"flux2-qwen:{qwenRepo}/{qwenFile}", () => Task.FromResult(new Flux2TextEncoderModel(rt, clipName, qwenRepo, qwenFile))));
+        }
         if (type != "stable_diffusion")
-            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders and Wan's umT5; choose 'stable_diffusion' or 'wan'.");
+            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders, Wan's umT5 and FLUX.2's Qwen3; choose 'stable_diffusion', 'wan' or 'flux2'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var (repo, file) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
         var model = await runtime.GetOrLoadAsync($"clip:{repo}/{file}", async () =>
@@ -260,8 +269,14 @@ public sealed class VAELoader
             return new VaeHandle(tae);
         }
         var (vaeRepo, file) = ModelFolders.Locate(ModelFolders.Vae, vaeName);
-        var vae = await runtime.GetOrLoadAsync($"vae:{vaeRepo}/{file}", async () =>
-            new StandaloneVae(vaeName, await SdVae.LoadAsync(runtime.Accelerator, runtime.ModelSource, vaeRepo, file)));
-        return new VaeHandle(vae);
+        var vae = await runtime.GetOrLoadAsync<IDisposable>($"vae:{vaeRepo}/{file}", async () =>
+        {
+            var sd = await SdVae.LoadAsync(runtime.Accelerator, runtime.ModelSource, vaeRepo, file);
+            // FLUX.2's VAE (32 latent channels): its LATENT is ComfyUI's patchified, batch-normalised [128, H/16, W/16].
+            return sd.LatentChannels == 32
+                ? await Flux2VaeModel.CreateAsync(vaeName, sd, runtime.Accelerator, runtime.ModelSource, vaeRepo, file, context.CancellationToken)
+                : new StandaloneVae(vaeName, sd);
+        });
+        return new VaeHandle((IVaeModel)vae);
     }
 }

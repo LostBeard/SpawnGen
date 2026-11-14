@@ -72,4 +72,67 @@ public class VideoNodeTests
                 for (int c = 0; c < 3; c++)
                     Assert.That(decoded.Rgba[f][i * 4 + c], Is.EqualTo((byte)Math.Clamp(255f * frames.Data[(f * 16 * 12 + i) * 3 + c], 0f, 255f)), $"frame {f} pixel {i}");
     }
+
+    /// <summary>
+    /// How long Save Animated WEBP's GPU encode takes for a video model's clip (25 frames, 512x352) on this device, twice (the second without
+    /// first compiles). SPAWNGEN_WEBP_FRAMES may name a folder of PNG frames (a real clip); otherwise the frames are a moving gradient with grain.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT and a GPU.")]
+    public async Task Save_Animated_WEBP_encode_timing_for_a_clip()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ImageBatch frames;
+        var folder = Environment.GetEnvironmentVariable("SPAWNGEN_WEBP_FRAMES");
+        string source;
+        if (!string.IsNullOrEmpty(folder))
+        {
+            var files = Directory.GetFiles(folder, "*.png").Order().Take(25).ToArray();
+            var first = PngReader.Decode(File.ReadAllBytes(files[0]));
+            frames = new ImageBatch(files.Length, first.Height, first.Width, 3);
+            for (int f = 0; f < files.Length; f++)
+                Array.Copy(PngReader.Decode(File.ReadAllBytes(files[f])).Data, 0, frames.Data, (long)f * first.Height * first.Width * 3, first.Height * first.Width * 3);
+            source = $"{files.Length} PNG frames";
+        }
+        else
+        {
+            frames = new ImageBatch(25, 352, 512, 3);
+            var random = new Random(1);
+            for (int f = 0; f < 25; f++)
+                for (int y = 0; y < 352; y++)
+                    for (int x = 0; x < 512; x++)
+                        for (int c = 0; c < 3; c++)
+                            frames.Data[(((long)f * 352 + y) * 512 + x) * 3 + c] = Math.Clamp(((x + 4 * f) * (c + 1) % 512) / 511f + (float)(random.NextDouble() - 0.5) * 0.04f, 0, 1);
+            source = "synthetic frames";
+        }
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var report = new System.Text.StringBuilder();
+        report.AppendLine($"device: {runtime.Accelerator.Name} ({runtime.Accelerator.AcceleratorType}); {source}, {frames.Batch} x {frames.Width}x{frames.Height}");
+        for (int run = 1; run <= 2; run++)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var webp = await SaveAnimatedWEBP.EncodeAsync(frames, 24, 80, runtime.Accelerator);
+            report.AppendLine($"node (WebPAnimEncoder) run {run}: {clock.Elapsed.TotalSeconds:F1} s, {webp.Length} bytes");
+        }
+        // The full-frame call SpawnGen made with Codecs 1.0.1 (every frame whole, no sub-frame search), for comparison.
+        var packed = new List<ReadOnlyMemory<byte>>();
+        var infos = new List<SpawnDev.Codecs.Images.ImageFrameInfo>();
+        for (int f = 0; f < frames.Batch; f++)
+        {
+            var px = Rgba.Pack(frames, f);
+            var bytes = new byte[px.Length * 4];
+            Buffer.BlockCopy(px, 0, bytes, 0, bytes.Length);
+            packed.Add(bytes);
+            infos.Add(new SpawnDev.Codecs.Images.ImageFrameInfo(f, 0, 0, frames.Width, frames.Height, 41, SpawnDev.Codecs.Images.FrameDispose.None, SpawnDev.Codecs.Images.FrameBlend.Source));
+        }
+        for (int run = 1; run <= 2; run++)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            using var encoder = new SpawnDev.Codecs.Images.WebP.WebPLosslessEncoderGpu(runtime.Accelerator);
+            var webp = await encoder.EncodeAnimationAsync(packed, infos, frames.Width, frames.Height, new SpawnDev.Codecs.Images.WebP.WebPAnimationEncodeOptions { Quality = 80, LoopCount = 0 });
+            report.AppendLine($"full-frame (1.0.1-style) run {run}: {clock.Elapsed.TotalSeconds:F1} s, {webp.Length} bytes");
+        }
+        File.WriteAllText(Path.Combine(TestContext.CurrentContext.WorkDirectory, "webp_timing.txt"), report.ToString());
+        TestContext.Out.WriteLine(report.ToString());
+    }
 }

@@ -15,7 +15,7 @@ One editor, three ways to run it, the same ComfyUI workflow files on all of them
 | Desktop app | `src/SpawnGen.Desktop`: a Photino window over an in-process server, native CUDA/OpenCL |
 | Server | `src/SpawnGen.Server`: ComfyUI-shaped HTTP + WebSocket API (`/prompt`, `/queue`, `/history`, `/object_info`, `/view`, `/upload/image`, `/userdata`, `/settings`, `/ws`, each also under `/api`); also serves the Studio |
 
-How close to ComfyUI it is, feature by feature, is in [docs/PARITY.md](docs/PARITY.md). Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+How close to ComfyUI it is, feature by feature, is in [docs/PARITY.md](docs/PARITY.md); what comes next and what it waits on, in [docs/PLANS.md](docs/PLANS.md). Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## What it can do today
 

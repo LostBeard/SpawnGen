@@ -95,6 +95,8 @@ public interface IVaeModel
     SdVae? SdVae { get; }
     Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default);
     Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default);
+    /// <summary>Pixels per latent cell along each side: 8 for the Stable Diffusion family's VAEs, 16 for FLUX.2's (a 2 x 2 patch of its 8x VAE).</summary>
+    int Downscale => 8;
 }
 
 /// <summary>

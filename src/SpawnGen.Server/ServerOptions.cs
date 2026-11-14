@@ -14,6 +14,10 @@ public sealed class ServerOptions
     public string UserPath { get; set; } = Path.Combine(Home, "user");
     /// <summary>Folder of custom node assemblies (.dll with classes marked [Node]), loaded when the server starts. See docs/CUSTOM_NODES.md.</summary>
     public string CustomNodesPath { get; set; } = Path.Combine(Home, "custom_nodes");
+    /// <summary>Where ComfyUI's workflow templates are kept once fetched (served at /templates, see <see cref="Templates"/>).</summary>
+    public string TemplatesPath { get; set; } = Path.Combine(Home, "templates");
+    /// <summary>Where the templates are fetched from (Comfy-Org's MIT repository); empty serves only what <see cref="TemplatesPath"/> holds.</summary>
+    public string TemplatesSource { get; set; } = "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates";
 
     /// <summary>What the custom node loader found at start-up (set by the server, reported by /system_stats).</summary>
     public IReadOnlyList<CustomNodes.Loaded> LoadedCustomNodes { get; set; } = [];

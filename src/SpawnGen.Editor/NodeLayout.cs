@@ -14,6 +14,12 @@ public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds)
     /// <summary>A CURVE widget: a plot the pointer edits (<see cref="CurveWidget"/>), not a one-line value.</summary>
     public bool IsCurve { get; init; }
 
+    /// <summary>Crop Image's crop region (a BOUNDING_BOX widget): the input picture with the rectangle, the ratio and the fields (<see cref="CropWidget"/>).</summary>
+    public bool IsCrop { get; init; }
+
+    /// <summary>A BOUNDING_BOXES widget: the canvas the boxes are drawn on (<see cref="BoxesWidget"/>), with its toolbar and the selected box's panel.</summary>
+    public bool IsBoxes { get; init; }
+
     /// <summary>
     /// What the row shows: a dynamic combo option's input shows its own part (<c>bit_depth</c> for <c>format.bit_depth</c>), as ComfyUI's frontend
     /// labels it (measured 2026-11-13: Save Image (Advanced) and Save Video); any other widget its name.
@@ -92,12 +98,16 @@ public static class NodeLayout
         var visible = VisibleInputs(schema, node, graph).ToList();
         var slotInputs = visible.Where(i => IsSlotRow(i, node, graph)).ToList();
         // Compare Images' IMAGECOMPARE widget is the picture itself (drawn as the preview with its split), not a row.
-        var widgetInputs = visible.Where(i => i.Widget is not null && !IsSlotRow(i, node, graph) && i.Type.Name != "IMAGECOMPARE" && !i.Widget!.Hidden).ToList();
+        // Create Bounding Boxes' optional BOUNDING_BOXES input (last_incoming) is the canvas's internal state: ComfyUI's editor does not show it.
+        var widgetInputs = visible.Where(i => i.Widget is not null && !IsSlotRow(i, node, graph) && i.Type.Name != "IMAGECOMPARE" && !i.Widget!.Hidden
+            && !(i.Type.Name == BoxesWidget.TypeName && i.Optional)).ToList();
         int slotRows = Math.Max(slotInputs.Count, schema.Outputs.Count);
 
         double width = node.Width ?? Math.Max(MinWidth, Math.Max(titleWidth,
             slotInputs.Select(i => measureText(Label(i.Name))).DefaultIfEmpty(0).Max() + schema.Outputs.Select(o => measureText(o.Name)).DefaultIfEmpty(0).Max() + 3 * Padding + 16));
         width = Math.Max(width, 90);
+        // A box canvas needs room to draw on (ComfyUI's node opens 420 wide).
+        if (node.Width is null && widgetInputs.Any(i => i.Type.Name == BoxesWidget.TypeName)) width = Math.Max(width, 380);
 
         double slotsTop = node.Y + TitleHeight;
         var inputs = new List<SlotGeometry>();
@@ -119,10 +129,15 @@ public static class NodeLayout
         var widgets = new List<WidgetRow>();
         foreach (var spec in widgetInputs)
         {
-            bool curve = spec.Type.Name == CurveWidget.TypeName;
-            double h = curve ? Math.Clamp((width - 2 * Padding) * 0.8, 120, 320) : spec.Widget!.Multiline ? MultilineWidgetHeight : WidgetRowHeight;
+            bool curve = spec.Type.Name == CurveWidget.TypeName, boxes = spec.Type.Name == BoxesWidget.TypeName,
+                crop = spec.Type.Name == CropWidget.TypeName && spec.Widget!.Kind == WidgetKind.Json;
+            var (canvasW, canvasH) = boxes ? BoxesWidget.CanvasSize(node.Widgets) : (1, 1);
+            double h = curve ? Math.Clamp((width - 2 * Padding) * 0.8, 120, 320)
+                : boxes ? BoxesWidget.RowHeight(width - 2 * Padding, canvasW, canvasH) + 4
+                : crop ? CropWidget.Height(width - 2 * Padding) + 4
+                : spec.Widget!.Multiline ? MultilineWidgetHeight : WidgetRowHeight;
             var bounds = new Rect(node.X + Padding, y, width - 2 * Padding, h - 4);
-            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, Label = spec.DynamicParent is null ? spec.Name : Label(spec.Name) });
+            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, IsBoxes = boxes, IsCrop = crop, Label = spec.DynamicParent is null ? spec.Name : Label(spec.Name) });
             // The drop target for linking a value into this widget: the left edge of its row.
             inputs.Add(new SlotGeometry(SlotKind.Input, spec.Name, inputs.Count, spec.Type, new Point(node.X, bounds.Center.Y), true, false));
             y += h;

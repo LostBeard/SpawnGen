@@ -37,6 +37,12 @@ public sealed record CondEntry(float[] Embeddings, int[] Shape)
     public bool ControlApplyToUncond { get; init; }
     public LatentBatch? ConcatLatent { get; init; }
     public MaskBatch? ConcatMask { get; init; }
+    /// <summary>ComfyUI's "guidance" (Flux Guidance): the distilled guidance scale guidance-distilled models (FLUX.1 / FLUX.2 dev) take; others ignore it.</summary>
+    public double? Guidance { get; init; }
+    /// <summary>ComfyUI's "reference_latents" (Set Reference Latent): the edit model's guiding latents in their raw VAE units, in the order they were set.</summary>
+    public IReadOnlyList<LatentBatch>? ReferenceLatents { get; init; }
+    /// <summary>ComfyUI's "reference_latents_method" (Edit Model Reference Method): how an edit model places the reference latents.</summary>
+    public string? ReferenceLatentsMethod { get; init; }
 }
 
 /// <summary>CONDITIONING: a list of entries, each guiding the sampler on its own.</summary>

@@ -174,3 +174,22 @@ SD-Turbo graph against his fixed build when he names the version.
 **Resolved (2026-10-22):** fixed in SpawnDev.ILGPU **5.4.2** (forks 2.4.2), released to nuget.org the same day. The stream check reports 0 mismatches
 at 16 and 1 MiB chunks, and the library pipeline and the SpawnGen node graph both render a correct apple scene on the RX 590 (OpenCL, seed 7,
 1 step, 512). `SpawnGen.Nodes.ML` references `SpawnDev.ILGPU` 5.4.2 directly, so SpawnGen no longer needs any pre-release feed.
+
+---
+
+## BUG-ML-FLUX2VAE-DECODE — FLUX.2 VAE decodes wrong on AMD OpenCL (RX 590); encode is right
+
+**Repo / area:** `SpawnDev.ILGPU.ML` — `StableDiffusion.SdVae` with ComfyUI's `flux2-vae.safetensors`
+**Package:** SpawnDev.ILGPU.ML **5.8.17-local.1** (master c4437406); reported 2026-11-14 (_DevComms 2026-11-14-0050-Lore-TO-Tuvok)
+**Blocks:** SpawnGen's FLUX.2 VAE Decode on the RX 590 (branch `ml-local-flux2`)
+
+Against ComfyUI's own results (Fixtures/flux2_vae): encode 5.75e-4 / 9.30e-4 relative RMS (fine, as the library's CUDA gate); decode 2.0e-1 /
+3.0e-1, green pulled down (channel means 0.504 / 0.462 / 0.510 vs 0.505 / 0.507 / 0.509). A plain `SdVae` encode then decode of the same picture
+on the same device is 18.8 dB (ComfyUI's round trip: 38.2 dB), so the decoder itself is at fault there. SD 1.5 / SDXL VAEs decode correctly on
+the same card. Also: `SdVae` does not run on the CPU accelerator (group size 256 > 64). Repro: `Flux2VaeTests.Encode_and_decode_match_ComfyUIs_FLUX2_VAE`.
+
+**Cause (proven 2026-11-14 with Tuvok's decoder taps):** the first wrong stage is the decoder's first nearest x2 upsample. Its neighbour table
+divides on the device, and AMD OpenCL's float division is not correctly rounded (OpenCL allows 2.5 ulp): `(float)24 / 48` = 0.49999997
+(0x3EFFFFFF) on the RX 590, so 13,110 of 27,648 table entries point at the wrong pixel. Power-of-two ratios divide exactly, so SD's 512 px
+decodes never showed it. Fix in ML (Tuvok): divide on the host, multiply on the device (5.8.17-local.2). Raised with Data for ILGPU's
+OpenCL backend: `-cl-fp32-correctly-rounded-divide-sqrt` would make every kernel's `/` match .NET.

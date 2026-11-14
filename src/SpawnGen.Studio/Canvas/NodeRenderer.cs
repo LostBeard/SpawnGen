@@ -619,6 +619,239 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         }
     }
 
+    /// <summary>
+    /// A BOUNDING_BOXES widget (Create Bounding Boxes): the toolbar (Grid, Clear all), the canvas at the boxes' aspect with the last run's background,
+    /// a dot every grid step while Grid is on, each box with its number tag and palette strip (the selected one highlighted with corner handles, the
+    /// one being drawn dashed), and the selected box's panel: obj / text, the text to render, the description, the palette.
+    /// </summary>
+    void DrawBoxes(CanvasRenderingContext2D ctx, EditorNode node, WidgetRow w, object? value)
+    {
+        var (cw, ch) = BoxesWidget.CanvasSize(node.Widgets);
+        var lay = BoxesWidget.Lay(w.Bounds, cw, ch);
+        var boxes = BoxesWidget.Boxes(value);
+        bool grid = view.BoxGrid(node.Id, w.Name);
+        int sel = view.SelectedBox is { } s && s.NodeId == node.Id && s.Name == w.Name && s.Index < boxes.Count ? s.Index : -1;
+        ctx.Font = Theme.Font;
+        ctx.TextBaseline = "middle";
+
+        void Button(Rect r, string text, bool on)
+        {
+            RoundRect(ctx, r, 4);
+            ctx.FillStyle = on ? Theme.Accent : Theme.Current.TextBoxFill;
+            ctx.Fill();
+            ctx.FillStyle = on ? "#ffffff" : Theme.ValueText;
+            ctx.TextAlign = "center";
+            ctx.FillText(text, r.Center.X, r.Center.Y + 1);
+            ctx.TextAlign = "left";
+        }
+        Button(lay.GridButton, "Grid", grid);
+        Button(lay.ClearButton, "Clear all", false);
+
+        // The canvas: the background picture of the last run (or a dark field), the grid's dots, the boxes.
+        var c = lay.Canvas;
+        ctx.Save();
+        ctx.BeginPath();
+        ctx.Rect(c.X, c.Y, c.Width, c.Height);
+        ctx.Clip();
+        ctx.FillStyle = "#202020";
+        ctx.FillRect(c.X, c.Y, c.Width, c.Height);
+        if (node.BoxesBackground is { } bg && images.Get(bg.Url, (_, _) => view.Invalidate()) is { } picture)
+        {
+            ctx.GlobalAlpha = 0.85;
+            ctx.DrawImage(picture, c.X, c.Y, c.Width, c.Height);
+            ctx.GlobalAlpha = 1;
+        }
+        double step = BoxesWidget.GridStep / cw * c.Width;
+        if (grid && step * view.Viewport.Scale >= 4)
+        {
+            ctx.FillStyle = "rgba(255,255,255,0.18)";
+            for (double y = c.Y + step; y < c.Bottom; y += step)
+                for (double x = c.X + step; x < c.Right; x += step)
+                    ctx.FillRect(x - 0.5, y - 0.5, 1, 1);
+        }
+        for (int i = 0; i < boxes.Count; i++)
+        {
+            var b = boxes[i];
+            var r = BoxesWidget.BoxRect(c, cw, ch, b);
+            var palette = b.Palette;
+            string colour = palette.Count > 0 ? palette[0] : "#c8c8c8";
+            ctx.FillStyle = "rgba(0,0,0,0.25)";
+            ctx.FillRect(r.X, r.Y, r.Width, r.Height);
+            for (int k = 0; k < Math.Min(5, palette.Count); k++)
+            {
+                ctx.FillStyle = palette[k];
+                ctx.FillRect(r.X + r.Width * k / Math.Min(5, palette.Count), r.Y, r.Width / Math.Min(5, palette.Count), 4);
+            }
+            ctx.StrokeStyle = i == sel ? Theme.Accent : colour;
+            ctx.LineWidth = i == sel ? 2 : 1.25;
+            ctx.StrokeRect(r.X, r.Y, r.Width, r.Height);
+            var tag = BoxesWidget.Tag(i);
+            ctx.Font = "600 9px ui-monospace, monospace";
+            double tw = MeasureText(tag) * 0.8 + 6;
+            ctx.FillStyle = i == sel ? Theme.Accent : "#5a5a5a";
+            ctx.FillRect(r.X + 1, r.Y + 1, tw, 11);
+            ctx.FillStyle = "#ffffff";
+            ctx.FillText(tag, r.X + 4, r.Y + 7);
+            ctx.Font = Theme.Font;
+            if (b.Desc.Length > 0 || (b.Type == "text" && b.Text.Length > 0))
+            {
+                ctx.FillStyle = "rgba(255,255,255,0.75)";
+                var label = b.Type == "text" && b.Text.Length > 0 ? $"\"{b.Text}\" {b.Desc}" : b.Desc;
+                ctx.FillText(Ellipsize(label, Math.Max(10, r.Width - tw - 8)), r.X + tw + 5, r.Y + 7);
+            }
+            if (i == sel)
+            {
+                ctx.FillStyle = Theme.Accent;
+                foreach (var (hx, hy) in new[] { (r.X, r.Y), (r.Right, r.Y), (r.X, r.Bottom), (r.Right, r.Bottom) })
+                    ctx.FillRect(hx - 3, hy - 3, 6, 6);
+            }
+        }
+        if (view.DraftBox is { } d && d.NodeId == node.Id && d.Name == w.Name)
+        {
+            var r = BoxesWidget.BoxRect(c, cw, ch, new BoxesWidget.Box(d.X, d.Y, d.W, d.H, BoxesWidget.NewMetadata()));
+            ctx.StrokeStyle = Theme.Accent;
+            ctx.LineWidth = 1.5;
+            ctx.SetLineDash([5, 3]);
+            ctx.StrokeRect(r.X, r.Y, r.Width, r.Height);
+            ctx.SetLineDash([]);
+        }
+        ctx.Restore();
+        ctx.StrokeStyle = Theme.WidgetBorder;
+        ctx.LineWidth = 1;
+        ctx.StrokeRect(c.X, c.Y, c.Width, c.Height);
+
+        // The selected box's panel.
+        if (sel < 0)
+        {
+            ctx.FillStyle = Theme.LabelText;
+            ctx.FillText(boxes.Count == 0 ? "Drag on the canvas to draw a box." : "Click a box to edit it.", lay.Panel.X + 8, lay.Panel.Y + 14);
+            return;
+        }
+        var box = boxes[sel];
+        Button(lay.ObjButton, "obj", box.Type != "text");
+        Button(lay.TextButton, "text", box.Type == "text");
+        void Field(Rect r, string text, string placeholder)
+        {
+            RoundRect(ctx, r, 4);
+            ctx.FillStyle = Theme.Current.TextBoxFill;
+            ctx.Fill();
+            ctx.Save();
+            ctx.BeginPath();
+            ctx.Rect(r.X, r.Y, r.Width, r.Height);
+            ctx.Clip();
+            ctx.FillStyle = text.Length > 0 ? Theme.ValueText : Theme.LabelText;
+            int line = 0;
+            foreach (var l in WrapLines(text.Length > 0 ? text : placeholder, r.Width - 12).Take(Math.Max(1, (int)((r.Height - 6) / 15))))
+                ctx.FillText(l, r.X + 6, r.Y + 10 + line++ * 15);
+            ctx.Restore();
+        }
+        if (box.Type == "text") Field(lay.TextField, box.Text, "text to render (verbatim)");
+        Field(lay.DescField, box.Desc, "description of this region");
+        var palette2 = box.Palette;
+        ctx.FillStyle = Theme.LabelText;
+        ctx.FillText("color_palette", lay.PaletteRow.X + 2, lay.PaletteRow.Center.Y + 1);
+        for (int k = 0; k < palette2.Count; k++)
+        {
+            var r = BoxesWidget.Swatch(lay.PaletteRow, k);
+            ctx.FillStyle = palette2[k];
+            ctx.FillRect(r.X, r.Y, r.Width, r.Height);
+            ctx.StrokeStyle = Theme.WidgetBorder;
+            ctx.StrokeRect(r.X, r.Y, r.Width, r.Height);
+        }
+        Button(BoxesWidget.Plus(lay.PaletteRow, palette2.Count), "+", false);
+    }
+
+    /// <summary>The picture a Crop Image node shows (its input's: the upstream node's last result, or Load Image's file), set by the Studio.</summary>
+    public Func<EditorNode, string?>? CropPictureUrl { get; set; }
+
+    /// <summary>The natural size of each picture drawn so far (the editor maps drags on a crop picture to its pixels with it).</summary>
+    public Dictionary<string, (double W, double H)> PictureSizes { get; } = [];
+
+    /// <summary>
+    /// Crop Image's crop region: the input picture with everything outside the region dimmed, the region's rectangle with its corner handles, the
+    /// Ratio choice and its lock, and the X / Y / Width / Height fields.
+    /// </summary>
+    void DrawCrop(CanvasRenderingContext2D ctx, EditorNode node, WidgetRow w, object? value)
+    {
+        var lay = CropWidget.Lay(w.Bounds);
+        var region = CropWidget.Read(value);
+        ctx.Font = Theme.Font;
+        ctx.TextBaseline = "middle";
+        var box = lay.PictureBox;
+        RoundRect(ctx, box, 5);
+        ctx.FillStyle = "#1c1c1c";
+        ctx.Fill();
+        var url = CropPictureUrl?.Invoke(node);
+        var picture = url is null ? null : images.Get(url, (pw, ph) => { PictureSizes[url] = (pw, ph); view.Invalidate(); });
+        if (picture is not null && url is not null && PictureSizes.TryGetValue(url, out var size))
+        {
+            var fit = CropWidget.Fit(box, size.W, size.H);
+            ctx.DrawImage(picture, fit.X, fit.Y, fit.Width, fit.Height);
+            var r = CropWidget.RegionRect(fit, size.W, size.H, region);
+            // Dim what the crop leaves out, then the rectangle and its handles.
+            ctx.Save();
+            ctx.BeginPath();
+            ctx.Rect(fit.X, fit.Y, fit.Width, fit.Height);
+            ctx.Clip();
+            ctx.FillStyle = "rgba(0,0,0,0.5)";
+            ctx.FillRect(fit.X, fit.Y, fit.Width, Math.Max(0, r.Y - fit.Y));
+            ctx.FillRect(fit.X, r.Bottom, fit.Width, Math.Max(0, fit.Bottom - r.Bottom));
+            ctx.FillRect(fit.X, r.Y, Math.Max(0, r.X - fit.X), r.Height);
+            ctx.FillRect(r.Right, r.Y, Math.Max(0, fit.Right - r.Right), r.Height);
+            ctx.StrokeStyle = "#ffffff";
+            ctx.LineWidth = 1.5;
+            ctx.StrokeRect(r.X, r.Y, r.Width, r.Height);
+            ctx.Restore();
+            ctx.FillStyle = "#ffffff";
+            foreach (var (hx, hy) in new[] { (r.X, r.Y), (r.Right, r.Y), (r.X, r.Bottom), (r.Right, r.Bottom) })
+            {
+                ctx.BeginPath();
+                ctx.Arc(hx, hy, 3.5, 0, Math.PI * 2);
+                ctx.Fill();
+            }
+        }
+        else
+        {
+            ctx.FillStyle = Theme.LabelText;
+            ctx.TextAlign = "center";
+            ctx.FillText(url is null ? "No input image connected" : "Loading the picture...", box.Center.X, box.Center.Y);
+            ctx.TextAlign = "left";
+        }
+
+        ctx.FillStyle = Theme.LabelText;
+        ctx.FillText("Ratio", lay.RatioLabel.X, lay.RatioLabel.Center.Y + 1);
+        RoundRect(ctx, lay.RatioButton, 4);
+        ctx.FillStyle = Theme.Current.TextBoxFill;
+        ctx.Fill();
+        ctx.FillStyle = Theme.ValueText;
+        ctx.FillText(view.CropRatio(node.Id, w.Name) + "  ▾", lay.RatioButton.X + 8, lay.RatioButton.Center.Y + 1);
+        // The lock: a padlock, filled when on.
+        bool locked = view.CropLocked(node.Id, w.Name);
+        var l = lay.LockButton;
+        RoundRect(ctx, l, 4);
+        ctx.FillStyle = locked ? Theme.Accent : Theme.Current.TextBoxFill;
+        ctx.Fill();
+        ctx.StrokeStyle = locked ? "#ffffff" : Theme.ValueText;
+        ctx.LineWidth = 1.5;
+        ctx.BeginPath();
+        ctx.Arc(l.Center.X, l.Center.Y - 1, 3.5, Math.PI, locked ? 0 : -0.35 * Math.PI);
+        ctx.Stroke();
+        ctx.FillStyle = locked ? "#ffffff" : Theme.ValueText;
+        ctx.FillRect(l.Center.X - 5, l.Center.Y - 1, 10, 7);
+
+        foreach (var (field, label, valueRect) in lay.FieldRows)
+        {
+            ctx.FillStyle = Theme.LabelText;
+            ctx.FillText(field switch { "x" => "X", "y" => "Y", "width" => "Width", _ => "Height" }, label.X, label.Center.Y + 1);
+            RoundRect(ctx, valueRect, 4);
+            ctx.FillStyle = Theme.Current.TextBoxFill;
+            ctx.Fill();
+            ctx.FillStyle = Theme.ValueText;
+            var v = field switch { "x" => region.X, "y" => region.Y, "width" => region.W, _ => region.H };
+            ctx.FillText(v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture), valueRect.X + 8, valueRect.Center.Y + 1);
+        }
+    }
+
     void DrawWidget(CanvasRenderingContext2D ctx, EditorNode node, WidgetRow w)
     {
         var r = w.Bounds;
@@ -633,6 +866,8 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.Stroke();
 
         if (w.IsCurve) { DrawCurve(ctx, w, value, node.ResultHistogram); return; }
+        if (w.IsBoxes) { DrawBoxes(ctx, node, w, value); return; }
+        if (w.IsCrop) { DrawCrop(ctx, node, w, value); return; }
 
         ctx.Font = Theme.Font;
         ctx.TextBaseline = "middle";

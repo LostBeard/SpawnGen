@@ -74,18 +74,16 @@ public class Flux2VaeTests
         var decA = await new VAEDecode().ExecuteAsync(comfyA, vae, context, services);
         Assert.That((decA.Width, decA.Height), Is.EqualTo((256, 192)));
         double decodeA = RelRms(decA.Data, Raw("dec_of_enc_256x192_images_f32_1x192x256x3.raw"));
-        var bytes = new byte[decA.Data.Length * 4];
-        Buffer.BlockCopy(decA.Data, 0, bytes, 0, bytes.Length);
-        File.WriteAllBytes(Path.Combine(TestContext.CurrentContext.WorkDirectory, "flux2_dec_A_ours_1x192x256x3.raw"), bytes);
         var synthetic = new LatentBatch(1, 128, 12, 16, Raw("f2_lat_1x128x12x16.raw"));
         var decS = await new VAEDecode().ExecuteAsync(synthetic, vae, context, services);
         double decodeS = RelRms(decS.Data, Raw("dec_synthetic_12x16_images_f32_1x192x256x3.raw"));
 
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: encode A {encA:E2}, encode B {encB:E2}, decode A {decodeA:E2}, decode synthetic {decodeS:E2} (relative RMS vs ComfyUI)");
-        // The library's gate (CUDA, RTX 4070): encode A 5.8e-4, B 9.3e-4, decode 1.1e-4. A device with other float rounding lands near that.
-        Assert.That(encA, Is.LessThan(5e-3));
-        Assert.That(encB, Is.LessThan(5e-3));
-        Assert.That(decodeA, Is.LessThan(5e-3));
-        Assert.That(decodeS, Is.LessThan(5e-3));
+        // Measured on the RX 590 (OpenCL, ML 5.8.17-local.2): encode A 5.75e-4, B 9.30e-4, decode A 1.11e-4, synthetic 1.24e-4 (the library's CUDA
+        // gate: the same). With local.1 the decode was 2.0e-1: AMD OpenCL's inexact float division broke the decoder's nearest-upsample table.
+        Assert.That(encA, Is.LessThan(2e-3));
+        Assert.That(encB, Is.LessThan(2e-3));
+        Assert.That(decodeA, Is.LessThan(1e-3));
+        Assert.That(decodeS, Is.LessThan(1e-3));
     }
 }

@@ -781,6 +781,8 @@
         public WidgetSpec? Spec { get; init; }
         public required Rect Bounds { get; init; }
         public required string Text { get; set; }
+        /// <summary>A field of a bounding box being edited (Create Bounding Boxes' panel): the box and "text", "desc" or "palette:&lt;i&gt;".</summary>
+        public (int Index, string Field)? Box { get; init; }
     }
 
     sealed class SearchState
@@ -832,6 +834,7 @@
         _doc.Changed += RefreshUi;
         _view.ViewChanged += RefreshUi;
         _view.WidgetActivated += OnWidgetActivated;
+        _view.BoxFieldActivated += OnBoxFieldActivated;
         _view.WidgetPicked += OnAppWidgetPicked;
         _view.NodePicked += OnAppNodePicked;
         _view.GroupTitleEditRequested += OnGroupTitleEdit;
@@ -1304,6 +1307,30 @@
         StateHasChanged();
     }
 
+    /// <summary>Create Bounding Boxes' panel: the selected box's text or description in a text box over the field, a palette colour in a colour picker.</summary>
+    void OnBoxFieldActivated(int nodeId, string name, int index, string field)
+    {
+        var node = _doc.Graph.GetNode(nodeId);
+        var row = _view.Hits.Geometry(node).Widgets.First(w => w.Name == name);
+        var (cw, ch) = BoxesWidget.CanvasSize(node.Widgets);
+        var lay = BoxesWidget.Lay(row.Bounds, cw, ch);
+        var box = BoxesWidget.Boxes(node.Widgets.GetValueOrDefault(name))[index];
+        bool colour = field.StartsWith("palette:", StringComparison.Ordinal);
+        int swatch = colour ? int.Parse(field[8..], System.Globalization.CultureInfo.InvariantCulture) : -1;
+        var at = field == "text" ? lay.TextField : field == "desc" ? lay.DescField : BoxesWidget.Swatch(lay.PaletteRow, swatch);
+        var topLeft = _view.Viewport.WorldToScreen(new Point(at.X, at.Y));
+        var scale = _view.Viewport.Scale;
+        _edit = new EditState
+        {
+            NodeId = nodeId, Name = name, Box = (index, field),
+            Spec = colour ? new WidgetSpec(WidgetKind.Color) : new WidgetSpec(WidgetKind.String) { Multiline = true },
+            Bounds = new Rect(topLeft.X, topLeft.Y, Math.Max(at.Width * scale, colour ? 40 : 140), Math.Max(at.Height * scale, 28)),
+            Text = field == "text" ? box.Text : field == "desc" ? box.Desc : box.Palette[swatch],
+        };
+        _focusEdit = true;
+        StateHasChanged();
+    }
+
     void OnTitleEdit(int nodeId)
     {
         var node = _doc.Graph.GetNode(nodeId);
@@ -1342,6 +1369,12 @@
         text ??= "";
         // The node (or group) can be gone by the time the editor closes: packed into a subgraph, deleted, another workflow opened.
         if (e.IsGroup ? _doc.Graph.Groups.All(g => g.Id != e.NodeId) : _doc.Graph.FindNode(e.NodeId) is null) return;
+        if (e.Box is { } boxField && e.Name is { } boxesName)
+        {
+            _view.SetBoxField(e.NodeId, boxesName, boxField.Index, boxField.Field, text);
+            _studio?.Focus();
+            return;
+        }
         if (e.IsGroup)
         {
             _doc.SetGroupTitle(e.NodeId, string.IsNullOrWhiteSpace(text) ? "Group" : text.Trim());
@@ -2284,6 +2317,25 @@
                 modelled.ResultModels = models.OfType<JsonObject>().Select(m => _engine!.ViewUrl((string)m["filename"]!, (string?)m["subfolder"], (string?)m["type"])).ToList();
                 modelled.ResultText = string.Join("\n", models.OfType<JsonObject>().Select(m => "▣ "+ (string?)m["filename"] + " (open it from the right-click menu)"));
                 break;
+            case "executed" when node is { } boxesId && _doc.Graph.FindNode(boxesId) is { } boxed && (data["output"]?["dims"] is JsonArray):
+            {
+                // Create Bounding Boxes: its background is drawn under the boxes; boxes from its bboxes input set the canvas when that value is new
+                // (last_incoming remembers it, so edits made since are kept until the upstream value changes again).
+                boxed.BoxesBackground = data["output"]?["background_images"] is JsonArray bgs && bgs.OfType<JsonObject>().FirstOrDefault() is { } bgImage
+                    ? new NodePreview(_engine!.ViewUrl((string)bgImage["filename"]!, (string?)bgImage["subfolder"], (string?)bgImage["type"])) : null;
+                if (data["output"]?["input_bboxes"] is JsonArray incoming)
+                {
+                    var value = SpawnGen.Engine.Types.JsonLiteral.FromJson(incoming);
+                    var last = boxed.Widgets.GetValueOrDefault("last_incoming");
+                    if (SpawnGen.Engine.Types.JsonLiteral.ToJson(value) != SpawnGen.Engine.Types.JsonLiteral.ToJson(last))
+                    {
+                        _doc.SetWidget(boxesId, "editor_state", value);
+                        _doc.SetWidget(boxesId, "last_incoming", value);
+                        _doc.EndGesture();
+                    }
+                }
+                break;
+            }
             case "executed" when node is { } histId && _doc.Graph.FindNode(histId) is { } charted && HistogramOf(data) is { } bins:
                 charted.ResultHistogram = bins.Select(b => (double?)b ?? 0).ToList();
                 break;

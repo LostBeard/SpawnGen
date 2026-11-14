@@ -619,6 +619,148 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         }
     }
 
+    /// <summary>
+    /// A BOUNDING_BOXES widget (Create Bounding Boxes): the toolbar (Grid, Clear all), the canvas at the boxes' aspect with the last run's background,
+    /// a dot every grid step while Grid is on, each box with its number tag and palette strip (the selected one highlighted with corner handles, the
+    /// one being drawn dashed), and the selected box's panel: obj / text, the text to render, the description, the palette.
+    /// </summary>
+    void DrawBoxes(CanvasRenderingContext2D ctx, EditorNode node, WidgetRow w, object? value)
+    {
+        var (cw, ch) = BoxesWidget.CanvasSize(node.Widgets);
+        var lay = BoxesWidget.Lay(w.Bounds, cw, ch);
+        var boxes = BoxesWidget.Boxes(value);
+        bool grid = view.BoxGrid(node.Id, w.Name);
+        int sel = view.SelectedBox is { } s && s.NodeId == node.Id && s.Name == w.Name && s.Index < boxes.Count ? s.Index : -1;
+        ctx.Font = Theme.Font;
+        ctx.TextBaseline = "middle";
+
+        void Button(Rect r, string text, bool on)
+        {
+            RoundRect(ctx, r, 4);
+            ctx.FillStyle = on ? Theme.Accent : Theme.Current.TextBoxFill;
+            ctx.Fill();
+            ctx.FillStyle = on ? "#ffffff" : Theme.ValueText;
+            ctx.TextAlign = "center";
+            ctx.FillText(text, r.Center.X, r.Center.Y + 1);
+            ctx.TextAlign = "left";
+        }
+        Button(lay.GridButton, "Grid", grid);
+        Button(lay.ClearButton, "Clear all", false);
+
+        // The canvas: the background picture of the last run (or a dark field), the grid's dots, the boxes.
+        var c = lay.Canvas;
+        ctx.Save();
+        ctx.BeginPath();
+        ctx.Rect(c.X, c.Y, c.Width, c.Height);
+        ctx.Clip();
+        ctx.FillStyle = "#202020";
+        ctx.FillRect(c.X, c.Y, c.Width, c.Height);
+        if (node.BoxesBackground is { } bg && images.Get(bg.Url, (_, _) => view.Invalidate()) is { } picture)
+        {
+            ctx.GlobalAlpha = 0.85;
+            ctx.DrawImage(picture, c.X, c.Y, c.Width, c.Height);
+            ctx.GlobalAlpha = 1;
+        }
+        double step = BoxesWidget.GridStep / cw * c.Width;
+        if (grid && step * view.Viewport.Scale >= 4)
+        {
+            ctx.FillStyle = "rgba(255,255,255,0.18)";
+            for (double y = c.Y + step; y < c.Bottom; y += step)
+                for (double x = c.X + step; x < c.Right; x += step)
+                    ctx.FillRect(x - 0.5, y - 0.5, 1, 1);
+        }
+        for (int i = 0; i < boxes.Count; i++)
+        {
+            var b = boxes[i];
+            var r = BoxesWidget.BoxRect(c, cw, ch, b);
+            var palette = b.Palette;
+            string colour = palette.Count > 0 ? palette[0] : "#c8c8c8";
+            ctx.FillStyle = "rgba(0,0,0,0.25)";
+            ctx.FillRect(r.X, r.Y, r.Width, r.Height);
+            for (int k = 0; k < Math.Min(5, palette.Count); k++)
+            {
+                ctx.FillStyle = palette[k];
+                ctx.FillRect(r.X + r.Width * k / Math.Min(5, palette.Count), r.Y, r.Width / Math.Min(5, palette.Count), 4);
+            }
+            ctx.StrokeStyle = i == sel ? Theme.Accent : colour;
+            ctx.LineWidth = i == sel ? 2 : 1.25;
+            ctx.StrokeRect(r.X, r.Y, r.Width, r.Height);
+            var tag = BoxesWidget.Tag(i);
+            ctx.Font = "600 9px ui-monospace, monospace";
+            double tw = MeasureText(tag) * 0.8 + 6;
+            ctx.FillStyle = i == sel ? Theme.Accent : "#5a5a5a";
+            ctx.FillRect(r.X + 1, r.Y + 1, tw, 11);
+            ctx.FillStyle = "#ffffff";
+            ctx.FillText(tag, r.X + 4, r.Y + 7);
+            ctx.Font = Theme.Font;
+            if (b.Desc.Length > 0 || (b.Type == "text" && b.Text.Length > 0))
+            {
+                ctx.FillStyle = "rgba(255,255,255,0.75)";
+                var label = b.Type == "text" && b.Text.Length > 0 ? $"\"{b.Text}\" {b.Desc}" : b.Desc;
+                ctx.FillText(Ellipsize(label, Math.Max(10, r.Width - tw - 8)), r.X + tw + 5, r.Y + 7);
+            }
+            if (i == sel)
+            {
+                ctx.FillStyle = Theme.Accent;
+                foreach (var (hx, hy) in new[] { (r.X, r.Y), (r.Right, r.Y), (r.X, r.Bottom), (r.Right, r.Bottom) })
+                    ctx.FillRect(hx - 3, hy - 3, 6, 6);
+            }
+        }
+        if (view.DraftBox is { } d && d.NodeId == node.Id && d.Name == w.Name)
+        {
+            var r = BoxesWidget.BoxRect(c, cw, ch, new BoxesWidget.Box(d.X, d.Y, d.W, d.H, BoxesWidget.NewMetadata()));
+            ctx.StrokeStyle = Theme.Accent;
+            ctx.LineWidth = 1.5;
+            ctx.SetLineDash([5, 3]);
+            ctx.StrokeRect(r.X, r.Y, r.Width, r.Height);
+            ctx.SetLineDash([]);
+        }
+        ctx.Restore();
+        ctx.StrokeStyle = Theme.WidgetBorder;
+        ctx.LineWidth = 1;
+        ctx.StrokeRect(c.X, c.Y, c.Width, c.Height);
+
+        // The selected box's panel.
+        if (sel < 0)
+        {
+            ctx.FillStyle = Theme.LabelText;
+            ctx.FillText(boxes.Count == 0 ? "Drag on the canvas to draw a box." : "Click a box to edit it.", lay.Panel.X + 8, lay.Panel.Y + 14);
+            return;
+        }
+        var box = boxes[sel];
+        Button(lay.ObjButton, "obj", box.Type != "text");
+        Button(lay.TextButton, "text", box.Type == "text");
+        void Field(Rect r, string text, string placeholder)
+        {
+            RoundRect(ctx, r, 4);
+            ctx.FillStyle = Theme.Current.TextBoxFill;
+            ctx.Fill();
+            ctx.Save();
+            ctx.BeginPath();
+            ctx.Rect(r.X, r.Y, r.Width, r.Height);
+            ctx.Clip();
+            ctx.FillStyle = text.Length > 0 ? Theme.ValueText : Theme.LabelText;
+            int line = 0;
+            foreach (var l in WrapLines(text.Length > 0 ? text : placeholder, r.Width - 12).Take(Math.Max(1, (int)((r.Height - 6) / 15))))
+                ctx.FillText(l, r.X + 6, r.Y + 10 + line++ * 15);
+            ctx.Restore();
+        }
+        if (box.Type == "text") Field(lay.TextField, box.Text, "text to render (verbatim)");
+        Field(lay.DescField, box.Desc, "description of this region");
+        var palette2 = box.Palette;
+        ctx.FillStyle = Theme.LabelText;
+        ctx.FillText("color_palette", lay.PaletteRow.X + 2, lay.PaletteRow.Center.Y + 1);
+        for (int k = 0; k < palette2.Count; k++)
+        {
+            var r = BoxesWidget.Swatch(lay.PaletteRow, k);
+            ctx.FillStyle = palette2[k];
+            ctx.FillRect(r.X, r.Y, r.Width, r.Height);
+            ctx.StrokeStyle = Theme.WidgetBorder;
+            ctx.StrokeRect(r.X, r.Y, r.Width, r.Height);
+        }
+        Button(BoxesWidget.Plus(lay.PaletteRow, palette2.Count), "+", false);
+    }
+
     void DrawWidget(CanvasRenderingContext2D ctx, EditorNode node, WidgetRow w)
     {
         var r = w.Bounds;
@@ -633,6 +775,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.Stroke();
 
         if (w.IsCurve) { DrawCurve(ctx, w, value, node.ResultHistogram); return; }
+        if (w.IsBoxes) { DrawBoxes(ctx, node, w, value); return; }
 
         ctx.Font = Theme.Font;
         ctx.TextBaseline = "middle";

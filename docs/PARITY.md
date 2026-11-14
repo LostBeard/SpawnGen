@@ -220,8 +220,11 @@ Still missing, by kind:
    Text Overlay (a font engine; the same engine would draw the number tags and descriptions in Create Bounding Boxes' preview and the labels of Draw
    BBoxes, which are left out until then). Done: object-valued widgets (BOUNDING_BOX, BOUNDING_BOXES, COMPOSITOR) in prompts,
    workflows and object_info, with Crop Image (ImageCropV2), Create Bounding Boxes, Draw BBoxes, Crop By Bounding Boxes, Split Image into List of Tiles,
-   Merge List of Tiles to Image, Add Layer, Layers From Bounding Boxes and Create Layered Image; the Studio edits those widgets as JSON text until it has
-   ComfyUI's crop editor, bounding-box canvas and compositor editor (todo).
+   Merge List of Tiles to Image, Add Layer, Layers From Bounding Boxes and Create Layered Image. The Studio draws Create Bounding Boxes' canvas and edits
+   it as ComfyUI's editor does (measured black-box in its Node 2.0 view; BoxesWidgetTests, BoxesEditingTests, drive-bboxes.js): drawing in any direction,
+   Grid snapping to 32 canvas pixels, moving and resizing by the rounded drag, Delete, obj / text, the text and description, the palette, Clear all, the
+   last run's background behind the boxes, and an upstream bboxes value setting the canvas when it is new; the crop editor and the compositor
+   editor still show JSON text (todo).
 
 ## 5. Platform
 

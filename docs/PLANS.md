@@ -119,7 +119,7 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
    from these measurements, the row in NodeLayout, pointer modes in EditorView, drawing in NodeRenderer (background from the node's ui
    background_images), the text / colour fields in Studio.razor, and a browser test that repeats the probe's actions and expects ComfyUI's states.
 3. Text Overlay (a font engine; also the labels of Create Bounding Boxes' preview and Draw BBoxes).
-4. **ComfyUI's templates browser (in progress)**: ComfyUI's templates are MIT (Comfy-Org/workflow_templates; the comfyui_workflow_templates
+4. **ComfyUI's templates browser: done** (drive-templates.js: 761 templates in ComfyUI's 12 groups, thumbnails, search, opening one): ComfyUI's templates are MIT (Comfy-Org/workflow_templates; the comfyui_workflow_templates
    packages say MIT): index.json (12 groups, ~640 templates with title, description, tags, models, size, openSource) and per template
    <name>.json and <name>-1.webp. ComfyUI's server serves them at /templates/<file> (measured). SpawnGen: the server serves /templates/<file>,
    fetched once from raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates/ and cached (file names checked); the browser engine

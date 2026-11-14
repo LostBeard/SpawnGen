@@ -23,12 +23,13 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
    - Load CLIP type flux2 (2c71ffe): = ComfyUI's conditioning on the RX 590 (1.3e-6 relative RMS).
    - Load Diffusion Model (flux-2-klein-*) and its own schedule (ab58f40): ComfyUI's distilled text-to-image graph runs on the RX 590, the same
      picture as ComfyUI's (36.9 dB at 256 x 256, fp8 file; 30 s).
-   - Next: reference latents (the edit templates: measure ComfyUI's model call with Set Reference Latent first), the base model with cfg 5,
-     the 1024 x 1024 template once, then merge when ML 5.8.17 is on nuget.org.
+   - Reference latents / editing (51ada8c): ComfyUI's edit graph = ComfyUI's green apple on the RX 590 (44.4 dB).
+   - Next: the base model with cfg 5, the 1024 x 1024 template once, then merge when ML 5.8.17 is on nuget.org.
 3. **Dumps for Tuvok** (his order; same format as the FLUX.2 VAE dumps: raw float32 files plus a note in _DevComms):
    1. ~~ae.safetensors (FLUX.1 / Z-Image VAE)~~ sent 2026-11-14 (_DevComms 2026-11-14-0005): [b, 16, H/8, W/8], values look raw, centred crop to 8.
    2. ~~FLUX.1 dev~~ sent 2026-11-14 (_DevComms 2026-11-14-0300): T5 [1,256,4096] + pooled y [1,768], guidance, model space (raw - 0.1159) x 0.3611, timestep sigma, result = denoised. schnell on request.
-   3. Z-Image turbo: conditioning from qwen_3_4b, sigmas, one model call in and out.
+   3. ~~Z-Image Turbo~~ sent 2026-11-14 (_DevComms 2026-11-14-0400): one Qwen3-4B hidden state [1, N, 2560] unpadded + mask, AuraFlow shift 3,
+      the ae latent format, result = denoised. All three dump requests done; Tuvok builds FLUX.1, then Z-Image.
 
 ## Waiting on others
 

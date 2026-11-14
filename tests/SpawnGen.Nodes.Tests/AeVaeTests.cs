@@ -103,7 +103,9 @@ public class AeVaeTests
         // accelerator gives the same (A 4.88e-3), so it is not the device's arithmetic. A's and C's difference sits at a few single latent cells
         // (A: (20, 19), (12, 9), (0, 16); up to 0.6 where the latent reaches 7 to 9), not spread over the picture, and the decoder hardly sees it:
         // ComfyUI's decode of our latent is 72.7 dB from its decode of its own (both 44.6 dB from A). Sent to SpawnDev.ILGPU.ML with ComfyUI's
-        // encoder stage outputs (_DevComms 2026-11-14-0700); the bounds hold today's figures until that is understood.
+        // encoder stage outputs (_DevComms 2026-11-14-0700). Cause (Tuvok, proven on the host): SdVae stores the weights as fp16, and ae's encoder
+        // amplifies that rounding at these cells (down_3 into mid.block_1); the whole encoder in fp32 gives ComfyUI's mean to 1.5e-4. The next ML
+        // release keeps fp32 files' weights at full precision: then tighten A and C back to 2e-3.
         Assert.That(encA, Is.LessThan(6e-3));
         Assert.That(encB, Is.LessThan(2e-3));
         Assert.That(encC, Is.LessThan(4e-3));

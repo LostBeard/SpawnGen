@@ -34,7 +34,7 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
        ComfyUI drops; cond and uncond as separate calls. Tuvok ports it next.
      - When -local.2 comes (Tuvok, 2026-11-14): (a) Z-Image: open the transformer once with maxCaptionTokens and pass each call's length;
        set Flux2TextEncoder.PreciseActivations = true for the lumina2 encoder (CUDA; OpenCL is fp32 already); (b) the split FLUX.1 graph's
-       fp8_scaled files (scale_weight read); (c) Generate Text with the automatic Q8_0 load (13 of 23 greedy tokens = ComfyUI's with thinking
+       fp8_scaled files (scale_weight read), and UmT5Encoder.PreciseActivations = true for FLUX.1's T5 (CUDA); (c) Generate Text with the automatic Q8_0 load (13 of 23 greedy tokens = ComfyUI's with thinking
        off, 159 / 159 with it on: say so in the node's docs); (d) Qwen-Image: WanVae in Wan 2.1 mode (LATENT raw [16, 1, h, w], the VAE takes
        the normalised latent: convert at the node, as Wan 2.2), text = Qwen2.5-VL's last hidden state after the final norm, rows from 34 on
        (Flux2Weights / Flux2TextEncoder with layer 28 and finalNorm, PreciseActivations on), QwenImageTransformer (timestep sigma, output the

@@ -72,28 +72,30 @@ const IMAGE = process.env.CROP_IMAGE || 'example.png';
     if (await pick.count()) { await pick.click(); await record('ratio-16:9'); }
     else await page.keyboard.press('Escape');
   }
-  // Corners, clamping and the lock: positions from the stored region (image pixels -> the shown picture).
+  // The lock (Custom ratio), typing in the fields, and the picture's edge: start from a known region each time by typing it.
   if (picture) {
-    const imgW = Number(process.env.CROP_IMAGE_W || 768), imgH = Number(process.env.CROP_IMAGE_H || 768);
+    const imgW = 768, imgH = 768;
     const toScreen = (x, y) => [picture.x + x / imgW * picture.w, picture.y + y / imgH * picture.h];
     async function drag(a, b) { await page.mouse.move(...a); await page.mouse.down(); await page.mouse.move((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, { steps: 5 }); await page.mouse.move(...b, { steps: 5 }); await page.mouse.up(); }
-    let r = JSON.parse(await crop());
-    await drag(toScreen(r.x + r.width, r.y + r.height), toScreen(r.x + r.width + 50, r.y + r.height + 100)); await record('drag-bottom-right-corner-16:9');
-    r = JSON.parse(await crop());
-    await drag(toScreen(r.x + 10, r.y + 10), toScreen(r.x + 10 + 2000, r.y + 10 + 2000)); await record('drag-inside-far-past-the-edge');
-    r = JSON.parse(await crop());
-    await drag(toScreen(r.x, r.y), toScreen(r.x - 60, r.y - 30)); await record('drag-top-left-corner');
-    const custom = page.locator('[data-node-id] button', { hasText: '16:9' }).first();
-    if (await custom.count()) { await custom.click(); await page.waitForTimeout(300); const c = page.locator('[role="option"], li', { hasText: 'Custom' }).first(); if (await c.count()) await c.click(); await record('ratio-back-to-custom'); }
-    r = JSON.parse(await crop());
-    await drag(toScreen(r.x + r.width, r.y + r.height), toScreen(r.x + r.width - 100, r.y + r.height + 20)); await record('drag-bottom-right-corner-custom');
-    const lock = page.locator('[data-node-id] button[aria-label="Lock aspect ratio"]').first();
-    if (await lock.count()) {
-      await lock.click(); await record('lock-on', { aria: await lock.getAttribute('aria-label') });
-      r = JSON.parse(await crop());
-      await drag(toScreen(r.x + r.width, r.y + r.height), toScreen(r.x + r.width + 80, r.y + r.height + 10)); await record('drag-bottom-right-corner-locked');
-    }
-    await page.locator('[data-node-id] input').nth(2).fill('700'); await page.keyboard.press('Enter'); await record('type-width-700');
+    const cropNode = page.locator('[data-node-id]', { hasText: 'Crop Image' }).last();
+    const field = (i) => cropNode.locator('input').nth(i);
+    async function type(i, v) { await field(i).fill(String(v), { force: true }); await field(i).press('Enter'); await field(i).evaluate(el => el.blur()); await page.waitForTimeout(250); }
+    // Back to Custom.
+    const ratioButton = page.locator('[data-node-id] button', { hasText: /^(1:1|3:4|4:3|16:9|9:16|Custom)$/ }).first();
+    await ratioButton.click(); await page.waitForTimeout(300);
+    await page.locator('[role="option"], li', { hasText: 'Custom' }).first().click(); await record('custom');
+    await type(0, 100); await type(1, 100); await type(2, 400); await type(3, 200); await record('typed-100-100-400x200');
+    await type(2, 900); await record('typed-width-900-past-the-edge');
+    await type(0, 700); await record('typed-x-700');
+    await type(0, 100); await type(2, 400); await type(3, 200);
+    await drag(toScreen(300, 200), toScreen(300 + 600, 200 + 600)); await record('drag-inside-past-the-edge');
+    await type(0, 100); await type(1, 100); await type(2, 400); await type(3, 200);
+    await drag(toScreen(500, 300), toScreen(500 + 600, 300 + 50)); await record('drag-corner-past-the-edge');
+    await type(0, 100); await type(1, 100); await type(2, 400); await type(3, 200);
+    const lock = cropNode.locator('button[aria-label*="aspect ratio"]').first();
+    await lock.click(); await record('lock', { aria: await lock.getAttribute('aria-label') });
+    await drag(toScreen(500, 300), toScreen(500 + 100, 300 + 10)); await record('drag-corner-locked');
+    await type(2, 600); await record('typed-width-600-locked');
   }
   fs.writeFileSync(path.join(OUT, 'steps.json'), JSON.stringify(log, null, 1));
   await browser.close();

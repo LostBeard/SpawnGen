@@ -104,8 +104,11 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
    corner handles; a drag inside moves it by the drag in picture pixels, rounded (0.15 / 0.10 of the picture: +115, +77); a drag outside it
    does nothing (no new rectangle); Ratio: 1:1, 3:4, 4:3, 16:9, 9:16, Custom; choosing one keeps the width and sets the height (512 -> 512 x
    288 for 16:9); with a ratio a corner drag keeps it (the drag projected on the ratio's direction: (+50, +100) on 512 x 288 -> 593 x 334);
-   corners stop at a 16-pixel side (a top-left corner dragged past the other: 28 x 16 at 16:9). Still to measure: the lock button, typing in
-   the fields, the picture edge. Then: CropWidget logic and tests in SpawnGen.Editor, the row (the linked Load Image's picture), EditorView,
+   corners stop at a 16-pixel side (a top-left corner dragged past the other: 28 x 16 at 16:9). The lock (aria "Lock aspect ratio" ->
+   "Unlock aspect ratio" when on) keeps the current aspect for corner drags the same way ((+100, +10) on 400 x 200 -> 484 x 242: the drag
+   projected on the aspect, the height from the rounded width); typed values are taken as they are (not clamped to the picture, the lock
+   ignored: width 900 at x 100 on a 768 picture stays); drags stay inside the picture (a move past the edge stops at 768 - size, a corner at
+   the edge: width 668 from x 100). Measured 2026-11-14. Then: CropWidget logic and tests in SpawnGen.Editor, the row (the linked Load Image's picture), EditorView,
    NodeRenderer, a browser test. ComfyUI's editor measured
    black-box in its Node 2.0 view (`tools/studio-browser-test/probe-comfy-bboxes*.js`, 2026-11-14): a canvas at the boxes' aspect, a Grid
    toggle (on) and Clear all (no confirmation); dragging draws a box (any direction, stored normalised), with Grid on its corners snap to a

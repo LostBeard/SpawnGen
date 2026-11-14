@@ -371,14 +371,24 @@ public static class ServerApp
         if (i.ForceInput) config["forceInput"] = true;
         if (i.Group is { } group) { config["autogrow_group"] = group; config["autogrow_min"] = i.GroupMin; }
         if (i.DynamicParent is { } parent) { config["dynamic_parent"] = parent; config["dynamic_options"] = new JsonArray(i.DynamicOptions.Select(o => (JsonNode)o).ToArray()); }
+        if (i.Variants is { } variants)
+        {
+            // Per option, the entry the input has when that option brings it (its own choices, default and tooltip).
+            var byOption = new JsonObject();
+            foreach (var (option, v) in variants)
+                byOption[option] = InputEntry(i with { Widget = v.Widget, Tooltip = v.Tooltip, Variants = null, DynamicParent = null });
+            config["dynamic_variants"] = byOption;
+        }
         if (i.MatchTemplate is { } template)
         {
             config["template"] = new JsonObject { ["template_id"] = template, ["allowed_types"] = i.Type.Name };
             return new JsonArray(MatchTypeName, config);
         }
         if (i.StatedDefault is { } stated) config["default"] = JsonLiteral.ToNode(stated);
+        if (i.Tooltip is { Length: > 0 } tooltip) config["tooltip"] = tooltip;
         if (i.Widget is not { } w) return config.Count > 0 ? new JsonArray(i.Type.Name, config) : new JsonArray(i.Type.Name);
-        if (w.Default is { } d) config["default"] = w.Kind == WidgetKind.Json ? JsonLiteral.ToNode(d) : JsonSerializer.SerializeToNode(d);
+        if (w.Default is { } d)
+            config["default"] = w.Kind == WidgetKind.Json ? JsonLiteral.ToNode(d) : JsonSerializer.SerializeToNode(w.Kind == WidgetKind.Combo && d is string text ? w.OptionValue(text) : d);
         if (w.Socketless is { } socketless) config["socketless"] = socketless;
         if (w.Min is { } min) config["min"] = min;
         if (w.Max is { } max) config["max"] = max;
@@ -387,7 +397,7 @@ public static class ServerApp
         if (w.Kind == WidgetKind.Color) config["socketless"] = true;
         return w.Kind switch
         {
-            WidgetKind.Combo => new JsonArray(new JsonArray(w.ResolveOptions().Select(o => (JsonNode)o).ToArray()), config),
+            WidgetKind.Combo => new JsonArray(new JsonArray(w.ResolveOptions().Select(o => JsonSerializer.SerializeToNode(w.OptionValue(o))).ToArray()), config),
             _ => new JsonArray(i.Type.Name, config),
         };
     }

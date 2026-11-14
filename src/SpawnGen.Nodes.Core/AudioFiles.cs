@@ -25,6 +25,15 @@ public static class AudioFiles
     /// <summary>The Opus encoder: the clip (at an Opus rate), the bitrate in bits per second (null: the encoder's default) and the comments.</summary>
     public static Func<AudioClip, int?, IReadOnlyList<KeyValuePair<string, string>>, Task<byte[]>>? Opus { get; set; }
 
+    /// <summary>The MP3 encoder: the clip, the quality ("V0", "128k" or "320k") and the comments.</summary>
+    public static Func<AudioClip, string, IReadOnlyList<KeyValuePair<string, string>>, Task<byte[]>>? Mp3 { get; set; }
+
+    /// <summary>
+    /// The sample rates MP3 carries (MPEG-1, 2 and 2.5 Layer III). Measured with ComfyUI: any other rate (96000) fails in its encoder; nothing is
+    /// resampled.
+    /// </summary>
+    public static readonly int[] Mp3Rates = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
+
     /// <summary>The decoder for files that are not WAV (FLAC); null when it does not know the file.</summary>
     public static Func<byte[], Task<AudioClip?>>? Decode { get; set; }
 
@@ -78,7 +87,11 @@ public static class AudioFiles
                 return (await opus(resampled, quality is null ? null : Bitrate(quality), comments), "opus");
             case "mp3":
                 if (quality is not null && !Mp3Qualities.Contains(quality)) throw new ArgumentException($"Unknown MP3 quality '{quality}'.", nameof(quality));
-                throw new NotSupportedException("Saving MP3 needs an MP3 encoder, which this build does not have.");
+                var mp3 = Mp3 ?? throw new NotSupportedException("Saving MP3 needs SpawnDev.Codecs, which is not installed in this build.");
+                if (!Mp3Rates.Contains(clip.SampleRate))
+                    throw new NotSupportedException($"MP3 cannot carry {clip.SampleRate} Hz audio (it takes {string.Join(", ", Mp3Rates)}); resample it first.");
+                if (clip.ChannelCount is not (1 or 2)) throw new NotSupportedException($"MP3 carries mono or stereo audio, not {clip.ChannelCount} channels.");
+                return (await mp3(clip, quality ?? "V0", comments), "mp3");
             default:
                 throw new ArgumentException($"Unknown audio format '{format}'. The choices are flac, mp3 and opus.", nameof(format));
         }

@@ -37,7 +37,7 @@ public sealed class SaveAudioOpus
         await AudioResults.SaveAsync(audio, context, services, "output", filenamePrefix, "opus", quality);
 }
 
-/// <summary>Save Audio (MP3): not available yet (SpawnDev.Codecs has no MP3 encoder); it fails with that message.</summary>
+/// <summary>Save Audio (MP3): the clip as MP3 at V0 (variable bit rate), 128k or 320k, encoded by SpawnDev.Codecs (see CodecsAudio.EncodeMp3Async).</summary>
 [Node(Category = "audio", DisplayName = "Save Audio (MP3) (DEPRECATED)", IsOutput = true)]
 public sealed class SaveAudioMP3
 {

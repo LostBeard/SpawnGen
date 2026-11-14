@@ -75,10 +75,11 @@ public class SaveAudioFlacTests
     {
         using var context = Context.Create(b => b.CPU());
         using var acc = context.CreateCPUAccelerator(0);
-        await CodecsAudio.WarmUpAsync(acc, CodecsAudio.Work.FlacEncode | CodecsAudio.Work.FlacDecode | CodecsAudio.Work.Opus);
+        await CodecsAudio.WarmUpAsync(acc, CodecsAudio.Work.FlacEncode | CodecsAudio.Work.FlacDecode | CodecsAudio.Work.Opus | CodecsAudio.Work.Mp3);
         foreach (var name in new[] { "stereo_44100", "mono_22050_odd" })
             await AssertComfyUIsFlac(acc, await CodecsAudio.EncodeFlacAsync(acc, Clip(name), Metadata(true)), name);
-        Assert.That(CodecsAudio.WorkFor("SaveAudioAdvanced"), Is.EqualTo(CodecsAudio.Work.FlacEncode | CodecsAudio.Work.Opus));
+        Assert.That(CodecsAudio.WorkFor("SaveAudioAdvanced"), Is.EqualTo(CodecsAudio.Work.FlacEncode | CodecsAudio.Work.Opus | CodecsAudio.Work.Mp3));
+        Assert.That(CodecsAudio.WorkFor("SaveAudioMP3"), Is.EqualTo(CodecsAudio.Work.Mp3));
         Assert.That(CodecsAudio.WorkFor("LoadAudio"), Is.EqualTo(CodecsAudio.Work.FlacDecode));
         Assert.That(CodecsAudio.WorkFor("KSampler"), Is.EqualTo(CodecsAudio.Work.None));
     }

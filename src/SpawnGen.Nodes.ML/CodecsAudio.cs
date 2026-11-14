@@ -1,5 +1,6 @@
 using ILGPU.Runtime;
 using SpawnDev.Codecs.Audio.Flac;
+using SpawnDev.Codecs.Audio.Mp3;
 using SpawnDev.Codecs.Audio.Opus;
 using SpawnGen.Engine.Types;
 using SpawnGen.Nodes.Core;
@@ -25,12 +26,13 @@ public static class CodecsAudio
     {
         AudioFiles.Flac = async (clip, metadata) => await EncodeFlacAsync(await accelerator(), clip, metadata);
         AudioFiles.Opus = async (clip, bitrate, metadata) => await EncodeOpusAsync(await accelerator(), clip, bitrate, metadata);
+        AudioFiles.Mp3 = async (clip, quality, metadata) => await EncodeMp3Async(await accelerator(), clip, quality, metadata);
         AudioFiles.Decode = async data => IsFlac(data) ? await DecodeFlacAsync(await accelerator(), data) : null;
     }
 
     /// <summary>What <see cref="WarmUpAsync"/> can prepare.</summary>
     [Flags]
-    public enum Work { None = 0, FlacEncode = 1, FlacDecode = 2, Opus = 4 }
+    public enum Work { None = 0, FlacEncode = 1, FlacDecode = 2, Opus = 4, Mp3 = 8 }
 
     /// <summary>
     /// Compiles the kernels of the audio work a graph is about to need (SpawnDev.Codecs' warm-ups: a short silent encode or decode, thrown away), so the
@@ -60,6 +62,8 @@ public static class CodecsAudio
             }
             if (work.HasFlag(Work.Opus))
                 await OggOpusEncoder.WarmUpAsync(accelerator);
+            if (work.HasFlag(Work.Mp3))
+                await Mp3Encoder(accelerator).WarmUpAsync();
         }
         finally { Gate.Release(); }
     }
@@ -69,7 +73,8 @@ public static class CodecsAudio
     {
         "SaveAudio" or "PreviewAudio" => Work.FlacEncode,
         "SaveAudioOpus" => Work.Opus,
-        "SaveAudioAdvanced" => Work.FlacEncode | Work.Opus,
+        "SaveAudioMP3" => Work.Mp3,
+        "SaveAudioAdvanced" => Work.FlacEncode | Work.Opus | Work.Mp3,
         "LoadAudio" => Work.FlacDecode,
         _ => Work.None,
     };
@@ -118,6 +123,45 @@ public static class CodecsAudio
         };
         await Gate.WaitAsync();
         try { return await OggOpusEncoder.EncodeAsync(accelerator, interleaved, clip.SampleRate, c, options); }
+        finally { Gate.Release(); }
+    }
+
+    static Mp3EncoderGpu? _mp3;
+    static Accelerator? _mp3Accelerator;
+
+    /// <summary>The MP3 encoder for <paramref name="accelerator"/> (kept between saves; call inside <see cref="Gate"/>).</summary>
+    static Mp3EncoderGpu Mp3Encoder(Accelerator accelerator)
+    {
+        if (_mp3 is null || _mp3Accelerator != accelerator)
+        {
+            _mp3?.Dispose();
+            _mp3 = new Mp3EncoderGpu(accelerator);
+            _mp3Accelerator = accelerator;
+        }
+        return _mp3;
+    }
+
+    /// <summary>
+    /// MP3 as ComfyUI's PyAV (libmp3lame) writes it, measured 2026-11-13 (Fixtures/codecs/save_audio_mp3): an ID3v2.4 tag with the comments as TXXX
+    /// frames and TSSE "Lavf62.12.102", an Info (CBR) or Xing (VBR) frame with the "Lavf" encoder string, joint stereo. "V0" is variable bit rate at
+    /// quality 0; "128k" and "320k" are constant, at most 160 kbps at the MPEG-2 rates (below 32 kHz), as libmp3lame clamps them. The frames come from
+    /// SpawnDev.Codecs' own encoder (not LAME), so they are valid but not byte-identical.
+    /// </summary>
+    public static async Task<byte[]> EncodeMp3Async(Accelerator accelerator, AudioClip clip, string quality, IReadOnlyList<KeyValuePair<string, string>> metadata)
+    {
+        int n = clip.Length, c = clip.ChannelCount;
+        var interleaved = new float[n * c];
+        for (int f = 0; f < n; f++)
+            for (int k = 0; k < c; k++) interleaved[f * c + k] = clip.Channels[k][f];
+        var options = new Mp3EncodeOptions { Tags = [.. metadata], Id3Encoder = Lavf };
+        options = quality switch
+        {
+            "V0" => options with { VbrQuality = 0 },
+            "128k" or "320k" => options with { BitrateKbps = Math.Min(int.Parse(quality.TrimEnd('k')), clip.SampleRate < 32000 ? 160 : 320) },
+            _ => throw new ArgumentException($"Unknown MP3 quality '{quality}'.", nameof(quality)),
+        };
+        await Gate.WaitAsync();
+        try { return await Mp3Encoder(accelerator).EncodeAsync(interleaved, c, clip.SampleRate, options); }
         finally { Gate.Release(); }
     }
 

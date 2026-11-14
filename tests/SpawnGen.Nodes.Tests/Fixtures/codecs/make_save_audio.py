@@ -70,7 +70,17 @@ if __name__ == "__main__":
         target = {44100: 48000, 22050: 24000}[c["sample_rate"]]
         comfy.audio.resample(wave[0], c["sample_rate"], target).numpy().astype("<f4").tofile(os.path.join(HERE, f"{name}_{target}.resampled.f32"))
         opus.append({"name": name, "quality": quality, "file": f"{name}_{quality}.opus", "rate": target, "resampled": f"{name}_{target}.resampled.f32"})
+    # MP3 (libmp3lame through PyAV, no resampling): stereo 44.1 kHz at V0 (variable) and 128k, mono 22.05 kHz at V0 and 320k (libmp3lame clamps it to
+    # 160 kbps, the MPEG-2 maximum). The frames come from LAME; SpawnGen's tests compare the tag, the Info / Xing frame, the frame headers and the sound.
+    mp3 = []
+    for name, quality in [("stereo_44100", "V0"), ("stereo_44100", "128k"), ("mono_22050_odd", "V0"), ("mono_22050_odd", "320k")]:
+        c = next(c for c in cases if c["name"] == name)
+        Cls.hidden = Hidden(PROMPT, EXTRA)
+        wave = torch.from_numpy(np.fromfile(os.path.join(HERE, name + ".f32"), "<f4").reshape(c["channels"], -1))[None]
+        r = AudioSaveHelper.save_audio({"waveform": wave, "sample_rate": c["sample_rate"]}, name + "_" + quality, FolderType.output, Cls, format="mp3", quality=quality)
+        os.replace(os.path.join(HERE, r[0].filename), os.path.join(HERE, f"{name}_{quality}.mp3"))
+        mp3.append({"name": name, "quality": quality, "file": f"{name}_{quality}.mp3"})
     json.dump({"pyav": av.__version__, "libavcodec": ".".join(map(str, av.library_versions["libavcodec"])),
-               "prompt": json.dumps(PROMPT), "extra": {k: json.dumps(v) for k, v in EXTRA.items()}, "cases": cases, "opus": opus},
+               "prompt": json.dumps(PROMPT), "extra": {k: json.dumps(v) for k, v in EXTRA.items()}, "cases": cases, "opus": opus, "mp3": mp3},
               open(os.path.join(HERE, "cases.json"), "w"), indent=1)
     print("wrote", [c["name"] for c in cases])

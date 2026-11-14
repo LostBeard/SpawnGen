@@ -189,28 +189,33 @@ public sealed class RegisteredNode
     internal static DynamicBinding RegisterDynamic(string name, IReadOnlyList<DynamicOption> options, string chosenByDefault, List<InputSpec> inputs,
         Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> dynamicCombos)
     {
-        // Options may also share an input name with different widgets (mp3's and opus's "quality"): each option's widget is kept.
-        var nested = new Dictionary<string, (DynamicInput Spec, List<string> Options, List<DynamicOption> SubOptions, Dictionary<string, WidgetSpec?> Widgets)>(StringComparer.Ordinal);
+        var nested = new Dictionary<string, (DynamicInput Spec, List<string> Options, List<DynamicOption> SubOptions)>(StringComparer.Ordinal);
         var order = new List<string>();
         foreach (var option in options)
             foreach (var input in option.Inputs)
             {
-                if (!nested.TryGetValue(input.Name, out var entry)) { nested[input.Name] = entry = (input, [], [], new(StringComparer.Ordinal)); order.Add(input.Name); }
+                if (!nested.TryGetValue(input.Name, out var entry)) { nested[input.Name] = entry = (input, [], []); order.Add(input.Name); }
                 entry.Options.Add(option.Key);
-                entry.Widgets[option.Key] = input.Widget;
                 foreach (var sub in input.Options ?? [])
                     if (!entry.SubOptions.Any(o => o.Key == sub.Key)) entry.SubOptions.Add(sub);
             }
         var children = new Dictionary<string, DynamicBinding>(StringComparer.Ordinal);
         foreach (var n in order)
         {
-            var (spec, from, subOptions, widgets) = nested[n];
+            var (spec, from, subOptions) = nested[n];
             var full = $"{name}.{n}";
             var widget = spec.Options is null ? spec.Widget : spec.Widget! with { Options = [.. subOptions.Select(o => o.Key)] };
+            // Options that bring this input with another widget or tooltip (not a nested combo, whose options are merged above): one variant each.
+            Dictionary<string, InputVariant>? variants = null;
+            if (spec.Options is null)
+            {
+                var each = options.SelectMany(o => o.Inputs.Where(i => i.Name == n).Select(i => (o.Key, Variant: new InputVariant(i.Widget, i.Tooltip)))).ToList();
+                if (each.Any(e => !SameWidget(e.Variant.Widget, spec.Widget) || e.Variant.Tooltip != spec.Tooltip))
+                    variants = each.ToDictionary(e => e.Key, e => e.Variant, StringComparer.Ordinal);
+            }
             inputs.Add(new InputSpec(full, spec.Type, Required: false, widget, spec.Tooltip)
             {
-                DynamicParent = name, DynamicOptions = from, Optional = !spec.Required, MatchTemplate = spec.MatchTemplate,
-                OptionWidgets = spec.Options is null && widgets.Values.Distinct().Count() > 1 ? widgets : null,
+                DynamicParent = name, DynamicOptions = from, Optional = !spec.Required, MatchTemplate = spec.MatchTemplate, Variants = variants,
             });
             if (spec.Options is not null)
                 children[n] = RegisterDynamic(full, subOptions, spec.Widget?.Default as string ?? subOptions[0].Key, inputs, dynamicCombos);
@@ -220,6 +225,11 @@ public sealed class RegisteredNode
             options.ToDictionary(o => o.Key, o => o.Inputs.Select(i => ($"{name}.{i.Name}", i.Name, children.GetValueOrDefault(i.Name))).ToArray(), StringComparer.Ordinal),
             chosenByDefault);
     }
+
+    static bool SameWidget(WidgetSpec? a, WidgetSpec? b) =>
+        a is null || b is null ? a is null && b is null
+        : a.Kind == b.Kind && Equals(a.Default, b.Default) && a.Min == b.Min && a.Max == b.Max && a.Step == b.Step && a.Multiline == b.Multiline
+          && a.NumericOptions == b.NumericOptions && (a.Options ?? []).SequenceEqual(b.Options ?? []);
 
     /// <summary>An Autogrow parameter: the members that have a value, in order, as a list or as a dictionary by short name.</summary>
     static object BuildGroup(ParamBinding p, (string Input, string Key)[] members, IReadOnlyDictionary<string, object?> inputs)
@@ -589,7 +599,7 @@ public sealed class NodeRegistry
                 };
             }
             if (ia?.Options is { } options) // an empty list stays a combo (Custom Combo: the editor supplies the options)
-                return new WidgetSpec(WidgetKind.Combo) { Options = options, Default = def ?? options.FirstOrDefault() };
+                return new WidgetSpec(WidgetKind.Combo) { Options = options, Default = def ?? options.FirstOrDefault(), NumericOptions = ia.NumericOptions };
             return new WidgetSpec(WidgetKind.String) { Multiline = ia?.Multiline ?? false, Default = def ?? "" };
         }
 

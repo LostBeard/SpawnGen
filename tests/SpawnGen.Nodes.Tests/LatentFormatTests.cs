@@ -24,6 +24,41 @@ public class LatentFormatTests
         Assert.That(r, Is.Not.SameAs(empty), "a copy: the caller may write to it");
     }
 
+    [TestCase(1024, 1024, 1, new[] { 1, 16, 128, 128 })]
+    [TestCase(100, 36, 2, new[] { 2, 16, 4, 12 })]
+    [TestCase(272, 160, 1, new[] { 1, 16, 20, 34 })]
+    public void EmptySD3LatentImage_is_ComfyUIs_zeros(int w, int h, int batch, int[] shape)
+    {
+        // Measured with ComfyUI (2026-11-13, SpawnGenDumpLatent): these shapes, every value 0.
+        var latent = new SpawnGen.Nodes.Core.EmptySD3LatentImage().Execute(w, h, batch);
+        Assert.That(latent.Shape, Is.EqualTo(shape));
+        Assert.That(latent.Data, Is.All.EqualTo(0f));
+    }
+
+    [Test]
+    public void An_empty_latent_takes_the_models_channel_count()
+    {
+        // ComfyUI sampled SD 1.5 from Empty SD3 Latent Image (16 channels) and from Empty Latent Image (4): the same 4-channel result to the last bit.
+        var mask = new MaskBatch(2, 4, 12);
+        var sd3 = new SpawnGen.Nodes.Core.EmptySD3LatentImage().Execute(100, 36, 2);
+        var withMask = new LatentBatch(2, 16, 4, 12) { NoiseMask = mask, BatchIndex = [3, 5] };
+        var r = SamplingCore.ToModelChannels(withMask, LatentFormat.SD15);
+        Assert.That(r.Shape, Is.EqualTo(new[] { 2, 4, 4, 12 }));
+        Assert.That(r.Data, Is.All.EqualTo(0f));
+        Assert.That(r.NoiseMask, Is.SameAs(mask));
+        Assert.That(r.BatchIndex, Is.EqualTo(new[] { 3, 5 }));
+        Assert.That(SamplingCore.ToModelChannels(sd3, LatentFormat.Wan22).Channels, Is.EqualTo(48));
+
+        var video = new LatentBatch(1, 16, 3, 4, 6);
+        Assert.That(SamplingCore.ToModelChannels(video, LatentFormat.Wan22).Shape, Is.EqualTo(new[] { 1, 48, 3, 4, 6 }));
+
+        var four = new LatentBatch(1, 4, 4, 12);
+        Assert.That(SamplingCore.ToModelChannels(four, LatentFormat.SD15), Is.SameAs(four), "already the model's: untouched");
+        var nonZero = new LatentBatch(1, 16, 4, 12);
+        nonZero.Data[7] = 0.5f;
+        Assert.That(SamplingCore.ToModelChannels(nonZero, LatentFormat.SD15), Is.SameAs(nonZero), "only an all-zero latent is replaced");
+    }
+
     [Test]
     public void The_SDXL_preview_adds_its_bias_and_uses_its_own_factors()
     {

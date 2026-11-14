@@ -66,6 +66,7 @@ public sealed class CLIPTextEncode
     {
         var encoder = clip.Encoder;
         await encoder.UseWeightsAsync(clip.Weights, cancellationToken);
+        if (encoder is IPromptTextEncoder byText) return await byText.EncodePromptAsync(textL, cancellationToken);
         bool xl = encoder.Family == SpawnDev.ILGPU.ML.StableDiffusion.SdFamily.SDXL;
         int padL = ClipPadding.ForTextWidth(encoder.FirstTowerWidth);
         var chunksL = PromptWeights.Chunks(textL, piece => PlainTokens(encoder, piece), Checkpoint.TokenCount);

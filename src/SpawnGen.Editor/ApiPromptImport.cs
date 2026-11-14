@@ -100,6 +100,8 @@ public static class ApiPromptImport
     {
         WidgetKind.Int when literal is double d => (long)Math.Round(d),
         WidgetKind.Float when literal is long l => (double)l,
+        // The editor keeps combo options as text; ComfyUI sends some as numbers (Create Video's bit_depth 8).
+        WidgetKind.Combo when literal is long or double => Convert.ToString(literal, System.Globalization.CultureInfo.InvariantCulture),
         _ => literal,
     };
 }

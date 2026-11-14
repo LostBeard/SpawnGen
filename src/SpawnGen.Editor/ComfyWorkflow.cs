@@ -246,6 +246,8 @@ public static class ComfyWorkflow
                 WidgetKind.Float => (double)value,
                 WidgetKind.Boolean => (bool)value,
                 WidgetKind.Json => SpawnGen.Engine.Types.JsonLiteral.FromJson(value),
+                // A combo option ComfyUI lists as a number (Create Video's bit_depth 8) is kept as its text.
+                WidgetKind.Combo when value is JsonValue nv && nv.GetValueKind() == System.Text.Json.JsonValueKind.Number => nv.ToJsonString(),
                 _ => (string?)value ?? "",
             };
         }
@@ -387,6 +389,7 @@ public static class ComfyWorkflow
         foreach (var w in NodeLayout.OrderedInputs(schema, n.Widgets).Where(i => i.Widget is not null))
         {
             var v = n.Widgets.GetValueOrDefault(w.Name) ?? w.Widget!.Default;
+            if (w.Widget!.Kind == WidgetKind.Combo && v is string option) v = w.Widget.OptionValue(option);
             list.Add(v switch
             {
                 null => null,

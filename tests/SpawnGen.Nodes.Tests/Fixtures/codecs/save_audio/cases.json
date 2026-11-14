@@ -50,5 +50,27 @@
    "rate": 24000,
    "resampled": "mono_22050_odd_24000.resampled.f32"
   }
+ ],
+ "mp3": [
+  {
+   "name": "stereo_44100",
+   "quality": "V0",
+   "file": "stereo_44100_V0.mp3"
+  },
+  {
+   "name": "stereo_44100",
+   "quality": "128k",
+   "file": "stereo_44100_128k.mp3"
+  },
+  {
+   "name": "mono_22050_odd",
+   "quality": "V0",
+   "file": "mono_22050_odd_V0.mp3"
+  },
+  {
+   "name": "mono_22050_odd",
+   "quality": "320k",
+   "file": "mono_22050_odd_320k.mp3"
+  }
  ]
 }

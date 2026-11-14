@@ -50,6 +50,9 @@ public sealed class EditorDocument(NodeRegistry registry)
         var node = new EditorNode { Id = Graph.NextNodeId, ClassType = classType, X = x, Y = y };
         foreach (var input in schema.Inputs)
             if (input.Widget is { } w) node.Widgets[input.Name] = DefaultValue(w);
+        // An input shared by dynamic combo options with different widgets starts at the default of the option chosen by default.
+        foreach (var input in NodeLayout.OrderedInputs(schema, node.Widgets))
+            if (input.Variants is not null && input.Widget is { } chosen) node.Widgets[input.Name] = DefaultValue(chosen);
         if (classType == CustomComboWidgets.NodeType)
             foreach (var (name, value) in CustomComboWidgets.Normalize(node.Widgets)) node.Widgets[name] = value;
         Run(new AddNodeCommand(node));
@@ -240,27 +243,19 @@ public sealed class EditorDocument(NodeRegistry registry)
             });
             return;
         }
-        // A dynamic combo whose options share an input with different choices (Save Audio (Advanced)'s quality: V0 for mp3, 128k for opus): a value the
-        // new option does not offer becomes its default, in the same undo step.
-        if (Registry.GetSchema(node.ClassType) is { } schema && schema.DynamicCombos.TryGetValue(name, out var combos) && value is string chosen
-            && combos.TryGetValue(chosen, out var brought))
+        if (Registry.GetSchema(node.ClassType) is { } schema && schema.Inputs.Any(i => i.DynamicParent == name && i.Variants is not null))
         {
-            var resets = new List<(string Input, object? Value)>();
-            foreach (var input in brought)
+            // A dynamic combo whose options give a shared input different choices (Save Image (Advanced)'s bit_depth): a value the new option does
+            // not offer becomes that option's default, in the same undo step.
+            Group(() =>
             {
-                if (schema.FindInput(input) is not { OptionWidgets: not null } shared || shared.ForOption(chosen).Widget is not { Kind: WidgetKind.Combo } widget) continue;
-                var current = node.Widgets.GetValueOrDefault(input) as string;
-                if (current is null || !widget.ResolveOptions().Contains(current)) resets.Add((input, widget.Default));
-            }
-            if (resets.Count > 0)
-            {
-                Group(() =>
-                {
-                    Run(new SetWidgetCommand(nodeId, name, old, value));
-                    foreach (var (input, now) in resets) Run(new SetWidgetCommand(nodeId, input, node.Widgets.GetValueOrDefault(input), now));
-                });
-                return;
-            }
+                Run(new SetWidgetCommand(nodeId, name, old, value));
+                foreach (var input in NodeLayout.OrderedInputs(schema, node.Widgets))
+                    if (input.DynamicParent == name && input.Variants is not null && input.Widget is { Kind: WidgetKind.Combo } combo
+                        && node.Widgets.GetValueOrDefault(input.Name) is var current && !(current is string text && combo.ResolveOptions().Contains(text)))
+                        Run(new SetWidgetCommand(nodeId, input.Name, current, DefaultValue(combo)));
+            });
+            return;
         }
         Run(new SetWidgetCommand(nodeId, name, old, value));
     }

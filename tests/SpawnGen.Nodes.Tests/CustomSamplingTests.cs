@@ -158,6 +158,41 @@ public class CustomSamplingTests
         Assert.That(PngReader.Decode(File.ReadAllBytes(adv)).Data, Is.EqualTo(PngReader.Decode(File.ReadAllBytes(plain)).Data), "SamplerCustomAdvanced with RandomNoise and BasicGuider gives the same picture");
     }
 
+    /// <summary>
+    /// ComfyUI sampled SD 1.5 from Empty SD3 Latent Image (16 channels) and from Empty Latent Image to the same 4-channel result, bit for bit
+    /// (measured 2026-11-13): the empty latent takes the model's channel count. SpawnGen must give the same picture both ways.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT (a models folder with checkpoints/v1-5-pruned-emaonly.safetensors) and a GPU.")]
+    public async Task SD15_from_the_SD3_empty_latent_draws_the_Empty_Latent_Image_picture()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        CheckpointCatalog.ScanCheckpointFiles(root!);
+        var outDir = Path.Combine(Path.GetTempPath(), "spawngen-sd3empty-" + Guid.NewGuid().ToString("N"));
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly);
+        var executor = new PromptExecutor(registry, new Services(runtime, new OutputOptions { Directory = outDir }));
+        PromptGraph Graph(string prefix, string empty)
+        {
+            var g = new PromptGraph();
+            g.Add("1", "CheckpointLoaderSimple", ("ckpt_name", "v1-5-pruned-emaonly.safetensors"));
+            g.Add("2", "CLIPTextEncode", ("text", "a photo of a red apple on a wooden table"), ("clip", PromptInput.Link("1", 1)));
+            g.Add("3", "CLIPTextEncode", ("text", ""), ("clip", PromptInput.Link("1", 1)));
+            g.Add("4", empty, ("width", 256), ("height", 256), ("batch_size", 1));
+            g.Add("7", "KSampler", ("model", PromptInput.Link("1")), ("positive", PromptInput.Link("2")), ("negative", PromptInput.Link("3")), ("latent_image", PromptInput.Link("4")),
+                ("seed", 7), ("steps", 1), ("cfg", 7.0), ("sampler_name", "euler"), ("scheduler", "normal"), ("denoise", 1.0));
+            g.Add("8", "VAEDecode", ("samples", PromptInput.Link("7")), ("vae", PromptInput.Link("1", 2)));
+            g.Add("9", "SaveImage", ("images", PromptInput.Link("8")), ("filename_prefix", prefix));
+            return g;
+        }
+        await executor.ExecuteAsync(Graph("sd1", "EmptyLatentImage"));
+        await executor.ExecuteAsync(Graph("sd3", "EmptySD3LatentImage"));
+        var sd1 = Directory.GetFiles(outDir, "sd1_*.png").Single();
+        var sd3 = Directory.GetFiles(outDir, "sd3_*.png").Single();
+        TestContext.Out.WriteLine(sd1 + " and " + sd3);
+        Assert.That(PngReader.Decode(File.ReadAllBytes(sd3)).Data, Is.EqualTo(PngReader.Decode(File.ReadAllBytes(sd1)).Data));
+    }
+
     [Test]
     public void The_advanced_sampler_and_its_pieces_validate_in_a_graph()
     {

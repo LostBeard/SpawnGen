@@ -93,6 +93,7 @@ public static class GraphCompiler
                 {
                     if (input.Name == "filename_prefix" && value is string prefix && prefix.Contains('%'))
                         value = ApplyTextReplacements(graph, prefix, now ?? DateTime.Now);
+                    if (input.Widget.Kind == WidgetKind.Combo && value is string option) value = input.Widget.OptionValue(option);
                     node.Inputs[input.Name] = PromptInput.Value(value);
                 }
             }

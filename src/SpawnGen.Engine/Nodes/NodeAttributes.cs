@@ -75,6 +75,8 @@ public sealed class InputAttribute : Attribute
     public bool Multiline { get; init; }
     /// <summary>Fixed combo options for a string parameter.</summary>
     public string[]? Options { get; init; }
+    /// <summary>The <see cref="Options"/> that read as integers are numbers, as in ComfyUI's list ("auto", 8, 10). See <see cref="WidgetSpec.NumericOptions"/>.</summary>
+    public bool NumericOptions { get; init; }
     /// <summary>Name of a public static method on the node class returning the combo options (e.g. model files).</summary>
     public string? OptionsProvider { get; init; }
     public string? Tooltip { get; init; }

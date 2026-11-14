@@ -263,7 +263,7 @@ public class VisionTests
             var g = new PromptGraph();
             g.Add("1", "LoadImage", ("image", "in.png"));
             g.Add("2", "TrellisImageTo3D", ("image", PromptInput.Link("1")), ("seed", 42), ("max_faces", 100000), ("texture_size", "1024"), ("resolution", "512"));
-            g.Add("3", "Save3DModel", ("model", PromptInput.Link("2")), ("filename_prefix", "trellis"));
+            g.Add("3", "SaveGLB", ("mesh", PromptInput.Link("2")), ("filename_prefix", "trellis"));
             return g;
         }, TestPicture(512), "glb");
         Assert.That(files, Has.Length.EqualTo(1));

@@ -19,9 +19,9 @@
     }
   },
   "3": {
-    "class_type": "Save3DModel",
+    "class_type": "SaveGLB",
     "inputs": {
-      "model": [
+      "mesh": [
         "2",
         0
       ],

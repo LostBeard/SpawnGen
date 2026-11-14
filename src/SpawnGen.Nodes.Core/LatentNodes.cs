@@ -34,6 +34,41 @@ public sealed class EmptySD3LatentImage
 }
 
 /// <summary>
+/// Empty Flux 2 Latent: zeros [batch, 128, height / 16, width / 16]. Measured with ComfyUI (2026-11-13): 1024x1024 gives 64 x 64 cells, 100x36
+/// 6 x 2 and 17x33 1 x 2 (rounded down), all values 0.
+/// </summary>
+[Node("EmptyFlux2LatentImage", Category = "model/latent/flux", DisplayName = "Empty Flux 2 Latent")]
+public sealed class EmptyFlux2LatentImage
+{
+    public LatentBatch Execute(
+        [Input(Min = 16, Max = 16384, Step = 16)] int width = 1024,
+        [Input(Min = 16, Max = 16384, Step = 16)] int height = 1024,
+        [Input(Min = 1, Max = 4096)] int batchSize = 1) =>
+        new(batchSize, 128, height / 16, width / 16);
+}
+
+/// <summary>
+/// Trim Video Latent: drops the first <c>trim_amount</c> frames; trimming all of them or more leaves no frames. The noise mask and batch indexes are
+/// passed on as they are. Measured with ComfyUI (2026-11-13): a picture latent loses its first rows instead (its third dimension is the height).
+/// </summary>
+[VideoLatents]
+[Node("TrimVideoLatent", Category = "model/latent", DisplayName = "Trim Video Latent")]
+public sealed class TrimVideoLatent
+{
+    public LatentBatch Execute(LatentBatch samples, [Input(Min = 0, Max = 99999)] int trimAmount = 0)
+    {
+        int b = samples.Batch, c = samples.Channels, w = samples.Width;
+        int depth = samples.IsVideo ? samples.Frames : samples.Height, rows = samples.IsVideo ? samples.Height * w : w;
+        int keep = Math.Max(0, depth - trimAmount), cut = depth - keep;
+        var data = new float[b * c * keep * rows];
+        for (int bc = 0; bc < b * c; bc++)
+            Array.Copy(samples.Data, (bc * depth + cut) * rows, data, bc * keep * rows, keep * rows);
+        var trimmed = samples.IsVideo ? new LatentBatch(b, c, keep, samples.Height, w, data) : new LatentBatch(b, c, keep, w, data);
+        return trimmed.With(samples);
+    }
+}
+
+/// <summary>
 /// Empty Hunyuan Video 1.0 Latent (also Wan 2.1's empty latent): zeros [batch, 16, (length - 1) / 4 + 1, height / 8, width / 8], as measured.
 /// </summary>
 [Node("EmptyHunyuanLatentVideo", Category = "model/latent/hunyuan video", DisplayName = "Empty Hunyuan Video 1.0 Latent")]

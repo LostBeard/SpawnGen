@@ -86,7 +86,7 @@ What "on par with ComfyUI" means here, what is done, and what is next. Status: *
 
 Measured, not estimated: `tools/parity/compare_object_info.py` compares SpawnGen's `/object_info` with a running ComfyUI's (master of 2026-10-22,
 API nodes left out) input by input: sections, widget order, types, defaults, ranges, combo options, outputs and their names, display names, categories.
-**303 shared nodes, 299 identical** (2026-11-13); the 4 that differ do so by design: the background-removal model list (SpawnGen ships one),
+**310 shared nodes, 306 identical** (2026-11-13); the 4 that differ do so by design: the background-removal model list (SpawnGen ships one),
 RecordAudio's recorder widget, Resolution Selector's preview-only widget, and Compare Images' view widget, for which SpawnGen states the `{}` its
 editor sends (ComfyUI's frontend supplies it; both servers require the input and accept `{}`). Compare Images draws picture A with B over it right of
 a split that follows the pointer (tools/studio-browser-test/drive-compare.js). `tools/parity/apply_names.py` keeps names and categories in step.
@@ -97,6 +97,12 @@ common_upscale incl. Pillow's 8-bit Lanczos; bounding boxes, Crop Image (ImageCr
 merge, and the compositor: Pillow's rectangle drawing, bicubic rotate and premultiplied Lanczos, all 26 blend modes in numpy's float32, layer fingerprints
 and saved compositions), Python-exact string, regex, `str.format` and simpleeval ports (about 3,500 CPython vectors), torch's interpolate and bislerp
 for latents, and the sampling replay above.
+The model-independent FLUX nodes, measured on ComfyUI with probe nodes (FluxNodeTests, Fixtures/flux): Flux2Scheduler (33 cases, every sigma
+within 2e-7: the published FLUX.2 empirical mu on width x height / 256 rounded half to even), FluxKontextImageScale (the 17 Kontext sizes, nearest
+aspect by |w/h - W/H| over 251 measured inputs, Lanczos after a centre crop pixel for pixel), Empty Flux 2 Latent (128 channels at 1/16), Trim Video
+Latent (drops leading frames; a picture latent loses rows, as in ComfyUI), Flux Guidance, Set Reference Latent and Edit Model Reference Method (the
+conditioning keys ComfyUI sets; "uxo/uno" is stored as "uxo"). The FLUX models these feed wait for the library's split-graph building blocks
+(asked of SpawnDev.ILGPU.ML 2026-11-13: ComfyUI's flux2-vae, then FLUX.2 Klein 4B from ComfyUI's files).
 Empty SD3 Latent Image (zeros, 16 channels) and ComfyUI's rule that sampling turns an all-zero latent into the model's channel count were measured
 with ComfyUI (SD 1.5 from either empty latent gives the same result to the last bit; SpawnGen too: CustomSamplingTests, red-checked).
 

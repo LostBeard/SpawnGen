@@ -598,5 +598,5 @@ public class ComfyUIRenderParityTests
 public sealed class TomePatchModelTopLeft
 {
     public ModelHandle Execute(ModelHandle model, [Input(Min = 0.0, Max = 1.0, Step = 0.01)] double ratio = 0.3) =>
-        model.WithPatches(p => p with { UNet = p.UNet with { TokenMerge = new SpawnDev.ILGPU.ML.StableDiffusion.SdTokenMerge((float)ratio, RandomDestinations: false) } });
+        model.WithPatches(p => p with { UNet = (p.UNet ?? UNetOptions.None) with { TokenMerge = new SpawnDev.ILGPU.ML.StableDiffusion.SdTokenMerge((float)ratio, RandomDestinations: false) } });
 }

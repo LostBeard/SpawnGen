@@ -53,7 +53,7 @@ public sealed class PatchContext
     public UNetOptions? UNet { get; init; }
 
     /// <summary>A conditioning's denoised estimate with other UNet options.</summary>
-    public Func<Conditioning, UNetOptions, Task<float[]>>? EvaluateWith { get; init; }
+    public Func<Conditioning, UNetOptions, Task<float[]>> EvaluateWith { get; init; } = null!;
 
     /// <summary>A conditioning's denoised estimate at another input (same sigma).</summary>
     public Func<Conditioning, float[], Task<float[]>>? EvaluateAt { get; init; }

@@ -190,7 +190,7 @@ public class ComfyImageParityTests
         var choice = new SpawnGen.Engine.Nodes.DynamicChoice("lottes", new Dictionary<string, object?> { ["target_luminance"] = c.Args.GetProperty("target_luminance").GetDouble() });
         ImageBatch Run() => new ImageSDRToHDR().Execute(Img(c.Inputs["image"]), choice);
         if (c.Out[0].TryGetProperty("error", out var error))
-            Assert.Throws<ArgumentException>(() => Run(), error.GetString());
+            Assert.Throws<ArgumentException>(() => Run(), error.ToString());
         else
             Same(Run(), c.Out[0], 2.5e-4);
     }
@@ -202,7 +202,7 @@ public class ComfyImageParityTests
         ImageBatch Run() => new ImageCropToMask().Execute(Img(c.Inputs["images"]), Mask(c.Inputs["masks"]), I(c, "width"), I(c, "height"), D(c, "pad_factor"),
             I(c, "grow_mask"), S(c, "background"));
         if (c.Out[0].TryGetProperty("error", out var error))
-            Assert.Throws<ArgumentException>(() => Run(), error.GetString());
+            Assert.Throws<ArgumentException>(() => Run(), error.ToString());
         else
             Same(Run(), c.Out[0], 1e-6);
     }

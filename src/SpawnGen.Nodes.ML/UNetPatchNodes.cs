@@ -113,7 +113,7 @@ public sealed class SelfAttentionGuidance
         [Input(Min = 0.0, Max = 10.0, Step = 0.1)] double blur_sigma = 2.0) =>
         model.WithPatches(p => p.WithPostCfgAsync(ModelPatches.Stateless<Func<PostCfgArgs, Task<float[]>>>(async a =>
         {
-            if (!a.HasUncond || a.Uncond is null || a.UncondDenoised is null || a.Context.ReadMiddleAttention is null) return a.Denoised;
+            if (!a.HasUncond || a.Uncond is null || a.UncondDenoised is null || a.Context.ReadMiddleAttention is null || a.Context.EvaluateAt is null) return a.Denoised;
             var mass = await a.Context.ReadMiddleAttention();
             if (mass is null) return a.Denoised;
             var ctx = a.Context;

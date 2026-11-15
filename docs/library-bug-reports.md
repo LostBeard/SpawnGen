@@ -207,3 +207,6 @@ template's 34 + 5) instead of matching it, and every encode computes 512 rows ho
 Qwen-Image Edit 2509 adds the pictures' vision rows to the same sequence (192 + 198 for two small pictures, measured), so three pictures
 already pass 512. Asked: a length per call (or per open), as QwenImageTransformer has. With the padding, SpawnGen matches ComfyUI's
 conditioning at 4.4e-6 / 7.9e-6 on the RX 590 (QwenImageTests).
+
+**Resolved (2026-11-15):** SpawnDev.ILGPU.ML **5.8.18-local.7** takes the length per encoder (`maxTokens`), each call any length up to it,
+unpadded = padded bit for bit. SpawnGen sizes the encoder to the prompt: no length limit; conditioning 4.2e-6 / 8.2e-6 on the RX 590.

@@ -47,19 +47,15 @@ internal sealed class QwenImageTextEncoderModel(MlRuntime runtime, string name, 
 
     public async Task<TextEncoding> EncodePromptAsync(string text, CancellationToken cancellationToken)
     {
-        var real = await TokenizeAsync(text, cancellationToken);
-        // The library's encoder runs a fixed SeqLen (512) rows; ComfyUI takes any length. Asked of SpawnDev.ILGPU.ML (docs/library-bug-reports.md).
-        if (real.Length > Flux2TextEncoder.SeqLen)
-            throw new NotSupportedException($"This prompt is {real.Length - Dropped - 5} tokens; Qwen-Image's text encoder in SpawnDev.ILGPU.ML takes at most {Flux2TextEncoder.SeqLen - Dropped - 5} so far.");
-        var (ids, _) = _tokenizer!.EncodePadded(text, p => Prefix + p + Suffix, Flux2TextEncoder.SeqLen);   // padded with the tokenizer's pad id
-        int rows = real.Length - Dropped;
+        var ids = await TokenizeAsync(text, cancellationToken);
+        int rows = ids.Length - Dropped;
         var acc = runtime.Accelerator;
         // The 7B encoder and a loaded transformer do not fit one card together.
         ModelResidency.ReleaseTransformers();
         using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, Layers, finalNorm: true, cancellationToken);
-        // Precise activations: the reference's fp32 (CUDA's tensor-core path would round them to bf16; OpenCL is fp32 already).
-        using var encoder = new Flux2TextEncoder(acc, weights, [Layers], finalNorm: true) { PreciseActivations = true };
-        var all = encoder.Encode(ids, real.Length);
+        // Sized for this prompt (any length, as ComfyUI); precise activations: the reference's fp32 (CUDA's tensor cores would round to bf16).
+        using var encoder = new Flux2TextEncoder(acc, weights, [Layers], finalNorm: true, maxTokens: ids.Length) { PreciseActivations = true };
+        var all = encoder.Encode(ids, ids.Length);
         await acc.SynchronizeAsync();
         var context = new float[rows * Width];
         all.SubView((long)Dropped * Width, context.Length).CopyToCPU(context);

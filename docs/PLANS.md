@@ -16,7 +16,12 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
   Sampling_takes_min_p_and_presence_penalty fails until then. codecs-unreleased = 796db3e on ILGPU 5.4.33.
   main builds with 0 warnings (2026-11-15): the Studio assembly is browser-only (SupportedOSPlatform), the preview-frame parser moved to
   SpawnGen.Editor.PreviewFrames, CA2014 / CS9124 / CS8602 / CS8604 / CS8620 fixed. Keep it at 0.
-  In progress: Qwen-Image Edit 2509 dumps for Tuvok (_scratch/probe/qwenedit/graph_run.py; 2509 fp8 file in SpawnGen's models folder).
+  2026-11-15: ml-local-flux1 = 0b3deab: **Qwen-Image runs** (split graph, = ComfyUI on the RX 590: conditioning 4.4e-6, calls 1.7e-4, VAE 8e-7,
+  graph 72.5 dB, 356 s at 256 px), QwenImageTests. The library's Qwen text encoder takes exactly 512 ids (prompts over 473 tokens refused;
+  asked of Tuvok, docs/library-bug-reports.md GAP-ML-QWEN-TEXT-LENGTH). Next on the branch: Qwen-Image Edit 2509 (TextEncodeQwenImageEditPlus:
+  vision rows, reference latents) when Tuvok's 2509 path is in a -local; the dumps are his (_DevComms 2026-11-15-1425 / 1450).
+  Sent Tuvok 2026-11-15: 2509 dumps (encode 1 / 2 pictures, both sampling runs), CLIP vision H (_DevComms 2026-11-15-1500: pixel input
+  bit-exact). In progress: the Wan 2.1 i2v 14B graph in ComfyUI (_scratch/probe/wan14b/graph_run.py; fp8 file in SpawnGen's models folder).
 - Branch `ml-local-flux1` (worktree `_scratch/wt-flux1`) = 70b6802 on SpawnDev.ILGPU.ML 5.8.18-local.3 + SpawnDev.ILGPU 5.4.32: Z-Image,
   FLUX.1 (checkpoint and split), Generate Text, measured on the RX 590 (Flux1Tests, Flux1SplitTests, ZImageTests, TextGenerateTests,
   AeVaeTests tightened). Next there: **Qwen-Image** ((d) in the -local.2 list below; Tuvok's API in his messages / Docs; dumps in
@@ -102,9 +107,9 @@ ComfyUI's LATENT, conditioning and sigmas and sends the dumps before the library
 | family | templates | status |
 |---|---|---|
 | FLUX.2 Klein 4B (split graph) | 5 | done, on main since 2026-11-14 with ML 5.8.17 (text to image, editing, base cfg, 1024) |
-| Qwen-Image | 43 | requested; Tuvok's 2nd |
+| Qwen-Image | 43 | base t2i runs on ml-local-flux1 (0b3deab, ML 5.8.18-local.6); Edit 2509: dumps sent, Tuvok building |
 | Wan 2.1 / 2.2 14B | 24 | requested; Tuvok's 3rd, with CLIP vision |
-| CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | requested; with Wan 14B |
+| CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | ViT-H dumps sent 2026-11-15; with Wan 14B |
 | LTX-2 / 2.3 / 2.5 (19-22B audio + video) | 18 | requested; Tuvok's 4th |
 | FLUX.1 (dev, schnell, Kontext, Fill) | 13 | requested; Tuvok's 1st (ae.safetensors first): dumps in Now 3 |
 | ACE-Step | 9 | requested |

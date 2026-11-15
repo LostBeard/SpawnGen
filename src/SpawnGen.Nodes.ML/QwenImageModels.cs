@@ -39,10 +39,83 @@ internal sealed class QwenImageTextEncoderModel(MlRuntime runtime, string name, 
     public SdTextEncoder? TextEncoder => null;
 
     /// <summary>The ids of a prompt in the template (all of them: ComfyUI does not cut long prompts).</summary>
-    public async Task<int[]> TokenizeAsync(string text, CancellationToken cancellationToken)
-    {
+    public async Task<int[]> TokenizeAsync(string text, CancellationToken cancellationToken) =>
+        (await TokenizerAsync(cancellationToken)).Encode(Prefix + text + Suffix);
+
+    async Task<Qwen2Tokenizer> TokenizerAsync(CancellationToken cancellationToken) =>
         _tokenizer ??= new Qwen2Tokenizer(System.Text.Encoding.UTF8.GetString(await runtime.ModelSource.FetchBytesAsync(Flux2TextEncoderModel.TokenizerRepo, Flux2Pipeline.TokenizerFile, cancellationToken)));
-        return _tokenizer.Encode(Prefix + text + Suffix);
+
+    /// <summary>
+    /// Qwen-Image Edit 2509's template (TextEncodeQwenImageEditPlus; measured: the ids ComfyUI fed the embedding table, decoded): its own system
+    /// prompt, then "Picture k: " and the picture's vision span for each picture, then the prompt. 64 rows are dropped (the system turn and
+    /// "&lt;|im_start|&gt;user\n").
+    /// </summary>
+    public const string EditPrefix = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n";
+    public const int EditDropped = 64, VisionStart = 151652, VisionEnd = 151653, ImagePad = 151655;
+
+    /// <summary>
+    /// The edit template's ids for pictures whose vision grids (in 14-pixel patches) are <paramref name="grids"/>: one image-pad id per merged token
+    /// (2 x 2 patches) between each picture's vision start and end, and where each picture's tokens start.
+    /// </summary>
+    public async Task<(int[] Ids, int[] Starts)> TokenizeEditAsync(string text, IReadOnlyList<(int Rows, int Cols)> grids, CancellationToken cancellationToken)
+    {
+        var tokenizer = await TokenizerAsync(cancellationToken);
+        var ids = new List<int>(tokenizer.Encode(EditPrefix));
+        var starts = new int[grids.Count];
+        for (int p = 0; p < grids.Count; p++)
+        {
+            ids.AddRange(tokenizer.Encode($"Picture {p + 1}: "));
+            ids.Add(VisionStart);
+            starts[p] = ids.Count;
+            ids.AddRange(Enumerable.Repeat(ImagePad, grids[p].Rows / 2 * (grids[p].Cols / 2)));
+            ids.Add(VisionEnd);
+        }
+        ids.AddRange(tokenizer.Encode(text + Suffix));
+        return ([.. ids], starts);
+    }
+
+    /// <summary>
+    /// The edit template's conditioning: each picture (already at its vision size, sides multiples of 28) through Qwen2.5-VL's vision tower, its
+    /// rows in place of its image-pad ids, the language model after the final norm, the first 64 rows dropped: [1, rows, 3584]. The tower and the
+    /// language model take turns on the device; the pictures' rows stay on it in between.
+    /// </summary>
+    public async Task<TextEncoding> EncodeEditAsync(string text, IReadOnlyList<ImageBatch> pictures, CancellationToken cancellationToken)
+    {
+        var grids = pictures.Select(p => SpawnDev.ILGPU.ML.QwenImage.QwenVisionEncoder.Grid(p.Height, p.Width)).ToList();
+        var (ids, starts) = await TokenizeEditAsync(text, grids, cancellationToken);
+        var acc = runtime.Accelerator;
+        ModelResidency.ReleaseTransformers();
+        int patches = grids.Sum(g => g.Rows * g.Cols), merged = patches / 4;
+        using var visionRows = acc.Allocate1D<float>(Math.Max(1, (long)merged * Width));
+        if (pictures.Count > 0)
+        {
+            using var visionWeights = await Flux2Weights.LoadVisionAsync(acc, runtime.ModelSource, repo, file, cancellationToken);
+            using var vision = new SpawnDev.ILGPU.ML.QwenImage.QwenVisionEncoder(acc, visionWeights, patches);
+            var uploads = pictures.Select(p => acc.Allocate1D(p.Data.AsSpan(0, p.Height * p.Width * 3).ToArray())).ToList();
+            try
+            {
+                var rows = vision.Encode([.. uploads.Select((u, i) => (u.View, pictures[i].Height, pictures[i].Width))]);
+                visionRows.View.SubView(0, (long)merged * Width).CopyFrom(rows.SubView(0, (long)merged * Width));
+                await acc.SynchronizeAsync();
+            }
+            finally { foreach (var u in uploads) u.Dispose(); }
+        }
+        using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, Layers, finalNorm: true, cancellationToken);
+        using var encoder = new Flux2TextEncoder(acc, weights, [Layers], finalNorm: true, maxTokens: ids.Length) { PreciseActivations = true };
+        var spans = new List<(int Start, ArrayView1D<float, Stride1D.Dense> Rows, int MergedRows, int MergedCols)>();
+        long offset = 0;
+        for (int p = 0; p < pictures.Count; p++)
+        {
+            int n = grids[p].Rows / 2 * (grids[p].Cols / 2);
+            spans.Add((starts[p], visionRows.View.SubView(offset * Width, (long)n * Width), grids[p].Rows / 2, grids[p].Cols / 2));
+            offset += n;
+        }
+        var all = encoder.Encode(ids, ids.Length, spans);
+        await acc.SynchronizeAsync();
+        int kept = ids.Length - EditDropped;
+        var context = new float[kept * Width];
+        all.SubView((long)EditDropped * Width, context.Length).CopyToCPU(context);
+        return new TextEncoding(context, [1, kept, Width], null);
     }
 
     public async Task<TextEncoding> EncodePromptAsync(string text, CancellationToken cancellationToken)

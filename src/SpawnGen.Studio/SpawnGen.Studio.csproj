@@ -12,6 +12,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The Studio runs only in the browser: the assembly says so, so its canvas, DOM and SpawnJS calls (browser-only APIs) do not raise CA1416. -->
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>browser</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.14" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.14" PrivateAssets="all" />
     <PackageReference Include="SpawnDev.SpawnJS" Version="3.0.8" />

@@ -11,6 +11,12 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 
 - main = this commit: the box canvas, the crop editor, the templates browser, AeVae / InstructPixToPix, PLANS. All suites pass.
   2026-11-15: main on SpawnDev.ILGPU 5.4.33 (nuget.org) with ML 5.8.17; suites pass (3173 / 3 skipped).
+  2026-11-15: ml-local-flux1 = 131d35d on ML 5.8.18-local.5 + ILGPU 5.4.33: Krea = ComfyUI (calls 2.35e-6 / 2.39e-5, 65.7 dB; bounds
+  tightened), Generate Text passes min_p / presence_penalty. Waiting on Tuvok: the library refuses min_p 1.0 (ComfyUI allows it), so
+  Sampling_takes_min_p_and_presence_penalty fails until then. codecs-unreleased = 796db3e on ILGPU 5.4.33.
+  Build warnings to fix on main (9): CA2014 stackalloc in a loop (CompositorBlend.cs:206), CS9124 (Samplers.cs:154), CS8602
+  (UNetPatchNodes.cs:98 / 129, ComfyUIRenderParityTests.cs:601, WanTests.cs:28), CS8604 (ComfyImageParityTests.cs:193 / 205).
+  In progress: Qwen-Image Edit 2509 dumps for Tuvok (_scratch/probe/qwenedit/graph_run.py; 2509 fp8 file in SpawnGen's models folder).
 - Branch `ml-local-flux1` (worktree `_scratch/wt-flux1`) = 70b6802 on SpawnDev.ILGPU.ML 5.8.18-local.3 + SpawnDev.ILGPU 5.4.32: Z-Image,
   FLUX.1 (checkpoint and split), Generate Text, measured on the RX 590 (Flux1Tests, Flux1SplitTests, ZImageTests, TextGenerateTests,
   AeVaeTests tightened). Next there: **Qwen-Image** ((d) in the -local.2 list below; Tuvok's API in his messages / Docs; dumps in

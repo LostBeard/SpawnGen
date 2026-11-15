@@ -51,8 +51,8 @@ internal sealed class Qwen3Generator(GgufGenerator generator, SentencePieceToken
 /// the model opens it itself and max_length counts those tokens; the thinking text comes out on "thinking" without its tags, and the answer is
 /// empty when the thinking used the budget. Greedy with sampling off. Runs on SpawnDev.ILGPU.ML's GGUF decoder over the safetensors file
 /// (no conversion); on a card the 16-bit weights do not fit (8 GB) the library loads them 8-bit (Q8_0), and greedy output then follows ComfyUI's
-/// for its first tokens (13 of 23 on the measured prompt) rather than all of them. Pictures, video and audio are not taken yet; min_p and
-/// presence_penalty wait for the library.
+/// for its first tokens (13 of 23 on the measured prompt) rather than all of them. Pictures, video and audio are not taken yet. Sampling "on"
+/// passes min_p and presence_penalty to the library; seeded draws use the library's random numbers, not torch's, so a seed picks different text.
 /// </summary>
 [Node("TextGenerate", Category = "text", DisplayName = "Generate Text", OutputNames = ["generated_text", "thinking"])]
 public sealed class TextGenerate
@@ -133,6 +133,8 @@ public sealed class TextGenerate
             config.TopK = (int)samplingMode.Get("top_k", 64L);
             config.TopP = (float)samplingMode.Get("top_p", 0.95);
             config.RepetitionPenalty = (float)samplingMode.Get("repetition_penalty", 1.05);
+            config.MinP = (float)samplingMode.Get("min_p", 0.05);
+            config.PresencePenalty = (float)samplingMode.Get("presence_penalty", 0.0);
             config.Seed = (int)(samplingMode.Get("seed", 0L) & int.MaxValue);
         }
         int produced = 0;

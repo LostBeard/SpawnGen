@@ -83,4 +83,39 @@ public class TextGenerateTests
         }
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name} ({runtime.Accelerator.MemorySize >> 20} MB):\n" + string.Join("\n", report));
     }
+    /// <summary>
+    /// Sampling "on" reaches the library's min_p and presence_penalty. min_p 1.0 keeps only the most likely token, so even at temperature 2 with
+    /// top_k and top_p open the text is the greedy text; presence_penalty 5 (applied before min-p) pushes repeated tokens down, so the text changes.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT with text_encoders/qwen_3_4b.safetensors, a GPU, and Qwen3's tokenizer files (downloaded on first use).")]
+    public async Task Sampling_takes_min_p_and_presence_penalty()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var executor = new PromptExecutor(new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(KSampler).Assembly), new Services(runtime));
+        async Task<string> Run(params (string, object?)[] sampling)
+        {
+            var g = new PromptGraph();
+            g.Add("clip", "CLIPLoader", ("clip_name", "qwen_3_4b.safetensors"), ("type", "ltxv"), ("device", "default"));
+            var inputs = new List<(string, object?)> { ("clip", PromptInput.Link("clip")), ("prompt", "Describe a red apple in one sentence."), ("max_length", 32L),
+                ("thinking", false), ("use_default_template", true), ("mtp", "off") };
+            inputs.AddRange(sampling);
+            g.Add("gen", "TextGenerate", inputs.ToArray());
+            g.Add("show", "PreviewAny", ("source", PromptInput.Link("gen")));
+            var capture = new Capture();
+            await executor.ExecuteAsync(g, null, capture);
+            return (string)capture.Outputs["gen"].Values[0]!;
+        }
+        (string, object?)[] Hot(double presence) => [("sampling_mode", "on"), ("sampling_mode.temperature", 2.0), ("sampling_mode.top_k", 0L),
+            ("sampling_mode.top_p", 1.0), ("sampling_mode.min_p", 1.0), ("sampling_mode.repetition_penalty", 1.0), ("sampling_mode.seed", 7L),
+            ("sampling_mode.presence_penalty", presence)];
+        var greedy = await Run(("sampling_mode", "off"));
+        var minP = await Run(Hot(0.0));
+        var presence = await Run(Hot(5.0));
+        TestContext.Out.WriteLine($"greedy: \"{greedy}\"\nmin_p 1, T 2: \"{minP}\"\n+ presence 5: \"{presence}\"");
+        Assert.That(minP, Is.EqualTo(greedy), "min_p 1.0 keeps only the top token");
+        Assert.That(presence, Is.Not.EqualTo(greedy), "presence_penalty 5 changes the text");
+    }
 }

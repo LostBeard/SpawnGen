@@ -13,8 +13,9 @@ namespace SpawnGen.Nodes.Tests;
 /// FluxGuidance: ComfyUI passes 3.5) at 256 x 256, 2 steps, seed 42.
 /// </summary>
 /// <remarks>
-/// Two known gaps, both in SpawnDev.ILGPU.ML 5.8.18-local.2's CHANGELOG: the scaled 8-bit transformer is ~1.3e-3 from ComfyUI (an ILGPU float to
-/// bfloat16 rounding bug in kernels, fixed in SpawnDev.ILGPU 5.4.33); the scaled T5 runs exact since ML -local.3 (6.5e-6). The bounds below hold today's figures; they tighten when those land. ComfyUI's own Linear on this file is plain fp32
+/// Both earlier gaps are closed: the scaled 8-bit transformer was ~1.3e-3 from ComfyUI until SpawnDev.ILGPU 5.4.33 fixed its float to bfloat16
+/// rounding in kernels (ML 5.8.18-local.5 on the RX 590: calls 2.35e-6 / 2.39e-5, final latent 4.7e-4, picture 65.7 dB, 2026-11-15); the scaled T5
+/// runs exact since ML -local.3 (6.5e-6). The bounds sit about 4x to 10x above those figures. ComfyUI's own Linear on this file is plain fp32
 /// (measured one layer at 5e-8: _DevComms 2026-11-14-1000).
 /// </remarks>
 public class Flux1SplitTests
@@ -110,7 +111,7 @@ public class Flux1SplitTests
             var denoised = x.Select((xi, i) => xi - sigma * v[i]).ToArray();
             double err = RelRms(denoised, Raw($"f1s_call_{call}_output_f32_1x16x32x32.raw"));
             report.Add($"call {call} (sigma {sigma:F4}): {err:E2}");
-            Assert.That(err, Is.LessThan(1e-2), $"call {call}: the scaled transformer's known gap is ~1.3e-3");
+            Assert.That(err, Is.LessThan(2e-4), $"call {call}: 2.35e-6 / 2.39e-5 on the RX 590 with ML -local.5");
         }
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: " + string.Join("; ", report));
     }
@@ -146,7 +147,7 @@ public class Flux1SplitTests
         for (int i = 0; i < ours.Data.Length; i++) { double d = ours.Data[i] - theirs.Data[i]; mse += d * d; }
         double psnr = 10 * Math.Log10(ours.Data.Length / mse);
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: {seconds:F1} s; final latent {latentErr:E2} relative RMS vs ComfyUI's; picture {psnr:F1} dB; {outDir}");
-        Assert.That(latentErr, Is.LessThan(5e-2));
-        Assert.That(psnr, Is.GreaterThan(30));
+        Assert.That(latentErr, Is.LessThan(5e-3), "4.7e-4 on the RX 590 with ML -local.5");
+        Assert.That(psnr, Is.GreaterThan(55), "65.7 dB on the RX 590 with ML -local.5");
     }
 }

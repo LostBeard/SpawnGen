@@ -20,6 +20,10 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
   graph 72.5 dB, 356 s at 256 px), QwenImageTests. The library's Qwen text encoder takes exactly 512 ids (prompts over 473 tokens refused;
   asked of Tuvok, docs/library-bug-reports.md GAP-ML-QWEN-TEXT-LENGTH). Next on the branch: Qwen-Image Edit 2509 (TextEncodeQwenImageEditPlus:
   vision rows, reference latents) when Tuvok's 2509 path is in a -local; the dumps are his (_DevComms 2026-11-15-1425 / 1450).
+  2026-11-15 later: ml-local-flux1 = 8402f6f on ML 5.8.18-local.7: Qwen-Image prompts of any length; **Text Encode Qwen Image Edit Plus**
+  (encode side = ComfyUI: conditioning 4.4e-5 / 7.3e-5, reference latents 1.2e-6; vision and reference resize rules measured, QwenImageEditTests).
+  Waiting: Tuvok's 2509 transformer (call-0 module taps sent, _DevComms 2026-11-15-1730); then let QwenImageRun take reference latents and
+  test the 2509 graph against graph1 / graph2 (_DevComms 2026-11-15-1425 / 1450). Big model files live on L: (comfyui-ref/models).
   Sent Tuvok 2026-11-15: 2509 dumps (encode 1 / 2 pictures, both sampling runs), CLIP vision H (_DevComms 2026-11-15-1500: pixel input
   bit-exact). Wan 2.1 i2v 14B: encode side sent (_DevComms 2026-11-15-1535: umT5, WanImageToVideo's concat latent / mask / vision output); the sampling
   stage does not fit NV1080's 32 GB in ComfyUI (the fp8 14B load alone; watchdog-stopped twice): asked Tuvok whether Yoda can run it
@@ -31,7 +35,7 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
   Merge to main when ML 5.8.18 is on nuget.org.
 - Branch `codecs-unreleased` (worktree `_scratch/wt-codecs`) = e889bfa: main merged, Codecs 1.0.2-local.19 + ILGPU 5.4.32, suites pass.
   Merge when SpawnDev.Codecs is released.
-- Models for the GPU tests: SPAWNGEN_MODELS_ROOT = the ComfyUI reference install's models folder (_scratch/comfyui-ref/models: Z-Image,
+- Models for the GPU tests: SPAWNGEN_MODELS_ROOT = the ComfyUI reference install's models folder (big files live there on L:, not on C:) (_scratch/comfyui-ref/models: Z-Image,
   FLUX.1 checkpoint, Krea, Qwen-Image files, qwen_3_4b, clip_l, t5 fp8_scaled, ae); FLUX.2 / LTX use SpawnGen's own models folder.
 - The ComfyUI reference server is stopped; restart it for probes (reference-comfyui-ref-tooling memory). Probe nodes in
   comfyui-ref/custom_nodes/spawngen_dump.py now include SpawnGenHookTokenIds, SpawnGenHookVaeModules and SpawnGenHookModelModules.

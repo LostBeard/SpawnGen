@@ -22,8 +22,8 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
   vision rows, reference latents) when Tuvok's 2509 path is in a -local; the dumps are his (_DevComms 2026-11-15-1425 / 1450).
   2026-11-15 later: ml-local-flux1 = 8402f6f on ML 5.8.18-local.7: Qwen-Image prompts of any length; **Text Encode Qwen Image Edit Plus**
   (encode side = ComfyUI: conditioning 4.4e-5 / 7.3e-5, reference latents 1.2e-6; vision and reference resize rules measured, QwenImageEditTests).
-  Waiting: Tuvok's 2509 transformer (call-0 module taps sent, _DevComms 2026-11-15-1730); then let QwenImageRun take reference latents and
-  test the 2509 graph against graph1 / graph2 (_DevComms 2026-11-15-1425 / 1450). Big model files live on L: (comfyui-ref/models).
+  **Qwen-Image Edit 2509 runs** (7151226, ML 5.8.18-local.8): model calls with 1 / 2 references = ComfyUI (<= 7.9e-4), the 2509 graph 48.8 dB
+  (its negative's sigma-0.75 call is ~140x input-sensitive: measured, see QwenImageEditTests). Merge ml-local-flux1 when ML 5.8.18 is on nuget.org. Big model files live on L: (comfyui-ref/models).
   Sent Tuvok 2026-11-15: 2509 dumps (encode 1 / 2 pictures, both sampling runs), CLIP vision H (_DevComms 2026-11-15-1500: pixel input
   bit-exact). Wan 2.1 i2v 14B: encode side sent (_DevComms 2026-11-15-1535: umT5, WanImageToVideo's concat latent / mask / vision output); the sampling
   stage does not fit NV1080's 32 GB in ComfyUI (the fp8 14B load alone; watchdog-stopped twice): asked Tuvok whether Yoda can run it
@@ -113,7 +113,7 @@ ComfyUI's LATENT, conditioning and sigmas and sends the dumps before the library
 | family | templates | status |
 |---|---|---|
 | FLUX.2 Klein 4B (split graph) | 5 | done, on main since 2026-11-14 with ML 5.8.17 (text to image, editing, base cfg, 1024) |
-| Qwen-Image | 43 | base t2i runs on ml-local-flux1 (0b3deab, ML 5.8.18-local.6); Edit 2509: dumps sent, Tuvok building |
+| Qwen-Image | 43 | t2i and Edit 2509 (1-3 pictures) run on ml-local-flux1 (7151226, ML 5.8.18-local.8), = ComfyUI |
 | Wan 2.1 / 2.2 14B | 24 | requested; Tuvok's 3rd, with CLIP vision |
 | CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | ViT-H dumps sent 2026-11-15; with Wan 14B |
 | LTX-2 / 2.3 / 2.5 (19-22B audio + video) | 18 | requested; Tuvok's 4th |

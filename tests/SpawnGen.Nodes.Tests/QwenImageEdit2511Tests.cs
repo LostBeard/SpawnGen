@@ -62,6 +62,12 @@ public class QwenImageEdit2511Tests
 
     const string Needs = "Needs SPAWNGEN_MODELS_ROOT with diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors and a GPU.";
 
+    /// <remarks>
+    /// The one-picture sigma-1 calls sit near 1e-3 (2509's are 3e-4): float32 conditioning in ComfyUI's own run, not a difference in the math.
+    /// SpawnDev.ILGPU.ML's float64 rebuild of block 0's attention (from the file's weights and ComfyUI's inputs, ML master 53321738) matches
+    /// ComfyUI's text output to 7.7e-7 but its image output only to 1.1e-3, and the same rebuild in float32 moves the image rows by 9.9e-4: the
+    /// image queries' softmax is very sharp there.
+    /// </remarks>
     [Test, Explicit(Needs)]
     public async Task The_2511_model_calls_give_ComfyUIs_denoised_estimate()
     {

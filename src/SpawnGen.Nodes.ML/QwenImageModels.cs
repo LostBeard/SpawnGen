@@ -196,6 +196,19 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
 
     QwenImageTransformer? _transformer;
     string _layout = "";
+    bool _fileTimestepZero;
+
+    /// <summary>
+    /// Whether the reference tokens are modulated at timestep 0 (Qwen-Image Edit 2511; ComfyUI's FluxKontextMultiReferenceLatentMethod
+    /// "index_timestep_zero") for a conditioning entry: that method turns it on; no method leaves the file's choice (2509: off; 2511's files carry
+    /// ComfyUI's __index_timestep_zero__ marker: on). Other methods are refused: not measured with Qwen-Image.
+    /// </summary>
+    public bool ReferencesAtTimestepZero(CondEntry entry) => entry.ReferenceLatentsMethod switch
+    {
+        null => _fileTimestepZero,
+        "index_timestep_zero" => true,
+        var m => throw new NotSupportedException($"Reference latents method '{m}' is not available for Qwen-Image; SpawnGen runs 'index_timestep_zero' (Qwen-Image Edit 2511) and the model's own default."),
+    };
 
     public string Name => name;
     public SdFamily Family => SdFamily.SD1;
@@ -221,6 +234,7 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
         if (_transformer is not null && _layout == layout) return _transformer;
         ModelResidency.ReleaseTransformers();
         _transformer = await QwenImageTransformer.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, MaxTextTokens, rows, cols, references, ResidentBytes, ct);
+        _fileTimestepZero = _transformer.ReferencesAtTimestepZero;   // the library reads the file's marker
         _layout = layout;
         QwenImageResidency.Holding(this);
         return _transformer;
@@ -267,6 +281,7 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
                     throw new ArgumentException($"A Qwen-Image reference latent is 16 channels of one frame (Qwen-Image's VAE); this one is [{string.Join(", ", r.Shape)}].");
             var grids = references.Select(r => ((r.Height + 1) / 2, (r.Width + 1) / 2)).ToArray();
             var transformer = await model.TransformerAsync(rows, cols, grids, cancellationToken);
+            transformer.ReferencesAtTimestepZero = model.ReferencesAtTimestepZero(entry);
             _kernels ??= new Flux1Kernels(acc);
             long tokens = (long)transformer.InputTokens * 64;
             if (_latent is null || _latent.Length != n || _tokens!.Length != tokens)

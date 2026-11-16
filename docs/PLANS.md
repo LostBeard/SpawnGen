@@ -11,7 +11,8 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 
 - **2026-11-16: ml-local-flux1 merged into main** on SpawnDev.ILGPU.ML 5.8.18 + SpawnDev.ILGPU 5.4.34 (nuget.org): Z-Image, FLUX.1
   (checkpoint and split, Krea), Generate Text, Qwen-Image, Qwen-Image Edit 2509 (Text Encode Qwen Image Edit Plus) all on main; GPU checks on
-  the release unchanged (RX 590). Next: Qwen-Image Edit 2511 in SpawnGen when the library has it (dumps sent, _DevComms 2026-11-16-0750);
+  the release unchanged (RX 590). **Qwen-Image Edit 2511 runs** on branch `ml-local-2511` (worktree _scratch/wt-2511, 4f47e99, ML
+  5.8.19-local.1): calls <= 9.7e-4, graph 52.4 dB; merge when ML 5.8.19 is on nuget.org;
   codecs-unreleased merges when SpawnDev.Codecs is released. The lines below are the state before the merge.
 - main = this commit: the box canvas, the crop editor, the templates browser, AeVae / InstructPixToPix, PLANS. All suites pass.
   2026-11-15: main on SpawnDev.ILGPU 5.4.33 (nuget.org) with ML 5.8.17; suites pass (3173 / 3 skipped).

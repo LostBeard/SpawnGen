@@ -195,7 +195,7 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
     public const int MaxTextTokens = 1024;
 
     QwenImageTransformer? _transformer;
-    (int Rows, int Cols) _layout;
+    string _layout = "";
 
     public string Name => name;
     public SdFamily Family => SdFamily.SD1;
@@ -211,13 +211,17 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
     /// <summary>The device memory the transformer keeps resident: all but 3 GB of the device (the rest of its blocks stream from the file).</summary>
     long ResidentBytes => Math.Max(1L << 30, runtime.Accelerator.MemorySize - (3L << 30));
 
-    /// <summary>The transformer for this picture size (token grid = latent / 2); each call passes its text's length.</summary>
-    public async Task<QwenImageTransformer> TransformerAsync(int rows, int cols, CancellationToken ct)
+    /// <summary>
+    /// The transformer for this picture size (token grid = latent / 2) and these reference latents' token grids (Qwen-Image Edit: each side halved,
+    /// rounded up); each call passes its text's length.
+    /// </summary>
+    public async Task<QwenImageTransformer> TransformerAsync(int rows, int cols, IReadOnlyList<(int Rows, int Cols)> references, CancellationToken ct)
     {
-        if (_transformer is not null && _layout == (rows, cols)) return _transformer;
+        var layout = $"{rows}x{cols}" + string.Concat(references.Select(r => $"|{r.Rows}x{r.Cols}"));
+        if (_transformer is not null && _layout == layout) return _transformer;
         ModelResidency.ReleaseTransformers();
-        _transformer = await QwenImageTransformer.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, MaxTextTokens, rows, cols, ResidentBytes, ct);
-        _layout = (rows, cols);
+        _transformer = await QwenImageTransformer.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, MaxTextTokens, rows, cols, references, ResidentBytes, ct);
+        _layout = layout;
         QwenImageResidency.Holding(this);
         return _transformer;
     }
@@ -237,6 +241,7 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
     sealed class QwenImageRun(QwenImageDiffusionModel model, Accelerator acc) : UNetRun
     {
         readonly Dictionary<CondEntry, MemoryBuffer1D<float, Stride1D.Dense>> _text = new(ReferenceEqualityComparer.Instance);
+        readonly Dictionary<CondEntry, List<MemoryBuffer1D<float, Stride1D.Dense>>> _references = new(ReferenceEqualityComparer.Instance);
         MemoryBuffer1D<float, Stride1D.Dense>? _latent, _tokens, _zeros, _velocity;
         Flux1Kernels? _kernels;
 
@@ -245,7 +250,6 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
             UNetOptions options, float[]? concat, CancellationToken cancellationToken)
         {
             if (controls is { Count: > 0 }) throw new NotSupportedException("ControlNets do not apply to Qwen-Image yet.");
-            if (entry.ReferenceLatents is { Count: > 0 }) throw new NotSupportedException("Reference latents (Qwen-Image Edit) are not available yet.");
             if (entry.Shape[^1] != QwenImageTextEncoderModel.Width)
                 throw new ArgumentException($"Qwen-Image takes its Qwen2.5-VL text ([1, tokens, {QwenImageTextEncoderModel.Width}]); this conditioning is [{string.Join(", ", entry.Shape)}]. Encode the prompt with Load CLIP type qwen_image.");
             const int c = 16;
@@ -254,20 +258,38 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
             if (h % 2 != 0 || w % 2 != 0) throw new ArgumentException($"Qwen-Image needs an even latent size (pictures in multiples of 16); this latent is {w} x {h}.");
             int rows = h / 2, cols = w / 2, text = entry.Shape[^2];
             if (text > MaxTextTokens) throw new ArgumentException($"Qwen-Image takes at most {MaxTextTokens} text rows; this conditioning has {text}.");
-            var transformer = await model.TransformerAsync(rows, cols, cancellationToken);
+            // Qwen-Image Edit's reference latents: the conditioning carries the raw VAE latent of one frame; the model receives each normalised like the
+            // noise latent, (raw - mean) / std (measured: ComfyUI's model calls against its conditioning, 3e-7), packs them with odd sides wrapped, each
+            // on its own frame after the noise latent's tokens.
+            var references = entry.ReferenceLatents ?? [];
+            foreach (var r in references)
+                if (r.Channels != c || r.Frames != 1)
+                    throw new ArgumentException($"A Qwen-Image reference latent is 16 channels of one frame (Qwen-Image's VAE); this one is [{string.Join(", ", r.Shape)}].");
+            var grids = references.Select(r => ((r.Height + 1) / 2, (r.Width + 1) / 2)).ToArray();
+            var transformer = await model.TransformerAsync(rows, cols, grids, cancellationToken);
             _kernels ??= new Flux1Kernels(acc);
-            if (_latent is null || _latent.Length != n)
+            long tokens = (long)transformer.InputTokens * 64;
+            if (_latent is null || _latent.Length != n || _tokens!.Length != tokens)
             {
                 _latent?.Dispose(); _tokens?.Dispose(); _zeros?.Dispose(); _velocity?.Dispose();
                 _latent = acc.Allocate1D<float>(n);
-                _tokens = acc.Allocate1D<float>(n * 4L);
+                _tokens = acc.Allocate1D<float>(tokens);
                 _zeros = acc.Allocate1D<float>(n);
                 _zeros.MemSetToZero();
                 _velocity = acc.Allocate1D<float>(n);
             }
             if (!_text.TryGetValue(entry, out var buffer)) _text[entry] = buffer = acc.Allocate1D(entry.Embeddings);
+            if (!_references.TryGetValue(entry, out var referenceBuffers))
+                _references[entry] = referenceBuffers = [.. references.Select(r => acc.Allocate1D(LatentFormat.Wan21.ProcessIn(r.Data.AsSpan(0, r.ItemSize).ToArray())))];
             _latent.View.CopyFromCPU(input);
-            _kernels.Patchify(_latent.View, _tokens!.View, rows, cols);
+            _kernels.Patchify(_latent.View, _tokens!.View.SubView(0, (long)rows * cols * 64), rows, cols);
+            long offset = (long)rows * cols * 64;
+            for (int k = 0; k < references.Count; k++)
+            {
+                long size = (long)grids[k].Item1 * grids[k].Item2 * 64;
+                _kernels.PatchifyWrap(referenceBuffers[k].View, _tokens.View.SubView(offset, size), references[k].Height, references[k].Width);
+                offset += size;
+            }
             await transformer.ForwardAsync(_tokens.View, buffer.View, timestep, text, cancellationToken);
             // 0 - (-1) x output, unpatchified: the velocity.
             _kernels.Denoised(_zeros!.View, transformer.Output, _velocity!.View, -1f, rows, cols);
@@ -280,6 +302,8 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
             _latent?.Dispose(); _tokens?.Dispose(); _zeros?.Dispose(); _velocity?.Dispose();
             foreach (var t in _text.Values) t.Dispose();
             _text.Clear();
+            foreach (var list in _references.Values) foreach (var r in list) r.Dispose();
+            _references.Clear();
         }
     }
 }

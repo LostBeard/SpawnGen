@@ -130,6 +130,140 @@ public class QwenImageEditTests
         Assert.That(r2, Is.LessThan(1e-5), "1.4e-6 on the RX 590");
     }
 
+
+    const string NeedsModel = "Needs SPAWNGEN_MODELS_ROOT with diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors and a GPU.";
+
+    /// <summary>
+    /// The 2509 transformer's calls with reference latents as ComfyUI made them (graph1: picture A; graph2: A and B), from the conditioning's text
+    /// rows and raw reference latents (the run normalises them as ComfyUI's model receives them).
+    /// </summary>
+    [Test, Explicit(NeedsModel)]
+    public async Task The_edit_model_calls_give_ComfyUIs_denoised_estimate()
+    {
+        var root = Root();
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var services = new Services(runtime);
+        var handle = await new UNETLoader().ExecuteAsync("qwen_image_edit_2509_fp8_e4m3fn.safetensors", "default", Context(services, "UNETLoader"), services);
+        Assert.That(handle.Model, Is.InstanceOf<QwenImageDiffusionModel>());
+        using var run = handle.Model.BeginRun(runtime.Accelerator);
+        var refA = new LatentBatch(1, 16, 1, 111, 148, Raw("qe_te1_cond_0_reference_latents_0_f32_1x16x1x111x148.raw"));
+        var refB = new LatentBatch(1, 16, 1, 99, 165, Raw("qe_te2_cond_0_reference_latents_1_f32_1x16x1x99x165.raw"));
+        var report = new List<string>();
+        foreach (var (graph, call, text, rows, refs, sigma) in new[]
+        {
+            ("graph1", 2, "qe_te1_cond_0_cond_f32_1x212x3584.raw", 212, new[] { refA }, 0.75f),
+            ("graph1", 3, "qe_te1_neg_cond_0_cond_f32_1x204x3584.raw", 204, new[] { refA }, 0.75f),
+            ("graph1", 0, "qe_te1_cond_0_cond_f32_1x212x3584.raw", 212, new[] { refA }, 1f),
+            ("graph1", 1, "qe_te1_neg_cond_0_cond_f32_1x204x3584.raw", 204, new[] { refA }, 1f),
+            ("graph2", 0, "qe_te2_cond_0_cond_f32_1x417x3584.raw", 417, new[] { refA, refB }, 1f),
+            ("graph2", 1, "qe_te2_neg_cond_0_cond_f32_1x409x3584.raw", 409, new[] { refA, refB }, 1f),
+        })
+        {
+            var entry = new CondEntry(Raw(text), [1, rows, 3584]) { ReferenceLatents = refs };
+            var x = Raw($"qe_{graph}_call_{call}_input_f32_1x16x1x24x32.raw");
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var v = await run.PredictAsync(x, 24, 32, sigma, entry, null, UNetOptions.None, null, CancellationToken.None);
+            var denoised = x.Select((xi, i) => xi - sigma * v[i]).ToArray();
+            double err = RelRms(denoised, Raw($"qe_{graph}_call_{call}_output_f32_1x16x1x24x32.raw"));
+            report.Add($"{graph} call {call} (sigma {sigma}, {refs.Length} reference(s), {rows} text rows): {err:E2} in {clock.Elapsed.TotalSeconds:F1} s");
+            Assert.That(err, Is.LessThan(2e-3), string.Join("; ", report));   // 1.7e-4 to 7.9e-4 on the RX 590
+        }
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name} ({runtime.Accelerator.MemorySize >> 20} MB): " + string.Join("; ", report));
+    }
+
+    /// <summary>
+    /// ComfyUI's image_qwen_image_edit_2509 template on its default path (Lightning LoRA off: AuraFlow 3, CFGNorm 1, euler / simple, cfg 4) with
+    /// picture A at 256 x 192 fed directly (FluxKontextImageScale left out, as in ComfyUI's run), cut to 2 steps, seed 42: the final latent and
+    /// the picture against ComfyUI's graph1.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the RX 590 (2026-11-15): latent_image 8.0e-7; the four calls' inputs 1.8e-7 (the noise) and 3.3e-5 (after the first step) from
+    /// ComfyUI's, their denoised estimates 3.6e-4, 3.2e-4, 9.0e-4, 4.7e-3; final latent 9.1e-3, picture 48.8 dB. The negative's call at sigma 0.75
+    /// is ~140x sensitive to its input there: with ComfyUI's x2 it is 7.9e-4 from ComfyUI's, with ours (3.3e-5 away) 4.7e-3, with our text and
+    /// ComfyUI's x2 8.0e-4. So the final latent's 9e-3 is that sensitivity acting on the first step's rounding, not a fault of a part; each part
+    /// is pinned by its own test (The_edit_model_calls_give_ComfyUIs_denoised_estimate, The_edit_conditioning_is_ComfyUIs).
+    /// The nodes are chained directly on ComfyUI's float picture A: Load Image cannot carry it exactly (it reads a PNG at 8 bits, as ComfyUI's
+    /// does, 2e-3 to 3.5e-3 off), and ComfyUI's run took the float picture.
+    /// </remarks>
+    [Test, Explicit(NeedsModel + " Also text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors and vae/qwen_image_vae.safetensors.")]
+    public async Task The_2509_template_graph_matches_ComfyUI()
+    {
+        var root = Root();
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var services = new Services(runtime);
+        NodeContext Ctx(string type) => Context(services, type);
+        const string Prompt = "Turn the picture into a watercolor painting";
+        var a = Picture("f2_img_1x192x256x3.raw", 192, 256);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var unet = await new UNETLoader().ExecuteAsync("qwen_image_edit_2509_fp8_e4m3fn.safetensors", "default", Ctx("UNETLoader"), services);
+        var clip = await new CLIPLoader().ExecuteAsync("qwen_2.5_vl_7b_fp8_scaled.safetensors", "qwen_image", Ctx("CLIPLoader"), services);
+        var vae = await new VAELoader().ExecuteAsync("qwen_image_vae.safetensors", Ctx("VAELoader"), services);
+        var pos = await new TextEncodeQwenImageEditPlus().ExecuteAsync(clip, Ctx("TextEncodeQwenImageEditPlus"), Prompt, vae, a);
+        var neg = await new TextEncodeQwenImageEditPlus().ExecuteAsync(clip, Ctx("TextEncodeQwenImageEditPlus"), "", vae, a);
+        var recorder = new RecordingModel(unet.Model);
+        var model = new CFGNorm().Execute(new ModelSamplingAuraFlow().Execute(new ModelHandle(recorder, unet.Sampling), 3.0), 1.0);
+        var latentIn = await new VAEEncode().ExecuteAsync(a, vae, Ctx("VAEEncode"), services);
+        double inErr = RelRms(latentIn.Data, Raw("qe_graph1_latent_in_samples_f32_1x16x1x24x32.raw"));
+        var latent = await new KSampler().ExecuteAsync(model, pos, neg, latentIn, Ctx("KSampler"), services, 42, 2, 4.0, "euler", "simple", 1.0);
+        Assert.That(latent.Shape, Is.EqualTo(new[] { 1, 16, 1, 24, 32 }));
+        double latentErr = RelRms(latent.Data, Raw("qe_graph1_out_samples_f32_1x16x1x24x32.raw"));
+        var picture = await new VAEDecode().ExecuteAsync(latent, vae, Ctx("VAEDecode"), services);
+        var seconds = clock.Elapsed.TotalSeconds;
+        // Each call against ComfyUI's (its four calls: prompt and negative at sigma 1, then at 0.75): the input, and the denoised estimate.
+        var calls = new List<string>();
+        for (int i = 0; i < recorder.Calls.Count && i < 4; i++)
+        {
+            var (inp, t, rows, v) = recorder.Calls[i];
+            var den = inp.Select((xi, j) => xi - t * v[j]).ToArray();
+            calls.Add($"call {i} (t {t}, {rows} rows): input {RelRms(inp, Raw($"qe_graph1_call_{i}_input_f32_1x16x1x24x32.raw")):E2}, denoised {RelRms(den, Raw($"qe_graph1_call_{i}_output_f32_1x16x1x24x32.raw")):E2}");
+        }
+        TestContext.Out.WriteLine(string.Join("; ", calls));
+        var theirs = PngReader.Decode(File.ReadAllBytes(Path.Combine(Dir, "comfyui_picture_graph1_256x192.png")));
+        double mse = 0;
+        for (int i = 0; i < theirs.Data.Length; i++)
+        {
+            double ours8 = Math.Clamp(Math.Floor(picture.Data[i] * 255.0 + 0.5), 0, 255) / 255.0, d = ours8 - theirs.Data[i];
+            mse += d * d;
+        }
+        double psnr = 10 * Math.Log10(theirs.Data.Length / mse);
+        var outFile = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"qwenedit_graph1_{Guid.NewGuid():N}_f32_192x256x3.raw");
+        File.WriteAllBytes(outFile, System.Runtime.InteropServices.MemoryMarshal.AsBytes(picture.Data.AsSpan()).ToArray());
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: {seconds:F1} s; latent_image {inErr:E2}; final latent {latentErr:E2} relative RMS vs ComfyUI's; picture {psnr:F1} dB; {outFile}");
+        Assert.That(inErr, Is.LessThan(1e-5), "8.0e-7 on the RX 590");
+        Assert.That(latentErr, Is.LessThan(2e-2), "9.1e-3 on the RX 590 (see remarks)");
+        Assert.That(psnr, Is.GreaterThan(44), "48.8 dB on the RX 590");
+    }
+
+
+    /// <summary>A model that records every call (input, timestep, text rows, velocity) of the one it wraps.</summary>
+    sealed class RecordingModel(IDiffusionModel inner) : IDiffusionModel
+    {
+        public List<(float[] Input, float Timestep, int TextRows, float[] Output)> Calls { get; } = [];
+        public string Name => inner.Name;
+        public SpawnDev.ILGPU.ML.StableDiffusion.SdFamily Family => inner.Family;
+        public LatentFormat LatentFormat => inner.LatentFormat;
+        public ModelSampling Sampling => inner.Sampling;
+        public SpawnDev.ILGPU.ML.StableDiffusion.SdUNet? UNet => inner.UNet;
+        public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) => inner.UseWeightsAsync(weights, cancellationToken);
+        public UNetRun BeginRun(ILGPU.Runtime.Accelerator accelerator) => new Run(this, inner.BeginRun(accelerator));
+
+        sealed class Run(RecordingModel owner, UNetRun run) : UNetRun
+        {
+            public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
+                UNetOptions options, float[]? concat, CancellationToken cancellationToken)
+            {
+                run.Frames = Frames;
+                run.FirstFrameClean = FirstFrameClean;
+                var output = await run.PredictAsync(input, h, w, timestep, entry, controls, options, concat, cancellationToken);
+                owner.Calls.Add(((float[])input.Clone(), timestep, entry.Shape[^2], (float[])output.Clone()));
+                return output;
+            }
+
+            public override void Dispose() => run.Dispose();
+        }
+    }
+
+
     const string NeedsVae = "Needs SPAWNGEN_MODELS_ROOT with vae/qwen_image_vae.safetensors and a GPU.";
 
     /// <summary>

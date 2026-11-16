@@ -26,8 +26,10 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
   (its negative's sigma-0.75 call is ~140x input-sensitive: measured, see QwenImageEditTests). Merge ml-local-flux1 when ML 5.8.18 is on nuget.org. Big model files live on L: (comfyui-ref/models).
   Sent Tuvok 2026-11-15: 2509 dumps (encode 1 / 2 pictures, both sampling runs), CLIP vision H (_DevComms 2026-11-15-1500: pixel input
   bit-exact). Wan 2.1 i2v 14B: encode side sent (_DevComms 2026-11-15-1535: umT5, WanImageToVideo's concat latent / mask / vision output); the sampling
-  stage does not fit NV1080's 32 GB in ComfyUI (the fp8 14B load alone; watchdog-stopped twice): asked Tuvok whether Yoda can run it
-  (_scratch/probe/wan14b/graph_run.py stages encode / sample / decode; feedback-ram-pagefile-disk memory).
+  stage does not fit NV1080's 32 GB in ComfyUI (the fp8 14B load alone): **parked** (TJ, 2026-11-16: no machine with more RAM); the encode side
+  stays gated in the library. Next family (Tuvok): **Qwen-Image Edit 2511** (fp8mixed, 20.5 GB; encode = 2509's; index_timestep_zero
+  references): ComfyUI runs in _scratch/probe/qwenedit (stages e2511_1 / e2511_2 / d2511_1). Merge ml-local-flux1 when ML 5.8.18 is on nuget.org
+  (Tuvok is cutting it 2026-11-16).
 - Branch `ml-local-flux1` (worktree `_scratch/wt-flux1`) = 70b6802 on SpawnDev.ILGPU.ML 5.8.18-local.3 + SpawnDev.ILGPU 5.4.32: Z-Image,
   FLUX.1 (checkpoint and split), Generate Text, measured on the RX 590 (Flux1Tests, Flux1SplitTests, ZImageTests, TextGenerateTests,
   AeVaeTests tightened). Next there: **Qwen-Image** ((d) in the -local.2 list below; Tuvok's API in his messages / Docs; dumps in

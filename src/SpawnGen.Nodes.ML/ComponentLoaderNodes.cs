@@ -131,6 +131,12 @@ public sealed class UNETLoader
         var names = await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file);
         if (names.Contains(Flux2DiffusionModel.MarkerTensor))
             return new ModelHandle(await runtime.GetOrLoadAsync($"flux2:{repo}/{file}", () => Task.FromResult(new Flux2DiffusionModel(runtime, unetName, repo, file))));
+        if (QwenImageDiffusionModel.Is(names))
+            return new ModelHandle(await runtime.GetOrLoadAsync($"qwenimage:{repo}/{file}", () => Task.FromResult(new QwenImageDiffusionModel(runtime, unetName, repo, file))));
+        if (Flux1Checkpoint.IsTransformer(names))
+            return new ModelHandle(await runtime.GetOrLoadAsync($"flux1:{repo}/{file}", () => Task.FromResult(new Flux1DiffusionModel(runtime, unetName, repo, file))));
+        if (names.Contains(ZImageDiffusionModel.MarkerTensor))
+            return new ModelHandle(await runtime.GetOrLoadAsync($"zimage:{repo}/{file}", () => Task.FromResult(new ZImageDiffusionModel(runtime, unetName, repo, file))));
         if (WanFiles.IsOriginalLayoutDit(names))
             throw new NotSupportedException($"'{unetName}' is a Wan transformer in its original layout (as ComfyUI's repackaged files ship it), which SpawnGen cannot load yet; pick {WanFiles.DiffusionModels[0]} (downloads on first use).");
         var model = await runtime.GetOrLoadAsync($"unet:{repo}/{file}", () => StandaloneDiffusionModel.LoadAsync(runtime, unetName, repo, file));
@@ -177,8 +183,30 @@ public sealed class CLIPLoader
             var (qwenRepo, qwenFile) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
             return new ClipHandle(await rt.GetOrLoadAsync($"flux2-qwen:{qwenRepo}/{qwenFile}", () => Task.FromResult(new Flux2TextEncoderModel(rt, clipName, qwenRepo, qwenFile))));
         }
+        if (type == "lumina2")
+        {
+            // Z-Image (ComfyUI's Z-Image templates load qwen_3_4b with type lumina2).
+            var rt = await GpuHelpers.RuntimeAsync(services);
+            var (qwenRepo, qwenFile) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
+            return new ClipHandle(await rt.GetOrLoadAsync($"zimage-qwen:{qwenRepo}/{qwenFile}", () => Task.FromResult(new ZImageTextEncoderModel(rt, clipName, qwenRepo, qwenFile))));
+        }
+        if (type == "qwen_image")
+        {
+            // Qwen-Image (ComfyUI's templates load qwen_2.5_vl_7b_fp8_scaled with type qwen_image).
+            var rt = await GpuHelpers.RuntimeAsync(services);
+            var (qwenRepo, qwenFile) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
+            return new ClipHandle(await rt.GetOrLoadAsync($"qwenimage-qwen:{qwenRepo}/{qwenFile}", () => Task.FromResult(new QwenImageTextEncoderModel(rt, clipName, qwenRepo, qwenFile))));
+        }
+        if (type != "stable_diffusion" && ModelFolders.Names(ModelFolders.TextEncoders).Contains(clipName))
+        {
+            // A Qwen3 language model's file under another type (ComfyUI's llm_qwen3_text_gen loads qwen_3_4b as ltxv): for Generate Text.
+            var lrt = await GpuHelpers.RuntimeAsync(services);
+            var (lmRepo, lmFile) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
+            if (Qwen3TextModel.Is(await SafetensorsHeader.NamesAsync(lrt.ModelSource, lmRepo, lmFile)))
+                return new ClipHandle(new Qwen3TextModel(clipName, type, lmRepo, lmFile));
+        }
         if (type != "stable_diffusion")
-            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders, Wan's umT5 and FLUX.2's Qwen3; choose 'stable_diffusion', 'wan' or 'flux2'.");
+            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders, Wan's umT5, FLUX.2's Qwen3, Z-Image's Qwen3 and Qwen-Image's Qwen2.5-VL; choose 'stable_diffusion', 'wan', 'flux2', 'lumina2' or 'qwen_image'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var (repo, file) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
         var model = await runtime.GetOrLoadAsync($"clip:{repo}/{file}", async () =>
@@ -211,11 +239,19 @@ public sealed class DualCLIPLoader
         [Input(OptionsProvider = nameof(Types))] string type, NodeContext context, IServiceProvider services,
         [Input(OptionsProvider = nameof(Devices), Optional = true)] string device = "default")
     {
-        if (type != "sdxl")
-            throw new NotSupportedException($"Dual CLIP type '{type}' is not available: SpawnGen runs SDXL's two text encoders; choose 'sdxl'.");
+        if (type != "sdxl" && type != "flux")
+            throw new NotSupportedException($"Dual CLIP type '{type}' is not available: SpawnGen runs SDXL's two text encoders and FLUX.1's CLIP-L + T5-XXL; choose 'sdxl' or 'flux'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var first = ModelFolders.Locate(ModelFolders.TextEncoders, clipName1);
         var second = ModelFolders.Locate(ModelFolders.TextEncoders, clipName2);
+        if (type == "flux")
+        {
+            // FLUX.1: CLIP-L and T5-XXL in either order (the T5 file is the one with T5's shared embedding table).
+            var firstIsT5 = (await SafetensorsHeader.NamesAsync(runtime.ModelSource, first.Repo, first.File)).Any(n => n.EndsWith("shared.weight", StringComparison.Ordinal));
+            var (t5, clipL) = firstIsT5 ? (first, second) : (second, first);
+            return new ClipHandle(await runtime.GetOrLoadAsync($"flux1-text:{t5.Repo}/{t5.File}|{clipL.Repo}/{clipL.File}",
+                () => Task.FromResult(new Flux1TextEncoderModel(runtime, $"{clipName1} + {clipName2}", (t5.Repo, t5.File), (clipL.Repo, clipL.File)))));
+        }
         var model = await runtime.GetOrLoadAsync($"clip2:{first.Repo}/{first.File}|{second.Repo}/{second.File}", async () =>
         {
             var source = runtime.ModelSource;
@@ -269,6 +305,9 @@ public sealed class VAELoader
             return new VaeHandle(tae);
         }
         var (vaeRepo, file) = ModelFolders.Locate(ModelFolders.Vae, vaeName);
+        // The Wan 2.1 VAE in ComfyUI's layout (qwen_image_vae, wan_2.1_vae): a video VAE, 16 channels.
+        if (WanComfyVaeModel.Is(await SafetensorsHeader.NamesAsync(runtime.ModelSource, vaeRepo, file)))
+            return new VaeHandle(await runtime.GetOrLoadAsync($"wan21-vae:{vaeRepo}/{file}", () => Task.FromResult(new WanComfyVaeModel(runtime, vaeName, vaeRepo, file))));
         var vae = await runtime.GetOrLoadAsync<IDisposable>($"vae:{vaeRepo}/{file}", async () =>
         {
             var sd = await SdVae.LoadAsync(runtime.Accelerator, runtime.ModelSource, vaeRepo, file);

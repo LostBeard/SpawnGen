@@ -46,7 +46,7 @@ public class ComponentLoaderTests
             Throws.TypeOf<NotSupportedException>().With.Message.Contains("default"));
         Assert.That(async () => await new CLIPLoader().ExecuteAsync("x.safetensors", "sd3", null!, null!),
             Throws.TypeOf<NotSupportedException>().With.Message.Contains("stable_diffusion"));
-        Assert.That(async () => await new DualCLIPLoader().ExecuteAsync("a.safetensors", "b.safetensors", "flux", null!, null!),
+        Assert.That(async () => await new DualCLIPLoader().ExecuteAsync("a.safetensors", "b.safetensors", "hidream", null!, null!),
             Throws.TypeOf<NotSupportedException>().With.Message.Contains("sdxl"));
         Assert.That(async () => await new VAELoader().ExecuteAsync("pixel_space", null!, null!), Throws.TypeOf<NotSupportedException>());
     }

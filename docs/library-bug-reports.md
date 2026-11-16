@@ -193,3 +193,20 @@ divides on the device, and AMD OpenCL's float division is not correctly rounded 
 (0x3EFFFFFF) on the RX 590, so 13,110 of 27,648 table entries point at the wrong pixel. Power-of-two ratios divide exactly, so SD's 512 px
 decodes never showed it. Fix in ML (Tuvok): divide on the host, multiply on the device (5.8.17-local.2). Raised with Data for ILGPU's
 OpenCL backend: `-cl-fp32-correctly-rounded-divide-sqrt` would make every kernel's `/` match .NET.
+
+---
+
+## GAP-ML-QWEN-TEXT-LENGTH — Qwen-Image's text encoder runs a fixed 512 rows
+
+**Repo / area:** `SpawnDev.ILGPU.ML` — `Flux2.Flux2TextEncoder` (SeqLen = 512) as Qwen-Image's Qwen2.5-VL encoder
+**Package:** SpawnDev.ILGPU.ML **5.8.18-local.6**; reported 2026-11-15 (SendMessage to Tuvok)
+**Limits:** SpawnGen's CLIP Text Encode with Load CLIP type qwen_image (branch `ml-local-flux1`)
+
+`Encode` takes exactly 512 ids. ComfyUI encodes a prompt of any length, so SpawnGen refuses a Qwen-Image prompt over 473 tokens (512 minus the
+template's 34 + 5) instead of matching it, and every encode computes 512 rows however short the prompt (46 for "a red apple on a wooden table").
+Qwen-Image Edit 2509 adds the pictures' vision rows to the same sequence (192 + 198 for two small pictures, measured), so three pictures
+already pass 512. Asked: a length per call (or per open), as QwenImageTransformer has. With the padding, SpawnGen matches ComfyUI's
+conditioning at 4.4e-6 / 7.9e-6 on the RX 590 (QwenImageTests).
+
+**Resolved (2026-11-15):** SpawnDev.ILGPU.ML **5.8.18-local.7** takes the length per encoder (`maxTokens`), each call any length up to it,
+unpadded = padded bit for bit. SpawnGen sizes the encoder to the prompt: no length limit; conditioning 4.2e-6 / 8.2e-6 on the RX 590.

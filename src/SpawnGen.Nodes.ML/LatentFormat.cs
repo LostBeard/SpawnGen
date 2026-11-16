@@ -7,10 +7,16 @@ namespace SpawnGen.Nodes.ML;
 
 /// <summary>A model family's latent space: how sampling-space latents relate to the VAE's, and a cheap RGB preview of a latent.</summary>
 public sealed class LatentFormat(string name, float scaleFactor, float[][] rgbFactors, float[]? rgbBias = null, string? taesdDecoderName = null,
-    int channels = 4, float[]? latentsMean = null, float[]? latentsStd = null)
+    int channels = 4, float[]? latentsMean = null, float[]? latentsStd = null, bool videoShaped = false)
 {
     /// <summary>The latent's channels (4 for SD 1.x / SDXL, 48 for Wan 2.2).</summary>
     public int Channels { get; } = channels;
+
+    /// <summary>
+    /// Whether the model's LATENT is a video latent even for one picture ([b, c, 1, h, w]): an empty picture latent sampled with it comes out 5-D
+    /// (Qwen-Image, measured: Empty SD3 Latent Image [1, 16, 32, 32] in, [1, 16, 1, 32, 32] out of KSampler).
+    /// </summary>
+    public bool VideoShaped { get; } = videoShaped;
 
     /// <summary>Per channel, the mean taken off on the way into the model (null: none).</summary>
     public float[]? LatentsMean { get; } = latentsMean;
@@ -44,9 +50,25 @@ public sealed class LatentFormat(string name, float scaleFactor, float[][] rgbFa
     public static LatentFormat Flux2 { get; } = new("Flux2", 1f, [], null, null, 128);
 
     /// <summary>
+    /// FLUX.1 / Z-Image (ComfyUI's ae.safetensors): LATENT is the VAE's raw mean, 16 channels; on the way into the model 0.1159 is taken off and the
+    /// rest scaled by 0.3611 (measured with ComfyUI's model calls, 2026-11-14). No cheap RGB preview yet.
+    /// </summary>
+    public static LatentFormat Flux1 { get; } = new("Flux1", 0.3611f, [], null, null, 16, [.. Enumerable.Repeat(0.1159f, 16)], [.. Enumerable.Repeat(1f, 16)]);
+
+    /// <summary>
     /// Wan 2.2 (TI2V 5B): 48 channels, frames x h x w per channel, each channel normalised by its own mean and spread (scale factor 1).
     /// No cheap RGB preview.
     /// </summary>
+    /// <summary>
+    /// The Wan 2.1 VAE's space (Qwen-Image; Wan 2.1 / 2.2 14B): 16 channels, a video latent, each channel normalised by the published mean and spread
+    /// its VAE carries (diffusers' AutoencoderKLWan latents_mean / latents_std, Apache-2.0; the library's WanVae gives the same numbers), scale factor 1.
+    /// ComfyUI's LATENT is the raw VAE latent and the model works on (raw - mean) / std (measured with Qwen-Image's model calls and final LATENT).
+    /// </summary>
+    public static LatentFormat Wan21 { get; } = new("Wan21", 1f, [], null, null, 16,
+        [-0.7571f, -0.7089f, -0.9113f, 0.1075f, -0.1745f, 0.9653f, -0.1517f, 1.5508f, 0.4134f, -0.0715f, 0.5517f, -0.3632f, -0.1922f, -0.9497f, 0.2503f, -0.2921f],
+        [2.8184f, 1.4541f, 2.3275f, 2.6558f, 1.2196f, 1.7708f, 2.6052f, 2.0743f, 3.2687f, 2.1526f, 2.8652f, 1.5579f, 1.6382f, 1.1253f, 2.8251f, 1.9160f],
+        videoShaped: true);
+
     public static LatentFormat Wan22 { get; } = new("Wan22", 1f, [], null, null, 48,
         [-0.2289f, -0.0052f, -0.1323f, -0.2339f, -0.2799f, 0.0174f, 0.1838f, 0.1557f, -0.1382f, 0.0542f, 0.2813f, 0.0891f, 0.1570f, -0.0098f, 0.0375f, -0.1825f,
          -0.2246f, -0.1207f, -0.0698f, 0.5109f, 0.2665f, -0.2108f, -0.2158f, 0.2502f, -0.2055f, -0.0322f, 0.1109f, 0.1567f, -0.0729f, 0.0899f, -0.2799f, -0.1230f,

@@ -49,7 +49,7 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 
 ## Now (in order)
 
-0. **ACE-Step 1.5 (music) in SpawnGen** (2026-11-17, SpawnDev.ILGPU.ML 5.8.20-local.2; branch `ml-local-acestep`). **Status 2026-11-17:** nodes done and measured (PARITY.md 3b: template graph 8.4e-5 latent / 2.1e-4 audio with ComfyUI's table as a fixture, 1.6e-2 with the MIT silence latent); waiting on Tuvok publishing 5.8.20 to nuget.org, then merge to main. Later: VAE Encode Audio (measure its posterior noise first), top_k / min_p in the code LM (asked of Tuvok), fractional durations (measure ComfyUI's prompt printing), a batch dimension on AUDIO. ComfyUI's
+0. **ACE-Step 1.5 (music) in SpawnGen** (2026-11-17, SpawnDev.ILGPU.ML 5.8.20-local.2; branch `ml-local-acestep`). **Status 2026-11-17:** nodes done and measured (PARITY.md 3b: template graph 8.4e-5 latent / 2.1e-4 audio with ComfyUI's table as a fixture, 1.6e-2 with the MIT silence latent); waiting on Tuvok publishing 5.8.20 to nuget.org, then merge to main. Later: VAE Encode Audio (measure its posterior noise first), fractional durations (measure ComfyUI's prompt printing), a batch dimension on AUDIO. ComfyUI's
    audio_ace_step_1_5_split graph: UNETLoader acestep_v1.5_turbo, DualCLIPLoader type ace (qwen_0.6b_ace15 + qwen_1.7b_ace15), VAELoader
    ace_1.5_vae, TextEncodeAceStepAudio1.5, EmptyAceStep1.5LatentAudio, ConditioningZeroOut, ModelSamplingAuraFlow 3, KSampler, VAEDecodeAudio.
    Design: the encode node makes the conditioning ComfyUI's way (caption states [1, n, 1024] + lyric embeddings + audio codes from the

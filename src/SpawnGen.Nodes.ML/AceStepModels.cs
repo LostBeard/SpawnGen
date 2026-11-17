@@ -91,8 +91,6 @@ internal sealed class AceStepTextModel(MlRuntime runtime, string name, (string R
     public async Task<CondEntry> EncodeAsync(AceStepEncodeSettings s, NodeContext context)
     {
         var ct = context.CancellationToken;
-        if (s.TopK != 0 || s.MinP != 0)
-            throw new NotSupportedException("top_k and min_p are not available for ACE-Step's code LM in SpawnDev.ILGPU.ML yet (cfg, temperature and top_p are); leave them at 0.");
         var (captionIds, lyricIds, lmPos, lmNeg) = await TokenizeAsync(s, ct);
         var acc = runtime.Accelerator;
         ModelResidency.ReleaseTransformers();
@@ -104,7 +102,7 @@ internal sealed class AceStepTextModel(MlRuntime runtime, string name, (string R
             using var lmModel = await AceStepCodeLm.LoadAsync(acc, runtime.ModelSource, lm.Repo, lm.File, Math.Max(lmPos.Length, negative.Length), count, ct: ct);
             int made = 0;
             codes = await lmModel.GenerateCodesAsync(lmPos, negative, count, (int)(s.Seed & int.MaxValue), (float)s.CfgScale, (float)s.Temperature, (float)s.TopP,
-                (_, _) => context.Progress(++made, count, "Generating audio codes"), ct);
+                (_, _) => context.Progress(++made, count, "Generating audio codes"), ct, (int)Math.Min(s.TopK, int.MaxValue), (float)s.MinP);
         }
         using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, caption.Repo, caption.File, Layers, finalNorm: true, ct);
         using var encoder = new Flux2TextEncoder(acc, weights, [Layers], finalNorm: true, maxTokens: captionIds.Length) { PreciseActivations = true };

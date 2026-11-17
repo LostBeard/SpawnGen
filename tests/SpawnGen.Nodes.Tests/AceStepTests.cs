@@ -284,6 +284,12 @@ public class AceStepTests
         var seconds = sw.Elapsed.TotalSeconds;
         var b = await CodesAsync(31);
         var c = await CodesAsync(32);
+        // top_k and min_p (0 = off): the same seed with top_k 1 keeps only the most likely code each step, so it differs from a's draws.
+        var greedy = (await new TextEncodeAceStepAudio15().ExecuteAsync(clip, Context(services, "TextEncodeAceStepAudio1.5"), s.Tags, s.Lyrics,
+            31, s.Bpm, 4.0, s.TimeSignature, s.Language, s.KeyScale, true, s.CfgScale, s.Temperature, s.TopP, 1, 0.05)).Entries.Single().AudioCodes!;
+        Assert.That(greedy, Has.Length.EqualTo(20));
+        Assert.That(greedy, Is.All.InRange(0, 63999));
+        Assert.That(greedy, Is.Not.EqualTo(a), "top_k 1");
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: 20 codes in {seconds:0.0} s (first, with the load); seed 31 [{string.Join(", ", a.Take(8))} ...]");
         Assert.That(a, Has.Length.EqualTo(20));
         Assert.That(a, Is.All.InRange(0, 63999));

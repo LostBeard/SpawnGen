@@ -277,16 +277,6 @@ public sealed class LTXAVTextEncoderLoader
     }
 }
 
-/// <summary>A model source that serves some file names from other (repo, file) pairs: for library calls that read two files from one repo.</summary>
-internal sealed class RoutedModelSource(SpawnDev.ILGPU.ML.Hub.IModelSource inner, IReadOnlyDictionary<string, (string Repo, string File)> files) : SpawnDev.ILGPU.ML.Hub.IModelSource
-{
-    public Task<Stream> OpenAsync(string repoId, string filePath, CancellationToken cancellationToken = default) =>
-        files.TryGetValue(filePath, out var at) ? inner.OpenAsync(at.Repo, at.File, cancellationToken) : inner.OpenAsync(repoId, filePath, cancellationToken);
-
-    public Task<byte[]> FetchBytesAsync(string repoId, string filePath, CancellationToken cancellationToken = default) =>
-        files.TryGetValue(filePath, out var at) ? inner.FetchBytesAsync(at.Repo, at.File, cancellationToken) : inner.FetchBytesAsync(repoId, filePath, cancellationToken);
-}
-
 /// <summary>LATENT_UPSCALE_MODEL: a latent upscaler file (LTX-2's x2 spatial upscaler).</summary>
 [Socket("LATENT_UPSCALE_MODEL")]
 public sealed record LatentUpscaleModelHandle(string Name, string Repo, string File);
@@ -321,12 +311,8 @@ public sealed class LTXVLatentUpsampler
         if (samples.NoiseMask is not null) throw new NotSupportedException("LTXVLatentUpsampler with a noise mask is not measured yet in SpawnGen.");
         var (runtime, repo, file) = ltxVae.Checkpoint;
         ModelResidency.ReleaseTransformers();
-        // the library reads the upscaler and the checkpoint from one repo; SpawnGen keeps them in their own folders, so route both names
-        var source = new RoutedModelSource(runtime.ModelSource, new Dictionary<string, (string, string)>
-        {
-            ["upscaler.safetensors"] = (upscaleModel.Repo, upscaleModel.File), ["checkpoint.safetensors"] = (repo, file),
-        });
-        using var up = await SpawnDev.ILGPU.ML.Ltx2.Ltx2LatentUpsampler.OpenAsync(runtime.Accelerator, source, "spawngen-routed", "upscaler.safetensors", "checkpoint.safetensors");
+        using var up = await SpawnDev.ILGPU.ML.Ltx2.Ltx2LatentUpsampler.OpenAsync(runtime.Accelerator, runtime.ModelSource, upscaleModel.Repo, upscaleModel.File,
+            runtime.ModelSource, repo, file);
         int F = samples.Frames, h = samples.Height, w = samples.Width, per = samples.ItemSize, outPer = per * 4;
         var data = new float[samples.Batch * outPer];
         for (int b = 0; b < samples.Batch; b++)

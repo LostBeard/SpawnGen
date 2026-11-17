@@ -60,4 +60,32 @@ public class DynamicComboTests
         var prompt = GraphCompiler.Compile(reopened.Graph, reopened.Registry).Graph.Nodes[node.Id.ToString()];
         Assert.That(prompt.Inputs.Keys, Is.EquivalentTo(new[] { "resize_type", "resize_type.longer_size", "scale_method" }));
     }
+
+    [Test]
+    public void Options_that_share_an_input_with_different_choices_each_offer_their_own()
+    {
+        // Save Audio (Advanced): mp3's quality is V0 / 128k / 320k, opus's 64k ... 320k; both are "format.quality".
+        var doc = new EditorDocument(Registry());
+        var node = doc.AddNode("SaveAudioAdvanced", 0, 0);
+        var schema = doc.Registry.GetSchema("SaveAudioAdvanced")!;
+        Assert.That(schema.FindInput("format.quality")!.ForOption("opus").Widget!.ResolveOptions(), Is.EqualTo(new[] { "64k", "96k", "128k", "192k", "320k" }));
+
+        doc.SetWidget(node.Id, "format", "mp3");
+        Assert.That(node.Widgets["format.quality"], Is.EqualTo("V0"));
+        var row = NodeLayout.VisibleInputs(schema, node, doc.Graph).Single(i => i.Name == "format.quality");
+        Assert.That(row.Widget!.ResolveOptions(), Is.EqualTo(new[] { "V0", "128k", "320k" }));
+
+        doc.SetWidget(node.Id, "format", "opus");
+        Assert.That(node.Widgets["format.quality"], Is.EqualTo("128k"), "V0 is not an Opus quality: opus's default");
+        row = NodeLayout.VisibleInputs(schema, node, doc.Graph).Single(i => i.Name == "format.quality");
+        Assert.That(row.Widget!.ResolveOptions()[0], Is.EqualTo("64k"));
+        doc.SetWidget(node.Id, "format.quality", "64k");
+        doc.SetWidget(node.Id, "format", "mp3");
+        Assert.That(node.Widgets["format.quality"], Is.EqualTo("V0"));
+        doc.Undo();
+        Assert.That((node.Widgets["format"], node.Widgets["format.quality"]), Is.EqualTo(("opus", "64k")), "one undo step");
+
+        var prompt = GraphCompiler.Compile(doc.Graph, doc.Registry).Graph;
+        Assert.That(prompt.Nodes[node.Id.ToString()].Inputs["format.quality"].Literal, Is.EqualTo("64k"));
+    }
 }

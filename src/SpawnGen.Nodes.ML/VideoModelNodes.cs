@@ -1,5 +1,3 @@
-using SpawnDev.Codecs.Images;
-using SpawnDev.Codecs.Images.WebP;
 using SpawnDev.ILGPU.ML.Ltx;
 using SpawnDev.ILGPU.ML.Wan;
 using SpawnGen.Engine.Nodes;
@@ -7,53 +5,6 @@ using SpawnGen.Engine.Types;
 using SpawnGen.Nodes.Core;
 
 namespace SpawnGen.Nodes.ML;
-
-/// <summary>
-/// Save Animated WEBP (ComfyUI's schema): the batch as one animated WebP in the output folder, each frame shown for <c>int(1000 / fps)</c> ms
-/// (as Save Animated PNG). Encoded on the GPU by SpawnDev.Codecs. Its released build has the lossless animation encoder only, so a lossy request
-/// is written lossless for now (the lossy one is in the next Codecs release); the prompt / workflow metadata comes with that release too.
-/// </summary>
-[Node("SaveAnimatedWEBP", Category = "image", DisplayName = "Save Animated WEBP", IsOutput = true)]
-public sealed class SaveAnimatedWEBP
-{
-    public async Task<(ImageBatch Images, UiOutput Ui)> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services,
-        string filenamePrefix = "ComfyUI",
-        [Input(Min = 0.01, Max = 1000.0, Step = 0.01)] double fps = 6.0,
-        bool lossless = true,
-        [Input(Min = 0, Max = 100)] long quality = 80,
-        [Input(Options = ["default", "fastest", "slowest"])] string method = "default")
-    {
-        var webp = await EncodeAsync(images, fps, (int)quality, services);
-        var prefix = SavePrefix.ComputeVars(filenamePrefix, images.Width, images.Height, DateTime.Now);
-        var file = (await Results.For(services).SaveAsync("output", prefix, webp, "webp")).AsImage(images.Width, images.Height);
-        var ui = new UiOutput("images", new object[] { file });
-        ui["animated"] = new object[] { images.Batch > 1 };
-        return (images, ui);
-    }
-
-    /// <summary>The frames as an animated WebP (lossless), each shown for int(1000 / fps) ms, looping forever.</summary>
-    public static async Task<byte[]> EncodeAsync(ImageBatch images, double fps, int quality, IServiceProvider services) =>
-        await EncodeAsync(images, fps, quality, (await GpuHelpers.RuntimeAsync(services)).Accelerator);
-
-    public static async Task<byte[]> EncodeAsync(ImageBatch images, double fps, int quality, ILGPU.Runtime.Accelerator accelerator)
-    {
-        if (fps <= 0) throw new ArgumentOutOfRangeException(nameof(fps), "The frame rate must be above 0.");
-        int duration = (int)(1000.0 / fps);
-        var frames = new List<ReadOnlyMemory<byte>>();
-        var infos = new List<ImageFrameInfo>();
-        for (int f = 0; f < images.Batch; f++)
-        {
-            var packed = Rgba.Pack(images, f);
-            var bytes = new byte[packed.Length * 4];
-            Buffer.BlockCopy(packed, 0, bytes, 0, bytes.Length);
-            frames.Add(bytes);
-            infos.Add(new ImageFrameInfo(f, 0, 0, images.Width, images.Height, duration, FrameDispose.None, FrameBlend.Source));
-        }
-        using var encoder = new WebPLosslessEncoderGpu(accelerator);
-        return await encoder.EncodeAnimationAsync(frames, infos, images.Width, images.Height,
-            new WebPAnimationEncodeOptions { Quality = Math.Clamp(quality, 0, 100), LoopCount = 0 });
-    }
-}
 
 /// <summary>
 /// Wan 2.2 TI2V 5B (Alibaba, Apache-2.0) from the library's 8-bit export: a video from a prompt, or from a start picture and a prompt. One node for

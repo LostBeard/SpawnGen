@@ -51,6 +51,7 @@ public static class ServerApp
         app.UseWebSockets();
         // WebP, GIF and BMP for Load Image decode on the GPU (SpawnDev.Codecs); the accelerator opens on the first such picture.
         CodecsImages.Install(() => Task.FromResult(app.Services.GetRequiredService<MlRuntime>().Accelerator));
+        CodecsAudio.Install(() => Task.FromResult(app.Services.GetRequiredService<MlRuntime>().Accelerator));
         var customNodes = CustomNodes.Load(app.Services.GetRequiredService<NodeRegistry>(), options.CustomNodesPath);
         var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpawnGen.CustomNodes");
         foreach (var pack in customNodes)
@@ -220,7 +221,7 @@ public static class ServerApp
             var form = await request.ReadFormAsync();
             if (form.Files["image"] is not { } file) return Results.BadRequest("no 'image' file");
             var name = Path.GetFileName(file.FileName);
-            if (!ImageDecoder.IsSupportedName(name) && !name.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".latent", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("only PNG, JPEG, WebP, GIF and BMP pictures, WAV sound and .latent files can be loaded for now");
+            if (!ImageDecoder.IsSupportedName(name) && !AudioFiles.LoadableExtensions.Any(e => name.EndsWith(e, StringComparison.OrdinalIgnoreCase)) && !name.EndsWith(".latent", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("only PNG, JPEG, WebP, GIF and BMP pictures, WAV and FLAC sound and .latent files can be loaded for now");
             var target = Path.Combine(options.InputPath, name);
             if (File.Exists(target) && (string?)form["overwrite"] != "true")
                 name = $"{Path.GetFileNameWithoutExtension(name)}_{Guid.NewGuid().ToString("N")[..6]}{Path.GetExtension(name)}";
@@ -415,6 +416,6 @@ public static class ServerApp
 
     static string ContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {
-        ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".gif" => "image/gif", ".bmp" => "image/bmp", ".wav" => "audio/wav", ".glb" => "model/gltf-binary", _ => "application/octet-stream",
+        ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".gif" => "image/gif", ".bmp" => "image/bmp", ".wav" => "audio/wav", ".flac" => "audio/flac", ".mp3" => "audio/mpeg", ".opus" => "audio/ogg", ".glb" => "model/gltf-binary", _ => "application/octet-stream",
     };
 }

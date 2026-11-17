@@ -70,7 +70,7 @@ public class VideoNodeTests
         for (int f = 0; f < 3; f++)
             for (int i = 0; i < 16 * 12; i++)
                 for (int c = 0; c < 3; c++)
-                    Assert.That(decoded.Rgba[f][i * 4 + c], Is.EqualTo((byte)Math.Round(frames.Data[(f * 16 * 12 + i) * 3 + c] * 255)), $"frame {f} pixel {i}");
+                    Assert.That(decoded.Rgba[f][i * 4 + c], Is.EqualTo((byte)Math.Clamp(255f * frames.Data[(f * 16 * 12 + i) * 3 + c], 0f, 255f)), $"frame {f} pixel {i}");
     }
 
     /// <summary>
@@ -112,7 +112,31 @@ public class VideoNodeTests
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
             var webp = await SaveAnimatedWEBP.EncodeAsync(frames, 24, 80, runtime.Accelerator);
-            report.AppendLine($"run {run}: {clock.Elapsed.TotalSeconds:F1} s, {webp.Length} bytes");
+            report.AppendLine($"node (WebPAnimEncoder) run {run}: {clock.Elapsed.TotalSeconds:F1} s, {webp.Length} bytes, SHA-256 {Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(webp))[..16]}");
+            // SPAWNGEN_WEBP_OUT: a folder to keep each run's file in (for the codec's authors).
+            if (Environment.GetEnvironmentVariable("SPAWNGEN_WEBP_OUT") is { Length: > 0 } keep)
+            {
+                Directory.CreateDirectory(keep);
+                File.WriteAllBytes(Path.Combine(keep, $"node_webpanimencoder_run{run}_{runtime.Accelerator.Name.Replace(' ', '_')}.webp"), webp);
+            }
+        }
+        // The full-frame call SpawnGen made with Codecs 1.0.1 (every frame whole, no sub-frame search), for comparison.
+        var packed = new List<ReadOnlyMemory<byte>>();
+        var infos = new List<SpawnDev.Codecs.Images.ImageFrameInfo>();
+        for (int f = 0; f < frames.Batch; f++)
+        {
+            var px = Rgba.Pack(frames, f);
+            var bytes = new byte[px.Length * 4];
+            Buffer.BlockCopy(px, 0, bytes, 0, bytes.Length);
+            packed.Add(bytes);
+            infos.Add(new SpawnDev.Codecs.Images.ImageFrameInfo(f, 0, 0, frames.Width, frames.Height, 41, SpawnDev.Codecs.Images.FrameDispose.None, SpawnDev.Codecs.Images.FrameBlend.Source));
+        }
+        for (int run = 1; run <= 2; run++)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            using var encoder = new SpawnDev.Codecs.Images.WebP.WebPLosslessEncoderGpu(runtime.Accelerator);
+            var webp = await encoder.EncodeAnimationAsync(packed, infos, frames.Width, frames.Height, new SpawnDev.Codecs.Images.WebP.WebPAnimationEncodeOptions { Quality = 80, LoopCount = 0 });
+            report.AppendLine($"full-frame (1.0.1-style) run {run}: {clock.Elapsed.TotalSeconds:F1} s, {webp.Length} bytes");
         }
         File.WriteAllText(Path.Combine(TestContext.CurrentContext.WorkDirectory, "webp_timing.txt"), report.ToString());
         TestContext.Out.WriteLine(report.ToString());

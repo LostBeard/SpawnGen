@@ -149,3 +149,10 @@ public sealed class VideoLatentsAttribute : Attribute { }
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class AudioLatentsAttribute : Attribute { }
+
+/// <summary>
+/// The node takes LTX-2's audio + video latents (packed: <see cref="SpawnGen.Engine.Types.LatentBatch.IsNested"/>); a node without it refuses one
+/// before it runs.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
+public sealed class NestedLatentsAttribute : Attribute { }

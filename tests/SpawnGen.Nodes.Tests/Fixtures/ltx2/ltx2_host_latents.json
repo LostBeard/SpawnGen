@@ -1,0 +1,304 @@
+{
+ "source": "ComfyUI bef11fc, measured 2026-11-17 (_scratch/probe/ltx2/host_run*.py)",
+ "latents": {
+  "concat_96x64x17": {
+   "samples": {
+    "nested": [
+     [
+      1,
+      128,
+      3,
+      2,
+      3
+     ],
+     [
+      1,
+      8,
+      17,
+      16
+     ]
+    ]
+   },
+   "downscale_ratio_spacial": "32",
+   "type": "'audio'"
+  },
+  "crop_v_latent": {
+   "samples": [
+    1,
+    128,
+    2,
+    2,
+    2
+   ],
+   "noise_mask": [
+    1,
+    1,
+    2,
+    1,
+    1
+   ]
+  },
+  "sep_audio": {
+   "samples": [
+    1,
+    8,
+    17,
+    16
+   ],
+   "downscale_ratio_spacial": "32",
+   "type": "'audio'"
+  },
+  "sep_video": {
+   "samples": [
+    1,
+    128,
+    3,
+    2,
+    3
+   ],
+   "downscale_ratio_spacial": "32",
+   "type": "'audio'"
+  },
+  "aud2_11_30": {
+   "samples": [
+    1,
+    8,
+    9,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_13_24": {
+   "samples": [
+    1,
+    8,
+    14,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_19_24": {
+   "samples": [
+    1,
+    8,
+    20,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_1_2": {
+   "samples": [
+    1,
+    8,
+    12,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_2_3": {
+   "samples": [
+    1,
+    8,
+    17,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_2_75": {
+   "samples": [
+    1,
+    8,
+    1,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_3_2": {
+   "samples": [
+    1,
+    8,
+    38,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_3_50": {
+   "samples": [
+    1,
+    8,
+    2,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_5_2": {
+   "samples": [
+    1,
+    8,
+    62,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud2_7_24": {
+   "samples": [
+    1,
+    8,
+    7,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_1000_1_b1": {
+   "samples": [
+    1,
+    8,
+    25000,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_10_30_b2": {
+   "samples": [
+    2,
+    8,
+    8,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_121_24_b1": {
+   "samples": [
+    1,
+    8,
+    126,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_1_25_b1": {
+   "samples": [
+    1,
+    8,
+    1,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_24_24_b1": {
+   "samples": [
+    1,
+    8,
+    25,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_25_25_b1": {
+   "samples": [
+    1,
+    8,
+    25,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_97_23.976_b1": {
+   "samples": [
+    1,
+    8,
+    101,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_97_25_b1": {
+   "samples": [
+    1,
+    8,
+    97,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "aud_9_25_b1": {
+   "samples": [
+    1,
+    8,
+    9,
+    16
+   ],
+   "type": "'audio'"
+  },
+  "vid_100x70x10_b1": {
+   "samples": [
+    1,
+    128,
+    2,
+    2,
+    3
+   ],
+   "downscale_ratio_spacial": "32"
+  },
+  "vid_64x64x1_b1": {
+   "samples": [
+    1,
+    128,
+    1,
+    2,
+    2
+   ],
+   "downscale_ratio_spacial": "32"
+  },
+  "vid_64x64x8_b1": {
+   "samples": [
+    1,
+    128,
+    1,
+    2,
+    2
+   ],
+   "downscale_ratio_spacial": "32"
+  },
+  "vid_64x64x9_b1": {
+   "samples": [
+    1,
+    128,
+    2,
+    2,
+    2
+   ],
+   "downscale_ratio_spacial": "32"
+  },
+  "vid_65x64x9_b1": {
+   "samples": [
+    1,
+    128,
+    2,
+    2,
+    2
+   ],
+   "downscale_ratio_spacial": "32"
+  },
+  "vid_768x512x97_b1": {
+   "samples": [
+    1,
+    128,
+    13,
+    16,
+    24
+   ],
+   "downscale_ratio_spacial": "32"
+  },
+  "vid_96x160x17_b2": {
+   "samples": [
+    2,
+    128,
+    3,
+    5,
+    3
+   ],
+   "downscale_ratio_spacial": "32"
+  }
+ }
+}

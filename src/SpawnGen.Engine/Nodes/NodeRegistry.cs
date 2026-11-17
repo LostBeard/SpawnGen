@@ -58,6 +58,9 @@ public sealed class RegisteredNode
     bool? _takesAudioLatents;
     /// <summary>Whether the node's class is marked <see cref="AudioLatentsAttribute"/>.</summary>
     bool TakesAudioLatents => _takesAudioLatents ??= Type.IsDefined(typeof(AudioLatentsAttribute), false);
+    bool? _takesNestedLatents;
+    /// <summary>Whether the node's class is marked <see cref="NestedLatentsAttribute"/>.</summary>
+    bool TakesNestedLatents => _takesNestedLatents ??= Type.IsDefined(typeof(NestedLatentsAttribute), false);
     internal Type[] OutputTypes { get; init; } = default!;
     internal bool ReturnsTuple { get; init; } = default!;
     internal int UiIndex { get; init; } = default!;
@@ -156,6 +159,8 @@ public sealed class RegisteredNode
                             throw new NotSupportedException($"{Schema.DisplayName} does not take video latents (input '{p.InputName}') in SpawnGen yet.");
                         if (typed is LatentBatch { IsAudio: true } && p.Info.ParameterType == typeof(LatentBatch) && !TakesAudioLatents)
                             throw new NotSupportedException($"{Schema.DisplayName} does not take audio latents (input '{p.InputName}') in SpawnGen yet.");
+                        if (typed is LatentBatch { IsNested: true } && p.Info.ParameterType == typeof(LatentBatch) && !TakesNestedLatents)
+                            throw new NotSupportedException($"{Schema.DisplayName} does not take audio + video latents (input '{p.InputName}') in SpawnGen yet; Separate AV Latent splits one.");
                         args[i] = typed;
                     }
                     else

@@ -15,6 +15,8 @@
     <ProjectReference Include="$(IlgpuMlProject)" Condition="'$(IlgpuMlProject)' != ''" />
     <!-- 5.4.1 corrupts streamed weight uploads on some AMD OpenCL drivers (Polaris): SD-Turbo output turns to noise. 5.4.2 fixes it. -->
     <PackageReference Include="SpawnDev.ILGPU" Version="5.4.36" />
+    <!-- platform H.264 (Media Foundation) for LTXV Preprocess: patent-encumbered codecs come from the platform, not SpawnDev.Codecs -->
+    <PackageReference Include="SpawnDev.MultiMedia" Version="2.6.0-local.1" />
     <PackageReference Include="SpawnDev.Codecs" Version="1.1.0" Condition="'$(CodecsProject)' == ''" />
   </ItemGroup>
   <ItemGroup>

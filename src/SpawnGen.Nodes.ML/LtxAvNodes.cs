@@ -360,14 +360,82 @@ public sealed class LTXVImgToVideoInplace
 }
 
 /// <summary>
-/// LTXV Preprocess: the start picture made to look like a frame of compressed video. Measured with ComfyUI: img_compression 0 returns the picture
-/// unchanged; above 0 the result is deterministic, on the 1/255 grid and lossy (33: 3.3% relative), from a video codec's round trip (H.264-like:
-/// plain libx264 at that CRF comes within 0.09 but not exactly). SpawnGen has no H.264 encoder yet, so it refuses a compression above 0.
+/// LTXV Preprocess: the start picture made to look like a frame of compressed video. Measured with ComfyUI (2026-11-18): img_compression 0
+/// returns the picture unchanged; above 0 it is a libx264 round trip whose loss grows with the compression and stops growing at about 51
+/// (60..100 identical: x264's CRF ceiling). SpawnGen uses the platform's H.264 (SpawnDev.MultiMedia: Media Foundation, Windows) at the
+/// constant QP that comes closest to ComfyUI's result (measured on 15 compressions, interpolated: 15 and under QP 11, compression - 6 from 20
+/// to 40, 50 -> 42, 51 and up 47). Different encoders leave different artifacts, so this is close, not exact (TJ, 2026-11-18: close is fine
+/// where licensing forces the codec): at the template's 33, 2.2e-2 relative RMS from ComfyUI's picture, against ComfyUI's own change of
+/// 3.3e-2. Not available in the browser yet (WebCodecs is next).
 /// </summary>
 [Node("LTXVPreprocess", Category = "video/preprocessors", DisplayName = "LTXV Preprocess", OutputNames = ["output_image"])]
 public sealed class LTXVPreprocess
 {
-    public ImageBatch Execute(ImageBatch image, [Input(Min = 0, Max = 100, Tooltip = "Amount of compression to apply on image.")] int imgCompression = 35) =>
-        imgCompression == 0 ? image
-        : throw new NotSupportedException($"img_compression {imgCompression}: LTXV Preprocess compresses the picture through a video codec (H.264), which SpawnGen does not have yet; use 0.");
+    /// <summary>Measured: the best Media Foundation QP per ComfyUI img_compression (relative RMS against ComfyUI's picture, 192 x 256 test picture).</summary>
+    static readonly (int Compression, int Qp)[] Measured = [(15, 11), (20, 14), (25, 19), (30, 24), (33, 27), (35, 29), (40, 34), (50, 42), (51, 47)];
+
+    /// <summary>The constant QP for an img_compression (1..100): the measured points, linear between them.</summary>
+    public static int Qp(int compression)
+    {
+        if (compression <= Measured[0].Compression) return Measured[0].Qp;
+        if (compression >= Measured[^1].Compression) return Measured[^1].Qp;
+        for (int i = 1; i < Measured.Length; i++)
+            if (compression <= Measured[i].Compression)
+            {
+                var (c0, q0) = Measured[i - 1];
+                var (c1, q1) = Measured[i];
+                return (int)Math.Round(q0 + (double)(q1 - q0) * (compression - c0) / (c1 - c0), MidpointRounding.ToEven);
+            }
+        return Measured[^1].Qp;
+    }
+
+    public ImageBatch Execute(ImageBatch image, [Input(Min = 0, Max = 100, Tooltip = "Amount of compression to apply on image.")] int imgCompression = 35)
+    {
+        if (imgCompression == 0) return image;
+        if (!OperatingSystem.IsWindows())
+            throw new NotSupportedException($"img_compression {imgCompression}: LTXV Preprocess needs an H.264 encoder; SpawnGen has Windows' (Media Foundation) so far, not this platform's.");
+        if ((image.Width & 1) != 0 || (image.Height & 1) != 0)
+            throw new NotSupportedException($"A {image.Width} x {image.Height} picture: H.264 4:2:0 needs even sides, and what ComfyUI does with odd ones is not measured yet.");
+        return H264RoundTrip(image, Qp(imgCompression));
+    }
+
+    /// <summary>
+    /// Each picture through one H.264 I-frame at a constant QP and back (SpawnDev.MultiMedia: Media Foundation's encoder and decoder, Windows),
+    /// as BT.601 limited-range 4:2:0 like x264's input; odd sides are cut to even. Values come back on the 1 / 255 grid.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static ImageBatch H264RoundTrip(ImageBatch image, int qp)
+    {
+        int w = image.Width & ~1, h = image.Height & ~1, plane = w * h;
+        var output = new float[image.Batch * plane * 3];
+        var rgb = new byte[plane * 3];
+        var nv12 = new byte[plane * 3 / 2];
+        var bgra = new byte[plane * 4];
+        for (int b = 0; b < image.Batch; b++)
+        {
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    for (int c = 0; c < 3; c++)
+                        rgb[(y * w + x) * 3 + c] = (byte)Math.Clamp((int)MathF.Round(image.Data[((b * image.Height + y) * image.Width + x) * image.Channels + c] * 255f), 0, 255);
+            SpawnDev.MultiMedia.PixelFormatConverter.RGB24toNV12(rgb, nv12, w, h);
+            using var encoder = SpawnDev.MultiMedia.VideoEncoderFactory.CreateH264(new SpawnDev.MultiMedia.H264EncoderOptions(w, h, 25, 1_000_000)
+            {
+                RateControl = SpawnDev.MultiMedia.H264RateControl.ConstantQp, Qp = qp,
+            });
+            using var decoder = SpawnDev.MultiMedia.VideoDecoderFactory.CreateH264();
+            var stream = new List<byte>();
+            if (encoder.Encode(nv12, 0, 400_000) is { } au) stream.AddRange(au);
+            if (encoder.Drain() is { } rest) stream.AddRange(rest);
+            var frames = decoder.Decode(stream.ToArray(), 0);
+            if (frames.Count == 0) throw new InvalidOperationException("The H.264 decoder returned no picture.");
+            SpawnDev.MultiMedia.PixelFormatConverter.NV12toBGRA(frames[^1].Data.Span, bgra, w, h);
+            for (int i = 0; i < plane; i++)
+            {
+                output[(b * plane + i) * 3] = bgra[i * 4 + 2] / 255f;
+                output[(b * plane + i) * 3 + 1] = bgra[i * 4 + 1] / 255f;
+                output[(b * plane + i) * 3 + 2] = bgra[i * 4] / 255f;
+            }
+        }
+        return new ImageBatch(image.Batch, h, w, 3, output);
+    }
 }

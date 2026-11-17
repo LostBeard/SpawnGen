@@ -221,10 +221,103 @@ public class Ltx2ModelTests
     }
 
     [Test]
-    public void LTXVPreprocess_passes_compression_0_and_refuses_the_codec()
+    public void LTXVPreprocess_maps_compression_to_the_measured_QP()
     {
         var picture = new ImageBatch(1, 2, 2, 3, [.. Enumerable.Range(0, 12).Select(i => i / 12f)]);
-        Assert.That(new LTXVPreprocess().Execute(picture, 0), Is.SameAs(picture));
-        Assert.Throws<NotSupportedException>(() => new LTXVPreprocess().Execute(picture, 33));
+        Assert.That(new LTXVPreprocess().Execute(picture, 0), Is.SameAs(picture), "0 passes the picture through (measured)");
+        foreach (var (c, qp) in new[] { (1, 11), (15, 11), (20, 14), (33, 27), (35, 29), (40, 34), (45, 38), (50, 42), (51, 47), (100, 47) })
+            Assert.That(LTXVPreprocess.Qp(c), Is.EqualTo(qp), $"compression {c}");
+    }
+
+    /// <summary>The node at the template's compression against ComfyUI's picture: close, not exact (a different H.264 encoder).</summary>
+    [Test, Explicit("Windows: Media Foundation H.264.")]
+    public void LTXVPreprocess_at_33_is_close_to_ComfyUI()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Ignore("Media Foundation H.264 is Windows-only.");
+        var picture = new ImageBatch(1, 192, 256, 3, Raw("ltx2_venc_input_f32_1x192x256x3.raw"));
+        var theirs = Raw("ltxv_preprocess_33_f32_1x192x256x3.raw");
+        var ours = new LTXVPreprocess().Execute(picture, 33);
+        double err = RelRms(ours.Data, theirs), comfyChange = RelRms(theirs, picture.Data);
+        TestContext.Out.WriteLine($"LTXV Preprocess 33: {err:E2} relative RMS from ComfyUI's picture (ComfyUI's own change {comfyChange:E2})");
+        Assert.That(ours.Data.All(v => Math.Abs(v * 255 - Math.Round(v * 255)) < 1e-3), "values on the 1 / 255 grid, as ComfyUI's");
+        Assert.That(err, Is.LessThan(0.75 * comfyChange), "closer to ComfyUI's picture than to the untouched one by a clear margin");
+    }
+
+    /// <summary>
+    /// Experiment (2026-11-18): Media Foundation H.264 at each constant QP against ComfyUI's LTXV Preprocess at img_compression 33, 35 and 100
+    /// (libx264), to choose the compression -> QP mapping. Prints the relative RMS error per QP; asserts only that some QP comes close.
+    /// </summary>
+    [Test, Explicit("Windows; prints the H.264 QP sweep against ComfyUI's LTXV Preprocess.")]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public void LTXVPreprocess_QP_sweep_against_ComfyUI()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Ignore("Media Foundation H.264 is Windows-only.");
+        var picture = new ImageBatch(1, 192, 256, 3, Raw("ltx2_venc_input_f32_1x192x256x3.raw"));
+        // more compression points from a ComfyUI measurement folder (pre_<c>_images_f32_1x192x256x3.raw) when SPAWNGEN_PREPROCESS_DIR names one
+        var dir = Environment.GetEnvironmentVariable("SPAWNGEN_PREPROCESS_DIR");
+        var points = new SortedDictionary<int, float[]>();
+        foreach (var c in new[] { 33, 35, 100 }) points[c] = Raw($"ltxv_preprocess_{c}_f32_1x192x256x3.raw");
+        if (!string.IsNullOrEmpty(dir))
+            foreach (var f in Directory.GetFiles(dir, "pre_*_images_f32_1x192x256x3.raw"))
+                if (int.TryParse(Path.GetFileName(f).Split('_')[1], out int c) && !points.ContainsKey(c))
+                {
+                    var b = File.ReadAllBytes(f); var d = new float[b.Length / 4]; Buffer.BlockCopy(b, 0, d, 0, b.Length); points[c] = d;
+                }
+        foreach (var (compression, theirs) in points)
+        {
+            double comfyChange = RelRms(theirs, picture.Data);
+            var errors = new List<(int Qp, double Err, double Change)>();
+            for (int qp = 10; qp <= 51; qp++)
+            {
+                var ours = LTXVPreprocess.H264RoundTrip(picture, qp).Data;
+                errors.Add((qp, RelRms(ours, theirs), RelRms(ours, picture.Data)));
+            }
+            var best = errors.MinBy(e => e.Err);
+            TestContext.Out.WriteLine($"compression {compression}: ComfyUI changes the picture by {comfyChange:E2}; best QP {best.Qp}: {best.Err:E2} from ComfyUI "
+                + $"(ours changes it by {best.Change:E2}); " + string.Join(", ", errors.Where(e => e.Qp % 3 == 0).Select(e => $"QP {e.Qp} {e.Err:E2}")));
+            Assert.That(best.Err, Is.LessThan(comfyChange), $"compression {compression}: no QP comes closer to ComfyUI's result than the untouched picture");
+        }
+    }
+
+    /// <summary>
+    /// A real-size run for scale (Tuvok, 2026-11-18): the t2v template's first pass at 384 x 256, 25 frames (4 latent frames of 8 x 12 = 384 video
+    /// tokens), 2 steps, cfg 4, then both decodes; seconds per stage printed. No ComfyUI comparison (its CPU run at this size is the 0600
+    /// guidecall folders' job); this measures that it runs and how long it takes. Any exception is printed in full and fails the test.
+    /// </summary>
+    [Test, Explicit(Needs)]
+    public async Task The_template_graph_runs_at_384x256x25()
+    {
+        var (runtime, services) = Runtime();
+        using var _r = runtime;
+        NodeContext Ctx(string type) => Context(services, type);
+        var stages = new List<string>();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        double Lap() { double t = sw.Elapsed.TotalSeconds; sw.Restart(); return t; }
+        try
+        {
+            var clip = await ClipAsync(services);
+            var pos = await new CLIPTextEncode().ExecuteAsync(Prompt.GetProperty("positive").GetString()!, clip, Ctx("CLIPTextEncode"));
+            var neg = await new CLIPTextEncode().ExecuteAsync(Prompt.GetProperty("negative").GetString()!, clip, Ctx("CLIPTextEncode"));
+            var (positive, negative) = new LTXVConditioning().Execute(pos, neg, 25);
+            stages.Add($"encode {Lap():0} s");
+            var (model, _, vae) = await new CheckpointLoaderSimple().ExecuteAsync(Checkpoint, Ctx("CheckpointLoaderSimple"), services);
+            var audioVae = await new LTXVAudioVAELoader().ExecuteAsync(Checkpoint, services);
+            var av = new LTXVConcatAVLatent().Execute(new EmptyLTXVLatentVideo().Execute(384, 256, 25, 1), new LTXVEmptyLatentAudio().Execute(25, 25, 1, audioVae));
+            var (output, _) = await new SamplerCustomAdvanced().ExecuteAsync(new RandomNoise().Execute(10), new CFGGuider().Execute(model, positive, negative, 4.0),
+                new KSamplerSelect().Execute("euler"), new LTXVScheduler().Execute(2, 2.05, 0.95, true, 0.1, av), av, Ctx("SamplerCustomAdvanced"), services);
+            stages.Add($"sample (2 steps) {Lap():0} s");
+            var (video, audio) = new LTXVSeparateAVLatent().Execute(output);
+            var frames = await new VAEDecode().ExecuteAsync(video, vae, Ctx("VAEDecode"), services);
+            stages.Add($"video decode {Lap():0} s ({frames.Batch} x {frames.Height} x {frames.Width})");
+            var clipOut = await new LTXVAudioVAEDecode().ExecuteAsync(audio, audioVae, Ctx("LTXVAudioVAEDecode"));
+            stages.Add($"audio decode {Lap():0} s ({clipOut.Length} samples)");
+            Assert.That((frames.Batch, frames.Height, frames.Width), Is.EqualTo((25, 256, 384)));
+        }
+        catch (Exception e)
+        {
+            TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: FAILED after: {string.Join("; ", stages)}; at {sw.Elapsed.TotalSeconds:0} s into the next stage: {e}");
+            throw;
+        }
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: 384 x 256 x 25: " + string.Join("; ", stages));
     }
 }

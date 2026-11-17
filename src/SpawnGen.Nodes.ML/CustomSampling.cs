@@ -24,6 +24,7 @@ public sealed class DisableNoise
 }
 
 [VideoLatents]
+[AudioLatents]
 [Node("AddNoise", Category = "model/sampling/noise", DisplayName = "AddNoise")]
 public sealed class AddNoise
 {
@@ -67,6 +68,7 @@ public sealed class CFGGuider
 }
 
 [VideoLatents]
+[AudioLatents]
 [Node("SamplerCustom", Category = "model/sampling/custom", DisplayName = "SamplerCustom", OutputNames = ["output", "denoised_output"])]
 public sealed class SamplerCustom
 {
@@ -79,6 +81,7 @@ public sealed class SamplerCustom
 }
 
 [VideoLatents]
+[AudioLatents]
 [Node("SamplerCustomAdvanced", Category = "model/sampling/custom", DisplayName = "SamplerCustomAdvanced", OutputNames = ["output", "denoised_output"])]
 public sealed class SamplerCustomAdvanced
 {

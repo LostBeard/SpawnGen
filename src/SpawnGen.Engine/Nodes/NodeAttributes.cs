@@ -142,3 +142,10 @@ public sealed class SocketAttribute(string name) : Attribute
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class VideoLatentsAttribute : Attribute { }
+
+/// <summary>
+/// The node handles audio latents (3-D LATENT: batch, channels, length). The others are refused one before they run, so a picture-only node never
+/// misreads an audio latent's layout.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
+public sealed class AudioLatentsAttribute : Attribute { }

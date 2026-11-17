@@ -43,6 +43,10 @@ public sealed record CondEntry(float[] Embeddings, int[] Shape)
     public IReadOnlyList<LatentBatch>? ReferenceLatents { get; init; }
     /// <summary>ComfyUI's "reference_latents_method" (Edit Model Reference Method): how an edit model places the reference latents.</summary>
     public string? ReferenceLatentsMethod { get; init; }
+    /// <summary>ComfyUI's "conditioning_lyrics" (ACE-Step 1.5): the lyric prompt's token embeddings [1, rows, 1024].</summary>
+    public HostTensor? Lyrics { get; init; }
+    /// <summary>ComfyUI's "audio_codes" (ACE-Step 1.5): the code LM's 5 Hz audio codes (0 .. 63999), when the encode generated them.</summary>
+    public int[]? AudioCodes { get; init; }
 }
 
 /// <summary>CONDITIONING: a list of entries, each guiding the sampler on its own.</summary>
@@ -202,7 +206,15 @@ public sealed class ConditioningSetTimestepRange
 [Node("ConditioningZeroOut", Category = "model/conditioning/transform", DisplayName = "Conditioning Zero Out")]
 public sealed class ConditioningZeroOut
 {
-    /// <summary>Each entry's context (and pooled output) set to zeros, keeping its shape.</summary>
+    /// <summary>
+    /// Each entry's context (and pooled output) set to zeros, keeping its shape; ACE-Step's lyric embeddings too, its audio codes kept (measured
+    /// with ComfyUI, 2026-11-17: conditioning_lyrics all zero, audio_codes unchanged).
+    /// </summary>
     public Conditioning Execute(Conditioning conditioning) =>
-        conditioning.Map(e => e with { Embeddings = new float[e.Embeddings.Length], Pooled = e.Pooled is null ? null : new float[e.Pooled.Length] });
+        conditioning.Map(e => e with
+        {
+            Embeddings = new float[e.Embeddings.Length],
+            Pooled = e.Pooled is null ? null : new float[e.Pooled.Length],
+            Lyrics = e.Lyrics is null ? null : new HostTensor(e.Lyrics.Shape),
+        });
 }

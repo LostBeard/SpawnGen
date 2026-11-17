@@ -11,8 +11,8 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 
 - **2026-11-16: ml-local-flux1 merged into main** on SpawnDev.ILGPU.ML 5.8.18 + SpawnDev.ILGPU 5.4.34 (nuget.org): Z-Image, FLUX.1
   (checkpoint and split, Krea), Generate Text, Qwen-Image, Qwen-Image Edit 2509 (Text Encode Qwen Image Edit Plus) all on main; GPU checks on
-  the release unchanged (RX 590). **Qwen-Image Edit 2511 runs** on branch `ml-local-2511` (worktree _scratch/wt-2511, 4f47e99, ML
-  5.8.19-local.1): calls <= 9.7e-4, graph 52.4 dB; merge when ML 5.8.19 is on nuget.org;
+  the release unchanged (RX 590). **Qwen-Image Edit 2511 runs on main** (ml-local-2511 merged 2026-11-16 on
+  SpawnDev.ILGPU.ML 5.8.19, nuget.org): calls <= 9.7e-4 (the ~1e-3 is float32 in ComfyUI's own run), graph 52.4 dB;
   codecs-unreleased merges when SpawnDev.Codecs is released. The lines below are the state before the merge.
 - main = this commit: the box canvas, the crop editor, the templates browser, AeVae / InstructPixToPix, PLANS. All suites pass.
   2026-11-15: main on SpawnDev.ILGPU 5.4.33 (nuget.org) with ML 5.8.17; suites pass (3173 / 3 skipped).
@@ -120,7 +120,7 @@ ComfyUI's LATENT, conditioning and sigmas and sends the dumps before the library
 | family | templates | status |
 |---|---|---|
 | FLUX.2 Klein 4B (split graph) | 5 | done, on main since 2026-11-14 with ML 5.8.17 (text to image, editing, base cfg, 1024) |
-| Qwen-Image | 43 | t2i and Edit 2509 (1-3 pictures) run on ml-local-flux1 (7151226, ML 5.8.18-local.8), = ComfyUI |
+| Qwen-Image | 43 | t2i, Edit 2509 and Edit 2511 (1-3 pictures) on main (ML 5.8.19), = ComfyUI |
 | Wan 2.1 / 2.2 14B | 24 | requested; Tuvok's 3rd, with CLIP vision |
 | CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | ViT-H dumps sent 2026-11-15; with Wan 14B |
 | LTX-2 / 2.3 / 2.5 (19-22B audio + video) | 18 | requested; Tuvok's 4th |

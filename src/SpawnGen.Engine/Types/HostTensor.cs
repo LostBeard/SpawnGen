@@ -37,8 +37,9 @@ public sealed class ImageBatch : HostTensor
 }
 
 /// <summary>
-/// A batch of latents, NCHW, or NCFHW for a video model's latents (frames between channels and height), the same layouts as ComfyUI's LATENT "samples".
-/// Only nodes marked <see cref="VideoLatentsAttribute"/> are given a video latent; the others refuse it before they run.
+/// A batch of latents, NCHW, or NCFHW for a video model's latents (frames between channels and height), or NCL for an audio model's (ACE-Step:
+/// [batch, 64, frames]), the same layouts as ComfyUI's LATENT "samples". Only nodes marked <see cref="VideoLatentsAttribute"/> are given a video
+/// latent and only nodes marked <see cref="AudioLatentsAttribute"/> an audio latent; the others refuse them before they run.
 /// </summary>
 [Socket("LATENT")]
 public sealed class LatentBatch : HostTensor
@@ -50,10 +51,19 @@ public sealed class LatentBatch : HostTensor
     public LatentBatch(int batch, int channels, int frames, int height, int width, float[]? data = null)
         : base([batch, channels, frames, height, width], data) { }
 
+    LatentBatch(int[] shape, float[]? data) : base(shape, data) { }
+
+    /// <summary>An audio latent [batch, channels, length] (ComfyUI's 3-D LATENT; ACE-Step 1.5: 64 channels, 25 frames per second).</summary>
+    public static LatentBatch Audio(int batch, int channels, int length, float[]? data = null) => new([batch, channels, length], data);
+
     public int Batch => Shape[0];
     public int Channels => Shape[1];
-    public int Height => Shape[^2];
+    /// <summary>The rows: an audio latent has one (its length is the <see cref="Width"/>).</summary>
+    public int Height => IsAudio ? 1 : Shape[^2];
     public int Width => Shape[^1];
+
+    /// <summary>Whether this is an audio latent (3-D: batch, channels, length).</summary>
+    public bool IsAudio => Shape.Length == 3;
 
     /// <summary>Whether this is a video latent (5-D, with a frames dimension).</summary>
     public bool IsVideo => Shape.Length == 5;
@@ -65,14 +75,14 @@ public sealed class LatentBatch : HostTensor
     public int ItemSize => Channels * Frames * Height * Width;
 
     /// <summary>An empty latent shaped like <paramref name="template"/> (picture or video) with another batch size and these values.</summary>
-    public static LatentBatch Shaped(LatentBatch template, int batch, float[]? data = null) => template.IsVideo
-        ? new LatentBatch(batch, template.Channels, template.Frames, template.Height, template.Width, data)
+    public static LatentBatch Shaped(LatentBatch template, int batch, float[]? data = null) =>
+        template.IsVideo ? new LatentBatch(batch, template.Channels, template.Frames, template.Height, template.Width, data)
+        : template.IsAudio ? Audio(batch, template.Channels, template.Width, data)
         : new LatentBatch(batch, template.Channels, template.Height, template.Width, data);
 
     /// <summary>A copy of these values with <paramref name="source"/>'s noise mask and batch indexes.</summary>
     public LatentBatch With(LatentBatch source) =>
-        IsVideo ? new LatentBatch(Batch, Channels, Frames, Height, Width, Data) { NoiseMask = source.NoiseMask, BatchIndex = source.BatchIndex }
-                : new LatentBatch(Batch, Channels, Height, Width, Data) { NoiseMask = source.NoiseMask, BatchIndex = source.BatchIndex };
+        new LatentBatch(Shape, Data) { NoiseMask = source.NoiseMask, BatchIndex = source.BatchIndex };
 
     /// <summary>
     /// Optional inpainting mask at latent size (batch, h, w): 1 = this area is regenerated, 0 = it is kept. Set by Set Latent Noise Mask. A video

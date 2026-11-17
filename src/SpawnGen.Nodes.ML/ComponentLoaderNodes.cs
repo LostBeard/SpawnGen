@@ -131,6 +131,8 @@ public sealed class UNETLoader
         var names = await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file);
         if (names.Contains(Flux2DiffusionModel.MarkerTensor))
             return new ModelHandle(await runtime.GetOrLoadAsync($"flux2:{repo}/{file}", () => Task.FromResult(new Flux2DiffusionModel(runtime, unetName, repo, file))));
+        if (AceStepDiffusionModel.Is(names))
+            return new ModelHandle(await runtime.GetOrLoadAsync($"acestep:{repo}/{file}", () => Task.FromResult(new AceStepDiffusionModel(runtime, unetName, repo, file))));
         if (QwenImageDiffusionModel.Is(names))
             return new ModelHandle(await runtime.GetOrLoadAsync($"qwenimage:{repo}/{file}", () => Task.FromResult(new QwenImageDiffusionModel(runtime, unetName, repo, file))));
         if (Flux1Checkpoint.IsTransformer(names))
@@ -239,11 +241,19 @@ public sealed class DualCLIPLoader
         [Input(OptionsProvider = nameof(Types))] string type, NodeContext context, IServiceProvider services,
         [Input(OptionsProvider = nameof(Devices), Optional = true)] string device = "default")
     {
-        if (type != "sdxl" && type != "flux")
-            throw new NotSupportedException($"Dual CLIP type '{type}' is not available: SpawnGen runs SDXL's two text encoders and FLUX.1's CLIP-L + T5-XXL; choose 'sdxl' or 'flux'.");
+        if (type != "sdxl" && type != "flux" && type != "ace")
+            throw new NotSupportedException($"Dual CLIP type '{type}' is not available: SpawnGen runs SDXL's two text encoders, FLUX.1's CLIP-L + T5-XXL and ACE-Step 1.5's Qwen3 pair; choose 'sdxl', 'flux' or 'ace'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var first = ModelFolders.Locate(ModelFolders.TextEncoders, clipName1);
         var second = ModelFolders.Locate(ModelFolders.TextEncoders, clipName2);
+        if (type == "ace")
+        {
+            // ACE-Step 1.5: the 0.6B caption / lyric encoder (1024 wide) and the 1.7B code LM (2048 wide), in either order.
+            var firstIsLm = await SafetensorsHeader.HasWidthAsync(runtime.ModelSource, first.Repo, first.File, 2048);
+            var (lm, caption) = firstIsLm ? (first, second) : (second, first);
+            return new ClipHandle(await runtime.GetOrLoadAsync($"acestep-text:{caption.Repo}/{caption.File}|{lm.Repo}/{lm.File}",
+                () => Task.FromResult(new AceStepTextModel(runtime, $"{clipName1} + {clipName2}", (caption.Repo, caption.File), (lm.Repo, lm.File)))));
+        }
         if (type == "flux")
         {
             // FLUX.1: CLIP-L and T5-XXL in either order (the T5 file is the one with T5's shared embedding table).
@@ -305,8 +315,12 @@ public sealed class VAELoader
             return new VaeHandle(tae);
         }
         var (vaeRepo, file) = ModelFolders.Locate(ModelFolders.Vae, vaeName);
+        var vaeNames = await SafetensorsHeader.NamesAsync(runtime.ModelSource, vaeRepo, file);
+        // ACE-Step 1.5's audio VAE (Oobleck: ace_1.5_vae).
+        if (AceStepVaeModel.Is(vaeNames))
+            return new VaeHandle(await runtime.GetOrLoadAsync($"acestep-vae:{vaeRepo}/{file}", () => Task.FromResult(new AceStepVaeModel(runtime, vaeName, vaeRepo, file))));
         // The Wan 2.1 VAE in ComfyUI's layout (qwen_image_vae, wan_2.1_vae): a video VAE, 16 channels.
-        if (WanComfyVaeModel.Is(await SafetensorsHeader.NamesAsync(runtime.ModelSource, vaeRepo, file)))
+        if (WanComfyVaeModel.Is(vaeNames))
             return new VaeHandle(await runtime.GetOrLoadAsync($"wan21-vae:{vaeRepo}/{file}", () => Task.FromResult(new WanComfyVaeModel(runtime, vaeName, vaeRepo, file))));
         var vae = await runtime.GetOrLoadAsync<IDisposable>($"vae:{vaeRepo}/{file}", async () =>
         {

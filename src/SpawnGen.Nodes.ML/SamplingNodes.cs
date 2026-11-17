@@ -8,6 +8,7 @@ namespace SpawnGen.Nodes.ML;
 // advanced sampler's slicing).
 
 [VideoLatents]
+[AudioLatents]
 [Node("KSampler", Category = "model/sampling", DisplayName = "KSampler",
     Description = "Uses the provided model, positive and negative conditioning to denoise the latent image.")]
 public sealed class KSampler
@@ -66,6 +67,7 @@ public sealed class KSampler
 }
 
 [VideoLatents]
+[AudioLatents]
 [Node("KSamplerAdvanced", Category = "model/sampling", DisplayName = "KSampler (Advanced)")]
 public sealed class KSamplerAdvanced
 {

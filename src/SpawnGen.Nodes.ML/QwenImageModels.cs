@@ -155,6 +155,7 @@ internal static class ModelResidency
         ZImageResidency.Release();
         Flux1Residency.Release();
         QwenImageResidency.Release();
+        AceStepResidency.Release();
     }
 }
 

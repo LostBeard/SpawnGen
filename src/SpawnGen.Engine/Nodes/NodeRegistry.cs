@@ -55,6 +55,9 @@ public sealed class RegisteredNode
     bool? _takesVideoLatents;
     /// <summary>Whether the node's class is marked <see cref="VideoLatentsAttribute"/>.</summary>
     bool TakesVideoLatents => _takesVideoLatents ??= Type.IsDefined(typeof(VideoLatentsAttribute), false);
+    bool? _takesAudioLatents;
+    /// <summary>Whether the node's class is marked <see cref="AudioLatentsAttribute"/>.</summary>
+    bool TakesAudioLatents => _takesAudioLatents ??= Type.IsDefined(typeof(AudioLatentsAttribute), false);
     internal Type[] OutputTypes { get; init; } = default!;
     internal bool ReturnsTuple { get; init; } = default!;
     internal int UiIndex { get; init; } = default!;
@@ -151,6 +154,8 @@ public sealed class RegisteredNode
                                 $"Input '{p.InputName}' expects {p.Info.ParameterType.Name} but got {raw.GetType().Name}.");
                         if (typed is LatentBatch { IsVideo: true } && p.Info.ParameterType == typeof(LatentBatch) && !TakesVideoLatents)
                             throw new NotSupportedException($"{Schema.DisplayName} does not take video latents (input '{p.InputName}') in SpawnGen yet.");
+                        if (typed is LatentBatch { IsAudio: true } && p.Info.ParameterType == typeof(LatentBatch) && !TakesAudioLatents)
+                            throw new NotSupportedException($"{Schema.DisplayName} does not take audio latents (input '{p.InputName}') in SpawnGen yet.");
                         args[i] = typed;
                     }
                     else

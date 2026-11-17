@@ -63,6 +63,7 @@ internal static class SamplingCore
         using var unet = diffusion.BeginRun(acc);
         unet.Frames = latent.Frames;
         unet.Parts = latent.Parts;
+        unet.Expected = [.. guider.Conditionings.SelectMany(c => c.Entries)];
         for (int b = 0; b < batch; b++)
         {
             var original = format.ProcessIn(latent.Data.AsSpan(b * per, per).ToArray());

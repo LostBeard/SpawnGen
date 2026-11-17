@@ -137,7 +137,8 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
         _model?.Dispose();
         _model = null;
         ModelResidency.ReleaseTransformers();
-        _model = await Ltx2AvModel.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, 1, F, H, W, Ta, Ltx2TextConnectors.Tokens, ResidentBytes, ct);
+        // batch 2: a step's two CFG halves go through each block together, so the weights stream once a step (see Ltx2Run)
+        _model = await Ltx2AvModel.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, 2, F, H, W, Ta, Ltx2TextConnectors.Tokens, ResidentBytes, ct);
         _size = (F, H, W, Ta);
         Ltx2Residency.Holding(this);
         return _model;
@@ -147,9 +148,18 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
 
     public void Dispose() { Ltx2Residency.Forget(this); Unload(); }
 
+    /// <summary>
+    /// One sampling run. The weights stream from disk each call, so a step's CFG halves share one: the guider asks for each conditioning at the
+    /// same input and sigma, and the first call of a step also evaluates another conditioning the guider may ask for (from the sampler's list, as
+    /// the batch's second item), keeping its half for the call that follows. A miss is computed.
+    /// </summary>
     sealed class Ltx2Run(Ltx2DiffusionModel model) : UNetRun
     {
-        readonly Dictionary<CondEntry, MemoryBuffer1D<float, Stride1D.Dense>> _contexts = new(ReferenceEqualityComparer.Instance);
+        readonly List<CondEntry> _known = [];
+        readonly Dictionary<CondEntry, float[]> _step = new(ReferenceEqualityComparer.Instance);
+        float[]? _stepInput;
+        float _stepSigma;
+        MemoryBuffer1D<float, Stride1D.Dense>? _context;
 
         public override async Task<float[]> PredictAsync(float[] input, int h, int w, float timestep, CondEntry entry, IReadOnlyList<ControlCall>? controls,
             UNetOptions options, float[]? concat, CancellationToken cancellationToken)
@@ -161,11 +171,27 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
                 throw new ArgumentException($"LTX-2 takes Load LTXV Audio Text Encoder's conditioning [1, 1024, 7680]; this one is [{string.Join(", ", entry.Shape)}].");
             if (entry.FrameRate is not { } fps)
                 throw new ArgumentException("LTX-2's conditioning needs a frame rate: put LTXVConditioning after the text encode, as ComfyUI's templates do.");
-            var ltx = await model.ModelAsync(video[2], video[3], video[4], audio[2], cancellationToken);
-            if (input.Length != ltx.PackedLength) throw new ArgumentException($"The packed latent has {input.Length} values; the model expects {ltx.PackedLength}.");
-            if (!_contexts.TryGetValue(entry, out var context))
-                _contexts[entry] = context = model.Accelerator.Allocate1D(entry.Embeddings);
-            var denoised = await ltx.DenoiseAsync(input, [timestep], context.View, (float)fps, cancellationToken);
+            if (_known.Count == 0) _known.AddRange(Expected.Where(e => e.Shape[^1] == Ltx2TextModel.Width && e.FrameRate is not null));
+            if (!_known.Contains(entry, ReferenceEqualityComparer.Instance)) _known.Add(entry);
+            bool sameStep = _stepInput is not null && _stepSigma == timestep && input.AsSpan().SequenceEqual(_stepInput);
+            if (!sameStep || !_step.TryGetValue(entry, out var denoised))
+            {
+                if (!sameStep) { _step.Clear(); _stepInput = (float[])input.Clone(); _stepSigma = timestep; }
+                var ltx = await model.ModelAsync(video[2], video[3], video[4], audio[2], cancellationToken);
+                if (input.Length != ltx.PackedLength) throw new ArgumentException($"The packed latent has {input.Length} values; the model expects {ltx.PackedLength}.");
+                var partner = _known.FirstOrDefault(e => !ReferenceEquals(e, entry) && !_step.ContainsKey(e) && e.FrameRate == entry.FrameRate) ?? entry;
+                int n = input.Length, ctx = entry.Embeddings.Length;
+                _context ??= model.Accelerator.Allocate1D<float>(2L * ctx);
+                _context.View.SubView(0, ctx).CopyFromCPU(entry.Embeddings);
+                _context.View.SubView(ctx, ctx).CopyFromCPU(partner.Embeddings);
+                var packed = new float[2 * n];
+                input.CopyTo(packed, 0);
+                input.CopyTo(packed, n);
+                var both = await ltx.DenoiseAsync(packed, [timestep, timestep], _context.View, (float)fps, cancellationToken);
+                denoised = both[..n];
+                _step[entry] = denoised;
+                if (!ReferenceEquals(partner, entry)) _step[partner] = both[n..(2 * n)];
+            }
             var v = new float[input.Length];
             for (int i = 0; i < v.Length; i++) v[i] = (input[i] - denoised[i]) / timestep;
             return v;
@@ -173,8 +199,9 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
 
         public override void Dispose()
         {
-            foreach (var c in _contexts.Values) c.Dispose();
-            _contexts.Clear();
+            _context?.Dispose();
+            _context = null;
+            _step.Clear();
         }
     }
 

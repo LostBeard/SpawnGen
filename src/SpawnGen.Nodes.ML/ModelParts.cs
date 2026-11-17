@@ -22,6 +22,9 @@ public abstract class UNetRun : IDisposable
     /// <summary>An audio + video latent's parts' shapes (LTX-2: the packed input's layout), set by the sampler before the first call; null otherwise.</summary>
     public IReadOnlyList<int[]>? Parts { get; set; }
 
+    /// <summary>Every conditioning entry the guider may evaluate (set by the sampler before the first call): lets a model batch a step's calls.</summary>
+    public IReadOnlyList<CondEntry> Expected { get; set; } = [];
+
     /// <summary>Image to video: the first latent frame is the start picture, kept (a video model runs its tokens at timestep 0). Set per batch item.</summary>
     public bool FirstFrameClean { get; set; }
 

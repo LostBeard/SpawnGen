@@ -1,0 +1,12 @@
+{
+ "source": "comfyui_workflow_templates (MIT): audio_ace_step_1_5_split, TextEncodeAceStepAudio1.5",
+ "tags": "K-Pop: A slick, maximalist K-pop track that genre-hops with precision and style. The production shifts seamlessly between sections—a hard-hitting trap-influenced verse with rapid-fire rapping, a softer R&B pre-chorus with breathy vocals and lush harmonies, then an explosive, synth-driven pop chorus with an ear worm hook.",
+ "lyrics": "[Intro - Synth Rise & Vocal Chop]\nyeah—\nuh\nturn it up\n\n[Verse 1 - Trap Rap]\nClick-clack, camera flash, we don’t miss  \nRun the board, every move calculated  \nBig bass hit when I step in the frame  \nToo fast, they can’t even say my name  \n\nRadar locked, yeah I’m on that lane  \nDrip so sharp, cut through champagne  \nTalk cheap, but my sound heavyweight  \nCountdown tickin’, watch me detonate  \n\n[Verse 2 - Trap Rap]\n808 talk, let it shake the floor  \nAll eyes on me when I hit that door  \nToo bold, too cold, no rehearsal  \nBuilt this crown from universal  \n\nChain reaction when I breathe that fire  \nOne line, whole room go higher  \nNo pause, no fear, full ignition  \nThis that global transmission  \n\n[Pre-Chorus - R&B]\nPull me closer, slow it down  \nHeartbeat under the sound  \nWhen you whisper my name like that  \nI forget where the edges are  \n\nLights go low, voices melt  \nEvery note just how I felt  \nHold your breath, let it bloom  \nSomething ’bout to break real soon  \n\n[Chorus - Pop Explosion]\nBoom, boom, feel it in your chest  \nWhen the beat drop, we the best  \nHands up high, don’t overthink  \nSay my name, make the whole world blink  \n\nFlash, flash, colors collide  \nWe don’t wait, we ignite  \nRound and round, stuck in your brain  \nThis that hook you won’t escape  \n\n[Post-Chorus - Chant]\nHey!  \nTurn it l\n",
+ "bpm": 190,
+ "timesignature": "4",
+ "language": "en",
+ "keyscale": "E minor",
+ "cfg_scale": 2,
+ "temperature": 0.85,
+ "top_p": 0.9
+}

@@ -157,9 +157,16 @@ internal sealed class AceStepDiffusionModel(MlRuntime runtime, string name, stri
 
     public UNetRun BeginRun(Accelerator accelerator) => new AceStepRun(this, accelerator);
 
-    /// <summary>ACE-Step's MIT silence latent, read once.</summary>
+    /// <summary>
+    /// Tests only: another silence latent, channel-major [64, frames] (ComfyUI's own table, from its run dumps, to check the rest of the chain
+    /// tightly; it is ComfyUI's data and is never shipped).
+    /// </summary>
+    internal (float[] Values, int Frames)? SilenceOverride { get; set; }
+
+    /// <summary>ACE-Step's MIT silence latent, read once (or the tests' override).</summary>
     public async Task<(float[] Values, int Frames)> SilenceAsync(CancellationToken ct)
     {
+        if (SilenceOverride is { } o) return o;
         if (_silence is { } s) return s;
         using var pt = new MemoryStream(await runtime.ModelSource.FetchBytesAsync(AceStepFiles.Repo, AceStepFiles.SilenceLatent, ct));
         var read = AceStepSilenceLatent.ReadPt(pt);
@@ -234,6 +241,8 @@ internal sealed class AceStepDiffusionModel(MlRuntime runtime, string name, stri
             AceStepCodeDecoder codeDecoder, int frames, int captionRows, int lyricRows, int tokens, CancellationToken ct)
         {
             var (values, total) = await model.SilenceAsync(ct);
+            if (frames > total)
+                throw new NotSupportedException($"{frames} latent frames ({frames / 25.0:0.##} s): ACE-Step's silence latent holds {total} ({total / 25.0:0.##} s); longer audio is not available yet.");
             var silence = AceStepSilenceLatent.TimeMajor(values, total, frames);       // [T, 64]
             using var caption = acc.Allocate1D(entry.Embeddings);
             using var lyrics = acc.Allocate1D(entry.Lyrics!.Data);

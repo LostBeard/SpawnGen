@@ -90,6 +90,22 @@ internal static class SafetensorsHeader
         return [.. doc.RootElement.EnumerateObject().Select(t => t.Name).Where(n => n != "__metadata__")];
     }
 
+    /// <summary>Tensor <paramref name="name"/>'s shape, or null when the file has no such tensor.</summary>
+    public static async Task<long[]?> ShapeAsync(IModelSource source, string repo, string file, string name)
+    {
+        await using var stream = await source.OpenAsync(repo, file);
+        var lengthBytes = new byte[8];
+        await stream.ReadExactlyAsync(lengthBytes);
+        long length = BinaryPrimitives.ReadInt64LittleEndian(lengthBytes);
+        if (length <= 0 || length > 100_000_000) throw new InvalidDataException($"{file} is not a safetensors file.");
+        var header = new byte[length];
+        await stream.ReadExactlyAsync(header);
+        using var doc = JsonDocument.Parse(header);
+        return doc.RootElement.TryGetProperty(name, out var tensor) && tensor.ValueKind == JsonValueKind.Object && tensor.TryGetProperty("shape", out var shape)
+            ? [.. shape.EnumerateArray().Select(d => d.GetInt64())]
+            : null;
+    }
+
     /// <summary>Whether any tensor of the file has <paramref name="width"/> as its last dimension.</summary>
     public static async Task<bool> HasWidthAsync(IModelSource source, string repo, string file, int width)
     {
@@ -248,8 +264,9 @@ public sealed class DualCLIPLoader
         var second = ModelFolders.Locate(ModelFolders.TextEncoders, clipName2);
         if (type == "ace")
         {
-            // ACE-Step 1.5: the 0.6B caption / lyric encoder (1024 wide) and the 1.7B code LM (2048 wide), in either order.
-            var firstIsLm = await SafetensorsHeader.HasWidthAsync(runtime.ModelSource, first.Repo, first.File, 2048);
+            // ACE-Step 1.5: the 0.6B caption / lyric encoder (embeddings 1024 wide) and the 1.7B code LM (2048 wide), in either order. The
+            // embedding table decides: the 0.6B has 2048-wide tensors too (its attention projections).
+            var firstIsLm = await SafetensorsHeader.ShapeAsync(runtime.ModelSource, first.Repo, first.File, "model.embed_tokens.weight") is [_, 2048];
             var (lm, caption) = firstIsLm ? (first, second) : (second, first);
             return new ClipHandle(await runtime.GetOrLoadAsync($"acestep-text:{caption.Repo}/{caption.File}|{lm.Repo}/{lm.File}",
                 () => Task.FromResult(new AceStepTextModel(runtime, $"{clipName1} + {clipName2}", (caption.Repo, caption.File), (lm.Repo, lm.File)))));

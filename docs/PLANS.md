@@ -135,7 +135,7 @@ ComfyUI's LATENT, conditioning and sigmas and sends the dumps before the library
 | Qwen-Image | 43 | t2i, Edit 2509 and Edit 2511 (1-3 pictures) on main (ML 5.8.19), = ComfyUI |
 | Wan 2.1 / 2.2 14B | 24 | requested; Tuvok's 3rd, with CLIP vision |
 | CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | ViT-H dumps sent 2026-11-15; with Wan 14B |
-| LTX-2 / 2.3 / 2.5 (19-22B audio + video) | 18 | requested; Tuvok's 4th |
+| LTX-2 / 2.3 / 2.5 (19-22B audio + video) | 18 | requested; Tuvok's 4th. 2026-11-17: LTX-2 19B fp8 runs as a ComfyUI reference on NV1080 (encode 39 GB, transformer 49 GB private: the mapped checkpoint pages; ~3 min a call at 64x64x9); Gemma 3 12B fp4_mixed nvfp4 decode measured bit-exact; first call dumps sent (_DevComms 2026-11-17-1700). LTX-2.5 is gated on Hugging Face |
 | FLUX.1 (dev, schnell, Kontext, Fill) | 13 | requested; Tuvok's 1st (ae.safetensors first): dumps in Now 3 |
 | ACE-Step | 9 | 1.5 (7 templates; MIT) ComfyUI dumps sent 2026-11-17 (_DevComms 2026-11-17-0010 / 1100); Tuvok: codes off / on, VAE, LM teacher-forced = ComfyUI. **Licence-driven gap:** ComfyUI's silence latent is ComfyUI's own (GPL) table, never shipped; the MIT silence_latent.pt puts a whole run 1.6e-2 (latent) / 3.4e-2 (audio) from ComfyUI's (1.8e-4 with ComfyUI's table as a test fixture). VAEEncodeAudio samples the posterior: measure its noise before claiming parity. Package after the LM sampling loop. v1 (3, Apache-2.0) after |
 | HunyuanVideo | 9 | requested |

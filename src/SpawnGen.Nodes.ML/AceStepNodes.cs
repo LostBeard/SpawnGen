@@ -23,7 +23,8 @@ public sealed class EmptyAceStep15LatentAudio
 
     public LatentBatch Execute([Input(Min = 1.0, Max = 1000.0, Step = 0.01)] double seconds = 120.0,
         [Input(Min = 1, Max = 4096, Tooltip = "The number of latent images in the batch.")] int batchSize = 1) =>
-        LatentBatch.Audio(batchSize, 64, Frames(seconds));
+        // ComfyUI's keys, measured: type "audio", downscale_ratio_temporal 1764
+        new([batchSize, 64, Frames(seconds)]) { Type = "audio", DownscaleRatioTemporal = 1764 };
 }
 
 /// <summary>

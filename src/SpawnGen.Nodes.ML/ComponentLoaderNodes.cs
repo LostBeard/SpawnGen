@@ -106,6 +106,22 @@ internal static class SafetensorsHeader
             : null;
     }
 
+    /// <summary>The file's <c>__metadata__</c> strings, or null when it has none.</summary>
+    public static async Task<Dictionary<string, string>?> MetadataAsync(IModelSource source, string repo, string file)
+    {
+        await using var stream = await source.OpenAsync(repo, file);
+        var lengthBytes = new byte[8];
+        await stream.ReadExactlyAsync(lengthBytes);
+        long length = BinaryPrimitives.ReadInt64LittleEndian(lengthBytes);
+        if (length <= 0 || length > 100_000_000) throw new InvalidDataException($"{file} is not a safetensors file.");
+        var header = new byte[length];
+        await stream.ReadExactlyAsync(header);
+        using var doc = JsonDocument.Parse(header);
+        return doc.RootElement.TryGetProperty("__metadata__", out var meta) && meta.ValueKind == JsonValueKind.Object
+            ? meta.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.String).ToDictionary(p => p.Name, p => p.Value.GetString()!)
+            : null;
+    }
+
     /// <summary>Whether any tensor of the file has <paramref name="width"/> as its last dimension.</summary>
     public static async Task<bool> HasWidthAsync(IModelSource source, string repo, string file, int width)
     {

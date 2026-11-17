@@ -9,6 +9,7 @@ namespace SpawnGen.Nodes.ML;
 
 [VideoLatents]
 [AudioLatents]
+[NestedLatents]
 [Node("KSampler", Category = "model/sampling", DisplayName = "KSampler",
     Description = "Uses the provided model, positive and negative conditioning to denoise the latent image.")]
 public sealed class KSampler
@@ -68,6 +69,7 @@ public sealed class KSampler
 
 [VideoLatents]
 [AudioLatents]
+[NestedLatents]
 [Node("KSamplerAdvanced", Category = "model/sampling", DisplayName = "KSampler (Advanced)")]
 public sealed class KSamplerAdvanced
 {

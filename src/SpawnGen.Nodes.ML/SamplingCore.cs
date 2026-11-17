@@ -28,6 +28,10 @@ internal static class SamplingCore
     internal static float[] InitialNoise(long seed, int index, LatentBatch latent)
     {
         int per = latent.ItemSize;
+        // LTX-2's audio + video latent: one draw over the packed values, video part then audio part (measured with ComfyUI at batch 1: the
+        // model's input at sigma 1 is exactly this). A batch may draw each part across the whole batch instead: not measured, so refused.
+        if (latent.IsNested && latent.Batch > 1)
+            throw new NotSupportedException($"An audio + video latent with a batch of {latent.Batch}: how ComfyUI draws its noise is not measured yet; use batch 1.");
         if (latent.BatchIndex is null) return TorchRandom.Randn(seed, per * latent.Batch).AsSpan(index * per, per).ToArray();
         int want = NoiseIndex(latent, index);
         var g = new TorchRandom(seed);

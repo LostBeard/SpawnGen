@@ -188,4 +188,43 @@ public class Ltx2ModelTests
             Assert.That(Math.Max(v, a), Is.LessThan(bound), string.Join("; ", report));
         }
     }
+
+    /// <summary>
+    /// LTXVImgToVideoInplace against ComfyUI: the 192 x 256 picture into a 17-frame latent at its own size (strength 1 and 0.5), into 9-frame
+    /// latents of other sizes (320 x 320: center crop; 96 x 128: plain resize), and bypassed. Latent frame 0 and the per-frame noise mask compared.
+    /// </summary>
+    [Test, Explicit(Needs)]
+    public async Task LTXVImgToVideoInplace_matches_ComfyUI()
+    {
+        var (runtime, services) = Runtime();
+        using var _r = runtime;
+        var (_, _, vae) = await new CheckpointLoaderSimple().ExecuteAsync(Checkpoint, Context(services, "CheckpointLoaderSimple"), services);
+        var picture = new ImageBatch(1, 192, 256, 3, Raw("ltx2_venc_input_f32_1x192x256x3.raw"));
+        var report = new List<string>();
+        foreach (var (w, h, n, strength, file) in new[]
+        {
+            (256, 192, 17, 1.0, "inplace_s10_on_samples_f32_1x128x3x6x8.raw"), (256, 192, 17, 0.5, "inplace_s05_on_samples_f32_1x128x3x6x8.raw"),
+            (320, 320, 9, 1.0, "inplace_resize_320x320_samples_f32_1x128x2x10x10.raw"), (128, 96, 9, 1.0, "inplace_resize_128x96_samples_f32_1x128x2x3x4.raw"),
+        })
+        {
+            var empty = new EmptyLTXVLatentVideo().Execute(w, h, n, 1);
+            var latent = await new LTXVImgToVideoInplace().ExecuteAsync(vae, picture, empty, strength, false);
+            double err = RelRms(latent.Data, Raw(file));
+            report.Add($"{w}x{h} strength {strength}: {err:E2}");
+            Assert.That(err, Is.LessThan(1e-4), string.Join("; ", report));
+            Assert.That(latent.NoiseMask!.Data, Is.EqualTo(new[] { (float)(1 - strength) }.Concat(Enumerable.Repeat(1f, latent.Frames - 1))));
+            Assert.That((latent.Type, latent.DownscaleRatioSpacial), Is.EqualTo(((string?)null, (int?)null)), "measured: only samples and noise_mask");
+        }
+        var bypassed = new EmptyLTXVLatentVideo().Execute(256, 192, 17, 1);
+        Assert.That(await new LTXVImgToVideoInplace().ExecuteAsync(vae, picture, bypassed, 1.0, true), Is.SameAs(bypassed));
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: " + string.Join("; ", report) + " (relative RMS vs ComfyUI)");
+    }
+
+    [Test]
+    public void LTXVPreprocess_passes_compression_0_and_refuses_the_codec()
+    {
+        var picture = new ImageBatch(1, 2, 2, 3, [.. Enumerable.Range(0, 12).Select(i => i / 12f)]);
+        Assert.That(new LTXVPreprocess().Execute(picture, 0), Is.SameAs(picture));
+        Assert.Throws<NotSupportedException>(() => new LTXVPreprocess().Execute(picture, 33));
+    }
 }

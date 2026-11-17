@@ -324,3 +324,50 @@ public sealed class LTXVLatentUpsampler
         };
     }
 }
+
+/// <summary>
+/// LTXVImgToVideoInplace: the picture as the video latent's first frame (image to video). Measured with ComfyUI (2026-11-18): the picture is
+/// center-cropped and resized bilinearly to the latent's pixel size (equal to Upscale Image bilinear, crop center, then VAE Encode: 0.0), encoded
+/// into latent frame 0 (the other frames unchanged), and a noise mask per latent frame [1 - strength, 1, 1, ...] keeps it; the LATENT then holds
+/// only samples and noise_mask. bypass returns the latent unchanged.
+/// </summary>
+[VideoLatents]
+[Node("LTXVImgToVideoInplace", Category = "model/conditioning/ltxv", DisplayName = "LTXVImgToVideoInplace", OutputNames = ["latent"])]
+public sealed class LTXVImgToVideoInplace
+{
+    public async Task<LatentBatch> ExecuteAsync(VaeHandle vae, ImageBatch image, LatentBatch latent, [Input(Min = 0.0, Max = 1.0)] double strength = 1.0,
+        [Input(Tooltip = "Bypass the conditioning.")] bool bypass = false)
+    {
+        if (bypass) return latent;
+        if (vae.Vae is not Ltx2VideoVaeModel ltxVae)
+            throw new NotSupportedException($"LTXVImgToVideoInplace takes LTX-2's VAE (Load Checkpoint of an LTX-2 checkpoint); {vae.Vae.Name} is not.");
+        if (!latent.IsVideo) throw new ArgumentException($"LTXVImgToVideoInplace takes a video latent; this one is [{string.Join(", ", latent.Shape)}].");
+        if (image.Batch != 1) throw new NotSupportedException($"{image.Batch} pictures: SpawnGen's LTXVImgToVideoInplace takes one (more is not measured yet).");
+        if (latent.NoiseMask is not null || latent.BatchIndex is not null)
+            throw new NotSupportedException("LTXVImgToVideoInplace on a latent with a noise mask or batch indexes is not measured yet in SpawnGen.");
+        int h = latent.Height, w = latent.Width, frames = latent.Frames;
+        var picture = new SpawnGen.Nodes.Core.ImageScale().Execute(image, "bilinear", w * 32, h * 32, "center");
+        var encoded = await ltxVae.EncodeVideoAsync(picture);
+        var data = (float[])latent.Data.Clone();
+        int plane = h * w, per = latent.ItemSize;
+        for (int b = 0; b < latent.Batch; b++)
+            for (int c = 0; c < latent.Channels; c++)
+                Array.Copy(encoded.Data, c * plane, data, b * per + c * frames * plane, plane);
+        var mask = MaskBatch.Filled(latent.Batch, frames, 1, 1f);
+        for (int b = 0; b < latent.Batch; b++) mask.Data[b * frames] = (float)(1 - strength);
+        return new LatentBatch(latent.Shape, data) { NoiseMask = mask };
+    }
+}
+
+/// <summary>
+/// LTXV Preprocess: the start picture made to look like a frame of compressed video. Measured with ComfyUI: img_compression 0 returns the picture
+/// unchanged; above 0 the result is deterministic, on the 1/255 grid and lossy (33: 3.3% relative), from a video codec's round trip (H.264-like:
+/// plain libx264 at that CRF comes within 0.09 but not exactly). SpawnGen has no H.264 encoder yet, so it refuses a compression above 0.
+/// </summary>
+[Node("LTXVPreprocess", Category = "video/preprocessors", DisplayName = "LTXV Preprocess", OutputNames = ["output_image"])]
+public sealed class LTXVPreprocess
+{
+    public ImageBatch Execute(ImageBatch image, [Input(Min = 0, Max = 100, Tooltip = "Amount of compression to apply on image.")] int imgCompression = 35) =>
+        imgCompression == 0 ? image
+        : throw new NotSupportedException($"img_compression {imgCompression}: LTXV Preprocess compresses the picture through a video codec (H.264), which SpawnGen does not have yet; use 0.");
+}

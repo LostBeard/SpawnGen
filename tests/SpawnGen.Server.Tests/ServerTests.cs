@@ -387,7 +387,7 @@ public class ServerTests
                 Is.EqualTo(("2", "2", id, "image/png")));
             Assert.That(frame[(8 + length)..], Is.EqualTo(PreviewNode.Png));
             // The Studio reads it back as its preview event for node 2.
-            var preview = SpawnGen.Studio.Run.ServerClient.PreviewEvent(frame)!;
+            var preview = SpawnGen.Editor.PreviewFrames.ToEvent(frame)!;
             Assert.That(((string?)preview["type"], (string?)preview["data"]!["node"], (string?)preview["data"]!["image"]),
                 Is.EqualTo(("preview", "2", "data:image/png;base64," + Convert.ToBase64String(PreviewNode.Png))));
         }

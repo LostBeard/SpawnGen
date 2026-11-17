@@ -8,7 +8,7 @@ namespace SpawnGen.Nodes.Tests;
 /// <summary>The Autogrow utility nodes run from prompts that name their inputs as ComfyUI does (values.a, values.value0).</summary>
 public class FormulaNodeTests
 {
-    static async Task<object?[]> Run(string classType, params (string, object)[] inputs)
+    static async Task<object?[]> Run(string classType, params (string, object?)[] inputs)
     {
         var g = new PromptGraph();
         g.Add("1", classType, inputs);

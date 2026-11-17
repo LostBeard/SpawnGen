@@ -165,7 +165,7 @@ public static partial class Samplers
 
         public void Step(int i) => onStep?.Invoke(i + 1);
 
-        public void Check() => ct.ThrowIfCancellationRequested();
+        public void Check() => Token.ThrowIfCancellationRequested();
 
         public double Eta(double fallback = 1.0) => Options.Eta ?? fallback;
         public double SNoise => Options.SNoise ?? 1.0;

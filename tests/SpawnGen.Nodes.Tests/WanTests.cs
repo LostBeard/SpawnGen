@@ -24,7 +24,7 @@ public class WanTests
         report.AppendLine($"device: {runtime.Accelerator.Name} ({runtime.Accelerator.AcceleratorType}); {(DateTime.Now - started).TotalSeconds:F1} s");
         report.AppendLine("request: 640x352, 9 frames, 50 steps, cfg 5, shift 5, seed 42, UniPC, default negative (null), DiT q8, umT5 q8, VAE f16, ML 5.8.16-local.2");
 
-        var latent = video.Latent;
+        var latent = video.Latent ?? throw new AssertionException("the video carries no latent");
         int channels = 48, per = latent.Length / channels;
         report.AppendLine($"latent: count {latent.Length} (48 x {per}), mean {Mean(latent, 0, latent.Length):G6}, std {Std(latent, 0, latent.Length):G6}, min {latent.Min():G6}, max {latent.Max():G6}");
         for (int c = 0; c < channels; c++)

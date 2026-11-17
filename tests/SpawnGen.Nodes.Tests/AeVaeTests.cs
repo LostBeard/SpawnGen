@@ -99,18 +99,14 @@ public class AeVaeTests
             File.WriteAllBytes(Path.Combine(TestContext.CurrentContext.WorkDirectory, $"ae_ours_{tag}_{string.Join("x", l.Shape)}.raw"), bytes);
         }
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: encode A {encA:E2}, B {encB:E2}, C (cut) {encC:E2}, decode A {decodeA:E2}, decode synthetic {decodeS:E2} (relative RMS vs ComfyUI)");
-        // Measured on the RX 590 (OpenCL, ML 5.8.17): encode A 4.85e-3, B 5.44e-4, C 2.86e-3, decode A 7.7e-5, synthetic 1.07e-4; ILGPU's CPU
-        // accelerator gives the same (A 4.88e-3), so it is not the device's arithmetic. A's and C's difference sits at a few single latent cells
-        // (A: (20, 19), (12, 9), (0, 16); up to 0.6 where the latent reaches 7 to 9), not spread over the picture, and the decoder hardly sees it:
-        // ComfyUI's decode of our latent is 72.7 dB from its decode of its own (both 44.6 dB from A). Sent to SpawnDev.ILGPU.ML with ComfyUI's
-        // encoder stage outputs (_DevComms 2026-11-14-0700). Cause (Tuvok, proven on the host): SdVae stores the weights as fp16, and ae's encoder
-        // amplifies that rounding at these cells (down_3 into mid.block_1); the whole encoder in fp32 gives ComfyUI's mean to 1.5e-4. The next ML
-        // release keeps fp32 files' weights at full precision: then tighten A and C back to 2e-3.
-        Assert.That(encA, Is.LessThan(6e-3));
-        Assert.That(encB, Is.LessThan(2e-3));
-        Assert.That(encC, Is.LessThan(4e-3));
-        Assert.That(decodeA, Is.LessThan(1e-3));
-        Assert.That(decodeS, Is.LessThan(1e-3));
+        // Measured on the RX 590 (OpenCL, ML 5.8.18-local.3 on SpawnDev.ILGPU 5.4.32): encode A 3.0e-4, B 1.75e-5, C 4.5e-5, decode A 9.6e-7, synthetic
+        // 1.4e-5. With 5.8.17 encode A was 4.85e-3 at a few single latent cells: the library kept the weights as fp16 (proven by Tuvok on the host);
+        // it now keeps fp32 weights as fp16 hi + lo with a second conv pass.
+        Assert.That(encA, Is.LessThan(1e-3));
+        Assert.That(encB, Is.LessThan(2e-4));
+        Assert.That(encC, Is.LessThan(5e-4));
+        Assert.That(decodeA, Is.LessThan(1e-4));
+        Assert.That(decodeS, Is.LessThan(1e-4));
     }
 
     /// <summary>The library's ae encoder, stage by stage, on picture A (SdVae.Tap): ae_tap_&lt;stage&gt;_&lt;h&gt;x&lt;w&gt;x&lt;c&gt;.raw, channel-last.</summary>

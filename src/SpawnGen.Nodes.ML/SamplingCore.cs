@@ -95,9 +95,11 @@ internal static class SamplingCore
     /// </summary>
     internal static LatentBatch ToModelChannels(LatentBatch latent, LatentFormat format)
     {
-        if (latent.Channels == format.Channels || !Array.TrueForAll(latent.Data, v => v == 0f)) return latent;
-        var zeros = latent.IsVideo
-            ? new LatentBatch(latent.Batch, format.Channels, latent.Frames, latent.Height, latent.Width)
+        bool reshape = format.VideoShaped && !latent.IsVideo;
+        if ((latent.Channels == format.Channels && !reshape) || !Array.TrueForAll(latent.Data, v => v == 0f)) return latent;
+        // A video-shaped model's LATENT has a frame axis even for a picture (Qwen-Image, measured): the empty picture latent becomes one frame.
+        var zeros = latent.IsVideo || reshape
+            ? new LatentBatch(latent.Batch, format.Channels, latent.IsVideo ? latent.Frames : 1, latent.Height, latent.Width)
             : new LatentBatch(latent.Batch, format.Channels, latent.Height, latent.Width);
         return zeros.With(latent);
     }

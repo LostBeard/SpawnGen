@@ -86,7 +86,7 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
             if (!result.EndOfMessage) continue;
             if (result.MessageType == WebSocketMessageType.Binary)
             {
-                if (PreviewEvent(message.GetBuffer().AsSpan(0, (int)message.Length)) is { } preview) EventReceived?.Invoke(preview);
+                if (SpawnGen.Editor.PreviewFrames.ToEvent(message.GetBuffer().AsSpan(0, (int)message.Length)) is { } preview) EventReceived?.Invoke(preview);
                 message.SetLength(0);
                 continue;
             }
@@ -94,25 +94,6 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
             message.SetLength(0);
             if (JsonNode.Parse(text) is JsonObject json) EventReceived?.Invoke(json);
         }
-    }
-
-    /// <summary>ComfyUI's PREVIEW_IMAGE_WITH_METADATA frame (event 4: header length, JSON header with the node, the image) as the Studio's preview event.</summary>
-    public static JsonObject? PreviewEvent(ReadOnlySpan<byte> frame)
-    {
-        if (frame.Length < 8 || System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(frame) != 4) return null;
-        int length = (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(frame[4..]);
-        if (length < 0 || 8 + length > frame.Length) return null;
-        if (JsonNode.Parse(Encoding.UTF8.GetString(frame.Slice(8, length))) is not JsonObject meta) return null;
-        var image = frame[(8 + length)..];
-        return new JsonObject
-        {
-            ["type"] = "preview",
-            ["data"] = new JsonObject
-            {
-                ["prompt_id"] = (string?)meta["prompt_id"], ["node"] = (string?)meta["display_node_id"] ?? (string?)meta["node_id"],
-                ["image"] = $"data:{(string?)meta["image_type"] ?? "image/png"};base64,{Convert.ToBase64String(image)}",
-            },
-        };
     }
 
     public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null)

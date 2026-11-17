@@ -181,7 +181,7 @@ public static class CompositorBlend
         if (canvasStride == 0) canvasStride = width;
         if (layerStride == 0) layerStride = width;
         float op = (float)opacity;
-        Span<float> cb = stackalloc float[3], cs = stackalloc float[3], bl = stackalloc float[3];
+        Span<float> cb = stackalloc float[3], cs = stackalloc float[3], bl = stackalloc float[3], eb = stackalloc float[3], es = stackalloc float[3];
         for (int y = 0; y < height; y++)
             for (int x = 0; x < width; x++)
             {
@@ -203,7 +203,6 @@ public static class CompositorBlend
                 if (linear) BlendPixel(mode, cb, cs, bl);
                 else
                 {
-                    Span<float> eb = stackalloc float[3], es = stackalloc float[3];
                     for (int c = 0; c < 3; c++) { eb[c] = LinearToSrgb(cb[c]); es[c] = LinearToSrgb(cs[c]); }
                     BlendPixel(mode, eb, es, bl);
                     for (int c = 0; c < 3; c++) bl[c] = SrgbToLinear(bl[c]);

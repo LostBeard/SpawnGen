@@ -73,8 +73,10 @@ internal sealed class Flux2VaeModel(string name, SdVae vae, Flux2VaeNorm norm, A
 /// 19) and no pooled output; the padding rows are not zero. The weights (6.2 GB of the file's 8 GB) are loaded for each encode and freed after it,
 /// so the transformer has the device afterwards.
 /// </summary>
-internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, string repo, string file) : ITextEncoderModel, IPromptTextEncoder, IDisposable
+internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, string repo, string file) : ITextEncoderModel, IPromptTextEncoder, IQwen3File, IDisposable
 {
+    public (string Repo, string File) Qwen3File => (repo, file);
+
     /// <summary>Where the Qwen tokenizer comes from (ComfyUI's file carries none): the library's hosted FLUX.2 klein export.</summary>
     public const string TokenizerRepo = "LostBeard/FLUX.2-klein-4B-q4-ILGPU";
     public const int Length = 512;
@@ -98,7 +100,7 @@ internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, stri
     {
         var (ids, real) = await TokenizeAsync(text, cancellationToken);
         var acc = runtime.Accelerator;
-        Flux2Residency.Release(); // the encoder's 6.2 GB and a loaded transformer do not fit an 8 GB card together
+        ModelResidency.ReleaseTransformers(); // the encoder's 6.2 GB and a loaded transformer do not fit an 8 GB card together
         using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, cancellationToken);
         using var encoder = new Flux2TextEncoder(acc, weights);
         var rows = encoder.Encode(ids, real);
@@ -173,6 +175,7 @@ internal sealed class Flux2DiffusionModel(MlRuntime runtime, string name, string
     public async Task<Flux2Weights> WeightsAsync(CancellationToken ct)
     {
         if (_weights is not null) return _weights;
+        ModelResidency.ReleaseTransformers(); // one big transformer on the device at a time
         _weights = await Flux2Weights.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file, ct);
         Flux2Residency.Holding(this);
         return _weights;

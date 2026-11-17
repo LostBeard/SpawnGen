@@ -174,7 +174,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     /// <summary>Results live in memory here, so the picture itself is the URL (a data URL).</summary>
     public string ViewUrl(string filename, string? subfolder, string? type) =>
-        (type == "input" ? _inputs.ReadAsync(filename).GetAwaiter().GetResult() : _results.Get(type ?? "output", filename, subfolder)) is { } bytes
+        (type == "input" ? _inputs.ReadAsync(filename).GetAwaiter().GetResult() : _results.Get(type ?? "output", filename, subfolder ?? "")) is { } bytes
             ? $"data:{MediaType(filename)};base64," + Convert.ToBase64String(bytes)
             : "";
 

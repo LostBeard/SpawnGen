@@ -7,6 +7,46 @@ work that changes it. What is already done and how well it matches ComfyUI is in
 browser, with no Python. SpawnGen also works out the SpawnDev libraries on a real project: what SpawnGen needs from SpawnDev.ILGPU.ML
 (Tuvok) or SpawnDev.Codecs (Geordi) is asked of them, ranked by what it unlocks, never worked around and never treated as a stop.
 
+## Resume here (state at 2026-11-14 end of day)
+
+- **2026-11-16: ml-local-flux1 merged into main** on SpawnDev.ILGPU.ML 5.8.18 + SpawnDev.ILGPU 5.4.34 (nuget.org): Z-Image, FLUX.1
+  (checkpoint and split, Krea), Generate Text, Qwen-Image, Qwen-Image Edit 2509 (Text Encode Qwen Image Edit Plus) all on main; GPU checks on
+  the release unchanged (RX 590). **Qwen-Image Edit 2511 runs on main** (ml-local-2511 merged 2026-11-16 on
+  SpawnDev.ILGPU.ML 5.8.19, nuget.org): calls <= 9.7e-4 (the ~1e-3 is float32 in ComfyUI's own run), graph 52.4 dB;
+  codecs-unreleased merges when SpawnDev.Codecs is released. The lines below are the state before the merge.
+- main = this commit: the box canvas, the crop editor, the templates browser, AeVae / InstructPixToPix, PLANS. All suites pass.
+  2026-11-15: main on SpawnDev.ILGPU 5.4.33 (nuget.org) with ML 5.8.17; suites pass (3173 / 3 skipped).
+  2026-11-15: ml-local-flux1 = 131d35d on ML 5.8.18-local.5 + ILGPU 5.4.33: Krea = ComfyUI (calls 2.35e-6 / 2.39e-5, 65.7 dB; bounds
+  tightened), Generate Text passes min_p / presence_penalty. Waiting on Tuvok: the library refuses min_p 1.0 (ComfyUI allows it), so
+  Sampling_takes_min_p_and_presence_penalty fails until then. codecs-unreleased = 796db3e on ILGPU 5.4.33.
+  main builds with 0 warnings (2026-11-15): the Studio assembly is browser-only (SupportedOSPlatform), the preview-frame parser moved to
+  SpawnGen.Editor.PreviewFrames, CA2014 / CS9124 / CS8602 / CS8604 / CS8620 fixed. Keep it at 0.
+  2026-11-15: ml-local-flux1 = 0b3deab: **Qwen-Image runs** (split graph, = ComfyUI on the RX 590: conditioning 4.4e-6, calls 1.7e-4, VAE 8e-7,
+  graph 72.5 dB, 356 s at 256 px), QwenImageTests. The library's Qwen text encoder takes exactly 512 ids (prompts over 473 tokens refused;
+  asked of Tuvok, docs/library-bug-reports.md GAP-ML-QWEN-TEXT-LENGTH). Next on the branch: Qwen-Image Edit 2509 (TextEncodeQwenImageEditPlus:
+  vision rows, reference latents) when Tuvok's 2509 path is in a -local; the dumps are his (_DevComms 2026-11-15-1425 / 1450).
+  2026-11-15 later: ml-local-flux1 = 8402f6f on ML 5.8.18-local.7: Qwen-Image prompts of any length; **Text Encode Qwen Image Edit Plus**
+  (encode side = ComfyUI: conditioning 4.4e-5 / 7.3e-5, reference latents 1.2e-6; vision and reference resize rules measured, QwenImageEditTests).
+  **Qwen-Image Edit 2509 runs** (7151226, ML 5.8.18-local.8): model calls with 1 / 2 references = ComfyUI (<= 7.9e-4), the 2509 graph 48.8 dB
+  (its negative's sigma-0.75 call is ~140x input-sensitive: measured, see QwenImageEditTests). Merge ml-local-flux1 when ML 5.8.18 is on nuget.org. Big model files live on L: (comfyui-ref/models).
+  Sent Tuvok 2026-11-15: 2509 dumps (encode 1 / 2 pictures, both sampling runs), CLIP vision H (_DevComms 2026-11-15-1500: pixel input
+  bit-exact). Wan 2.1 i2v 14B: encode side sent (_DevComms 2026-11-15-1535: umT5, WanImageToVideo's concat latent / mask / vision output); the sampling
+  stage does not fit NV1080's 32 GB in ComfyUI (the fp8 14B load alone): **parked** (TJ, 2026-11-16: no machine with more RAM); the encode side
+  stays gated in the library. Next family (Tuvok): **Qwen-Image Edit 2511** (fp8mixed, 20.5 GB; encode = 2509's; index_timestep_zero
+  references): ComfyUI runs in _scratch/probe/qwenedit (stages e2511_1 / e2511_2 / d2511_1). Merge ml-local-flux1 when ML 5.8.18 is on nuget.org
+  (Tuvok is cutting it 2026-11-16).
+- Branch `ml-local-flux1` (worktree `_scratch/wt-flux1`) = 70b6802 on SpawnDev.ILGPU.ML 5.8.18-local.3 + SpawnDev.ILGPU 5.4.32: Z-Image,
+  FLUX.1 (checkpoint and split), Generate Text, measured on the RX 590 (Flux1Tests, Flux1SplitTests, ZImageTests, TextGenerateTests,
+  AeVaeTests tightened). Next there: **Qwen-Image** ((d) in the -local.2 list below; Tuvok's API in his messages / Docs; dumps in
+  _DevComms 2026-11-14-0800); then MinP / PresencePenalty when the next -local (ILGPU 5.4.33) lands, and Krea's bounds tighten then.
+  Merge to main when ML 5.8.18 is on nuget.org.
+- Branch `codecs-unreleased` (worktree `_scratch/wt-codecs`) = e889bfa: main merged, Codecs 1.0.2-local.19 + ILGPU 5.4.32, suites pass.
+  Merge when SpawnDev.Codecs is released.
+- Models for the GPU tests: SPAWNGEN_MODELS_ROOT = the ComfyUI reference install's models folder (big files live there on L:, not on C:) (_scratch/comfyui-ref/models: Z-Image,
+  FLUX.1 checkpoint, Krea, Qwen-Image files, qwen_3_4b, clip_l, t5 fp8_scaled, ae); FLUX.2 / LTX use SpawnGen's own models folder.
+- The ComfyUI reference server is stopped; restart it for probes (reference-comfyui-ref-tooling memory). Probe nodes in
+  comfyui-ref/custom_nodes/spawngen_dump.py now include SpawnGenHookTokenIds, SpawnGenHookVaeModules and SpawnGenHookModelModules.
+
 ## Now (in order)
 
 Measured 2026-11-14 (`_scratch/count_missing_noapi.py`, the 254 templates without paid API nodes): what a template still lacks is almost
@@ -36,7 +76,8 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
        text encoders (604024a); the split FLUX.1 graph (Krea fp8_scaled + clip_l + t5 fp8_scaled) checked on the RX 590: calls 1.3e-3 / 2.6e-3,
        T5 4.7e-3, clip_l 1.35e-6, 55.6 dB, the library's two stated gaps (ILGPU's bf16 rounding in kernels, fixed in 5.4.33; the T5's
        folded scales), the bounds to tighten when they land; Generate Text (135e333, ebd178c): Q8 on the RX 590, ComfyUI's sentence with
-       one word changed, the thinking split as ComfyUI's; min_p / presence_penalty asked of the library. **Next: Qwen-Image (d) below.**
+       one word changed, the thinking split as ComfyUI's; min_p / presence_penalty asked of the library (on ML master 241611cb, in the next -local with ILGPU 5.4.33: then pass GenerationConfig.MinP and
+       PresencePenalty from sampling "on"; seeded draws use the library's RNG, not torch's). **Next: Qwen-Image (d) below.**
      - The -local.2 list (Tuvok, 2026-11-14), (a) to (c) done: (a) Z-Image: open the transformer once with maxCaptionTokens and pass each call's length;
        set Flux2TextEncoder.PreciseActivations = true for the lumina2 encoder (CUDA; OpenCL is fp32 already); (b) the split FLUX.1 graph's
        fp8_scaled files (scale_weight read), and UmT5Encoder.PreciseActivations = true for FLUX.1's T5 (CUDA); (c) Generate Text with the automatic Q8_0 load (13 of 23 greedy tokens = ComfyUI's with thinking
@@ -65,7 +106,7 @@ families Tuvok builds next is done ahead of him, measured against ComfyUI, and t
 |---|---|---|
 | SpawnDev.Codecs release on nuget.org | Geordi | merge `codecs-unreleased`: Load / Save Video, Save WEBM, Save Audio FLAC / Opus / MP3 (240 + 68 + 36 template uses) |
 | the model families below | Tuvok | SpawnGen's nodes for each, measured against ComfyUI |
-| GPU lossless animated WebP ~60x slower than libwebp on the RX 590 (25 x 512x352: 1.0.1 345 s, 1.0.2-local.18 373 s and 48% larger; libwebp 5.9 s); _DevComms 2026-11-14-0500. Geordi's diagnosis: a one-thread LZ77 tokenizer run 7-10 times a frame (a parallel one is in progress); local.18's size from transparent pixels cleared to black (to get libwebp's predicted colour); the lossy encoder is slow too (2.15 s a frame on a 4070). Fixed in Codecs 919c2a7 (local.19 after Data's ILGPU gate): on a 4070 the full-frame call 4.26 -> 0.24 s a frame, same bytes; the WebPAnimEncoder call 3.71 -> 0.36 s a frame, 4.79 -> 3.77 MB (libwebp 3.24); lossy next | Geordi, high: every video save | time his build on the RX 590 (`VideoNodeTests.Save_Animated_WEBP_encode_timing_for_a_clip`, frames in the _DevComms folder) |
+| GPU lossless animated WebP ~60x slower than libwebp on the RX 590 (25 x 512x352: 1.0.1 345 s, 1.0.2-local.18 373 s and 48% larger; libwebp 5.9 s); _DevComms 2026-11-14-0500. Geordi's diagnosis: a one-thread LZ77 tokenizer run 7-10 times a frame (a parallel one is in progress); local.18's size from transparent pixels cleared to black (to get libwebp's predicted colour); the lossy encoder is slow too (2.15 s a frame on a 4070). Fixed in Codecs 919c2a7 (local.19 after Data's ILGPU gate): on a 4070 the full-frame call 4.26 -> 0.24 s a frame, same bytes; the WebPAnimEncoder call 3.71 -> 0.36 s a frame, 4.79 -> 3.77 MB (libwebp 3.24); lossy next. **local.19 on the RX 590 (fe78d9a on codecs-unreleased): the node's call 373 -> 31.1 s, 3.54 MB; the full-frame call 345 -> 19.4 s, same bytes (libwebp 5.9 s); lossy and the last 9% of size still Geordi's** | Geordi, high: every video save | time his build on the RX 590 (`VideoNodeTests.Save_Animated_WEBP_encode_timing_for_a_clip`, frames in the _DevComms folder) |
 | AVIF writer (Save Image (Advanced) avif) | Geordi, low: no template uses it | the avif option |
 
 ## Model families asked of SpawnDev.ILGPU.ML
@@ -79,12 +120,12 @@ ComfyUI's LATENT, conditioning and sigmas and sends the dumps before the library
 | family | templates | status |
 |---|---|---|
 | FLUX.2 Klein 4B (split graph) | 5 | done, on main since 2026-11-14 with ML 5.8.17 (text to image, editing, base cfg, 1024) |
-| Qwen-Image | 43 | requested; Tuvok's 2nd |
+| Qwen-Image | 43 | t2i, Edit 2509 and Edit 2511 (1-3 pictures) on main (ML 5.8.19), = ComfyUI |
 | Wan 2.1 / 2.2 14B | 24 | requested; Tuvok's 3rd, with CLIP vision |
-| CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | requested; with Wan 14B |
+| CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | ViT-H dumps sent 2026-11-15; with Wan 14B |
 | LTX-2 / 2.3 / 2.5 (19-22B audio + video) | 18 | requested; Tuvok's 4th |
 | FLUX.1 (dev, schnell, Kontext, Fill) | 13 | requested; Tuvok's 1st (ae.safetensors first): dumps in Now 3 |
-| ACE-Step | 9 | requested |
+| ACE-Step | 9 | 1.5 (7 templates; MIT) ComfyUI dumps sent 2026-11-17 (_DevComms 2026-11-17-0010: codes off / on, LM norm taps); Tuvok building. v1 (3, Apache-2.0) after |
 | HunyuanVideo | 9 | requested |
 | Z-Image | 8 | requested; with FLUX.1 (shared ae, qwen_3_4b) |
 | HiDream | 7 | requested |

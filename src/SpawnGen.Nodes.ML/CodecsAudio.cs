@@ -97,7 +97,8 @@ public static class CodecsAudio
         }
         finally { Gate.Release(); }
         int c = result.Channels;
-        var planar = result.PlanarFloat;
+        // DecodeFloatAsync fills PlanarFloat (it is null only for the integer decode).
+        var planar = result.PlanarFloat ?? throw new InvalidDataException("SpawnDev.Codecs' FLAC float decode returned no float samples.");
         int n = planar.Length / c;
         return new AudioClip([.. Enumerable.Range(0, c).Select(k => planar.AsSpan(k * n, n).ToArray())], result.SampleRateHz);
     }

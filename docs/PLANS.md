@@ -49,6 +49,18 @@ browser, with no Python. SpawnGen also works out the SpawnDev libraries on a rea
 
 ## Now (in order)
 
+0. **ACE-Step 1.5 (music) in SpawnGen** (2026-11-17, SpawnDev.ILGPU.ML 5.8.20-local.1; branch `ml-local-acestep`). ComfyUI's
+   audio_ace_step_1_5_split graph: UNETLoader acestep_v1.5_turbo, DualCLIPLoader type ace (qwen_0.6b_ace15 + qwen_1.7b_ace15), VAELoader
+   ace_1.5_vae, TextEncodeAceStepAudio1.5, EmptyAceStep1.5LatentAudio, ConditioningZeroOut, ModelSamplingAuraFlow 3, KSampler, VAEDecodeAudio.
+   Design: the encode node makes the conditioning ComfyUI's way (caption states [1, n, 1024] + lyric embeddings + audio codes from the
+   1.7B LM when generate_audio_codes is on); the model runs ONE call per sampler step (AceStepConditionEncoder for the encoder states, the
+   context [source | ones], AceStepDiT.Forward for the velocity), so every SpawnGen sampler / scheduler works; latents are 3-D [b, 64, frames]
+   (25 frames per second, 1920 samples each); the VAE decodes to stereo 48 kHz. The silence latent is ACE-Step's MIT silence_latent.pt
+   (ComfyUI's own table is GPL data: never shipped; it is a test fixture only), so whole runs sit ~1.6e-2 from ComfyUI's, the parts tight.
+   Measure first (black box): ConditioningZeroOut on ACE conditioning (lyrics, codes zeroed?); EmptyAceStep1.5LatentAudio's frame count for
+   fractional seconds; the model's own schedule without AuraFlow; that LATENT = the model's space (final latent vs the last call). Then:
+   the nodes, tests against Fixtures from _DevComms 2026-11-17-0010 / 1100 / 1230, a browser check, PARITY.md.
+
 Measured 2026-11-14 (`_scratch/count_missing_noapi.py`, the 254 templates without paid API nodes): what a template still lacks is almost
 always a model family (Tuvok) or Save / Load Video (Geordi's release); SpawnGen's own nodes unlock little alone. So the host side of the
 families Tuvok builds next is done ahead of him, measured against ComfyUI, and the rest waits.

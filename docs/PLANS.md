@@ -125,7 +125,7 @@ ComfyUI's LATENT, conditioning and sigmas and sends the dumps before the library
 | CLIP vision (ViT-H, SigLIP 384, ViT-G) | 21 | ViT-H dumps sent 2026-11-15; with Wan 14B |
 | LTX-2 / 2.3 / 2.5 (19-22B audio + video) | 18 | requested; Tuvok's 4th |
 | FLUX.1 (dev, schnell, Kontext, Fill) | 13 | requested; Tuvok's 1st (ae.safetensors first): dumps in Now 3 |
-| ACE-Step | 9 | 1.5 (7 templates; MIT) ComfyUI dumps sent 2026-11-17 (_DevComms 2026-11-17-0010: codes off / on, LM norm taps); Tuvok building. v1 (3, Apache-2.0) after |
+| ACE-Step | 9 | 1.5 (7 templates; MIT) ComfyUI dumps sent 2026-11-17 (_DevComms 2026-11-17-0010 / 1100); Tuvok: codes off / on, VAE, LM teacher-forced = ComfyUI. **Licence-driven gap:** ComfyUI's silence latent is ComfyUI's own (GPL) table, never shipped; the MIT silence_latent.pt puts a whole run 1.6e-2 (latent) / 3.4e-2 (audio) from ComfyUI's (1.8e-4 with ComfyUI's table as a test fixture). VAEEncodeAudio samples the posterior: measure its noise before claiming parity. Package after the LM sampling loop. v1 (3, Apache-2.0) after |
 | HunyuanVideo | 9 | requested |
 | Z-Image | 8 | requested; with FLUX.1 (shared ae, qwen_3_4b) |
 | HiDream | 7 | requested |

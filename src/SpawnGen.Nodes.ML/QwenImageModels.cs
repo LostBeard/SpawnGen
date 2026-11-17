@@ -156,6 +156,7 @@ internal static class ModelResidency
         Flux1Residency.Release();
         QwenImageResidency.Release();
         AceStepResidency.Release();
+        Ltx2Residency.Release();
     }
 }
 

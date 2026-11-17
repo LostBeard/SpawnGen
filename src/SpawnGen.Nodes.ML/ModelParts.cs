@@ -19,6 +19,9 @@ public abstract class UNetRun : IDisposable
     /// <summary>A video model's latent frames: the inputs' rows are that many frames stacked (set by the sampler before the first call; 1 for pictures).</summary>
     public int Frames { get; set; } = 1;
 
+    /// <summary>An audio + video latent's parts' shapes (LTX-2: the packed input's layout), set by the sampler before the first call; null otherwise.</summary>
+    public IReadOnlyList<int[]>? Parts { get; set; }
+
     /// <summary>Image to video: the first latent frame is the start picture, kept (a video model runs its tokens at timestep 0). Set per batch item.</summary>
     public bool FirstFrameClean { get; set; }
 

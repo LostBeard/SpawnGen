@@ -75,6 +75,9 @@ public sealed class LatentFormat(string name, float scaleFactor, float[][] rgbFa
     /// </summary>
     public static LatentFormat AceStep15 { get; } = new("AceStep15", 1f, [], null, null, 64);
 
+    /// <summary>LTX-2's packed audio + video latent ([b, 1, values]): the model's own space (ComfyUI's model receives it as it is), no preview.</summary>
+    public static LatentFormat Ltx2Av { get; } = new("Ltx2Av", 1f, [], null, null, 1);
+
     public static LatentFormat Wan22 { get; } = new("Wan22", 1f, [], null, null, 48,
         [-0.2289f, -0.0052f, -0.1323f, -0.2339f, -0.2799f, 0.0174f, 0.1838f, 0.1557f, -0.1382f, 0.0542f, 0.2813f, 0.0891f, 0.1570f, -0.0098f, 0.0375f, -0.1825f,
          -0.2246f, -0.1207f, -0.0698f, 0.5109f, 0.2665f, -0.2108f, -0.2158f, 0.2502f, -0.2055f, -0.0322f, 0.1109f, 0.1567f, -0.0729f, 0.0899f, -0.2799f, -0.1230f,

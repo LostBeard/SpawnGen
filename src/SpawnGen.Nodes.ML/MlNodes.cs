@@ -35,9 +35,13 @@ public sealed class CheckpointLoaderSimple
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
         // ComfyUI's all-in-one FLUX.1 files (transformer, T5-XXL, CLIP-L and the ae in one checkpoint) load as FLUX.1's parts.
-        if (MlRuntime.KnownCheckpoints.TryGetValue(ckptName, out var repo) && MlRuntime.CheckpointDetails[ckptName].File is { } file
-            && Flux1Checkpoint.Is(await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file)))
-            return await Flux1Checkpoint.LoadAsync(runtime, ckptName, repo, file);
+        if (MlRuntime.KnownCheckpoints.TryGetValue(ckptName, out var repo) && MlRuntime.CheckpointDetails[ckptName].File is { } file)
+        {
+            var names = await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file);
+            if (Flux1Checkpoint.Is(names)) return await Flux1Checkpoint.LoadAsync(runtime, ckptName, repo, file);
+            // LTX-2's checkpoints: the audio + video transformer, the video VAE (and the audio VAE / vocoder / text connectors, read by their own nodes)
+            if (Ltx2Checkpoint.Is(names)) return Ltx2Checkpoint.Load(runtime, ckptName, repo, file);
+        }
         var checkpoint = await runtime.GetCheckpointAsync(ckptName, (stage, percent) => context.Progress(percent, 100, $"Loading {ckptName}: {stage}"));
         return (new ModelHandle(checkpoint), new ClipHandle(checkpoint), new VaeHandle(checkpoint));
     }

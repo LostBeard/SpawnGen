@@ -45,7 +45,7 @@ public sealed record LtxAudioLatentLayout(int Channels, int Bins, double FramesP
 }
 
 /// <summary>LTX-2's audio VAE (Load LTXV Audio VAE, from an LTX-2 checkpoint): the audio latent's layout; decoding comes with SpawnDev.ILGPU.ML's LTX-2.</summary>
-internal sealed class LtxAudioVaeModel(string name, LtxAudioLatentLayout layout) : IAudioVaeModel
+internal sealed class LtxAudioVaeModel(string name, LtxAudioLatentLayout layout, MlRuntime? runtime = null, string? repo = null, string? file = null) : IAudioVaeModel
 {
     public string Name => name;
     public LtxAudioLatentLayout Layout => layout;
@@ -59,8 +59,24 @@ internal sealed class LtxAudioVaeModel(string name, LtxAudioLatentLayout layout)
     public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("LTX-2's audio VAE encodes audio, not pictures.");
 
-    public Task<AudioClip> DecodeAudioAsync(LatentBatch latent, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("LTX-2's audio VAE decoder is not in SpawnDev.ILGPU.ML yet (coming with its LTX-2 port).");
+    /// <summary>
+    /// The audio VAE's decoder and the vocoder (SpawnDev.ILGPU.ML's Ltx2AudioDecoder): [8, Ta, 16] to stereo 240 (4 Ta - 3) samples at 24 kHz
+    /// (measured with ComfyUI: 9 latent frames give 7920 samples).
+    /// </summary>
+    public async Task<AudioClip> DecodeAudioAsync(LatentBatch latent, CancellationToken cancellationToken = default)
+    {
+        if (runtime is null || repo is null || file is null) throw new InvalidOperationException("This audio VAE was made without its checkpoint.");
+        if (!latent.IsAudio || latent.Shape.Length != 4 || latent.Channels != layout.Channels || latent.Width != layout.Bins)
+            throw new ArgumentException($"LTX-2's audio VAE decodes audio latents [b, {layout.Channels}, frames, {layout.Bins}]; this one is [{string.Join(", ", latent.Shape)}].");
+        if (latent.Batch != 1)
+            throw new NotSupportedException($"A batch of {latent.Batch} audio latents: SpawnGen's AUDIO holds one clip so far, so LTXV Audio VAE Decode takes batch 1.");
+        ModelResidency.ReleaseTransformers();
+        using var decoder = await SpawnDev.ILGPU.ML.Ltx2.Ltx2AudioDecoder.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, cancellationToken);
+        int ta = latent.Height;
+        var wave = await decoder.DecodeAsync(latent.Data, ta);
+        int n = wave.Length / 2;
+        return new AudioClip([wave.AsSpan(0, n).ToArray(), wave.AsSpan(n, n).ToArray()], SampleRate);
+    }
 }
 
 /// <summary>Load LTXV Audio VAE: LTX-2's audio VAE from an LTX-2 checkpoint (its audio_vae.* tensors and config).</summary>
@@ -81,7 +97,7 @@ public sealed class LTXVAudioVAELoader
         using var doc = JsonDocument.Parse(config!);
         if (!doc.RootElement.TryGetProperty("audio_vae", out var audioVae))
             throw new NotSupportedException($"{ckptName} is not an LTX-2 checkpoint (no audio VAE in its config).");
-        return new VaeHandle(new LtxAudioVaeModel(ckptName, LtxAudioLatentLayout.FromConfig(audioVae)));
+        return new VaeHandle(new LtxAudioVaeModel(ckptName, LtxAudioLatentLayout.FromConfig(audioVae), runtime, repo, file));
     }
 }
 
@@ -232,5 +248,31 @@ public sealed class LTXVAudioVAEDecode
         if (audioVae.Vae is not LtxAudioVaeModel vae)
             throw new NotSupportedException($"{audioVae.Vae.Name} is not LTX-2's audio VAE (Load LTXV Audio VAE).");
         return await vae.DecodeAudioAsync(samples, context.CancellationToken);
+    }
+}
+
+/// <summary>
+/// Load LTXV Audio Text Encoder: LTX-2's text side, Gemma 3 12B (text_encoder) with the LTX-2 checkpoint's text projection and video / audio
+/// connectors (ckpt_name). The prompt then goes through CLIP Text Encode as usual.
+/// </summary>
+[Node("LTXAVTextEncoderLoader", Category = "model/loaders", DisplayName = "Load LTXV Audio Text Encoder")]
+public sealed class LTXAVTextEncoderLoader
+{
+    public static string[] TextEncoderNames() => ModelFolders.Names(ModelFolders.TextEncoders);
+    public static string[] CheckpointNames() => [.. MlRuntime.KnownCheckpoints.Keys];
+    public static string[] Devices() => ["default", "cpu"];
+
+    public async Task<ClipHandle> ExecuteAsync([Input(OptionsProvider = nameof(TextEncoderNames))] string textEncoder,
+        [Input(OptionsProvider = nameof(CheckpointNames))] string ckptName, [Input(OptionsProvider = nameof(Devices))] string device, IServiceProvider services)
+    {
+        if (device != "default") throw new NotSupportedException("SpawnGen runs LTX-2's text encoder on the GPU (device default).");
+        var runtime = await GpuHelpers.RuntimeAsync(services);
+        var gemma = ModelFolders.Locate(ModelFolders.TextEncoders, textEncoder);
+        if (!MlRuntime.KnownCheckpoints.TryGetValue(ckptName, out var repo) || MlRuntime.CheckpointDetails[ckptName].File is not { } file)
+            throw new FileNotFoundException($"Checkpoint '{ckptName}' was not found.");
+        if (!Ltx2Checkpoint.Is(await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file)))
+            throw new NotSupportedException($"{ckptName} is not an LTX-2 checkpoint; Load LTXV Audio Text Encoder takes the one its connectors come from.");
+        return new ClipHandle(await runtime.GetOrLoadAsync($"ltx2-text:{gemma.Repo}/{gemma.File}|{repo}/{file}",
+            () => Task.FromResult(new Ltx2TextModel(runtime, $"{textEncoder} + {ckptName}", (gemma.Repo, gemma.File), (repo, file)))));
     }
 }

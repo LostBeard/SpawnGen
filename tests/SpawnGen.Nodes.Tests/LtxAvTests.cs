@@ -29,7 +29,7 @@ public class LtxAvTests
         """).RootElement);
 
     static VaeHandle AudioVae => new((IVaeModel)Activator.CreateInstance(typeof(LTXVAudioVAELoader).Assembly.GetType("SpawnGen.Nodes.ML.LtxAudioVaeModel")!,
-        "ltx-2-19b-dev-fp8.safetensors", Layout)!);
+        "ltx-2-19b-dev-fp8.safetensors", Layout, null, null, null)!);
 
     [Test]
     public void The_empty_video_latent_is_ComfyUIs()

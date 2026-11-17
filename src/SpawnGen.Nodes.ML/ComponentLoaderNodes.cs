@@ -106,6 +106,27 @@ internal static class SafetensorsHeader
             : null;
     }
 
+    /// <summary>One tensor's stored bytes (a small one: a tokenizer kept in the file), or null when the file has no such tensor.</summary>
+    public static async Task<byte[]?> TensorBytesAsync(IModelSource source, string repo, string file, string name)
+    {
+        await using var stream = await source.OpenAsync(repo, file);
+        var lengthBytes = new byte[8];
+        await stream.ReadExactlyAsync(lengthBytes);
+        long length = BinaryPrimitives.ReadInt64LittleEndian(lengthBytes);
+        if (length <= 0 || length > 100_000_000) throw new InvalidDataException($"{file} is not a safetensors file.");
+        var header = new byte[length];
+        await stream.ReadExactlyAsync(header);
+        using var doc = JsonDocument.Parse(header);
+        if (!doc.RootElement.TryGetProperty(name, out var tensor) || !tensor.TryGetProperty("data_offsets", out var offsets)) return null;
+        long start = offsets[0].GetInt64(), end = offsets[1].GetInt64();
+        if (end - start > 64_000_000) throw new InvalidDataException($"{name} in {file} is {end - start} bytes; too big to read whole.");
+        var data = new byte[end - start];
+        if (stream.CanSeek) stream.Seek(8 + length + start, SeekOrigin.Begin);
+        else { var skip = new byte[81920]; long left = start; while (left > 0) { int n = await stream.ReadAsync(skip.AsMemory(0, (int)Math.Min(skip.Length, left))); if (n == 0) throw new EndOfStreamException(); left -= n; } }
+        await stream.ReadExactlyAsync(data);
+        return data;
+    }
+
     /// <summary>The file's <c>__metadata__</c> strings, or null when it has none.</summary>
     public static async Task<Dictionary<string, string>?> MetadataAsync(IModelSource source, string repo, string file)
     {

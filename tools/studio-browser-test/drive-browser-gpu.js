@@ -45,6 +45,19 @@ fs.mkdirSync(OUT, { recursive: true });
   fs.writeFileSync(wfPath, JSON.stringify(wf));
 
   await page.goto(URL + (process.env.PEROP ? '?perop=1' : ''));
+  // The adapter the page gets (a software or fallback adapter would make every number here meaningless).
+  const adapter = await page.evaluate(async () => {
+    const a = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
+    if (!a) return null;
+    const i = a.info || {};
+    return { vendor: i.vendor, architecture: i.architecture, description: i.description, fallback: !!(a.isFallbackAdapter || i.isFallbackAdapter) };
+  });
+  console.log(t(), 'WebGPU adapter:', JSON.stringify(adapter));
+  if (!adapter || adapter.fallback || /swiftshader|llvmpipe|software/i.test(`${adapter.vendor} ${adapter.description}`)) {
+    console.log('STOP: no real GPU adapter (null, fallback or software); the run would not measure the GPU.');
+    await context.close();
+    process.exit(2);
+  }
   await page.waitForSelector('canvas');
   await require('./tab-offset')(page);
   await page.waitForTimeout(3500);

@@ -276,3 +276,65 @@ public sealed class LTXAVTextEncoderLoader
             () => Task.FromResult(new Ltx2TextModel(runtime, $"{textEncoder} + {ckptName}", (gemma.Repo, gemma.File), (repo, file)))));
     }
 }
+
+/// <summary>A model source that serves some file names from other (repo, file) pairs: for library calls that read two files from one repo.</summary>
+internal sealed class RoutedModelSource(SpawnDev.ILGPU.ML.Hub.IModelSource inner, IReadOnlyDictionary<string, (string Repo, string File)> files) : SpawnDev.ILGPU.ML.Hub.IModelSource
+{
+    public Task<Stream> OpenAsync(string repoId, string filePath, CancellationToken cancellationToken = default) =>
+        files.TryGetValue(filePath, out var at) ? inner.OpenAsync(at.Repo, at.File, cancellationToken) : inner.OpenAsync(repoId, filePath, cancellationToken);
+
+    public Task<byte[]> FetchBytesAsync(string repoId, string filePath, CancellationToken cancellationToken = default) =>
+        files.TryGetValue(filePath, out var at) ? inner.FetchBytesAsync(at.Repo, at.File, cancellationToken) : inner.FetchBytesAsync(repoId, filePath, cancellationToken);
+}
+
+/// <summary>LATENT_UPSCALE_MODEL: a latent upscaler file (LTX-2's x2 spatial upscaler).</summary>
+[Socket("LATENT_UPSCALE_MODEL")]
+public sealed record LatentUpscaleModelHandle(string Name, string Repo, string File);
+
+/// <summary>Load Latent Upscale Model: a file of the models folder's latent_upscale_models.</summary>
+[Node("LatentUpscaleModelLoader", Category = "model/loaders", DisplayName = "Load Latent Upscale Model")]
+public sealed class LatentUpscaleModelLoader
+{
+    public static string[] ModelNames() => ModelFolders.Names(ModelFolders.LatentUpscaleModels);
+
+    public LatentUpscaleModelHandle Execute([Input(OptionsProvider = nameof(ModelNames))] string modelName)
+    {
+        var (repo, file) = ModelFolders.Locate(ModelFolders.LatentUpscaleModels, modelName);
+        return new LatentUpscaleModelHandle(modelName, repo, file);
+    }
+}
+
+/// <summary>
+/// LTXVLatentUpsampler: LTX-2's video latent at twice the height and width (frames kept), through the x2 spatial upscaler and the VAE's latent
+/// statistics (SpawnDev.ILGPU.ML's Ltx2LatentUpsampler, 4.8e-6 against ComfyUI; no AdaIN, measured). The latent's keys are kept (measured).
+/// </summary>
+[VideoLatents]
+[Node("LTXVLatentUpsampler", Category = "model/latent/ltxv", DisplayName = "LTXVLatentUpsampler")]
+public sealed class LTXVLatentUpsampler
+{
+    public async Task<LatentBatch> ExecuteAsync(LatentBatch samples, LatentUpscaleModelHandle upscaleModel, VaeHandle vae)
+    {
+        if (vae.Vae is not Ltx2VideoVaeModel ltxVae)
+            throw new NotSupportedException($"LTXVLatentUpsampler takes LTX-2's VAE (Load Checkpoint of an LTX-2 checkpoint); {vae.Vae.Name} is not.");
+        if (!samples.IsVideo || samples.Channels != SpawnDev.ILGPU.ML.Ltx2.Ltx2LatentUpsampler.LatentChannels)
+            throw new ArgumentException($"LTXVLatentUpsampler takes LTX-2's video latent [b, 128, F, h, w]; this one is [{string.Join(", ", samples.Shape)}].");
+        if (samples.NoiseMask is not null) throw new NotSupportedException("LTXVLatentUpsampler with a noise mask is not measured yet in SpawnGen.");
+        var (runtime, repo, file) = ltxVae.Checkpoint;
+        ModelResidency.ReleaseTransformers();
+        // the library reads the upscaler and the checkpoint from one repo; SpawnGen keeps them in their own folders, so route both names
+        var source = new RoutedModelSource(runtime.ModelSource, new Dictionary<string, (string, string)>
+        {
+            ["upscaler.safetensors"] = (upscaleModel.Repo, upscaleModel.File), ["checkpoint.safetensors"] = (repo, file),
+        });
+        using var up = await SpawnDev.ILGPU.ML.Ltx2.Ltx2LatentUpsampler.OpenAsync(runtime.Accelerator, source, "spawngen-routed", "upscaler.safetensors", "checkpoint.safetensors");
+        int F = samples.Frames, h = samples.Height, w = samples.Width, per = samples.ItemSize, outPer = per * 4;
+        var data = new float[samples.Batch * outPer];
+        for (int b = 0; b < samples.Batch; b++)
+            (await up.UpsampleAsync(samples.Data.AsSpan(b * per, per).ToArray(), F, h, w)).CopyTo(data, b * outPer);
+        return new LatentBatch([samples.Batch, samples.Channels, F, 2 * h, 2 * w], data)
+        {
+            Type = samples.Type, DownscaleRatioSpacial = samples.DownscaleRatioSpacial, DownscaleRatioTemporal = samples.DownscaleRatioTemporal,
+            BatchIndex = samples.BatchIndex,
+        };
+    }
+}

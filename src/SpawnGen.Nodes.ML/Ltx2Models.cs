@@ -126,8 +126,21 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
 
     long ResidentBytes => Math.Max(1L << 30, runtime.Accelerator.MemorySize - (3L << 30));
 
-    public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) =>
-        weights.Count == 0 ? Task.CompletedTask : throw new NotSupportedException("LoRAs on LTX-2 are not available yet (the template's distilled and camera LoRAs need them).");
+    IReadOnlyList<LoraUse> _loras = [];
+    readonly List<Ltx2Lora> _openLoras = [];
+
+    /// <summary>
+    /// LoRAs (Load LoRA): applied on the fly to the transformer's linears (SpawnDev.ILGPU.ML's Ltx2Lora: strength x (x A^T) B^T). Measured against
+    /// ComfyUI on the distilled LoRA: bf16 layers equal its W + B A (calls 5.5e-6); its fp8 layers re-round W + B A stochastically (seeded), which
+    /// the exact float form does not repeat (7.4e-3 on one block against the LoRA's 2.2e-2 effect there).
+    /// </summary>
+    public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken)
+    {
+        if (weights.Any(w => w is not LoraUse)) throw new NotSupportedException("Only LoRAs apply to LTX-2 so far (no model merges).");
+        var loras = weights.Cast<LoraUse>().ToArray();
+        if (WeightStep.KeyOf(loras) != WeightStep.KeyOf(_loras)) { Unload(); _loras = loras; }
+        return Task.CompletedTask;
+    }
 
     public UNetRun BeginRun(Accelerator accelerator) => new Ltx2Run(this);
 
@@ -140,11 +153,23 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
         // batch 2: a step's two CFG halves go through each block together, so the weights stream once a step (see Ltx2Run)
         _model = await Ltx2AvModel.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, 2, F, H, W, Ta, Ltx2TextConnectors.Tokens, ResidentBytes, ct);
         _size = (F, H, W, Ta);
+        foreach (var l in _loras)
+        {
+            var lora = await Ltx2Lora.OpenAsync(runtime.Accelerator, runtime.ModelSource, l.Repo, l.File, l.Strength, ResidentBytes, ct);
+            _openLoras.Add(lora);
+            _model.Transformer.AddLora(lora);
+        }
         Ltx2Residency.Holding(this);
         return _model;
     }
 
-    public void Unload() { _model?.Dispose(); _model = null; }
+    public void Unload()
+    {
+        _model?.Dispose();
+        _model = null;
+        foreach (var l in _openLoras) l.Dispose();
+        _openLoras.Clear();
+    }
 
     public void Dispose() { Ltx2Residency.Forget(this); Unload(); }
 
@@ -223,6 +248,9 @@ internal static class Ltx2Residency
 /// </summary>
 internal sealed class Ltx2VideoVaeModel(MlRuntime runtime, string name, string repo, string file) : IVideoVaeModel
 {
+    /// <summary>The checkpoint this VAE is part of (LTXVLatentUpsampler reads its latent statistics).</summary>
+    internal (MlRuntime Runtime, string Repo, string File) Checkpoint => (runtime, repo, file);
+
     public string Name => name;
     public SdVae? SdVae => null;
     public int SpatialScale => 32;
@@ -234,10 +262,27 @@ internal sealed class Ltx2VideoVaeModel(MlRuntime runtime, string name, string r
         throw new NotSupportedException("LTX-2's VAE decodes video latents.");
 
     public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("LTX-2's video VAE encoder is not in SpawnDev.ILGPU.ML yet.");
+        throw new NotSupportedException("LTX-2's VAE encodes video (VAE Encode makes a video latent from the pictures).");
 
-    public Task<LatentBatch> EncodeVideoAsync(ImageBatch frames, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("LTX-2's video VAE encoder is not in SpawnDev.ILGPU.ML yet.");
+    /// <summary>
+    /// VAE Encode: 8 k + 1 pictures (sides multiples of 32) to one video latent [1, 128, k + 1, H / 32, W / 32], the posterior mean in ComfyUI's
+    /// latent units (measured: one 192 x 256 picture, 4.9e-6 in SpawnDev.ILGPU.ML's test; ComfyUI's LATENT has no other keys).
+    /// </summary>
+    public async Task<LatentBatch> EncodeVideoAsync(ImageBatch frames, CancellationToken cancellationToken = default)
+    {
+        int n = frames.Batch, H = frames.Height, W = frames.Width, plane = H * W;
+        if ((n - 1) % 8 != 0)
+            throw new NotSupportedException($"{n} pictures: LTX-2's VAE encodes 8 k + 1 frames (1, 9, 17, ...); how ComfyUI treats other counts is not measured yet.");
+        var video = new float[3 * n * plane];   // [3, F, H, W] in -1..1
+        for (int f = 0; f < n; f++)
+            for (int i = 0; i < plane; i++)
+                for (int c = 0; c < 3; c++)
+                    video[(c * n + f) * plane + i] = frames.Data[(f * plane + i) * frames.Channels + c] * 2f - 1f;
+        ModelResidency.ReleaseTransformers();
+        using var encoder = await Ltx2VideoEncoder.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, cancellationToken);
+        var z = await encoder.EncodeAsync(video, n, H, W);
+        return new LatentBatch([1, LatentChannels, (n - 1) / 8 + 1, H / 32, W / 32], z);
+    }
 
     public async Task<ImageBatch> DecodeVideoAsync(LatentBatch latent, CancellationToken cancellationToken = default)
     {

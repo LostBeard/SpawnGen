@@ -21,6 +21,7 @@ public static class ModelFolders
     public const string TextEncoders = "text_encoders";
     public const string ControlNet = "controlnet";
     public const string VaeApprox = "vae_approx";
+    public const string LatentUpscaleModels = "latent_upscale_models";
 
     static readonly Dictionary<string, string[]> Folders = new()
     {
@@ -29,6 +30,7 @@ public static class ModelFolders
         [TextEncoders] = ["text_encoders", "clip"],
         [ControlNet] = ["controlnet", "t2i_adapter"],
         [VaeApprox] = ["vae_approx"],
+        [LatentUpscaleModels] = ["latent_upscale_models"],
     };
 
     static readonly Lock Gate = new();

@@ -24,7 +24,7 @@ public sealed class LoadVideo
     public static string[] VideoNames() =>
         [.. InputFiles.Store.List(n => Extensions.Contains(Path.GetExtension(n).ToLowerInvariant()))];
 
-    public async Task<(VideoClip Video, UiOutput Ui)> ExecuteAsync([Input(OptionsProvider = nameof(VideoNames))] string file, IServiceProvider services)
+    public async Task<(VideoClip Video, UiOutput Ui)> ExecuteAsync([Input(OptionsProvider = nameof(VideoNames), Upload = "video")] string file, IServiceProvider services)
     {
         var name = RecordAudio.StripAnnotation(file);
         if (Path.GetExtension(name).ToLowerInvariant() != ".webm")

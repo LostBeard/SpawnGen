@@ -221,12 +221,20 @@ public static class ServerApp
             var form = await request.ReadFormAsync();
             if (form.Files["image"] is not { } file) return Results.BadRequest("no 'image' file");
             var name = Path.GetFileName(file.FileName);
-            if (!ImageDecoder.IsSupportedName(name) && !AudioFiles.LoadableExtensions.Any(e => name.EndsWith(e, StringComparison.OrdinalIgnoreCase)) && !name.EndsWith(".latent", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("only PNG, JPEG, WebP, GIF and BMP pictures, WAV and FLAC sound and .latent files can be loaded for now");
-            var target = Path.Combine(options.InputPath, name);
+            if (!ImageDecoder.IsSupportedName(name) && !AudioFiles.LoadableExtensions.Any(e => name.EndsWith(e, StringComparison.OrdinalIgnoreCase))
+                && !LoadVideo.Extensions.Any(e => name.EndsWith(e, StringComparison.OrdinalIgnoreCase)) && !name.EndsWith(".latent", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest("only PNG, JPEG, WebP, GIF and BMP pictures, WAV and FLAC sound, videos and .latent files can be loaded for now");
+            // ComfyUI's form fields: type (input, the default; output; temp) and subfolder say where the file goes (a node with image_folder "output" uploads there).
+            var type = string.IsNullOrEmpty(form["type"]) ? "input" : form["type"].ToString();
+            var root = type switch { "input" => options.InputPath, "output" => options.OutputPath, "temp" => options.TempPath, _ => null };
+            if (root is null) return Results.BadRequest("type must be input, output or temp");
+            var subfolder = form["subfolder"].ToString();
+            if (SafePath(root, subfolder, name) is not { } target) return Results.BadRequest("the subfolder leaves the folder");
             if (File.Exists(target) && (string?)form["overwrite"] != "true")
-                name = $"{Path.GetFileNameWithoutExtension(name)}_{Guid.NewGuid().ToString("N")[..6]}{Path.GetExtension(name)}";
-            await using (var output = File.Create(Path.Combine(options.InputPath, name))) await file.CopyToAsync(output);
-            return Results.Json(new { name, subfolder = "", type = "input" });
+                target = SafePath(root, subfolder, name = $"{Path.GetFileNameWithoutExtension(name)}_{Guid.NewGuid().ToString("N")[..6]}{Path.GetExtension(name)}")!;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            await using (var output = File.Create(target)) await file.CopyToAsync(output);
+            return Results.Json(new { name, subfolder, type });
         });
 
         app.Map("/ws", async (HttpContext context) =>
@@ -395,6 +403,8 @@ public static class ServerApp
         if (w.Max is { } max) config["max"] = max;
         if (w.Step is { } step) config["step"] = step;
         if (w.Multiline) config["multiline"] = true;
+        if (w.Upload is { } upload) config[upload + "_upload"] = true;
+        if (w.UploadFolder is { } folder) config["image_folder"] = folder;
         if (w.Kind == WidgetKind.Color) config["socketless"] = true;
         return w.Kind switch
         {

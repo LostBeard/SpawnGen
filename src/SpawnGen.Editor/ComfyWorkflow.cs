@@ -403,6 +403,7 @@ public static class ComfyWorkflow
             });
             if (w.Widget!.Kind == WidgetKind.Int && SeedWidgets.Contains(w.Name)) list.Add(ControlAfterGenerate.ModeOf(n));
         }
+        if (UploadWidget.SavedValue(schema) is { } tail) list.Add(tail);
         return list;
     }
 

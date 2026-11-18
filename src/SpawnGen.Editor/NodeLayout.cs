@@ -20,6 +20,12 @@ public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds)
     /// <summary>A BOUNDING_BOXES widget: the canvas the boxes are drawn on (<see cref="BoxesWidget"/>), with its toolbar and the selected box's panel.</summary>
     public bool IsBoxes { get; init; }
 
+    /// <summary>The upload button under a file combo (<see cref="UploadWidget"/>): pressing it picks a file for <see cref="UploadFor"/>.</summary>
+    public bool IsUpload => Name == UploadWidget.Name && UploadFor is not null;
+
+    /// <summary>For the upload button: the combo input it uploads into (<c>image</c> on Load Image).</summary>
+    public string? UploadFor { get; init; }
+
     /// <summary>
     /// What the row shows: a dynamic combo option's input shows its own part (<c>bit_depth</c> for <c>format.bit_depth</c>), as ComfyUI's frontend
     /// labels it (measured 2026-11-13: Save Image (Advanced) and Save Video); any other widget its name.
@@ -147,6 +153,14 @@ public static class NodeLayout
                 widgets.Add(new WidgetRow(ControlAfterGenerate.Name, ControlAfterGenerate.Spec, new Rect(node.X + Padding, y, width - 2 * Padding, WidgetRowHeight - 4)));
                 y += WidgetRowHeight;
             }
+        }
+        // ComfyUI's "choose file to upload" button is the node's last widget row, after every input widget (Load Image (as Mask): image, channel,
+        // then the button; measured on ComfyUI frontend 1.61.3).
+        if (widgetInputs.FirstOrDefault(UploadWidget.HasUpload) is { } uploadInto)
+        {
+            widgets.Add(new WidgetRow(UploadWidget.Name, UploadWidget.Spec, new Rect(node.X + Padding, y, width - 2 * Padding, WidgetRowHeight - 4))
+                { UploadFor = uploadInto.Name, Label = UploadWidget.Label });
+            y += WidgetRowHeight;
         }
 
         // The result picture, under the widgets: as wide as the node, as tall as its aspect ratio asks (until it has loaded it is assumed square).

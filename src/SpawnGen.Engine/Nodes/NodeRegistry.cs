@@ -606,6 +606,7 @@ public sealed class NodeRegistry
                 {
                     OptionsProvider = () => ((IEnumerable<string>)m.Invoke(null, null)!).ToList(),
                     Default = def,
+                    Upload = ia.Upload, UploadFolder = ia.UploadFolder,
                 };
             }
             if (ia?.Options is { } options) // an empty list stays a combo (Custom Combo: the editor supplies the options)

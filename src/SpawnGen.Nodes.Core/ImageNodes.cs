@@ -9,6 +9,9 @@ namespace SpawnGen.Nodes.Core;
 /// <summary>Where the Load Image nodes read pictures: the input store (a folder on the desktop, memory in the browser).</summary>
 public static class InputFiles
 {
+    /// <summary>A file combo value split into its name and its " [input]" / " [output]" / " [temp]" annotation (null when it has none).</summary>
+    public static (string Name, string? Type) Annotated(string value) => Pictures.Annotated(value);
+
     static string _directory = Path.Combine(AppContext.BaseDirectory, "input");
 
     /// <summary>The input store the nodes read from; setting <see cref="Directory"/> replaces it with that folder.</summary>
@@ -152,7 +155,7 @@ public sealed class LoadImage
 {
     public static string[] ImageNames() => [.. InputFiles.Store.List(ImageDecoder.IsSupportedName)];
 
-    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames))] string image) =>
+    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames), Upload = "image")] string image) =>
         await Pictures.LoadAsync(await InputFiles.Store.ReadAsync(Pictures.Annotated(image).Name));
 }
 
@@ -166,7 +169,7 @@ public sealed class LoadImageOutput
 {
     public static string[] OutputImages() => OutputFiles.List();
 
-    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(OutputImages))] string image, IServiceProvider services)
+    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(OutputImages), Upload = "image", UploadFolder = "output")] string image, IServiceProvider services)
     {
         var (name, type) = Pictures.Annotated(image);
         if (type is null or "input") return await Pictures.LoadAsync(await InputFiles.Store.ReadAsync(name));
@@ -187,7 +190,7 @@ public sealed class LoadImageMask
 {
     public static string[] ImageNames() => LoadImage.ImageNames();
 
-    public async Task<MaskBatch> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames))] string image,
+    public async Task<MaskBatch> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames), Upload = "image")] string image,
         [Input(Options = ["alpha", "red", "green", "blue"])] string channel = "alpha")
     {
         var (picture, alpha) = await ImageDecoder.DecodeFramesAsync(await InputFiles.Store.ReadAsync(Pictures.Annotated(image).Name));

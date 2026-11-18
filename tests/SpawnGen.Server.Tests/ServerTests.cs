@@ -571,6 +571,79 @@ public class ServerTests
         await WaitForAsync(Type("execution_success"));
     }
 
+    /// <summary>ComfyUI's upload flags on file combos (measured from ComfyUI's /object_info), and the Studio reads them back from a server.</summary>
+    [TestCase("LoadImage", "image", "image_upload", null)]
+    [TestCase("LoadImageMask", "image", "image_upload", null)]
+    [TestCase("LoadImageOutput", "image", "image_upload", "output")]
+    [TestCase("LoadAudio", "audio", "audio_upload", null)]
+    [TestCase("LoadVideo", "file", "video_upload", null)]
+    public async Task Object_info_marks_file_combos_that_take_uploads_as_ComfyUI_does(string type, string input, string flag, string? folder)
+    {
+        var info = JsonNode.Parse(await _http.GetStringAsync($"/object_info/{type}"))!.AsObject();
+        var config = info[type]!["input"]!["required"]![input]![1]!.AsObject();
+        Assert.That((bool?)config[flag], Is.True, config.ToJsonString());
+        Assert.That((string?)config["image_folder"], Is.EqualTo(folder));
+        Assert.That(config.Count(p => p.Key.EndsWith("_upload")), Is.EqualTo(1));
+
+        var schema = NodeSchemaJson.FromObjectInfo(info).Single();
+        var widget = schema.Inputs.Single(i => i.Name == input).Widget!;
+        Assert.That(widget.Upload, Is.EqualTo(flag[..flag.IndexOf('_')]), "read back by the Studio for a server engine");
+        Assert.That(widget.UploadFolder, Is.EqualTo(folder));
+    }
+
+    [Test]
+    public void ComfyUIs_own_upload_flags_are_read()
+    {
+        // ComfyUI's /object_info entry for Load Image (from Outputs), as ComfyUI serves it (its remote listing route left out).
+        var info = JsonNode.Parse("""
+        {"LoadImageOutput": {"input": {"required": {"image": [["a.png [output]"], {"image_upload": true, "image_folder": "output"}]}},
+          "output": ["IMAGE", "MASK"], "output_name": ["IMAGE", "MASK"], "name": "LoadImageOutput", "display_name": "Load Image (from Outputs)", "category": "image"},
+         "KSampler": {"input": {"required": {"sampler_name": [["euler"], {}]}}, "output": ["LATENT"], "name": "KSampler", "category": "sampling"}}
+        """)!.AsObject();
+        var schemas = NodeSchemaJson.FromObjectInfo(info).ToDictionary(s => s.Id);
+        Assert.That(schemas["LoadImageOutput"].Inputs[0].Widget!.Upload, Is.EqualTo("image"));
+        Assert.That(schemas["LoadImageOutput"].Inputs[0].Widget!.UploadFolder, Is.EqualTo("output"));
+        Assert.That(schemas["KSampler"].Inputs[0].Widget!.Upload, Is.Null);
+    }
+
+    [Test]
+    public async Task An_upload_goes_to_the_folder_its_type_names_and_a_bad_one_is_refused()
+    {
+        var png = PngWriter.Encode(new ImageBatch(1, 8, 8, 3));
+        using (var form = new MultipartFormDataContent { { new ByteArrayContent(png), "image", "result.png" }, { new StringContent("output"), "type" } })
+        {
+            var upload = await _http.PostAsync("/upload/image", form);
+            Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            var reply = (await upload.Content.ReadFromJsonAsync<JsonObject>())!;
+            Assert.That((string?)reply["type"], Is.EqualTo("output"));
+            Assert.That(File.Exists(Path.Combine(_dir, "output", (string)reply["name"]!)));
+            Assert.That(File.Exists(Path.Combine(_dir, "input", "result.png")), Is.False);
+        }
+        using (var form = new MultipartFormDataContent { { new ByteArrayContent(png), "image", "deep.png" }, { new StringContent("sub/two"), "subfolder" } })
+        {
+            var reply = (await (await _http.PostAsync("/upload/image", form)).Content.ReadFromJsonAsync<JsonObject>())!;
+            Assert.That(((string?)reply["subfolder"], (string?)reply["type"]), Is.EqualTo(("sub/two", "input")));
+            Assert.That(File.Exists(Path.Combine(_dir, "input", "sub", "two", "deep.png")));
+        }
+        using (var form = new MultipartFormDataContent { { new ByteArrayContent(png), "image", "x.png" }, { new StringContent("models"), "type" } })
+            Assert.That((await _http.PostAsync("/upload/image", form)).StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        using (var form = new MultipartFormDataContent { { new ByteArrayContent(png), "image", "x.png" }, { new StringContent("../../escape"), "subfolder" } })
+            Assert.That((await _http.PostAsync("/upload/image", form)).StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(File.Exists(Path.Combine(_dir, "..", "escape", "x.png")), Is.False);
+    }
+
+    [Test]
+    public async Task A_video_can_be_uploaded_for_Load_Video()
+    {
+        using var form = new MultipartFormDataContent { { new ByteArrayContent([0x1A, 0x45, 0xDF, 0xA3]), "image", "clip.webm" } };
+        var upload = await _http.PostAsync("/upload/image", form);
+        Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var name = (string)(await upload.Content.ReadFromJsonAsync<JsonObject>())!["name"]!;
+        Assert.That(File.Exists(Path.Combine(_dir, "input", name)));
+        var info = JsonNode.Parse(await _http.GetStringAsync("/object_info/LoadVideo"))!;
+        Assert.That(info["LoadVideo"]!["input"]!["required"]!["file"]![0]!.AsArray().Select(n => (string)n!), Does.Contain(name), "Load Video lists it");
+    }
+
     [Test]
     public async Task An_uploaded_image_can_be_loaded_by_a_prompt()
     {

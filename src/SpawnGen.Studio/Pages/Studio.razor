@@ -67,7 +67,8 @@
                 <option>No engine available</option>
             }
         </select>
-        <label class="button" title="Upload a PNG, JPEG, WebP, GIF or BMP for Load Image nodes, a WAV or FLAC for Load Audio, or a .latent for Load Latent">Upload<InputFile @key="_fileInputs" OnChange="OnUploadChosenAsync" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.wav,.flac,.latent" hidden /></label>
+        <label class="button" title="Upload a picture, sound, video or .latent; with a Load Image, Load Audio or Load Video node selected it is chosen there">Upload<InputFile @key="_fileInputs" OnChange="OnUploadChosenAsync" accept="@ToolbarAccept" hidden /></label>
+        <InputFile @key="(_fileInputs, 1)" @ref="_nodeUploadInput" OnChange="OnNodeUploadChosenAsync" accept="@UploadWidget.Accept(_nodeUpload?.Kind)" hidden />
         <label class="check" title="Batch count: how many times Queue runs the graph (each run uses the next seed per the seed widget's control after generate)">batch <input class="batch" type="number" min="1" max="100" step="1" @bind="_batchCount" @bind:event="oninput" /></label>
     </div>
 
@@ -552,8 +553,15 @@
             <div class="widget-edit" style="left:@(Px(e.Bounds.X)); top:@(Px(e.Bounds.Y)); width:@(Px(Math.Max(e.Bounds.Width, 140))); height:@(Px(e.Bounds.Height))">
                 @if (e.Spec?.Kind == WidgetKind.Combo)
                 {
-                    <select @ref="_editRef" @onchange="args => CommitEdit(args.Value?.ToString())" @onkeydown="EditKey">
-                        @foreach (var option in e.Spec.ResolveOptions())
+                    var options = e.Spec.ResolveOptions();
+                    <select @ref="_editRef" @onchange="args => CommitEdit(args.Value?.ToString())" @onkeydown="EditKey" @onblur="CloseComboEdit">
+                        @if (!options.Contains(e.Text))
+                        {
+                            // The value is not in the list (a workflow's example.png this engine does not have). Without this entry the browser shows
+                            // the first option as chosen, and choosing that option changes nothing: the node keeps the missing value.
+                            <option value="@e.Text" selected>@(e.Text.Length == 0 ? "(nothing chosen)" : $"{e.Text} (not found)")</option>
+                        }
+                        @foreach (var option in options)
                         {
                             <option value="@option" selected="@(option == e.Text)">@option</option>
                         }
@@ -912,6 +920,7 @@
         {
             _studio = new StudioCanvas(JS, _canvasRef.As<HTMLCanvasElement>(), _view, _renderer);
             _studio.FirstLayout += () => _view.FitToView();
+            _studio.BeforeDraw += SyncPicturePreviews;
             _studio.Shortcut += OnShortcut;
             await StartServerAsync(); // before the tabs open: a workflow may use the server's custom nodes
             _dropRef = DotNetObjectReference.Create(this);
@@ -1405,6 +1414,11 @@
     void OnWidgetActivated(int nodeId, string name)
     {
         var node = _doc.Graph.GetNode(nodeId);
+        if (name == UploadWidget.Name && _view.Hits.Geometry(node).Widgets.FirstOrDefault(w => w.IsUpload) is { UploadFor: { } comboName })
+        {
+            OpenNodeUpload(node, comboName);
+            return;
+        }
         // The node's own widget list: it includes widgets that are not in the schema (a dynamic combo's chosen inputs, Custom Combo's options).
         var spec = name == ControlAfterGenerate.Name ? ControlAfterGenerate.Spec
             : Registry.GetSchema(node.ClassType) is { } schema ? NodeLayout.OrderedInputs(schema, node.Widgets).FirstOrDefault(i => i.Name == name)?.Widget : null;
@@ -1581,6 +1595,12 @@
         if (spec.Min is { } min) v = Math.Max(v, min);
         if (spec.Max is { } max) v = Math.Min(v, max);
         return spec.Kind == WidgetKind.Int ? (object)(long)v : v;
+    }
+
+    /// <summary>A combo's dropdown closes when focus leaves it without a choice (a click on the canvas), as the text fields commit on blur.</summary>
+    void CloseComboEdit()
+    {
+        if (_edit?.Spec?.Kind == WidgetKind.Combo) _edit = null;
     }
 
     void EditKey(KeyboardEventArgs e)
@@ -2301,6 +2321,7 @@
         InputFiles.Store = _engine is BrowserEngine browser ? browser.Inputs : new ListedInputStore(names, await _engine.ListInputFoldersAsync());
         var outputs = await _engine.ListOutputFilesAsync();
         OutputFiles.Lister = () => outputs;
+        _picturePreviews.Clear(); // a file uploaded under a name a node already chose is there now
         _view.Invalidate();
     }
 
@@ -2309,14 +2330,127 @@
         if (_engine is null) { ShowMessage("There is no engine to upload to."); return; }
         try
         {
-            await using var stream = e.File.OpenReadStream(32 * 1024 * 1024);
+            await using var stream = e.File.OpenReadStream(256 * 1024 * 1024);
             using var memory = new MemoryStream();
             await stream.CopyToAsync(memory);
             var stored = await _engine.UploadImageAsync(e.File.Name, memory.ToArray());
             await RefreshInputImagesAsync();
-            ShowMessage(stored is null ? $"Could not upload {e.File.Name} (only PNG, JPEG, WebP, GIF and BMP pictures, WAV sound and .latent files can be loaded)." : $"Uploaded as {stored}: pick it in a Load Image, Load Audio or Load Latent node.");
+            if (stored is null) { ShowMessage($"Could not upload {e.File.Name} (only PNG, JPEG, WebP, GIF and BMP pictures, WAV and FLAC sound, videos and .latent files can be loaded)."); return; }
+            // With a node selected that loads this kind of file, the upload is chosen there (as its own upload button would).
+            var kind = UploadKindOf(stored);
+            var target = _view.SelectedNodes.Select(id => _doc.Graph.FindNode(id)).OfType<EditorNode>()
+                .Select(n => (Node: n, Input: Registry.GetSchema(n.ClassType) is { } s ? UploadWidget.ComboFor(s) : null))
+                .FirstOrDefault(t => t.Input?.Widget is { } w && w.Upload == kind && w.UploadFolder is null or "input" && _doc.Graph.LinkInto(t.Node.Id, t.Input.Name) is null);
+            if (kind is not null && target.Input is { Widget: { } combo })
+            {
+                ChooseUploaded(target.Node.Id, target.Input.Name, UploadWidget.ValueFor(combo, stored));
+                ShowMessage($"Uploaded {stored} and chose it in {target.Node.Title ?? Registry.GetSchema(target.Node.ClassType)?.DisplayName} #{target.Node.Id}.");
+            }
+            else ShowMessage($"Uploaded as {stored}: pick it in a Load Image, Load Audio, Load Video or Load Latent node (select the node first, or use its \"{UploadWidget.Label}\" button, to choose it there).");
         }
         catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
+    }
+
+    const string ToolbarAccept = ".png,.jpg,.jpeg,.webp,.gif,.bmp,.wav,.flac,.3gp,.avi,.m4v,.mkv,.mov,.mp4,.mpeg,.mpg,.ogv,.webm,.wmv,.latent";
+
+    /// <summary>The upload kind a stored file fills ("image", "audio", "video"), as ComfyUI's upload flags name them; null for another file (.latent).</summary>
+    static string? UploadKindOf(string name)
+    {
+        var ext = System.IO.Path.GetExtension(name).ToLowerInvariant();
+        foreach (var kind in new[] { "image", "audio", "video" })
+            if (UploadWidget.Accept(kind).Split(',').Contains(ext)) return kind;
+        return null;
+    }
+
+    // ---- a node's own upload button (Load Image, Load Audio, Load Video: ComfyUI's "choose file to upload") ----
+
+    InputFile? _nodeUploadInput;
+    /// <summary>The node and file combo the file picker is open for.</summary>
+    (int NodeId, string Input, string? Kind)? _nodeUpload;
+
+    void OpenNodeUpload(EditorNode node, string comboName)
+    {
+        if (_engine is null) { ShowMessage("There is no engine to upload to."); return; }
+        var combo = Registry.GetSchema(node.ClassType)?.Inputs.FirstOrDefault(i => i.Name == comboName)?.Widget;
+        _nodeUpload = (node.Id, comboName, combo?.Upload);
+        // Opened from the press itself (the canvas's pointer-up), which is what lets a page open a file picker. The accept list is set on the
+        // element here too: the render that would update the attribute comes after this click.
+        if (_nodeUploadInput?.Element is { } element)
+        {
+            using var input = element.As<HTMLInputElement>();
+            input.Accept = UploadWidget.Accept(combo?.Upload);
+            input.Click();
+        }
+    }
+
+    async Task OnNodeUploadChosenAsync(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            if (_engine is null || _nodeUpload is not { } at || _doc.Graph.FindNode(at.NodeId) is not { } node) return;
+            var combo = Registry.GetSchema(node.ClassType)?.Inputs.FirstOrDefault(i => i.Name == at.Input)?.Widget;
+            if (await UploadForComboAsync(e.File, combo) is { } value) ChooseUploaded(node.Id, at.Input, value);
+        }
+        catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
+        finally { _nodeUpload = null; _fileInputs++; StateHasChanged(); }
+    }
+
+    /// <summary>
+    /// Uploads a file for a file combo, into the folder the combo lists (input, or output for Load Image (from Outputs), as ComfyUI's frontend
+    /// uploads for image_folder "output"), and returns the combo value that names it; null (with the reason shown) when it could not be uploaded.
+    /// </summary>
+    async Task<string?> UploadForComboAsync(Microsoft.AspNetCore.Components.Forms.IBrowserFile file, WidgetSpec? combo)
+    {
+        if (_engine is null) { ShowMessage("There is no engine to upload to."); return null; }
+        await using var stream = file.OpenReadStream(256 * 1024 * 1024);
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+        var stored = await _engine.UploadImageAsync(file.Name, memory.ToArray(), combo?.UploadFolder ?? "input");
+        await RefreshInputImagesAsync();
+        if (stored is null) { ShowMessage($"Could not upload {file.Name}."); return null; }
+        return combo is null ? stored : UploadWidget.ValueFor(combo, stored);
+    }
+
+    /// <summary>Selects an uploaded file in a node's file combo: one undo step, saved with the tab.</summary>
+    void ChooseUploaded(int nodeId, string input, string value)
+    {
+        _doc.SetWidget(nodeId, input, value);
+        _doc.EndGesture();
+        _view.Invalidate();
+        ScheduleAutosave();
+    }
+
+    // ---- the chosen picture in Load Image nodes ----
+
+    /// <summary>Per node, the picture value its preview was made for and the preview's URL ("" when the picture is not on this engine).</summary>
+    readonly Dictionary<int, (string Value, string Url)> _picturePreviews = [];
+
+    /// <summary>
+    /// A node with a picture upload combo (Load Image, Load Image (as Mask), Load Image (from Outputs)) shows the chosen picture under its widgets,
+    /// as ComfyUI does. The URL is made again only when the choice changes (the browser engine's is a data URL of the whole file).
+    /// </summary>
+    void SyncPicturePreviews()
+    {
+        if (_engine is null) return;
+        foreach (var node in _doc.Graph.Nodes)
+        {
+            if (Registry.GetSchema(node.ClassType) is not { } schema || UploadWidget.ComboFor(schema) is not { Widget: { Upload: "image" } combo } input) continue;
+            var value = _doc.Graph.LinkInto(node.Id, input.Name) is null ? node.Widgets.GetValueOrDefault(input.Name) as string ?? "" : "";
+            if (!_picturePreviews.TryGetValue(node.Id, out var known) || known.Value != value)
+                _picturePreviews[node.Id] = known = (value, PicturePreviewUrl(value, combo));
+            if (known.Url.Length == 0) { if (node.Previews.Count > 0) node.Previews = []; }
+            else if (node.Previews.Count != 1 || node.Previews[0].Url != known.Url) node.Previews = [new NodePreview(known.Url)];
+        }
+    }
+
+    /// <summary>Where the picture a combo value names can be loaded from on this engine; "" when it is not one of the combo's files.</summary>
+    string PicturePreviewUrl(string value, WidgetSpec combo)
+    {
+        if (_engine is null || value.Length == 0 || !combo.ResolveOptions().Contains(value)) return "";
+        var (path, type) = InputFiles.Annotated(value);
+        path = path.Replace('\\', '/');
+        int slash = path.LastIndexOf('/');
+        return _engine.ViewUrl(path[(slash + 1)..], slash < 0 ? "" : path[..slash], type ?? combo.UploadFolder ?? "input");
     }
 
     /// <summary>The picture names and input folders of a remote engine, shown in Load Image's and Load Image (from Folder)'s combos (the files are read on that engine).</summary>

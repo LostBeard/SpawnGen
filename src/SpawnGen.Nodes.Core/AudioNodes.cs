@@ -13,7 +13,7 @@ public sealed class LoadAudio
     public static string[] AudioNames() =>
         [.. InputFiles.Store.List(n => AudioFiles.LoadableExtensions.Contains(Path.GetExtension(n).ToLowerInvariant()))];
 
-    public async Task<AudioClip> ExecuteAsync([Input(OptionsProvider = nameof(AudioNames))] string audio) =>
+    public async Task<AudioClip> ExecuteAsync([Input(OptionsProvider = nameof(AudioNames), Upload = "audio")] string audio) =>
         await AudioFiles.LoadAsync(await InputFiles.Store.ReadAsync(RecordAudio.StripAnnotation(audio)));
 }
 

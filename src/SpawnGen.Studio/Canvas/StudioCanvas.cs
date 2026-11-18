@@ -68,6 +68,7 @@ public sealed class StudioCanvas : IDisposable
                 if (SyncSize()) _dirty = true;
                 if (!_dirty) continue;
                 _dirty = false;
+                BeforeDraw?.Invoke();
                 _renderer.Draw(_ctx, _cssWidth, _cssHeight, _ratio);
             }
         }
@@ -94,6 +95,9 @@ public sealed class StudioCanvas : IDisposable
     }
 
     bool _sized;
+
+    /// <summary>Raised before each repaint: the page brings view state the graph does not hold (a Load Image node's picture) up to date.</summary>
+    public event Action? BeforeDraw;
 
     /// <summary>Raised once, when the canvas has been measured for the first time.</summary>
     public event Action? FirstLayout;

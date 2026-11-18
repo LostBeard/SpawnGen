@@ -85,7 +85,9 @@ public static class NodeSchemaJson
         if (entry[0] is JsonArray options)
             // ComfyUI's options can be numbers (Create Video's bit_depth: "auto", 8, 10): their text is the option.
             return new InputSpec(name, SocketType.String, required, new WidgetSpec(WidgetKind.Combo) { Options = options.Select(OptionText).ToList(), Default = options.Count > 0 ? OptionText(options[0]) : null,
-                NumericOptions = options.Any(o => o is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number) });
+                NumericOptions = options.Any(o => o is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number),
+                Upload = UploadKinds.FirstOrDefault(k => config?[k + "_upload"] is JsonValue up && up.TryGetValue<bool>(out var on) && on),
+                UploadFolder = (string?)config?["image_folder"] });
         var type = (string)entry[0]!;
         if (config is null) return new InputSpec(name, new SocketType(type), required);
         if (type == MatchTypeName)
@@ -111,6 +113,9 @@ public static class NodeSchemaJson
             Multiline = (bool?)config["multiline"] ?? false,
         });
     }
+
+    /// <summary>The upload flags ComfyUI puts on a file combo (image_upload, audio_upload, video_upload, file_upload).</summary>
+    static readonly string[] UploadKinds = ["image", "audio", "video", "file"];
 
     static string OptionText(JsonNode? o) => o is JsonValue v && v.TryGetValue<string>(out var text) ? text : o?.ToJsonString() ?? "";
 

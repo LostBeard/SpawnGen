@@ -29,6 +29,15 @@ public sealed record WidgetSpec(WidgetKind Kind)
     /// </summary>
     public bool NumericOptions { get; init; }
 
+    /// <summary>
+    /// ComfyUI's upload flag on a file combo: "image" (image_upload), "audio" (audio_upload), "video" (video_upload) or "file" (file_upload). The
+    /// editor adds a "choose file to upload" button under the combo that uploads a file and selects it; null for a combo without one.
+    /// </summary>
+    public string? Upload { get; init; }
+
+    /// <summary>ComfyUI's image_folder next to <see cref="Upload"/>: the folder the combo lists ("output" for Load Image (from Outputs)); null = input.</summary>
+    public string? UploadFolder { get; init; }
+
     public IReadOnlyList<string> ResolveOptions() => OptionsProvider?.Invoke() ?? Options ?? [];
 
     /// <summary>A combo value as ComfyUI has it: the integer for a <see cref="NumericOptions"/> option that reads as one, else the text.</summary>

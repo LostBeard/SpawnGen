@@ -131,9 +131,9 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
     public Task CancelQueuedAsync(string promptId) =>
         http.PostAsJsonAsync("queue", new JsonObject { ["delete"] = new JsonArray(promptId) }, _stop.Token);
 
-    public async Task<string?> UploadImageAsync(string name, byte[] png)
+    public async Task<string?> UploadImageAsync(string name, byte[] png, string type = "input")
     {
-        using var form = new MultipartFormDataContent { { new ByteArrayContent(png), "image", name } };
+        using var form = new MultipartFormDataContent { { new ByteArrayContent(png), "image", name }, { new StringContent(type), "type" } };
         using var response = await http.PostAsync("upload/image", form, _stop.Token);
         if (!response.IsSuccessStatusCode) return null;
         return (string?)(await response.Content.ReadFromJsonAsync<JsonObject>(_stop.Token))?["name"];

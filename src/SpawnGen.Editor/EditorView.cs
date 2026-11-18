@@ -518,7 +518,8 @@ public sealed class EditorView
         }
         if (button != PointerButton.Left) return;
         // The App Builder picks with a click: the widget or node is chosen, not edited, moved or selected (panning and the minimap still work).
-        if (Picking == PickTarget.Widgets && hit.Kind == HitKind.Widget && hit.Name is { } pickedWidget)
+        // The upload button is not a value: an app gets it with the file combo it fills.
+        if (Picking == PickTarget.Widgets && hit.Kind == HitKind.Widget && hit.Name is { } pickedWidget && pickedWidget != UploadWidget.Name)
         {
             WidgetPicked?.Invoke(hit.NodeId, pickedWidget);
             return;

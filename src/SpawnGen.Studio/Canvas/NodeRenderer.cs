@@ -379,15 +379,18 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         // A failed node says why, in a red tag under it.
         if (failed && detailed)
         {
-            var text = Ellipsize(visuals.Errors[node.Id], Math.Max(b.Width, 220));
+            // The whole message, wrapped: a cut-off reason ("'exa...") hides the one thing the tag is for.
             ctx.Font = Theme.Font;
-            double w = Math.Max(MeasureText(text) + 16, 60);
-            RoundRect(ctx, new Rect(b.X, b.Bottom + 6, w, 22), 5);
+            double room = Math.Max(b.Width, 320) - 16;
+            var lines = WrapLines(visuals.Errors[node.Id], room).ToList();
+            double w = Math.Max(lines.Select(MeasureText).DefaultIfEmpty(0).Max() + 16, 60);
+            const double LineHeight = 16;
+            RoundRect(ctx, new Rect(b.X, b.Bottom + 6, w, lines.Count * LineHeight + 6), 5);
             ctx.FillStyle = "#6b2424";
             ctx.Fill();
             ctx.FillStyle = "#ffd6d6";
             ctx.TextBaseline = "middle";
-            ctx.FillText(text, b.X + 8, b.Bottom + 17);
+            for (int i = 0; i < lines.Count; i++) ctx.FillText(lines[i], b.X + 8, b.Bottom + 6 + 3 + LineHeight * i + LineHeight / 2);
         }
     }
 
@@ -410,7 +413,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         }
         if (visuals.ShowAppInputs && detailed && !geo.Collapsed)
         {
-            foreach (var w in geo.Widgets)
+            foreach (var w in geo.Widgets.Where(w => !w.IsUpload))
             {
                 int place = visuals.AppInputs.IndexOf((node.Id, w.Name));
                 var r = w.Bounds;
@@ -866,6 +869,17 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.Stroke();
 
         if (w.IsCurve) { DrawCurve(ctx, w, value, node.ResultHistogram); return; }
+        if (w.IsUpload)
+        {
+            // A button: its label in the middle, as ComfyUI's "choose file to upload".
+            ctx.Font = Theme.Font;
+            ctx.TextBaseline = "middle";
+            ctx.FillStyle = Theme.ValueText;
+            ctx.TextAlign = "center";
+            ctx.FillText(Ellipsize(w.Label, r.Width - 16), r.X + r.Width / 2, r.Y + r.Height / 2);
+            ctx.TextAlign = "left";
+            return;
+        }
         if (w.IsBoxes) { DrawBoxes(ctx, node, w, value); return; }
         if (w.IsCrop) { DrawCrop(ctx, node, w, value); return; }
 

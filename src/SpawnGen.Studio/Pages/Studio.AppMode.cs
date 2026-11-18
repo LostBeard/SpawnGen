@@ -171,7 +171,9 @@ public partial class Studio
         StateHasChanged();
     }
 
-    bool IsPictureInput(EditorNode node, string widget) => node.ClassType is "LoadImage" or "LoadImageMask" && widget == "image";
+    /// <summary>A picture upload combo (ComfyUI's image_upload: Load Image, Load Image (as Mask) ...): the app shows the picture and an upload button.</summary>
+    bool IsPictureInput(EditorNode node, string widget) =>
+        Registry.GetSchema(node.ClassType) is { } schema && UploadWidget.ComboFor(schema) is { Widget.Upload: "image" } input && input.Name == widget;
 
     string? PictureUrl(EditorNode node, string widget) =>
         _engine is not null && node.Widgets.GetValueOrDefault(widget) is string { Length: > 0 } name ? _engine.ViewUrl(name, "", "input") : null;
@@ -179,16 +181,10 @@ public partial class Studio
     /// <summary>A picture uploaded from the app goes to the engine's inputs and into the input it was uploaded for.</summary>
     async Task OnAppPictureChosenAsync(InputFileChangeEventArgs e, EditorNode node, string widget)
     {
-        if (_engine is null) { ShowMessage("There is no engine to upload to."); return; }
         try
         {
-            await using var stream = e.File.OpenReadStream(32 * 1024 * 1024);
-            using var memory = new MemoryStream();
-            await stream.CopyToAsync(memory);
-            var stored = await _engine.UploadImageAsync(e.File.Name, memory.ToArray());
-            await RefreshInputImagesAsync();
-            if (stored is null) { ShowMessage($"Could not upload {e.File.Name}."); return; }
-            SetAppInput(node, widget, stored);
+            var combo = Registry.GetSchema(node.ClassType)?.Inputs.FirstOrDefault(i => i.Name == widget)?.Widget;
+            if (await UploadForComboAsync(e.File, combo) is { } value) SetAppInput(node, widget, value);
         }
         catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
     }

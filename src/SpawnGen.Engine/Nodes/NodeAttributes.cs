@@ -79,6 +79,10 @@ public sealed class InputAttribute : Attribute
     public bool NumericOptions { get; init; }
     /// <summary>Name of a public static method on the node class returning the combo options (e.g. model files).</summary>
     public string? OptionsProvider { get; init; }
+    /// <summary>A file combo's upload button (ComfyUI's image_upload / audio_upload / video_upload / file_upload): "image", "audio", "video" or "file". See <see cref="WidgetSpec.Upload"/>.</summary>
+    public string? Upload { get; init; }
+    /// <summary>ComfyUI's image_folder for an <see cref="Upload"/> combo that lists another folder ("output"). See <see cref="WidgetSpec.UploadFolder"/>.</summary>
+    public string? UploadFolder { get; init; }
     public string? Tooltip { get; init; }
     /// <summary>Earlier names of this input: a saved workflow that links to one still connects.</summary>
     public string[]? Aliases { get; init; }

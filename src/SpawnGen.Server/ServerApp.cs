@@ -17,7 +17,7 @@ public static class ServerApp
     {
         // The app's own folder, not the current one: a published server or desktop app started from anywhere (a shortcut, a terminal) finds its
         // Studio files (wwwroot) and appsettings.json.
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory, ApplicationName = StaticAssetsName() });
         // Serve the Studio's files straight from the build output when running from a checkout (`dotnet run`). A published server carries them in
         // wwwroot instead and there is no manifest, so this does nothing there.
         builder.WebHost.UseStaticWebAssets();
@@ -41,6 +41,7 @@ public static class ServerApp
         configure?.Invoke(builder);
 
         var app = builder.Build();
+        CopyExamplePicture(app, options.InputPath);
         // ComfyUI answers every route both as /x and /api/x (its frontend uses /api/...): the prefix is taken off before routing.
         app.Use((context, next) =>
         {
@@ -413,7 +414,32 @@ public static class ServerApp
         };
     }
 
+    /// <summary>
+    /// The application name the static web assets manifest is found by (<c>{name}.staticwebassets.runtime.json</c>): the running app's own when it
+    /// has one, else the server's (a host such as the test runner, whose own name has no manifest, still serves the Studio's files from a checkout).
+    /// </summary>
+    static string? StaticAssetsName()
+    {
+        var entry = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
+        var server = typeof(ServerApp).Assembly.GetName().Name!;
+        bool Has(string? name) => name is not null && File.Exists(Path.Combine(AppContext.BaseDirectory, name + ".staticwebassets.runtime.json"));
+        return Has(entry) || !Has(server) ? entry : server;
+    }
+
     // ---- files ----
+
+    /// <summary>
+    /// The examples' Load Image picture (ComfyUI ships input/example.png the same way): the Studio's examples/example.png (made with FLUX.2 Klein 4B,
+    /// Apache-2.0; see docs/EXAMPLE-PICTURE.md) is put in the input folder when that has no example.png. A file of that name already there is kept.
+    /// </summary>
+    static void CopyExamplePicture(WebApplication app, string inputPath)
+    {
+        var target = Path.Combine(inputPath, "example.png");
+        if (File.Exists(target) || app.Environment.WebRootFileProvider.GetFileInfo("examples/example.png") is not { Exists: true } example) return;
+        using var from = example.CreateReadStream();
+        using var to = File.Create(target);
+        from.CopyTo(to);
+    }
 
     /// <summary>The file under <paramref name="root"/>, or null when the request tries to leave it (a path-traversal attempt).</summary>
     internal static string? SafePath(string root, string? subfolder, string filename)

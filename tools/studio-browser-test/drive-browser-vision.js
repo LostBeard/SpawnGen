@@ -1,6 +1,6 @@
 // Library vision models in the BROWSER on WebGPU: uploads a picture, runs LoadImage -> <node> -> SaveImage on "This browser", follows the status and
 // leaves a screenshot (out/browser-vision-<node>.png: look at the picture in the Save Image node). The models download from Hugging Face into the
-// profile's storage on first use; keep PROFILE_DIR to reuse them. NODE: DepthAnythingV2 (default), RemoveBackground, StyleTransfer, ImageUpscaleWithModel.
+// profile's storage on first use; keep PROFILE_DIR to reuse them. NODE: DepthAnythingV2 (default), RemoveBackground, StyleTransfer, ImageUpscaleWithModel, ObjectDetection, PoseEstimation.
 // Flux2Klein: text to image (PICTURE_SIZE, FLUX_PROMPT; the first run downloads about 4.6 GB).
 // INPUT_PICTURE: a PNG to process (default: a generated gradient with a disc).
 const { chromium } = require('playwright-core');
@@ -53,7 +53,7 @@ fs.mkdirSync(OUT, { recursive: true });
   await page.waitForTimeout(1500);
   const name = path.basename(picture);
 
-  const inputs = { DepthAnythingV2: {}, RemoveBackground: { threshold: 0.5 }, StyleTransfer: { style: 'mosaic' }, ImageUpscaleWithModel: {} };
+  const inputs = { DepthAnythingV2: {}, RemoveBackground: { threshold: 0.5 }, StyleTransfer: { style: 'mosaic' }, ImageUpscaleWithModel: {}, ObjectDetection: { confidence: 0.25 }, PoseEstimation: { confidence: 0.3, overlay: true } };
   const prompt = { '1': { class_type: 'LoadImage', inputs: { image: name } } };
   if (NODE === 'ImageUpscaleWithModel') {
     prompt['2'] = { class_type: 'UpscaleModelLoader', inputs: { model_name: 'espcn_x3.onnx' } };

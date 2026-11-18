@@ -669,6 +669,31 @@ public class ServerTests
     }
 
     [Test]
+    public async Task The_examples_picture_is_put_in_the_input_folder_and_listed()
+    {
+        var copied = await File.ReadAllBytesAsync(Path.Combine(_dir, "input", "example.png"));
+        var served = await _http.GetByteArrayAsync("/examples/example.png");
+        Assert.That(copied, Is.EqualTo(served), "the Studio's examples/example.png, as it serves it");
+        Assert.That(ImageDecoder.Decode(copied) is { Width: 512, Height: 512 }, "a 512 x 512 picture");
+        var info = JsonNode.Parse(await _http.GetStringAsync("/object_info/LoadImage"))!;
+        Assert.That(info["LoadImage"]!["input"]!["required"]!["image"]![0]!.AsArray().Select(n => (string)n!), Does.Contain("example.png"));
+    }
+
+    [Test]
+    public async Task An_example_png_already_in_the_input_folder_is_kept()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "spawngen-server-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(dir, "input"));
+        var mine = PngWriter.Encode(new ImageBatch(1, 4, 4, 3));
+        await File.WriteAllBytesAsync(Path.Combine(dir, "input", "example.png"), mine);
+        await using var app = ServerApp.Build(["--urls", "http://127.0.0.1:0", $"--SpawnGen:ModelsPath={dir}/models", $"--SpawnGen:OutputPath={dir}/output",
+            $"--SpawnGen:InputPath={dir}/input", $"--SpawnGen:TempPath={dir}/temp", $"--SpawnGen:UserPath={dir}/user", "--environment", "Development"]);
+        Assert.That(await File.ReadAllBytesAsync(Path.Combine(dir, "input", "example.png")), Is.EqualTo(mine));
+        InputFiles.Directory = Path.Combine(_dir, "input");
+        try { Directory.Delete(dir, true); } catch (IOException) { }
+    }
+
+    [Test]
     public async Task An_uploaded_image_can_be_loaded_by_a_prompt()
     {
         await ConnectAsync();

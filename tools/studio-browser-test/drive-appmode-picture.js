@@ -21,8 +21,8 @@ const APPLE = path.join(__dirname, 'apple.png');
   const picks = async () => (await page.locator('.app-picks li, .app-pick').allTextContents()).map(s => s.trim()).filter(Boolean);
 
   await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(3500);
-  await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
-  await page.click('.menu li:has-text("Depth map")'); await page.waitForTimeout(1500);
+  // The Depth map example naming a picture this engine does not have (the shipped example.png would be found).
+  await page.setInputFiles('.toolbar input[type=file][accept=".json,.png"]', path.join(__dirname, 'depth-missing.json')); await page.waitForTimeout(1500);
   await page.click('.toolbar button:has-text("App")'); await page.waitForTimeout(800);
   await shot('1-inputs');
   if (process.env.PROBE) { await browser.close(); return; }
@@ -38,7 +38,7 @@ const APPLE = path.join(__dirname, 'apple.png');
   await shot('3-preview');
   check('Next on the outputs step shows the preview without an error', problems.length === 0 && (await page.locator('.appmode.preview').count()) === 1, problems.join(' | '));
   const field = page.locator('.appmode.preview .app-field').first();
-  check('the preview lists the missing example.png as not found, with no picture', /example\.png \(not found\)/.test(await field.locator('select').evaluate(s => s.options[s.selectedIndex].text))
+  check('the preview lists the missing not-here.png as not found, with no picture', /not-here\.png \(not found\)/.test(await field.locator('select').evaluate(s => s.options[s.selectedIndex].text))
     && (await field.locator('img.app-picture').count()) === 0);
 
   // Default view, Apply: the app itself. Upload a picture with the app's button, run, and the depth map is shown.

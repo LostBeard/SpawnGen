@@ -1,4 +1,5 @@
 // Uploading pictures for Load Image (TJ's 2026-11-18 report: Examples > Depth map, Upload, Queue failed on the example's example.png).
+// The Depth map example runs out of the box on the shipped example.png; depth-missing.json is the same graph naming not-here.png, for the rest.
 // Checks: the node's own "choose file to upload" button uploads and chooses the file; the node shows the chosen picture; a value that is not in
 // the list shows as "(not found)" in the dropdown so picking the first real option changes it; the toolbar Upload chooses the file in the
 // selected Load Image node; the queue error under a node is shown whole; and the depth map runs on the uploaded picture.
@@ -29,6 +30,19 @@ fs.copyFileSync(APPLE, PEAR);
     await page.click('.menu li:has-text("Depth map")');
     await page.waitForTimeout(1500);
   };
+  // The graph that names a picture this engine does not have (the Depth map example with not-here.png), opened with the toolbar's Open.
+  const openMissing = async () => {
+    await page.setInputFiles('.toolbar input[type=file][accept=".json,.png"]', path.join(__dirname, 'depth-missing.json'));
+    await page.waitForTimeout(1500);
+  };
+  const runs = async () => parseInt(((await page.textContent('.toolbar')).match(/History \((\d+)\)/) || [])[1] || '0', 10);
+  const waitForRun = async before => {
+    for (let i = 0; i < 300; i++) {
+      await page.waitForTimeout(1000);
+      if ((await runs()) > before && !/Running|Queued/.test(await page.textContent('.status'))) return true;
+    }
+    return false;
+  };
   // The Depth map example fits the view the same way every time: Load Image's title bar, image combo and upload button are here.
   const TITLE = [330, 432], COMBO = [400, 507], UPLOAD = [370, 533];
   const comboValue = async () => {
@@ -49,14 +63,23 @@ fs.copyFileSync(APPLE, PEAR);
   await page.waitForSelector('canvas');
   await page.waitForTimeout(3500);
 
-  // 1. The example as it opens: example.png is not on this engine. Queue says so, under the node, in full.
+  // 0. The example as it ships: example.png is there, shown in the node, and the depth map runs.
   await openDepth();
-  await page.screenshot({ path: path.join(OUT, 'upload-1-opened.png') });
   let v = await comboValue();
-  check('a missing picture shows as "(not found)" in the dropdown, still chosen', v.value === 'example.png' && /example\.png \(not found\)/.test(v.first), JSON.stringify(v));
+  check('the Depth map example finds the shipped example.png', v.value === 'example.png' && v.first === 'example.png', JSON.stringify(v));
+  let before = await runs();
+  await page.click('button:has-text("Queue")');
+  check('the Depth map example runs as it ships (see out/upload-0-example.png)', await waitForRun(before), await toast());
+  await page.screenshot({ path: path.join(OUT, 'upload-0-example.png') });
+
+  // 1. A graph naming a picture this engine does not have: the dropdown says so, and Queue says which, under the node, in full.
+  await openMissing();
+  await page.screenshot({ path: path.join(OUT, 'upload-1-opened.png') });
+  v = await comboValue();
+  check('a missing picture shows as "(not found)" in the dropdown, still chosen', v.value === 'not-here.png' && /not-here\.png \(not found\)/.test(v.first), JSON.stringify(v));
   await page.click('button:has-text("Queue")');
   await page.waitForTimeout(1500);
-  check('Queue refuses the missing example.png and says which', /example\.png/.test(await toast()), await toast());
+  check('Queue refuses the missing not-here.png and says which', /not-here\.png/.test(await toast()), await toast());
   await page.screenshot({ path: path.join(OUT, 'upload-2-error.png') });
 
   // 2. The node's own upload button: pick a file, it is uploaded and chosen, and the node shows it.
@@ -68,17 +91,17 @@ fs.copyFileSync(APPLE, PEAR);
   check('the uploaded picture is chosen in the node', v.value === 'apple.png', JSON.stringify(v));
   await page.screenshot({ path: path.join(OUT, 'upload-3-node-upload.png') });
 
-  // 3. A fresh example: picking the first listed picture in the dropdown is a real change now.
-  await openDepth();
+  // 3. The missing-picture graph again: picking a listed picture in the dropdown is a real change.
+  await openMissing();
   await page.mouse.click(...COMBO);
   await page.waitForSelector('.widget-edit select');
   await page.selectOption('.widget-edit select', 'apple.png');
   await page.waitForTimeout(500);
   v = await comboValue();
-  check('choosing the first listed picture over a missing one changes the node', v.value === 'apple.png', JSON.stringify(v));
+  check('choosing a listed picture over a missing one changes the node', v.value === 'apple.png', JSON.stringify(v));
 
-  // 4. Another fresh example: the toolbar Upload with Load Image selected chooses the file there.
-  await openDepth();
+  // 4. Again: the toolbar Upload with Load Image selected chooses the file there.
+  await openMissing();
   await page.mouse.click(...TITLE);
   await page.setInputFiles('.toolbar input[type=file][accept^=".png,.jpg"]', PEAR);
   await page.waitForTimeout(1500);
@@ -87,12 +110,11 @@ fs.copyFileSync(APPLE, PEAR);
   check('the toolbar Upload chooses the file in the selected Load Image', v.value === 'pear.png' && /chose it in Load Image #1/.test(said), `${JSON.stringify(v)} / ${said}`);
 
   // 5. The run: the depth map of the uploaded picture.
+  before = await runs();
   await page.click('button:has-text("Queue")');
   await page.waitForTimeout(1000);
-  check('Queue takes the graph with the uploaded picture', !/example\.png|not in|There is no/.test(await toast()), await toast());
-  // The run is over when History has it and the status line no longer says Running or Queued (History counts a run from its start).
-  let ran = false;
-  for (let i = 0; i < 300 && !ran; i++) { await page.waitForTimeout(1000); ran = /History \(1\)/.test(await page.textContent('.toolbar')) && !/Running|Queued/.test(await page.textContent('.status')); }
+  check('Queue takes the graph with the uploaded picture', !/not-here\.png|not in|There is no/.test(await toast()), await toast());
+  const ran = await waitForRun(before);
   await page.waitForTimeout(1500);
   await page.screenshot({ path: path.join(OUT, 'upload-4-run.png') });
   check('the depth map of the uploaded picture runs to the end (see out/upload-4-run.png)', ran, `toast: ${await toast()} | status: ${await page.textContent('.status')}`);

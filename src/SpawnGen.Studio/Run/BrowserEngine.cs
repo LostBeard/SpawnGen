@@ -37,6 +37,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _js = js;
         _http = http;
         InputFiles.Store = _inputs;
+        _example = AddExamplePictureAsync();
         // WebP, GIF and BMP for Load Image decode on the page's GPU (SpawnDev.Codecs over WebGPU), opened on the first such picture.
         CodecsImages.Install(async () => (await GetAsync()).Accelerator);
         CodecsAudio.Install(async () => (await GetAsync()).Accelerator);
@@ -52,6 +53,24 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     }
 
     readonly bool _perOp;
+
+    /// <summary>Done when the examples' Load Image picture is in this page's inputs (or could not be fetched); the input listing waits for it.</summary>
+    readonly Task _example;
+
+    /// <summary>
+    /// The examples' Load Image picture (ComfyUI ships input/example.png the same way): examples/example.png from the page's own files, made with
+    /// FLUX.2 Klein 4B (Apache-2.0; docs/EXAMPLE-PICTURE.md), as this page's input example.png. Offline or missing, the inputs are simply without it.
+    /// </summary>
+    async Task AddExamplePictureAsync()
+    {
+        try
+        {
+            if (_inputs.Exists("example.png")) return;
+            var bytes = await _http.GetByteArrayAsync("examples/example.png");
+            if (!_inputs.Exists("example.png")) await _inputs.SaveAsync("example.png", bytes);
+        }
+        catch (HttpRequestException) { }
+    }
 
     void ReportPerOpTimings(string eventType)
     {
@@ -208,7 +227,11 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _ => null,
     };
 
-    public Task<IReadOnlyList<string>> ListInputImagesAsync() => Task.FromResult(_inputs.List());
+    public async Task<IReadOnlyList<string>> ListInputImagesAsync()
+    {
+        await _example;
+        return _inputs.List();
+    }
 
     public Task<IReadOnlyList<string>> ListInputFoldersAsync() => Task.FromResult(_inputs.Folders());
 

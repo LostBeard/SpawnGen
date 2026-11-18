@@ -137,3 +137,10 @@ public sealed class Charted
 {
     public (long Value, UiOutput Ui) Execute(long value) { Calls.Hit(nameof(Charted)); return (value, new UiOutput("shown", new[] { value })); }
 }
+
+/// <summary>Returns the run settings it sees (<see cref="Execution.RunSettings.Canonical"/>), to check they reach the nodes.</summary>
+[Node(Category = "test")]
+public sealed class SettingsEcho
+{
+    public string Execute(NodeContext context) { Calls.Hit(nameof(SettingsEcho)); return Execution.RunSettings.Canonical(context.Settings); }
+}

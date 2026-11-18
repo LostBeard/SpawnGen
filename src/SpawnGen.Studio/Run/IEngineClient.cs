@@ -19,7 +19,9 @@ public interface IEngineClient
     /// <param name="workflowJson">The editor workflow (ComfyUI format); Save Image embeds it in each picture so the picture can be dropped back on the canvas.</param>
     /// <param name="targets">Run only these output nodes (ComfyUI's partial_execution_targets: Queue Selected Output Nodes); null runs them all.</param>
     /// <remarks>A queued result can still carry <see cref="QueueResult.NodeErrors"/>: output nodes left out because what they need does not validate.</remarks>
-    Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null);
+    /// <param name="settings">SpawnGen's run settings (extra_data.spawngen_settings, see SpawnGen.Engine.Execution.RunSettings); null for the defaults.</param>
+    Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null,
+        IReadOnlyDictionary<string, string>? settings = null);
     Task InterruptAsync();
 
     /// <summary>Removes a run that is still waiting in the queue (not the one that is running: that is <see cref="InterruptAsync"/>).</summary>

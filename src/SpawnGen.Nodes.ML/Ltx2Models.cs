@@ -6,6 +6,7 @@ using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Ltx2;
 using SpawnDev.ILGPU.ML.Preprocessing;
 using SpawnDev.ILGPU.ML.StableDiffusion;
+using SpawnGen.Engine.Execution;
 using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Nodes.ML;
@@ -131,8 +132,9 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
 
     /// <summary>
     /// LoRAs (Load LoRA): applied on the fly to the transformer's linears (SpawnDev.ILGPU.ML's Ltx2Lora: strength x (x A^T) B^T). Measured against
-    /// ComfyUI on the distilled LoRA: bf16 layers equal its W + B A (calls 5.5e-6); its fp8 layers re-round W + B A stochastically (seeded), which
-    /// the exact float form does not repeat (7.4e-3 on one block against the LoRA's 2.2e-2 effect there).
+    /// ComfyUI on the distilled LoRA: bf16 layers equal its W + B A (calls 5.5e-6); its fp8 layers re-round W + B A stochastically (seeded). By
+    /// default the model keeps the exact float form (7.5e-3 from ComfyUI on one block against the LoRA's 2.2e-2 effect there); the run setting
+    /// ltx2.comfy_fp8_lora = true repeats ComfyUI's rounding (SpawnDev.ILGPU.ML's ComfyCompatibleFp8Lora: 2.4e-5 / 4.6e-5 on the RX 590).
     /// </summary>
     public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken)
     {
@@ -140,6 +142,15 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
         var loras = weights.Cast<LoraUse>().ToArray();
         if (WeightStep.KeyOf(loras) != WeightStep.KeyOf(_loras)) { Unload(); _loras = loras; }
         return Task.CompletedTask;
+    }
+
+    /// <summary>LoRAs on 8-bit weights: the exact float form (the default) or ComfyUI's seeded re-rounding, opt-in (<see cref="RunSettings.Ltx2ComfyFp8Lora"/>).</summary>
+    bool _comfyFp8Lora;
+
+    public void UseRunSettings(IReadOnlyDictionary<string, string>? settings)
+    {
+        _comfyFp8Lora = RunSettings.Flag(settings, RunSettings.Ltx2ComfyFp8Lora, false);
+        if (_model is not null) _model.Transformer.ComfyCompatibleFp8Lora = _comfyFp8Lora;
     }
 
     public UNetRun BeginRun(Accelerator accelerator) => new Ltx2Run(this);
@@ -153,6 +164,7 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
         // batch 2: a step's two CFG halves go through each block together, so the weights stream once a step (see Ltx2Run)
         _model = await Ltx2AvModel.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, 2, F, H, W, Ta, Ltx2TextConnectors.Tokens, ResidentBytes, ct);
         _size = (F, H, W, Ta);
+        _model.Transformer.ComfyCompatibleFp8Lora = _comfyFp8Lora;
         foreach (var l in _loras)
         {
             var lora = await Ltx2Lora.OpenAsync(runtime.Accelerator, runtime.ModelSource, l.Repo, l.File, l.Strength, ResidentBytes, ct);

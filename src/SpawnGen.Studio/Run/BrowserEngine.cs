@@ -131,7 +131,8 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     // ---- IEngineClient ----
 
-    public Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null)
+    public Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null,
+        IReadOnlyDictionary<string, string>? settings = null)
     {
         PromptGraph graph;
         try { graph = PromptJson.Parse(promptJson); }
@@ -141,7 +142,8 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         }
         try
         {
-            var item = _queue.Enqueue(graph, "browser", workflowJson is null ? null : new Dictionary<string, string> { ["workflow"] = workflowJson }, front, previewMethod, targets);
+            var item = _queue.Enqueue(graph, "browser", workflowJson is null ? null : new Dictionary<string, string> { ["workflow"] = workflowJson }, front, previewMethod, targets,
+                settings is null ? null : new JsonObject { ["spawngen_settings"] = SettingsJson(settings) });
             // Output nodes left out (what they need does not validate) are reported while the rest runs, as on the server.
             return Task.FromResult(new QueueResult(true, item.Id, null, PerNode(item.Skipped.SelectMany(f => f.Result.Errors))));
         }
@@ -171,6 +173,10 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _queue.Remove(p => p.Id == promptId);
         return Task.CompletedTask;
     }
+
+    /// <summary>Run settings as the spawngen_settings object of extra_data.</summary>
+    internal static JsonObject SettingsJson(IReadOnlyDictionary<string, string> settings) =>
+        new(settings.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value))));
 
     /// <summary>Results live in memory here, so the picture itself is the URL (a data URL); "" when there is no such file.</summary>
     public string ViewUrl(string filename, string? subfolder, string? type) =>

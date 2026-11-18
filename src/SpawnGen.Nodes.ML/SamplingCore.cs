@@ -60,6 +60,7 @@ internal static class SamplingCore
         var previewer = context.WantsPreview && !latent.IsVideo && format.RgbFactors.Length > 0 ? await LatentPreviewer.CreateAsync(context.PreviewMethod, format, context.Services) : null;
         var ct = context.CancellationToken;
         int steps = sigmas.Length - 1, done = 0, total = steps * batch;
+        diffusion.UseRunSettings(context.Settings);
         using var unet = diffusion.BeginRun(acc);
         unet.Frames = latent.Frames;
         unet.Parts = latent.Parts;

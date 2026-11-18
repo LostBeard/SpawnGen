@@ -96,7 +96,8 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
         }
     }
 
-    public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null)
+    public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null,
+        IReadOnlyDictionary<string, string>? settings = null)
     {
         var body = new JsonObject { ["prompt"] = JsonNode.Parse(promptJson), ["client_id"] = ClientId };
         if (front) body["front"] = true;
@@ -107,6 +108,11 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
         {
             if (body["extra_data"] is not JsonObject extra) body["extra_data"] = extra = new JsonObject();
             extra["preview_method"] = previewMethod; // ComfyUI's frontend sends its preview setting here
+        }
+        if (settings is not null)
+        {
+            if (body["extra_data"] is not JsonObject extra) body["extra_data"] = extra = new JsonObject();
+            extra["spawngen_settings"] = BrowserEngine.SettingsJson(settings); // SpawnGen's own: a ComfyUI server ignores it
         }
         try
         {

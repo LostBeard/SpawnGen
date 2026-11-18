@@ -70,6 +70,9 @@ public interface IDiffusionModel
     /// <summary>Brings the UNet's weights to these steps (LoRAs, merges) before a run.</summary>
     Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken);
 
+    /// <summary>The run's settings (<see cref="SpawnGen.Engine.Execution.RunSettings"/>), given before each run; a model with none to use ignores them.</summary>
+    void UseRunSettings(IReadOnlyDictionary<string, string>? settings) { }
+
     UNetRun BeginRun(Accelerator accelerator);
 }
 

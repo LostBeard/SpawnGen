@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using SpawnGen.Engine.Execution;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 using SpawnGen.Nodes.Core;
@@ -642,6 +643,29 @@ public class ServerTests
         Assert.That(File.Exists(Path.Combine(_dir, "input", name)));
         var info = JsonNode.Parse(await _http.GetStringAsync("/object_info/LoadVideo"))!;
         Assert.That(info["LoadVideo"]!["input"]!["required"]!["file"]![0]!.AsArray().Select(n => (string)n!), Does.Contain(name), "Load Video lists it");
+    }
+
+    [Test]
+    public async Task SpawnGens_run_settings_in_extra_data_reach_the_run_another_value_runs_again()
+    {
+        await ConnectAsync();
+        var image = WriteInputPng("settings.png");
+        async Task<JsonArray> CachedNodesAsync(string fp8Lora)
+        {
+            var body = new JsonObject
+            {
+                ["prompt"] = Prompt(image), ["client_id"] = "test",
+                ["extra_data"] = new JsonObject { ["spawngen_settings"] = new JsonObject { [RunSettings.Ltx2ComfyFp8Lora] = fp8Lora } },
+            };
+            var id = (string)(await (await _http.PostAsJsonAsync("/prompt", body)).Content.ReadFromJsonAsync<JsonObject>())!["prompt_id"]!;
+            await WaitForAsync(m => (string?)m["type"] == "execution_success" && (string?)m["data"]!["prompt_id"] == id);
+            for (int i = 0; i < 100 && !(await _http.GetStringAsync("/history")).Contains(id); i++) await Task.Delay(25);
+            var entry = JsonNode.Parse(await _http.GetStringAsync($"/history/{id}"))!.AsObject()[id]!;
+            return entry["status"]!["messages"]!.AsArray().First(m => (string?)m![0] == "execution_cached")![1]!["nodes"]!.AsArray();
+        }
+        Assert.That(await CachedNodesAsync("true"), Is.Empty);
+        Assert.That(await CachedNodesAsync("true"), Is.Not.Empty, "the same settings: cached");
+        Assert.That(await CachedNodesAsync("false"), Is.Empty, "another value: every node runs again");
     }
 
     [Test]

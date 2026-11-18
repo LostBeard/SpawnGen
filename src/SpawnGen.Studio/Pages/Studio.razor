@@ -400,6 +400,9 @@
                         }
                     </select>
                 </label>
+                <h4>Models</h4>
+                <label class="row" title="On: a LoRA on LTX-2's 8-bit weights is rounded back to 8 bits the way ComfyUI rounds it, so the video matches ComfyUI's. Off: the exact sum, the LoRA's full effect (about 7e-3 away from ComfyUI's result on one block).">
+                    <input type="checkbox" checked="@_settings.Ltx2ComfyFp8Lora" @onchange="e => { _settings.Ltx2ComfyFp8Lora = (bool)(e.Value ?? false); ApplySettings(); }" /> LTX-2 LoRAs on 8-bit weights: round like ComfyUI</label>
             </div>
         }
 
@@ -2510,7 +2513,7 @@
         // The workflow travels with the prompt so Save Image can embed it: the picture can then be dropped back on the canvas.
         var workflow = ComfyWorkflow.Save(runDoc, _renderer.MeasureText);
         var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow, front, _settings.PreviewMethod,
-            targets?.Select(id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToList());
+            targets?.Select(id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToList(), _settings.RunSettings());
         if (!result.Queued)
         {
             foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;

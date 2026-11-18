@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SpawnGen.Engine.Execution;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 using SpawnGen.Nodes.Core;
@@ -159,7 +160,8 @@ public class Ltx2ModelTests
     /// <summary>
     /// The template's second-pass model (Load LoRA Model Only, the distilled LoRA at 1, CFGGuider cfg 1) on the first pass's setup, with SUBSETS of
     /// the LoRA (ComfyUI cannot bake the whole one on a 32 GB CPU): block 0 + the top-level layers (bf16 in the checkpoint: ComfyUI's float W + B A,
-    /// tight) and block 1 alone (fp8: ComfyUI re-rounds W + B A stochastically, which SpawnDev.ILGPU.ML's exact float form does not repeat; reported).
+    /// tight) and block 1 alone (fp8: ComfyUI re-rounds W + B A stochastically; the run setting ltx2.comfy_fp8_lora = true repeats that, and the
+    /// default exact float form sits further off).
     /// The subset files are local copies of the LoRA's tensors (_scratch/probe/ltx2), not shipped.
     /// </summary>
     [Test, Explicit(Needs + " Also loras/ltx-2-19b-distilled-lora-384-block0-top.safetensors and -block1.safetensors (subsets of the distilled LoRA).")]
@@ -175,17 +177,21 @@ public class Ltx2ModelTests
         var (model, _, _) = await new CheckpointLoaderSimple().ExecuteAsync(Checkpoint, Ctx("CheckpointLoaderSimple"), services);
         var audioVae = await new LTXVAudioVAELoader().ExecuteAsync(Checkpoint, services);
         var report = new List<string>();
-        foreach (var (subset, prefix, bound) in new[] { ("block0-top", "bf16sub", 1e-4), ("block1", "fp8sub", 5e-2) })
+        // block 1 twice: with the run setting ltx2.comfy_fp8_lora = true ComfyUI's seeded re-rounding of the patched 8-bit weights (its result),
+        // then false (the default) the exact float form, which must sit clearly further off (it proves the setting reaches the model).
+        foreach (var (subset, prefix, comfyFp8, low, high) in new[] { ("block0-top", "bf16sub", true, 0.0, 1e-4), ("block1", "fp8sub", true, 0.0, 1e-4), ("block1", "fp8sub", false, 1e-3, 5e-2) })
         {
             var lora = new LoraLoaderModelOnly().Execute(model, $"ltx-2-19b-distilled-lora-384-{subset}.safetensors", 1.0);
             var av = new LTXVConcatAVLatent().Execute(new EmptyLTXVLatentVideo().Execute(64, 64, 9, 1), new LTXVEmptyLatentAudio().Execute(9, 25, 1, audioVae));
+            var sampler = Ctx("SamplerCustomAdvanced");
+            typeof(NodeContext).GetProperty(nameof(NodeContext.Settings))!.SetValue(sampler, new Dictionary<string, string> { [RunSettings.Ltx2ComfyFp8Lora] = comfyFp8 ? "true" : "false" });
             var (output, _) = await new SamplerCustomAdvanced().ExecuteAsync(new RandomNoise().Execute(10), new CFGGuider().Execute(lora, positive, negative, 1.0),
-                new KSamplerSelect().Execute("euler"), new LTXVScheduler().Execute(2, 2.05, 0.95, true, 0.1, av), av, Ctx("SamplerCustomAdvanced"), services);
+                new KSamplerSelect().Execute("euler"), new LTXVScheduler().Execute(2, 2.05, 0.95, true, 0.1, av), av, sampler, services);
             var (video, audio) = new LTXVSeparateAVLatent().Execute(output);
             double v = RelRms(video.Data, Raw($"ltx2_lora_{prefix}_out_video_f32_1x128x2x2x2.raw")), a = RelRms(audio.Data, Raw($"ltx2_lora_{prefix}_out_audio_f32_1x8x9x16.raw"));
-            report.Add($"{subset}: final latent video {v:E2}, audio {a:E2}");
+            report.Add($"{subset} ({(comfyFp8 ? "ComfyUI's fp8 rounding" : "exact")}): final latent video {v:E2}, audio {a:E2}");
             TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: {report[^1]} (relative RMS vs ComfyUI)");
-            Assert.That(Math.Max(v, a), Is.LessThan(bound), string.Join("; ", report));
+            Assert.That(Math.Max(v, a), Is.InRange(low, high), string.Join("; ", report));
         }
     }
 

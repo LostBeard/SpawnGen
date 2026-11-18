@@ -205,7 +205,8 @@ public sealed class PromptQueue : IDisposable
         ExecutionResult? result = null;
         try
         {
-            result = await _executor.ExecuteAsync(item.Graph, new ExecutionOptions { PromptId = item.Id, ExtraPngInfo = item.ExtraPngInfo, PreviewMethod = item.PreviewMethod, OutputNodeIds = item.Outputs }, observer, ct);
+            result = await _executor.ExecuteAsync(item.Graph, new ExecutionOptions { PromptId = item.Id, ExtraPngInfo = item.ExtraPngInfo, PreviewMethod = item.PreviewMethod, OutputNodeIds = item.Outputs,
+                Settings = RunSettings.FromJson(item.ExtraData["spawngen_settings"]) }, observer, ct);
         }
         catch (OperationCanceledException)
         {

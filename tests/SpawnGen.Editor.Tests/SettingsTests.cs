@@ -21,6 +21,17 @@ public class SettingsTests
         Assert.That(empty.PreviewMethod, Is.EqualTo("auto"));
     }
 
+    [Test]
+    public void The_LTX2_fp8_LoRA_choice_is_kept_and_sent_as_a_run_setting()
+    {
+        Assert.That(StudioSettings.FromJson(null).Ltx2ComfyFp8Lora, Is.False, "exact by default, ComfyUI's rounding opt-in");
+        Assert.That(StudioSettings.FromJson("{\"Ltx2ComfyFp8Lora\": \"yes\"}").Ltx2ComfyFp8Lora, Is.False, "a damaged value falls back");
+        var on = StudioSettings.FromJson(new StudioSettings { Ltx2ComfyFp8Lora = true }.ToJson());
+        Assert.That(on.Ltx2ComfyFp8Lora, Is.True);
+        Assert.That(on.RunSettings(), Is.EquivalentTo(new Dictionary<string, string> { [SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora] = "true" }));
+        Assert.That(new StudioSettings().RunSettings()[SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora], Is.EqualTo("false"));
+    }
+
     [TestCase("not json")]
     [TestCase("[1,2]")]
     [TestCase("{\"LinkStyle\": 99, \"GridSize\": 100000, \"SnapToGrid\": \"yes\", \"Palette\": 7}")]

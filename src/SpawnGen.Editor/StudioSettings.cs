@@ -19,6 +19,17 @@ public sealed class StudioSettings
     /// <summary>How samplers preview while they work, sent with each prompt (ComfyUI's preview method): auto / latent2rgb (a quick colour guess), taesd (the
     /// tiny VAE from vae_approx, close to the final picture), none.</summary>
     public string PreviewMethod { get; set; } = "auto";
+    /// <summary>
+    /// LTX-2 LoRAs on 8-bit weights: true re-rounds the patched weights as ComfyUI does, so the result is ComfyUI's; false (default) keeps the exact
+    /// float form (the LoRA's full effect). Sent with each prompt as a run setting (<see cref="SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora"/>).
+    /// </summary>
+    public bool Ltx2ComfyFp8Lora { get; set; }
+
+    /// <summary>The run settings sent with each prompt (extra_data.spawngen_settings).</summary>
+    public IReadOnlyDictionary<string, string> RunSettings() => new Dictionary<string, string>
+    {
+        [SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora] = Ltx2ComfyFp8Lora ? "true" : "false",
+    };
     /// <summary>The user's keyboard shortcut changes, as <see cref="KeyBindings.ToJson"/> writes them (only what differs from the defaults).</summary>
     public System.Text.Json.Nodes.JsonObject Shortcuts { get; set; } = [];
 
@@ -46,6 +57,7 @@ public sealed class StudioSettings
             if (root.TryGetProperty(nameof(Shortcuts), out var sc) && sc.ValueKind == JsonValueKind.Object)
                 s.Shortcuts = KeyBindings.FromJson(System.Text.Json.Nodes.JsonNode.Parse(sc.GetRawText())).ToJson();
             if (root.TryGetProperty(nameof(PreviewMethod), out var pm) && pm.ValueKind == JsonValueKind.String && PreviewMethods.Contains(pm.GetString())) s.PreviewMethod = pm.GetString()!;
+            if (root.TryGetProperty(nameof(Ltx2ComfyFp8Lora), out var lf) && lf.ValueKind is JsonValueKind.True or JsonValueKind.False) s.Ltx2ComfyFp8Lora = lf.GetBoolean();
         }
         catch (JsonException) { }
         return s;

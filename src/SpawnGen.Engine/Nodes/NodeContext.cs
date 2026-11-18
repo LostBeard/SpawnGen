@@ -51,6 +51,9 @@ public sealed class NodeContext
     /// <summary>How a sampler should preview, as the prompt asked (ComfyUI's preview_method: "auto", "latent2rgb", "taesd", "none"); null for the default.</summary>
     public string? PreviewMethod { get; internal set; }
 
+    /// <summary>The run's settings (<see cref="Execution.ExecutionOptions.Settings"/>); null when the prompt gave none.</summary>
+    public IReadOnlyDictionary<string, string>? Settings { get; internal set; }
+
     /// <summary>Shows a picture (PNG bytes) in the node while it works, e.g. a sampler's current guess; each call replaces the last.</summary>
     public void Preview(byte[] png) => _preview?.Invoke(png);
 

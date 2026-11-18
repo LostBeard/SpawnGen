@@ -50,6 +50,44 @@ public sealed class ExecutionOptions
     public IReadOnlyDictionary<string, string>? ExtraPngInfo { get; init; }
     /// <summary>How samplers preview (ComfyUI's <c>extra_data.preview_method</c>): "auto" / "latent2rgb", "taesd", "none"; null or "default" for the default.</summary>
     public string? PreviewMethod { get; init; }
+    /// <summary>
+    /// SpawnGen's run settings (<c>extra_data.spawngen_settings</c>): choices that change how a model computes, such as LTX-2's ComfyUI-compatible
+    /// fp8 LoRA rounding (<see cref="RunSettings"/> names them). They are part of every node's cache signature, so changing one runs again.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Settings { get; init; }
+}
+
+/// <summary>The run settings SpawnGen knows (keys of <see cref="ExecutionOptions.Settings"/>), with what a run uses when one is not given.</summary>
+public static class RunSettings
+{
+    /// <summary>
+    /// "true": a LoRA on LTX-2's 8-bit (F8_E4M3) weights re-rounds the patched weight with ComfyUI's seeded rounding, so the result is ComfyUI's.
+    /// "false": the exact float W + strength B A (the LoRA's full effect, about 7e-3 from ComfyUI on one block). Default false: exact, with ComfyUI's
+    /// rounding opt-in (TJ, 2026-11-18).
+    /// </summary>
+    public const string Ltx2ComfyFp8Lora = "ltx2.comfy_fp8_lora";
+
+    /// <summary>The value of <paramref name="key"/> as a boolean, <paramref name="fallback"/> when it is missing or not "true" / "false".</summary>
+    public static bool Flag(IReadOnlyDictionary<string, string>? settings, string key, bool fallback) =>
+        settings is not null && settings.TryGetValue(key, out var text) && bool.TryParse(text, out var value) ? value : fallback;
+
+    /// <summary>The settings as one canonical string (sorted keys), for cache signatures; "" when there are none.</summary>
+    public static string Canonical(IReadOnlyDictionary<string, string>? settings) =>
+        settings is null || settings.Count == 0 ? "" : string.Join(";", settings.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value));
+
+    /// <summary>
+    /// The settings in an <c>extra_data.spawngen_settings</c> object: strings as they are, booleans and numbers as their JSON text; null when there
+    /// are none.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string>? FromJson(System.Text.Json.Nodes.JsonNode? node)
+    {
+        if (node is not System.Text.Json.Nodes.JsonObject o || o.Count == 0) return null;
+        var settings = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in o)
+            if (value is System.Text.Json.Nodes.JsonValue v)
+                settings[key] = v.TryGetValue<string>(out var text) ? text : v.ToJsonString();
+        return settings.Count == 0 ? null : settings;
+    }
 }
 
 public sealed class ExecutionResult

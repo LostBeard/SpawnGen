@@ -22,7 +22,8 @@
             <select @onchange="e => OnSet(Str(e.Value))">
                 @if (!options.Contains(Text))
                 {
-                    <option value="@Text" selected>@Text</option>
+                    // Not in the list (a workflow's example.png this engine does not have): shown as such, so picking a listed option is a change.
+                    <option value="@Text" selected>@(Text.Length == 0 ? "(nothing chosen)" : $"{Text} (not found)")</option>
                 }
                 @foreach (var o in options)
                 {

@@ -175,8 +175,10 @@ public partial class Studio
     bool IsPictureInput(EditorNode node, string widget) =>
         Registry.GetSchema(node.ClassType) is { } schema && UploadWidget.ComboFor(schema) is { Widget.Upload: "image" } input && input.Name == widget;
 
+    /// <summary>The app's picture for a picture input: the file the node chose, when this engine has it (null for a missing example.png).</summary>
     string? PictureUrl(EditorNode node, string widget) =>
-        _engine is not null && node.Widgets.GetValueOrDefault(widget) is string { Length: > 0 } name ? _engine.ViewUrl(name, "", "input") : null;
+        Registry.GetSchema(node.ClassType)?.Inputs.FirstOrDefault(i => i.Name == widget)?.Widget is { } combo
+        && node.Widgets.GetValueOrDefault(widget) is string name && PicturePreviewUrl(name, combo) is { Length: > 0 } url ? url : null;
 
     /// <summary>A picture uploaded from the app goes to the engine's inputs and into the input it was uploaded for.</summary>
     async Task OnAppPictureChosenAsync(InputFileChangeEventArgs e, EditorNode node, string widget)

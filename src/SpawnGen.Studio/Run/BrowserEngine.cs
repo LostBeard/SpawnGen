@@ -172,11 +172,22 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         return Task.CompletedTask;
     }
 
-    /// <summary>Results live in memory here, so the picture itself is the URL (a data URL).</summary>
+    /// <summary>Results live in memory here, so the picture itself is the URL (a data URL); "" when there is no such file.</summary>
     public string ViewUrl(string filename, string? subfolder, string? type) =>
-        (type == "input" ? _inputs.ReadAsync(filename).GetAwaiter().GetResult() : _results.Get(type ?? "output", filename, subfolder ?? "")) is { } bytes
+        (type == "input" ? ReadInput(string.IsNullOrEmpty(subfolder) ? filename : $"{subfolder}/{filename}") : _results.Get(type ?? "output", filename, subfolder ?? "")) is { } bytes
             ? $"data:{MediaType(filename)};base64," + Convert.ToBase64String(bytes)
             : "";
+
+    /// <summary>
+    /// An input file's bytes, or null when there is none: a workflow's example.png this page never had must not throw out of a render (the App
+    /// Builder's preview threw FileNotFoundException for it, TJ 2026-11-18).
+    /// </summary>
+    byte[]? ReadInput(string path)
+    {
+        if (path.Length == 0 || !_inputs.Exists(path)) return null;
+        try { return _inputs.ReadAsync(path).GetAwaiter().GetResult(); }
+        catch (Exception ex) when (ex is FileNotFoundException or UnauthorizedAccessException) { return null; } // a folder of that name
+    }
 
     static string MediaType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
     {

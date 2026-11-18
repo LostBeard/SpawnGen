@@ -1478,14 +1478,10 @@
     {
         if (_doc.Graph.LinkInto(crop.Id, "image") is not { } link || _doc.Graph.FindNode(link.FromNode) is not { } source) return null;
         if (source.Previews.Count > 0) return source.Previews[0].Url;
-        if (_engine is null || source.Widgets.GetValueOrDefault("image") is not string { Length: > 0 } file) return null;
-        string? type = source.ClassType switch { "LoadImage" or "LoadImageMask" => "input", "LoadImageOutput" => "output", _ => null };
-        if (type is null) return null;
-        // An annotated name ("x.png [output]") names its folder; a path's folder part is the subfolder.
-        if (file.EndsWith(" [output]", StringComparison.Ordinal)) { file = file[..^9]; type = "output"; }
-        else if (file.EndsWith(" [input]", StringComparison.Ordinal)) file = file[..^8];
-        int slash = file.LastIndexOf('/');
-        return _engine.ViewUrl(slash < 0 ? file : file[(slash + 1)..], slash < 0 ? "" : file[..slash], type);
+        // Not run yet: the picture the loader chose (Load Image and the other picture upload combos), when this engine has it.
+        if (Registry.GetSchema(source.ClassType) is not { } schema || UploadWidget.ComboFor(schema) is not { Widget: { Upload: "image" } combo } input
+            || source.Widgets.GetValueOrDefault(input.Name) is not string file) return null;
+        return PicturePreviewUrl(file, combo) is { Length: > 0 } url ? url : null;
     }
 
     /// <summary>Crop Image: a field in a number box over it, the ratio in a list.</summary>

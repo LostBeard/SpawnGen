@@ -24,11 +24,20 @@ public sealed class StudioSettings
     /// float form (the LoRA's full effect). Sent with each prompt as a run setting (<see cref="SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora"/>).
     /// </summary>
     public bool Ltx2ComfyFp8Lora { get; set; }
+    /// <summary>LTX-2's arithmetic on CUDA: "fp32", "exact_tc" (default) or "fast" (<see cref="SpawnGen.Engine.Execution.RunSettings.Ltx2Precision"/>).</summary>
+    public string Ltx2Precision { get; set; } = "exact_tc";
+    /// <summary>LTX-2: host RAM (GB) for streamed blocks kept between steps; 0 = none (<see cref="SpawnGen.Engine.Execution.RunSettings.Ltx2HostCacheGb"/>).</summary>
+    public double Ltx2HostCacheGb { get; set; }
+    /// <summary>LTX-2: host RAM (GB) the block reader may run ahead; 0 = one block (<see cref="SpawnGen.Engine.Execution.RunSettings.Ltx2ReadAheadGb"/>).</summary>
+    public double Ltx2ReadAheadGb { get; set; }
 
     /// <summary>The run settings sent with each prompt (extra_data.spawngen_settings).</summary>
     public IReadOnlyDictionary<string, string> RunSettings() => new Dictionary<string, string>
     {
         [SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora] = Ltx2ComfyFp8Lora ? "true" : "false",
+        [SpawnGen.Engine.Execution.RunSettings.Ltx2Precision] = Ltx2Precision,
+        [SpawnGen.Engine.Execution.RunSettings.Ltx2HostCacheGb] = Ltx2HostCacheGb.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        [SpawnGen.Engine.Execution.RunSettings.Ltx2ReadAheadGb] = Ltx2ReadAheadGb.ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
     /// <summary>The user's keyboard shortcut changes, as <see cref="KeyBindings.ToJson"/> writes them (only what differs from the defaults).</summary>
     public System.Text.Json.Nodes.JsonObject Shortcuts { get; set; } = [];
@@ -58,6 +67,10 @@ public sealed class StudioSettings
                 s.Shortcuts = KeyBindings.FromJson(System.Text.Json.Nodes.JsonNode.Parse(sc.GetRawText())).ToJson();
             if (root.TryGetProperty(nameof(PreviewMethod), out var pm) && pm.ValueKind == JsonValueKind.String && PreviewMethods.Contains(pm.GetString())) s.PreviewMethod = pm.GetString()!;
             if (root.TryGetProperty(nameof(Ltx2ComfyFp8Lora), out var lf) && lf.ValueKind is JsonValueKind.True or JsonValueKind.False) s.Ltx2ComfyFp8Lora = lf.GetBoolean();
+            if (root.TryGetProperty(nameof(Ltx2Precision), out var lp) && lp.ValueKind == JsonValueKind.String && SpawnGen.Engine.Execution.RunSettings.Ltx2Precisions.Contains(lp.GetString()))
+                s.Ltx2Precision = lp.GetString()!;
+            if (root.TryGetProperty(nameof(Ltx2HostCacheGb), out var hc) && hc.ValueKind == JsonValueKind.Number && hc.GetDouble() is >= 0 and <= 1024 and var cache) s.Ltx2HostCacheGb = cache;
+            if (root.TryGetProperty(nameof(Ltx2ReadAheadGb), out var ra) && ra.ValueKind == JsonValueKind.Number && ra.GetDouble() is >= 0 and <= 1024 and var ahead) s.Ltx2ReadAheadGb = ahead;
         }
         catch (JsonException) { }
         return s;

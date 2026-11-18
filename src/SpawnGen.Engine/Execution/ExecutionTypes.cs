@@ -67,6 +67,34 @@ public static class RunSettings
     /// </summary>
     public const string Ltx2ComfyFp8Lora = "ltx2.comfy_fp8_lora";
 
+    /// <summary>
+    /// LTX-2's arithmetic on CUDA (SpawnDev.ILGPU.ML's PreciseActivations / ExactTensorCoreAttention; other backends compute in fp32 whatever it says):
+    /// "fp32" (fp32-class activations, fp32 attention: closest to ComfyUI's float32, slowest), "exact_tc" (the default: the same with the attentions on
+    /// the tensor cores as two bf16 halves, about 3x faster attention, 4e-6 to 9e-6 per attention), "fast" (bf16 activations: about half the GPU work,
+    /// about 5.8e-3 from the precise result a call).
+    /// </summary>
+    public const string Ltx2Precision = "ltx2.precision";
+    public static readonly string[] Ltx2Precisions = ["fp32", "exact_tc", "fast"];
+
+    /// <summary>
+    /// LTX-2: host RAM in GB for keeping the transformer's streamed blocks between sampling steps (read from the disk once a clip instead of once a
+    /// step; pays on a slow drive). Default 0.
+    /// </summary>
+    public const string Ltx2HostCacheGb = "ltx2.host_cache_gb";
+
+    /// <summary>LTX-2: host RAM in GB the block reader may run ahead of the device (default 0: one block ahead). Pays on a slow drive; same output.</summary>
+    public const string Ltx2ReadAheadGb = "ltx2.read_ahead_gb";
+
+    /// <summary>The value of <paramref name="key"/> when it is one of <paramref name="choices"/>, else <paramref name="fallback"/>.</summary>
+    public static string Choice(IReadOnlyDictionary<string, string>? settings, string key, IReadOnlyList<string> choices, string fallback) =>
+        settings is not null && settings.TryGetValue(key, out var text) && choices.Contains(text) ? text : fallback;
+
+    /// <summary>The value of <paramref name="key"/> as a number in [<paramref name="min"/>, <paramref name="max"/>], else <paramref name="fallback"/>.</summary>
+    public static double Number(IReadOnlyDictionary<string, string>? settings, string key, double min, double max, double fallback) =>
+        settings is not null && settings.TryGetValue(key, out var text)
+        && double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value)
+        && value >= min && value <= max ? value : fallback;
+
     /// <summary>The value of <paramref name="key"/> as a boolean, <paramref name="fallback"/> when it is missing or not "true" / "false".</summary>
     public static bool Flag(IReadOnlyDictionary<string, string>? settings, string key, bool fallback) =>
         settings is not null && settings.TryGetValue(key, out var text) && bool.TryParse(text, out var value) ? value : fallback;

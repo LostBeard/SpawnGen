@@ -64,6 +64,13 @@ public class RunSettingsTests
         Assert.That(RunSettings.Flag(read, "a", true), Is.True, "not a boolean: the fallback");
         Assert.That(RunSettings.Flag(null, RunSettings.Ltx2ComfyFp8Lora, true), Is.True);
         Assert.That(RunSettings.FromJson(JsonNode.Parse("{}")), Is.Null);
+        var speed = RunSettings.FromJson(JsonNode.Parse("""{"ltx2.precision": "fast", "ltx2.host_cache_gb": 6, "ltx2.read_ahead_gb": "2.5", "bad.gb": -1}"""));
+        Assert.That(RunSettings.Choice(speed, RunSettings.Ltx2Precision, RunSettings.Ltx2Precisions, "exact_tc"), Is.EqualTo("fast"));
+        Assert.That(RunSettings.Choice(new Dictionary<string, string> { [RunSettings.Ltx2Precision] = "fp16" }, RunSettings.Ltx2Precision, RunSettings.Ltx2Precisions, "exact_tc"),
+            Is.EqualTo("exact_tc"), "not one of the choices: the fallback");
+        Assert.That(RunSettings.Number(speed, RunSettings.Ltx2HostCacheGb, 0, 1024, 0), Is.EqualTo(6));
+        Assert.That(RunSettings.Number(speed, RunSettings.Ltx2ReadAheadGb, 0, 1024, 0), Is.EqualTo(2.5), "a number given as text");
+        Assert.That(RunSettings.Number(speed, "bad.gb", 0, 1024, 0), Is.EqualTo(0), "out of range: the fallback");
         Assert.That(RunSettings.FromJson(null), Is.Null);
     }
 }

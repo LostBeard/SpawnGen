@@ -403,6 +403,20 @@
                 <h4>Models</h4>
                 <label class="row" title="On: a LoRA on LTX-2's 8-bit weights is rounded back to 8 bits the way ComfyUI rounds it, so the video matches ComfyUI's. Off: the exact sum, the LoRA's full effect (about 7e-3 away from ComfyUI's result on one block).">
                     <input type="checkbox" checked="@_settings.Ltx2ComfyFp8Lora" @onchange="e => { _settings.Ltx2ComfyFp8Lora = (bool)(e.Value ?? false); ApplySettings(); }" /> LTX-2 LoRAs on 8-bit weights: round like ComfyUI</label>
+                <label title="NVIDIA (CUDA) only; other GPUs always compute in fp32. fp32: closest to ComfyUI's float32, slowest. exact tensor cores (default): the attentions on the tensor cores at near-fp32 accuracy, about 3x faster. fast: bf16 activations, about half the GPU work, a little further from ComfyUI.">LTX-2 precision (CUDA)
+                    <select @onchange="OnLtx2PrecisionChosen">
+                        @foreach (var (value, label) in new[] { ("fp32", "fp32 (slowest, closest)"), ("exact_tc", "exact tensor cores"), ("fast", "fast (bf16)") })
+                        {
+                            <option value="@value" selected="@(value == _settings.Ltx2Precision)">@label</option>
+                        }
+                    </select>
+                </label>
+                <label title="Host RAM that keeps LTX-2's streamed blocks between sampling steps, so the model file is read once a clip instead of once a step. Helps on a slow drive. 0 = off.">LTX-2 block cache (GB of RAM)
+                    <input type="number" min="0" max="1024" step="1" value="@_settings.Ltx2HostCacheGb" @onchange="e => { if (double.TryParse(e.Value as string, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var gb) && gb is >= 0 and <= 1024) _settings.Ltx2HostCacheGb = gb; ApplySettings(); }" />
+                </label>
+                <label title="Host RAM the LTX-2 block reader may run ahead of the GPU. Helps on a slow drive; same output. 0 = one block ahead.">LTX-2 read-ahead (GB of RAM)
+                    <input type="number" min="0" max="1024" step="1" value="@_settings.Ltx2ReadAheadGb" @onchange="e => { if (double.TryParse(e.Value as string, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var gb) && gb is >= 0 and <= 1024) _settings.Ltx2ReadAheadGb = gb; ApplySettings(); }" />
+                </label>
             </div>
         }
 
@@ -2089,6 +2103,12 @@
     bool _settingsOpen;
 
     /// <summary>Puts the settings to work (view, renderer) and remembers them in the browser.</summary>
+    void OnLtx2PrecisionChosen(ChangeEventArgs e)
+    {
+        if (e.Value is string value && SpawnGen.Engine.Execution.RunSettings.Ltx2Precisions.Contains(value)) _settings.Ltx2Precision = value;
+        ApplySettings();
+    }
+
     void OnPreviewMethodChosen(ChangeEventArgs e)
     {
         _settings.PreviewMethod = e.Value as string ?? "auto";

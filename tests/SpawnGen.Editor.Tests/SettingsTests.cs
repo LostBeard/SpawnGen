@@ -28,8 +28,17 @@ public class SettingsTests
         Assert.That(StudioSettings.FromJson("{\"Ltx2ComfyFp8Lora\": \"yes\"}").Ltx2ComfyFp8Lora, Is.False, "a damaged value falls back");
         var on = StudioSettings.FromJson(new StudioSettings { Ltx2ComfyFp8Lora = true }.ToJson());
         Assert.That(on.Ltx2ComfyFp8Lora, Is.True);
-        Assert.That(on.RunSettings(), Is.EquivalentTo(new Dictionary<string, string> { [SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora] = "true" }));
+        Assert.That(on.RunSettings()[SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora], Is.EqualTo("true"));
         Assert.That(new StudioSettings().RunSettings()[SpawnGen.Engine.Execution.RunSettings.Ltx2ComfyFp8Lora], Is.EqualTo("false"));
+
+        var d = new StudioSettings();
+        Assert.That((d.Ltx2Precision, d.Ltx2HostCacheGb, d.Ltx2ReadAheadGb), Is.EqualTo(("exact_tc", 0.0, 0.0)), "SpawnDev.ILGPU.ML's own defaults");
+        var speed = StudioSettings.FromJson(new StudioSettings { Ltx2Precision = "fast", Ltx2HostCacheGb = 6, Ltx2ReadAheadGb = 2.5 }.ToJson());
+        Assert.That((speed.Ltx2Precision, speed.Ltx2HostCacheGb, speed.Ltx2ReadAheadGb), Is.EqualTo(("fast", 6.0, 2.5)));
+        var sent = speed.RunSettings();
+        Assert.That((sent["ltx2.precision"], sent["ltx2.host_cache_gb"], sent["ltx2.read_ahead_gb"]), Is.EqualTo(("fast", "6", "2.5")));
+        var damaged = StudioSettings.FromJson("{\"Ltx2Precision\": \"fp16\", \"Ltx2HostCacheGb\": -3, \"Ltx2ReadAheadGb\": \"lots\"}");
+        Assert.That((damaged.Ltx2Precision, damaged.Ltx2HostCacheGb, damaged.Ltx2ReadAheadGb), Is.EqualTo(("exact_tc", 0.0, 0.0)), "damaged values fall back");
     }
 
     [TestCase("not json")]

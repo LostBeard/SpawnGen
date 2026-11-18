@@ -147,10 +147,30 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
     /// <summary>LoRAs on 8-bit weights: the exact float form (the default) or ComfyUI's seeded re-rounding, opt-in (<see cref="RunSettings.Ltx2ComfyFp8Lora"/>).</summary>
     bool _comfyFp8Lora;
 
+    /// <summary>CUDA arithmetic (<see cref="RunSettings.Ltx2Precision"/>): "exact_tc" is SpawnDev.ILGPU.ML's own default for the transformer.</summary>
+    string _precision = "exact_tc";
+    /// <summary>Host RAM for streamed blocks kept between steps and for the reader's read-ahead, bytes (0 = SpawnDev.ILGPU.ML's defaults).</summary>
+    long _hostCacheBytes, _readAheadBytes;
+
     public void UseRunSettings(IReadOnlyDictionary<string, string>? settings)
     {
         _comfyFp8Lora = RunSettings.Flag(settings, RunSettings.Ltx2ComfyFp8Lora, false);
-        if (_model is not null) _model.Transformer.ComfyCompatibleFp8Lora = _comfyFp8Lora;
+        _precision = RunSettings.Choice(settings, RunSettings.Ltx2Precision, RunSettings.Ltx2Precisions, "exact_tc");
+        _hostCacheBytes = (long)(RunSettings.Number(settings, RunSettings.Ltx2HostCacheGb, 0, 1024, 0) * (1L << 30));
+        _readAheadBytes = (long)(RunSettings.Number(settings, RunSettings.Ltx2ReadAheadGb, 0, 1024, 0) * (1L << 30));
+        if (_model is not null) Apply(_model);
+    }
+
+    /// <summary>The run settings onto the transformer (before each run; the model is kept between runs).</summary>
+    void Apply(Ltx2AvModel model)
+    {
+        var t = model.Transformer;
+        t.ComfyCompatibleFp8Lora = _comfyFp8Lora;
+        t.PreciseActivations = _precision != "fast";
+        t.ExactTensorCoreAttention = _precision == "exact_tc";
+        // As SpawnDev.ILGPU.ML's Ltx2Pipeline does: the cache holds at most what one forward streams.
+        t.Weights.HostCacheBytes = Math.Min(_hostCacheBytes, t.Weights.StreamedBytesPerForward);
+        t.Weights.ReadAheadBytes = _readAheadBytes;
     }
 
     public UNetRun BeginRun(Accelerator accelerator) => new Ltx2Run(this);
@@ -164,7 +184,7 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
         // batch 2: a step's two CFG halves go through each block together, so the weights stream once a step (see Ltx2Run)
         _model = await Ltx2AvModel.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, 2, F, H, W, Ta, Ltx2TextConnectors.Tokens, ResidentBytes, ct);
         _size = (F, H, W, Ta);
-        _model.Transformer.ComfyCompatibleFp8Lora = _comfyFp8Lora;
+        Apply(_model);
         foreach (var l in _loras)
         {
             var lora = await Ltx2Lora.OpenAsync(runtime.Accelerator, runtime.ModelSource, l.Repo, l.File, l.Strength, ResidentBytes, ct);

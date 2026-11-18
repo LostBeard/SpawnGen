@@ -286,6 +286,51 @@ public class Ltx2ModelTests
     }
 
     /// <summary>
+    /// The run settings for speed (ltx2.host_cache_gb, ltx2.read_ahead_gb: SpawnDev.ILGPU.ML's streamed-block cache and read-ahead) must not change the
+    /// result: the same small sample three times on the one model the runtime keeps (defaults; cache 4 GB + read-ahead 2 GB + precision "fp32", which
+    /// changes nothing outside CUDA; the same again, now from the cache) gives the same latents bit for bit. On CUDA "fp32" is a different arithmetic,
+    /// so there the comparison is against ComfyUI's tolerance instead.
+    /// </summary>
+    [Test, Explicit(Needs)]
+    public async Task The_streaming_settings_do_not_change_the_result()
+    {
+        var (runtime, services) = Runtime();
+        using var _r = runtime;
+        NodeContext Ctx(string type) => Context(services, type);
+        var clip = await ClipAsync(services);
+        var pos = await new CLIPTextEncode().ExecuteAsync(Prompt.GetProperty("positive").GetString()!, clip, Ctx("CLIPTextEncode"));
+        var neg = await new CLIPTextEncode().ExecuteAsync(Prompt.GetProperty("negative").GetString()!, clip, Ctx("CLIPTextEncode"));
+        var (positive, negative) = new LTXVConditioning().Execute(pos, neg, 25);
+        var (model, _, _) = await new CheckpointLoaderSimple().ExecuteAsync(Checkpoint, Ctx("CheckpointLoaderSimple"), services);
+        var audioVae = await new LTXVAudioVAELoader().ExecuteAsync(Checkpoint, services);
+        async Task<(float[] Video, float[] Audio, double Seconds)> RunAsync(Dictionary<string, string>? settings)
+        {
+            var av = new LTXVConcatAVLatent().Execute(new EmptyLTXVLatentVideo().Execute(64, 64, 9, 1), new LTXVEmptyLatentAudio().Execute(9, 25, 1, audioVae));
+            var sampler = Ctx("SamplerCustomAdvanced");
+            typeof(NodeContext).GetProperty(nameof(NodeContext.Settings))!.SetValue(sampler, settings);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var (output, _) = await new SamplerCustomAdvanced().ExecuteAsync(new RandomNoise().Execute(10), new CFGGuider().Execute(model, positive, negative, 4.0),
+                new KSamplerSelect().Execute("euler"), new LTXVScheduler().Execute(2, 2.05, 0.95, true, 0.1, av), av, sampler, services);
+            var (video, audio) = new LTXVSeparateAVLatent().Execute(output);
+            return (video.Data.ToArray(), audio.Data.ToArray(), sw.Elapsed.TotalSeconds);
+        }
+        var fast = new Dictionary<string, string> { [RunSettings.Ltx2HostCacheGb] = "4", [RunSettings.Ltx2ReadAheadGb] = "2", [RunSettings.Ltx2Precision] = "fp32" };
+        var plain = await RunAsync(null);
+        var first = await RunAsync(fast);
+        var cached = await RunAsync(fast);
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: defaults {plain.Seconds:0.0} s; cache 4 GB + read-ahead 2 GB + fp32 {first.Seconds:0.0} s, again from the cache {cached.Seconds:0.0} s");
+        if (runtime.Accelerator.AcceleratorType == ILGPU.Runtime.AcceleratorType.Cuda)
+            Assert.That(RelRms(first.Video, plain.Video), Is.LessThan(1e-3), "CUDA: fp32 against the default exact tensor cores");
+        else
+        {
+            Assert.That(first.Video, Is.EqualTo(plain.Video), "video, settings on");
+            Assert.That(first.Audio, Is.EqualTo(plain.Audio), "audio, settings on");
+        }
+        Assert.That(cached.Video, Is.EqualTo(first.Video), "video, from the cache");
+        Assert.That(cached.Audio, Is.EqualTo(first.Audio), "audio, from the cache");
+    }
+
+    /// <summary>
     /// A real-size run for scale (Tuvok, 2026-11-18): the t2v template's first pass at 384 x 256, 25 frames (4 latent frames of 8 x 12 = 384 video
     /// tokens), 2 steps, cfg 4, then both decodes; seconds per stage printed. No ComfyUI comparison (its CPU run at this size is the 0600
     /// guidecall folders' job); this measures that it runs and how long it takes. Any exception is printed in full and fails the test.

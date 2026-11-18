@@ -28,23 +28,25 @@ fs.mkdirSync(OUT, { recursive: true });
   check('App opens the builder on a workflow without an app', (await page.locator('.app-steps').count()) === 1);
   check('the builder starts at Inputs', /Inputs/.test(await page.textContent('.app-steps button.on')));
 
-  // Inputs: click the prompt, the seed and the steps; a second click on the steps takes them out again.
+  // Inputs: click the prompt, the seed and the steps; a second click on the steps takes them out again. (Positions as the builder fits the
+  // starter graph at 88% beside its panel, measured 2026-11-18 from out/app-2-inputs.png: seed row y 389, steps 434, KSampler title 290,
+  // Save Image title 391.)
   await page.mouse.click(465, 280); await page.waitForTimeout(200);
-  await page.mouse.click(850, 375); await page.waitForTimeout(200);
-  await page.mouse.click(850, 421); await page.waitForTimeout(200);
+  await page.mouse.click(850, 389); await page.waitForTimeout(200);
+  await page.mouse.click(850, 434); await page.waitForTimeout(200);
   let list = await picks();
   check('three inputs picked in click order', list.length === 3 && /text/.test(list[0]) && /seed/.test(list[1]) && /steps/.test(list[2]), list.join(' | '));
   await shot('app-2-inputs');
-  await page.mouse.click(850, 421); await page.waitForTimeout(200);
+  await page.mouse.click(850, 434); await page.waitForTimeout(200);
   list = await picks();
   check('a second click takes an input out', list.length === 2, list.join(' | '));
   check('picking does not open the widget editor', (await page.locator('.widget-edit').count()) === 0);
 
   // Outputs: Save Image is an output node, KSampler is not.
   await page.click('.app-builder-bar button:has-text("Next")'); await page.waitForTimeout(400);
-  await page.mouse.click(850, 272); await page.waitForTimeout(200);
+  await page.mouse.click(850, 290); await page.waitForTimeout(200);
   check('a non-output node is refused', (await picks()).length === 0);
-  await page.mouse.click(1150, 377); await page.waitForTimeout(200);
+  await page.mouse.click(1150, 391); await page.waitForTimeout(200);
   list = await picks();
   check('Save Image picked as the output', list.length === 1 && /Save Image/.test(list[0]), list.join(' | '));
   await shot('app-3-outputs');

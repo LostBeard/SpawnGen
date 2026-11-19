@@ -9,6 +9,8 @@ public sealed class SubgraphPort
     public required string Name { get; set; }
     /// <summary>Socket type name (IMAGE, LATENT ...).</summary>
     public required string TypeName { get; set; }
+    /// <summary>The name shown for the port (ComfyUI's "label": "duration" for an input named "value"); null shows <see cref="Name"/>.</summary>
+    public string? Label { get; set; }
     /// <summary>Inputs only: the inner (node, input) pairs this port feeds.</summary>
     public List<(int Node, string Input)> Targets { get; } = [];
     /// <summary>Outputs only: the inner node output this port exposes.</summary>
@@ -37,14 +39,30 @@ public sealed class SubgraphDefinition
 
     public string InstanceType => Prefix + Id;
 
-    public NodeSchema ToSchema() => new()
+    public NodeSchema ToSchema(NodeRegistry? registry = null) => new()
     {
         Id = InstanceType,
         DisplayName = Name,
         Category = "subgraph",
-        Inputs = Inputs.Select(p => new InputSpec(p.Name, new SocketType(p.TypeName), Required: false)).ToList(),
+        Inputs = Inputs.Select(p => new InputSpec(p.Name, new SocketType(p.TypeName), Required: false, Widget: registry is null ? null : PromotedWidget(p, registry)) { Label = p.Label }).ToList(),
         Outputs = Outputs.Select(p => new OutputSpec(p.Name, new SocketType(p.TypeName))).ToList(),
     };
+
+    /// <summary>
+    /// A subgraph input that feeds an inner node's widget shows on the instance as that widget (ComfyUI's promoted widgets: the "proxyWidgets"
+    /// its templates save, and its own promotion of widget inputs), starting from the inner node's value. Left unlinked, its value goes to the
+    /// inner widget when the graph runs (<see cref="SubgraphExpander"/>); linked, the link does. Null for an input that feeds a socket.
+    /// </summary>
+    public WidgetSpec? PromotedWidget(SubgraphPort port, NodeRegistry registry)
+    {
+        foreach (var (node, input) in port.Targets)
+        {
+            var inner = Nodes.FirstOrDefault(n => n.Id == node);
+            if (inner is null || registry.GetSchema(inner.ClassType)?.Inputs.FirstOrDefault(i => i.Name == input)?.Widget is not { } widget) continue;
+            return inner.Widgets.TryGetValue(input, out var value) && value is not null ? widget with { Default = value } : widget;
+        }
+        return null;
+    }
 
     /// <summary>The ids of the subgraphs this one contains (one level).</summary>
     public IEnumerable<string> ContainedIds() => Nodes.Where(n => n.ClassType.StartsWith(Prefix, StringComparison.Ordinal)).Select(n => n.ClassType[Prefix.Length..]).Distinct();
@@ -66,7 +84,7 @@ public static class SubgraphLibrary
 
     /// <summary>Lets a registry answer for subgraph instance types (their schema comes from the definition). Safe to call more than once.</summary>
     public static void Install(NodeRegistry registry) => registry.SchemaResolver = type =>
-        type.StartsWith(SubgraphDefinition.Prefix, StringComparison.Ordinal) ? Get(type)?.ToSchema() : SubgraphEditing.BoundarySchema(type);
+        type.StartsWith(SubgraphDefinition.Prefix, StringComparison.Ordinal) ? Get(type)?.ToSchema(registry) : SubgraphEditing.BoundarySchema(type);
 
     /// <summary>The definitions a graph needs, including those nested inside them, each once, innermost first.</summary>
     public static IReadOnlyList<SubgraphDefinition> Used(IEnumerable<string> classTypes)
@@ -115,6 +133,7 @@ public static class SubgraphExpander
         var map = new Dictionary<(int Instance, int Inner), int>();
         foreach (var (instanceId, def) in instanceIds)
         {
+            var instance = g.GetNode(instanceId);
             foreach (var inner in def.Nodes)
             {
                 int id = nodeId++;
@@ -123,6 +142,11 @@ public static class SubgraphExpander
                 copy.ZIndex = id;
                 flat.AddNodeRaw(copy);
             }
+            // A promoted widget's value (an unlinked input the instance shows as a widget) goes to the inner widgets it feeds.
+            foreach (var port in def.Inputs)
+                if (instance.Widgets.TryGetValue(port.Name, out var value) && value is not null && g.LinkInto(instanceId, port.Name) is null)
+                    foreach (var (node, input) in port.Targets)
+                        if (flat.FindNode(map[(instanceId, node)]) is { } copy && copy.Widgets.ContainsKey(input)) copy.Widgets[input] = value;
             foreach (var l in def.Links)
                 flat.AddLinkRaw(new EditorLink { Id = linkId++, FromNode = map[(instanceId, l.FromNode)], FromOutput = l.FromOutput, ToNode = map[(instanceId, l.ToNode)], ToInput = l.ToInput });
         }

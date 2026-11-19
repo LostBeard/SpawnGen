@@ -546,7 +546,7 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         if (s.Kind == SlotKind.Input)
         {
             ctx.TextAlign = "left";
-            ctx.FillText(NodeLayout.Label(s.Name), s.Position.X + 12, s.Position.Y);
+            ctx.FillText(s.Label ?? NodeLayout.Label(s.Name), s.Position.X + 12, s.Position.Y);
         }
         else
         {

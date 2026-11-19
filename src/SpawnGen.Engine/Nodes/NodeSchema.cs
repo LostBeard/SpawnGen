@@ -80,6 +80,9 @@ public sealed record InputSpec(string Name, SocketType Type, bool Required, Widg
     /// <summary>Where ComfyUI's object_info lists the input: "required" for sockets that must be linked, for widgets and for Autogrow group members
     /// not declared optional (ComfyUI lists the whole group in its declared section).</summary>
     public bool ListedAsRequired => !Optional && (Required || Widget is not null || Group is not null);
+
+    /// <summary>The name shown for the input when it differs from <see cref="Name"/> (a subgraph input's label, as ComfyUI shows it).</summary>
+    public string? Label { get; init; }
 }
 
 /// <summary>The widget and tooltip one option of a dynamic combo gives an input it shares with other options (see <see cref="InputSpec.Variants"/>).</summary>

@@ -277,8 +277,26 @@ public static class ComfyWorkflow
             ["version"] = 0.4,
         };
         var used = SubgraphLibrary.Used(graph.Nodes.Select(n => n.ClassType));
+        StorePromotedValues(graph);
         if (used.Count > 0) root["definitions"] = new JsonObject { ["subgraphs"] = SubgraphJson.Write(used, doc.Registry) };
         return root.ToJsonString(Pretty);
+    }
+
+    /// <summary>
+    /// ComfyUI saves a subgraph instance's promoted widget values in the definition's inner nodes (the instance's widgets_values stays empty):
+    /// each unlinked promoted input's value goes to the inner widgets it feeds. With several instances of one definition the last one's values
+    /// are saved, as ComfyUI's single definition holds one set.
+    /// </summary>
+    static void StorePromotedValues(EditorGraph graph)
+    {
+        foreach (var n in graph.Nodes.OrderBy(n => n.Id))
+        {
+            if (SubgraphLibrary.Get(n.ClassType) is not { } def) continue;
+            foreach (var port in def.Inputs)
+                if (n.Widgets.TryGetValue(port.Name, out var value) && value is not null && graph.LinkInto(n.Id, port.Name) is null)
+                    foreach (var (node, input) in port.Targets)
+                        if (def.Nodes.FirstOrDefault(x => x.Id == node) is { } inner && inner.Widgets.ContainsKey(input)) inner.Widgets[input] = value;
+        }
     }
 
     /// <summary>
@@ -314,7 +332,8 @@ public static class ComfyWorkflow
                 foreach (var i in NodeLayout.VisibleInputs(schema, n, graph))
                 {
                     var link = graph.LinkInto(n.Id, i.Name);
-                    if (i.Widget is null || link is not null)
+                    // A subgraph instance lists every input (ComfyUI counts its link slots over all of them), promoted widgets too.
+                    if (i.Widget is null || link is not null || SubgraphLibrary.Get(n.ClassType) is not null)
                     {
                         var entry = new JsonObject { ["name"] = i.Name, ["type"] = i.Type.Name, ["link"] = link?.Id };
                         if (i.Widget is not null) entry["widget"] = new JsonObject { ["name"] = i.Name };
@@ -332,7 +351,8 @@ public static class ComfyWorkflow
                 }
                 obj["inputs"] = inputs;
                 obj["outputs"] = outputs;
-                obj["widgets_values"] = WriteWidgets(schema, n);
+                // A subgraph instance's promoted widgets keep their values in the inner nodes, as ComfyUI saves them (StorePromotedValues).
+                obj["widgets_values"] = SubgraphLibrary.Get(n.ClassType) is not null ? new JsonArray() : WriteWidgets(schema, n);
             }
             else
             {
@@ -376,7 +396,7 @@ public static class ComfyWorkflow
         int idx = 0;
         foreach (var i in NodeLayout.VisibleInputs(schema, to, graph))
         {
-            bool listed = i.Widget is null || graph.LinkInto(l.ToNode, i.Name) is not null;
+            bool listed = i.Widget is null || graph.LinkInto(l.ToNode, i.Name) is not null || SubgraphLibrary.Get(to.ClassType) is not null;
             if (i.Name == l.ToInput) return listed ? idx : -1;
             if (listed) idx++;
         }

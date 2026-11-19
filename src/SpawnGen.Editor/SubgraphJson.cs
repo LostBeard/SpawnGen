@@ -52,7 +52,7 @@ public static class SubgraphJson
         {
             ["id"] = PortId(def.Id, side, i), ["name"] = p.Name, ["type"] = p.TypeName,
             ["linkIds"] = new JsonArray(ids[i].Select(id => (JsonNode)id).ToArray()), ["localized_name"] = p.Name, ["pos"] = new JsonArray(x, top + 20 + 20 * i),
-        }).ToArray());
+        }).Select((port, i) => { if (ports[i].Label is { } label) ((JsonObject)port)["label"] = label; return port; }).ToArray());
 
         return new JsonObject
         {
@@ -99,8 +99,8 @@ public static class SubgraphJson
             try
             {
                 var def = new SubgraphDefinition { Id = (string)item["id"]!, Name = (string?)item["name"] ?? "Subgraph", Revision = ComfyWorkflow.Int(item["revision"]) ?? 0 };
-                foreach (var p in (item["inputs"] as JsonArray ?? []).OfType<JsonObject>()) def.Inputs.Add(new SubgraphPort { Name = (string)p["name"]!, TypeName = (string?)p["type"] ?? "*" });
-                foreach (var p in (item["outputs"] as JsonArray ?? []).OfType<JsonObject>()) def.Outputs.Add(new SubgraphPort { Name = (string)p["name"]!, TypeName = (string?)p["type"] ?? "*" });
+                foreach (var p in (item["inputs"] as JsonArray ?? []).OfType<JsonObject>()) def.Inputs.Add(new SubgraphPort { Name = (string)p["name"]!, TypeName = (string?)p["type"] ?? "*", Label = (string?)p["label"] });
+                foreach (var p in (item["outputs"] as JsonArray ?? []).OfType<JsonObject>()) def.Outputs.Add(new SubgraphPort { Name = (string)p["name"]!, TypeName = (string?)p["type"] ?? "*", Label = (string?)p["label"] });
                 // A newer revision already known (edited in this session) is kept; this file's copy is then only read for its id.
                 var used = SubgraphLibrary.RegisterUnlessOlder(def);
                 ids.Add(def.Id);

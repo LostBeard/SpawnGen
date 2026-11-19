@@ -6,7 +6,11 @@ public enum SlotKind { Input, Output }
 
 /// <summary>A connection point on a node: where links attach, and what it carries.</summary>
 /// <param name="IsList">An output that sends a list on item by item (ComfyUI's OUTPUT_IS_LIST), drawn as a grid.</param>
-public sealed record SlotGeometry(SlotKind Kind, string Name, int Index, SocketType Type, Point Position, bool IsWidgetInput, bool IsConnected, bool IsList = false);
+public sealed record SlotGeometry(SlotKind Kind, string Name, int Index, SocketType Type, Point Position, bool IsWidgetInput, bool IsConnected, bool IsList = false)
+{
+    /// <summary>The text shown at the slot (the input's label, or its name).</summary>
+    public string? Label { get; init; }
+}
 
 /// <summary>One widget row (a number, text box, combo or toggle) inside a node body.</summary>
 public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds)
@@ -110,7 +114,7 @@ public static class NodeLayout
         int slotRows = Math.Max(slotInputs.Count, schema.Outputs.Count);
 
         double width = node.Width ?? Math.Max(MinWidth, Math.Max(titleWidth,
-            slotInputs.Select(i => measureText(Label(i.Name))).DefaultIfEmpty(0).Max() + schema.Outputs.Select(o => measureText(o.Name)).DefaultIfEmpty(0).Max() + 3 * Padding + 16));
+            slotInputs.Select(i => measureText(i.Label ?? Label(i.Name))).DefaultIfEmpty(0).Max() + schema.Outputs.Select(o => measureText(o.Name)).DefaultIfEmpty(0).Max() + 3 * Padding + 16));
         width = Math.Max(width, 90);
         // A box canvas needs room to draw on (ComfyUI's node opens 420 wide).
         if (node.Width is null && widgetInputs.Any(i => i.Type.Name == BoxesWidget.TypeName)) width = Math.Max(width, 380);
@@ -121,7 +125,7 @@ public static class NodeLayout
         {
             var spec = slotInputs[i];
             inputs.Add(new SlotGeometry(SlotKind.Input, spec.Name, i, spec.Type,
-                new Point(node.X, slotsTop + i * SlotRowHeight + SlotRowHeight / 2), spec.Widget is not null, graph.LinkInto(node.Id, spec.Name) is not null));
+                new Point(node.X, slotsTop + i * SlotRowHeight + SlotRowHeight / 2), spec.Widget is not null, graph.LinkInto(node.Id, spec.Name) is not null) { Label = spec.Label });
         }
         var outputs = new List<SlotGeometry>();
         for (int i = 0; i < schema.Outputs.Count; i++)
@@ -143,7 +147,7 @@ public static class NodeLayout
                 : crop ? CropWidget.Height(width - 2 * Padding) + 4
                 : spec.Widget!.Multiline ? MultilineWidgetHeight : WidgetRowHeight;
             var bounds = new Rect(node.X + Padding, y, width - 2 * Padding, h - 4);
-            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, IsBoxes = boxes, IsCrop = crop, Label = spec.DynamicParent is null ? spec.Name : Label(spec.Name) });
+            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, IsBoxes = boxes, IsCrop = crop, Label = spec.Label ?? (spec.DynamicParent is null ? spec.Name : Label(spec.Name)) });
             // The drop target for linking a value into this widget: the left edge of its row.
             inputs.Add(new SlotGeometry(SlotKind.Input, spec.Name, inputs.Count, spec.Type, new Point(node.X, bounds.Center.Y), true, false));
             y += h;

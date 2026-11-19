@@ -31,7 +31,7 @@ public sealed class Wan22Video
 
     public async Task<(ImageBatch Images, double Fps)> ExecuteAsync(NodeContext context, IServiceProvider services,
         [Input(Multiline = true)] string prompt = "",
-        [Input(Multiline = true)] string negativePrompt = Wan22Pipeline.DefaultNegativePrompt,
+        [Input(Multiline = true, Tooltip = "The default is the Wan authors' own list, in Chinese, as the model was trained with it. In English: oversaturated colors, overexposed, static, blurry details, subtitles, style, artwork, painting, frame, still, overall gray, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, malformed limbs, fused fingers, motionless frame, cluttered background, three legs, many people in the background, walking backwards. Typing that English list in its place made the video much worse (measured 2026-11-19); a short English negative works.")] string negativePrompt = Wan22Pipeline.DefaultNegativePrompt,
         [Input(Min = 32, Max = 2048, Step = 32, Tooltip = "Wan 2.2 5B was trained at 1280x704 and 704x1280; well below that it degrades (posterised, over-saturated: the reference does too).")] int width = 1280,
         [Input(Min = 32, Max = 2048, Step = 32, Tooltip = "Wan 2.2 5B was trained at 1280x704 and 704x1280; well below that it degrades (posterised, over-saturated: the reference does too).")] int height = 704,
         [Input(Min = 1, Max = 481, Step = 4)] int length = 121,

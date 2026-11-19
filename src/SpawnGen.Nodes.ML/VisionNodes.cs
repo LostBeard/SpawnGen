@@ -35,7 +35,7 @@ public sealed class ImageUpscaleWithModel
     public async Task<ImageBatch> ExecuteAsync(UpscaleModel upscaleModel, ImageBatch image, NodeContext context, IServiceProvider services)
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"upscale:{upscaleModel.Repo}/{upscaleModel.File}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"upscale:{upscaleModel.Repo}/{upscaleModel.File}", async () =>
         {
             await using var stream = await runtime.ModelSource.OpenAsync(upscaleModel.Repo, upscaleModel.File);
             var session = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);
@@ -93,7 +93,7 @@ public sealed class RemoveBackground
     public static async Task<MaskBatch> MasksAsync(ImageBatch image, NodeContext context, IServiceProvider services, float threshold)
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"rmbg:{Repo}/{File}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"rmbg:{Repo}/{File}", async () =>
         {
             await using var stream = await runtime.ModelSource.OpenAsync(Repo, File);
             var session = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);

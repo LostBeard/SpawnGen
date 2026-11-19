@@ -45,6 +45,7 @@ public sealed class PromptExecutor
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            PromptScope.Begin();
             var validation = PromptValidator.Validate(_registry, graph, options?.OutputNodeIds);
             if (!validation.IsValid)
             {

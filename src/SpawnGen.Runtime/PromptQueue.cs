@@ -196,8 +196,21 @@ public sealed class PromptQueue : IDisposable
         catch (OperationCanceledException) { }
     }
 
+    /// <summary>
+    /// Runs before each prompt: an engine checks its device here (the browser engine opens a new GPU device after the old one was lost, and calls
+    /// <see cref="ClearResults"/> since cached outputs may hold models on the lost device).
+    /// </summary>
+    public Func<Task>? BeforeRun { get; set; }
+
+    /// <summary>Told of every failed prompt's error (the browser engine looks for a lost GPU device in it).</summary>
+    public Action<Exception>? RunFailed { get; set; }
+
+    /// <summary>Forgets every cached node output: the next prompt runs every node.</summary>
+    public void ClearResults() => _executor.Cache.Clear();
+
     async Task RunOneAsync(QueuedPrompt item, CancellationToken ct)
     {
+        if (BeforeRun is { } before) await before();
         var observer = new RunObserver(item, _events);
         var started = DateTime.UtcNow;
         string status = "success";
@@ -222,6 +235,7 @@ public sealed class PromptQueue : IDisposable
         }
         catch (Exception ex)
         {
+            RunFailed?.Invoke(ex);
             status = "error";
             errorMessage = ex is NodeExecutionException { InnerException: { } inner } ? inner.Message : ex.Message;
             errorNode = (ex as NodeExecutionException)?.NodeId;

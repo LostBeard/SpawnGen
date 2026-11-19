@@ -58,7 +58,7 @@ public sealed class LatentPreviewer
         {
             var runtime = await GpuHelpers.RuntimeAsync(services);
             var (repo, file) = ModelFolders.Locate(ModelFolders.VaeApprox, name);
-            var taesd = await runtime.GetOrLoadAsync($"preview:{repo}/{file}",
+            var taesd = await runtime.GetOrLoadPipelineAsync($"preview:{repo}/{file}",
                 () => SdTaesd.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file, null!, format.ScaleFactor));
             return new LatentPreviewer(format, taesd);
         }

@@ -33,7 +33,7 @@ public sealed class Flux2Klein
         if (width % 16 != 0 || height % 16 != 0) throw new ArgumentException($"FLUX.2 needs sides that are multiples of 16, got {width}x{height}.");
         int bits = weights == "8-bit" ? 8 : 4;
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"flux2:{Repo}:{bits}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"flux2:{Repo}:{bits}", async () =>
         {
             string? last = null;
             var p = await Flux2Pipeline.CreateAsync(runtime.Accelerator, runtime.ModelSource, Repo, 512, (stage, pct) =>
@@ -116,7 +116,7 @@ public sealed class Flux3Klein
         if (width % 16 != 0 || height % 16 != 0) throw new ArgumentException($"FLUX 3 needs sides that are multiples of 16, got {width}x{height}.");
         int bits = weights == "8-bit" ? 8 : 4;
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"flux3:{Repo}:{bits}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"flux3:{Repo}:{bits}", async () =>
         {
             string? last = null;
             var p = await SpawnDev.ILGPU.ML.Flux3.Flux3Pipeline.CreateAsync(runtime.Accelerator, runtime.ModelSource, Repo, (stage, pct) =>

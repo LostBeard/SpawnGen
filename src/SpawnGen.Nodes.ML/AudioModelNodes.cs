@@ -30,7 +30,7 @@ public sealed class KokoroTextToSpeech
             throw new ArgumentException($"Unknown voice '{voice}'. Known: {string.Join(", ", KokoroVoicePack.EnglishVoiceNames)}.", nameof(voice));
         var runtime = await GpuHelpers.RuntimeAsync(services);
         context.Status("Loading Kokoro");
-        var pipeline = await runtime.GetOrLoadAsync($"kokoro:{Repo}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"kokoro:{Repo}", async () =>
         {
             await using var stream = await runtime.ModelSource.OpenAsync(Repo, "onnx/model.onnx", context.CancellationToken);
             return await KokoroPipeline.CreateFromStreamAsync(runtime.Accelerator, stream, context.CancellationToken);
@@ -56,7 +56,7 @@ public sealed class SpeechToText
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
         context.Status("Loading Parakeet");
-        var pipeline = await runtime.GetOrLoadAsync($"parakeet:{Repo}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"parakeet:{Repo}", async () =>
         {
             async Task<SpawnDev.ILGPU.ML.InferenceSession> Open(string file, string? dataFile = null)
             {
@@ -113,7 +113,7 @@ public sealed class TextGeneration
         if (!Models.TryGetValue(model, out var m)) throw new ArgumentException($"Unknown model '{model}'. Known: {string.Join(", ", Models.Keys)}.", nameof(model));
         var runtime = await GpuHelpers.RuntimeAsync(services);
         context.Status($"Loading {model}");
-        var pipeline = await runtime.GetOrLoadAsync($"llm:{m.Repo}/{m.File}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"llm:{m.Repo}/{m.File}", async () =>
         {
             await using var stream = await runtime.ModelSource.OpenAsync(m.Repo, m.File, context.CancellationToken);
             return await GgufTextGenerationPipeline.CreateFromStreamAsync(runtime.Accelerator, stream, ct: context.CancellationToken);

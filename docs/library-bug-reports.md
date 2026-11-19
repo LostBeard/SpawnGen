@@ -218,3 +218,12 @@ frame at sigma x mask and holds it at the clean latent. SpawnDev.ILGPU.ML 5.8.22
 guide frame (`Ltx2AvModel.DenoiseAsync`: "guide frames 0 of N latent frames"). Asked: allow 0 guide frames (the mask as per-frame timestep
 multipliers, no boxes, no bias), or a frame-mask parameter without a guide. SpawnGen refuses the case with a clear message until then; the
 ComfyUI taps for the test are in Fixtures/ltx2/i2vcall_* (A_start_picture_sample_matches_ComfyUI, strength 1 and 0.6).
+
+## GAP-ML-HF-RESOLVER-RATE (2026-11-19, sent to Tuvok)
+
+Every range request SpawnDev.ILGPU.ML sends to Hugging Face is a /resolve/ call, which the Hub counts against a "resolvers" budget:
+measured `ratelimit-policy: "fixed window";"resolvers";q=3000;w=300` (3,000 per 5 minutes, anonymous) on a 302 to the signed CDN URL.
+FetchRangeStream (16 MiB ReadAhead) and HttpModelDownloader's segments (16 MiB, adaptive down to 512 KiB) appear to hit /resolve/ per chunk, so
+one 27 GB file is ~1,700 calls per load. TJ's observation: likely the cause of past HF throttling (why models.spawndev.com is used so much).
+Suggested: resolve once, range the CDN URL (`Response.url` after the 302), re-resolve on expiry; respect the `ratelimit` header. Matters to
+SpawnGen since StreamingModelSource (2026-11-19) streams what the browser cannot store.

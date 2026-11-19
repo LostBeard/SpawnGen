@@ -18,7 +18,7 @@ public sealed class ImageClassification
         [Input(Min = 1, Max = 20)] int topK = 5)
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"classify:{Repo}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"classify:{Repo}", async () =>
         {
             await using var stream = await runtime.ModelSource.OpenAsync(Repo, File);
             var session = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);
@@ -61,7 +61,7 @@ public sealed class ZeroShotClassification
         if (options.Length < 2) throw new ArgumentException("Give at least two descriptions to choose between, one per line.", nameof(labels));
 
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"clip:{Repo}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"clip:{Repo}", async () =>
         {
             await using var vision = await runtime.ModelSource.OpenAsync(Repo, "onnx/vision_model.onnx");
             var visionSession = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, vision);

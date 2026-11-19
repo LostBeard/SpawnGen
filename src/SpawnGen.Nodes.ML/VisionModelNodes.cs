@@ -54,7 +54,7 @@ public sealed class DepthAnythingV2
     public async Task<ImageBatch> ExecuteAsync(ImageBatch image, NodeContext context, IServiceProvider services)
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"depth:{Repo}", () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"depth:{Repo}", () =>
             DepthEstimationPipeline.CreateFromHubAsync(runtime.Accelerator, runtime.ModelSource, Repo, "onnx/model.onnx", externalDataFile: "",
                 inputShapes: new Dictionary<string, int[]> { ["pixel_values"] = [1, 3, 518, 518] }));
 
@@ -97,7 +97,7 @@ public sealed class StyleTransfer
     {
         if (!Styles.TryGetValue(style, out var model)) throw new ArgumentException($"Unknown style '{style}'. Known: {string.Join(", ", Styles.Keys)}.", nameof(style));
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"style:{model.Repo}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"style:{model.Repo}", async () =>
         {
             await using var stream = await runtime.ModelSource.OpenAsync(model.Repo, model.File);
             var session = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);
@@ -131,7 +131,7 @@ public sealed class PoseEstimation
         [Input(Min = 0, Max = 1, Step = 0.01)] float confidence = 0.3f, bool overlay = false)
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"pose:{Repo}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"pose:{Repo}", async () =>
         {
             await using var stream = await runtime.ModelSource.OpenAsync(Repo, File);
             var session = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);
@@ -173,7 +173,7 @@ public sealed class ObjectDetection
         [Input(Min = 0, Max = 1, Step = 0.01)] float confidence = 0.25f)
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        var pipeline = await runtime.GetOrLoadAsync($"yolo:{Repo}", async () =>
+        var pipeline = await runtime.GetOrLoadPipelineAsync($"yolo:{Repo}", async () =>
         {
             await using var stream = await runtime.ModelSource.OpenAsync(Repo, File);
             var session = await InferenceSession.CreateFromOnnxStreamAsync(runtime.Accelerator, stream);

@@ -26,6 +26,13 @@ upload / App drives; report what was not covered. Found and fixed 2026-11-19 (fi
   the browser shows Opens (every node here, the default; 100), Ready (every model file too; 6 in a browser), All, with a badge per card.
 - The Speech example saved with Save Audio (FLAC) (DEPRECATED): now Save Audio (Advanced), flac; its note no longer says the listener needs a
   desktop GPU (Parakeet ran in the browser).
+- Running every example in a row on the live site lost the WebGPU device at FLUX 3 Klein (it runs alone: 162 s), and every later example then
+  failed until a reload. Two fixes: MlRuntime.GetOrLoadPipelineAsync frees the per-node pipelines a prompt has not used before anything new
+  loads (PromptScope; ModelResidencyTests), and the browser engine watches GPUDevice.lost and opens a new device for the next run, clearing
+  cached outputs (drive-device-lost.js, a real loss through ?testhooks=1; red-checked). Not freed yet: models handed out as MODEL / CLIP /
+  VAE (SD checkpoints): they need an unload that reloads on demand, if the full sequence still runs out of GPU memory.
+- Hugging Face counts every /resolve/ range request (3,000 per 5 min anonymous); Tuvok is moving ML's three readers to resolve once and range
+  the CDN URL (library-bug-reports.md GAP-ML-HF-RESOLVER-RATE).
 Open, measured: FLUX 3 Klein's first run in the browser took 20 min (download); the Upscale example's nodes overlap. Next for the site: run the Wan 2.2 5B Turbo node in the browser (the library serves it; never tried
 there), then decide whether it is an example; the template "Ready" set for the browser (6) grows only with hosted model files.
 

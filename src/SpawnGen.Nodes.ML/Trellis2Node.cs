@@ -39,7 +39,7 @@ public sealed class TrellisImageTo3D
         var packed = Rgba.Pack(image, 0);
         for (int i = 0; i < packed.Length; i++) packed[i] = (packed[i] & 0x00FFFFFF) | (foreground[i] >= 0.5f ? 255 << 24 : 0);
 
-        var generator = await runtime.GetOrLoadAsync("trellis2", () => Task.FromResult(
+        var generator = await runtime.GetOrLoadPipelineAsync("trellis2", () => Task.FromResult(
             new Trellis2ImageTo3D(runtime.Accelerator, Trellis2Weights.FromModelSource(runtime.ModelSource))));
         generator.StageDone = (stage, seconds) => context.Status($"{stage} ({seconds:0} s)");
 

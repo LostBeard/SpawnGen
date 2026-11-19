@@ -46,10 +46,45 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             if (_perOp) ReportPerOpTimings(e.Type);
             EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
         };
-        _queue = new PromptQueue(registry, this, _bus);
+        _queue = new PromptQueue(registry, this, _bus) { BeforeRun = ReplaceLostDeviceAsync, RunFailed = NoteLostDevice };
         // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the
         // slowest ones to the console when a run ends. For finding the single op that overruns a GPU watchdog.
         try { _perOp = _js.Get<string>("location.search")?.Contains("perop=1") == true; } catch (Exception) { }
+        // Test switch: ?testhooks=1 adds window.spawngenLoseGpu(), which destroys the engine's WebGPU device (a real device loss, as a GPU reset
+        // gives), for tools/studio-browser-test/drive-device-lost.js.
+        try
+        {
+            if (_js.Get<string>("location.search")?.Contains("testhooks=1") == true)
+                _js.Set("spawngenLoseGpu", new ActionCallback(LoseDeviceForTest));
+        }
+        catch (Exception) { }
+    }
+
+    bool _deviceLost;
+
+    /// <summary>
+    /// A run that failed because the device was lost (the browser's own words: "device was lost" / "device has been lost") marks it, whether or
+    /// not the accelerator's lost flag has caught up (measured 2026-11-19: after GPUDevice.destroy() a run failed on a mapAsync with "The Device
+    /// was lost" while IsDeviceLost was still false).
+    /// </summary>
+    void NoteLostDevice(Exception error)
+    {
+        for (Exception? e = error; e is not null; e = e.InnerException)
+            if (System.Text.RegularExpressions.Regex.IsMatch(e.Message, @"device (was|has been|is) lost", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            {
+                _deviceLost = true;
+                Console.WriteLine("[gpu] a run failed on a lost WebGPU device: the next run opens a new one");
+                return;
+            }
+    }
+
+    void LoseDeviceForTest()
+    {
+        if (_runtime is { IsCompletedSuccessfully: true } task && task.Result.Accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator gpu)
+        {
+            Console.WriteLine("[gpu] test hook: destroying the WebGPU device");
+            gpu.NativeAccelerator.NativeDevice.Destroy();
+        }
     }
 
     readonly bool _perOp;
@@ -125,6 +160,24 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     /// <summary>Opens the GPU on first use (the first ML node to run asks for it) and keeps it.</summary>
     public Task<MlRuntime> GetAsync() => _runtime ??= CreateRuntimeAsync();
 
+    /// <summary>
+    /// Before each prompt: when the WebGPU device was lost (a GPU reset, a driver timeout, the GPU out of memory), every later dispatch throws, so
+    /// the runtime and its models are dropped and the next ML node opens a new device; cached node outputs go too (they may hold models on the
+    /// lost device). Found 2026-11-19 on the live site: after one loss every later example failed until the page was reloaded.
+    /// </summary>
+    async Task ReplaceLostDeviceAsync()
+    {
+        if (_runtime is not { IsCompletedSuccessfully: true } task) return;
+        bool lost = _deviceLost || task.Result.Accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator { IsDeviceLost: true };
+        if (!lost) return;
+        _deviceLost = false;
+        _runtime = null;
+        Console.WriteLine("[gpu] the WebGPU device was lost: opening a new one for this run");
+        try { task.Result.Dispose(); } catch (Exception ex) { Console.WriteLine("[gpu] releasing the lost device: " + ex.Message); }
+        _queue.ClearResults();
+        await Task.CompletedTask;
+    }
+
     async Task<MlRuntime> CreateRuntimeAsync()
     {
         var builder = MLContext.Create();
@@ -134,7 +187,21 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             ?? throw new InvalidOperationException("This browser has no GPU the engine can use (it needs WebGPU).");
         // Model files stream into the origin-private file system and are reused on the next visit, never held whole in memory.
         // Every model, whatever its size: cached in the browser when there is room, streamed from the model host when not (StreamingModelSource).
-        return new MlRuntime(new StreamingModelSource(Hub), accelerator);
+        var runtime = new MlRuntime(new StreamingModelSource(Hub), accelerator);
+        if (accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator gpu) _ = WatchDeviceAsync(gpu.NativeAccelerator.NativeDevice, runtime);
+        return runtime;
+    }
+
+    /// <summary>The device's lost promise: once it resolves, the next run opens a new device (<see cref="ReplaceLostDeviceAsync"/>).</summary>
+    async Task WatchDeviceAsync(SpawnDev.SpawnJS.JSObjects.GPUDevice device, MlRuntime runtime)
+    {
+        try
+        {
+            var info = await device.Lost;
+            if (_runtime is { IsCompletedSuccessfully: true } current && ReferenceEquals(current.Result, runtime)) _deviceLost = true;
+            Console.WriteLine($"[gpu] the WebGPU device was lost ({info?.Reason}: {info?.Message}); the next run opens a new one");
+        }
+        catch (Exception ex) { Console.WriteLine("[gpu] watching the device: " + ex.Message); }
     }
 
     HubModelSource? _hub;

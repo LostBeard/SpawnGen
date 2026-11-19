@@ -2765,7 +2765,9 @@
                 if (failedNode is null && int.TryParse((string?)data["node_id"], out var failedId)) failedNode = failedId;
                 if (failedNode is { } badId) _visuals.Errors[badId] = (string?)data["exception_message"] ?? "failed";
                 FinishHistoryEntry("failed", (string?)data["exception_message"]);
-                ShowMessage($"Run failed: {(string?)data["exception_message"]}");
+                var failure = (string?)data["exception_message"];
+                ShowMessage($"Run failed: {failure}" + (failure?.Contains("device has been lost", StringComparison.OrdinalIgnoreCase) == true
+                    ? " The GPU was reset (often a run that needed more GPU memory than was free). Queue again: SpawnGen opens the GPU anew." : ""));
                 _running = false;
                 _visuals.EndRun();
                 break;

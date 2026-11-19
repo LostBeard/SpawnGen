@@ -49,7 +49,7 @@ public sealed class Wan22Video
         if ((length - 1) % 4 != 0) throw new ArgumentException($"Wan 2.2 makes 4n+1 frames (1, 5, 9 ... 121), got {length}.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var dit = Wan22Paths.DitFile(model == "5B Turbo" ? "turbo_q8" : "q8");
-        var loaded = await runtime.GetOrLoadAsync($"wan22:{Wan22Pipeline.DefaultRepo}:{dit}", () => Task.FromResult(new Loaded(
+        var loaded = await runtime.GetOrLoadPipelineAsync($"wan22:{Wan22Pipeline.DefaultRepo}:{dit}", () => Task.FromResult(new Loaded(
             new Wan22Pipeline(runtime.Accelerator, runtime.ModelSource, Wan22Pipeline.DefaultRepo, Wan22Paths.InRepo(dit)))));
 
         var rgb = startImage is null ? null : VideoFrames.Rgb(startImage);
@@ -137,7 +137,7 @@ public sealed class LtxVideo
         if ((length - 1) % 8 != 0) throw new ArgumentException($"LTX-Video makes 8n+1 frames (1, 9, 17 ... 121), got {length}.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var paths = LtxPaths.InRepo(LtxPaths.DitFile(precision == "bf16" ? "bf16" : "q8"));
-        var loaded = await runtime.GetOrLoadAsync($"ltx:{LtxPipeline.DefaultRepo}:{paths.Dit}", () => Task.FromResult(new Loaded(
+        var loaded = await runtime.GetOrLoadPipelineAsync($"ltx:{LtxPipeline.DefaultRepo}:{paths.Dit}", () => Task.FromResult(new Loaded(
             new LtxPipeline(runtime.Accelerator, runtime.ModelSource, LtxPipeline.DefaultRepo, paths))));
 
         var conditions = new List<LtxCondition>();

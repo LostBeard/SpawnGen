@@ -18,7 +18,17 @@ const check = (ok, what) => { console.log((ok ? 'PASS ' : 'FAIL ') + what); if (
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error' && !/powerPreference|Failed to load resource/.test(m.text())) errors.push(m.text().slice(0, 200)); });
   await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(3000);
-  const toast = async () => (await page.locator('.toast').first().textContent({ timeout: 4000 }).catch(() => '')) || '';
+  const toast = async () => (await page.locator('.toast').last().textContent({ timeout: 4000 }).catch(() => '')) || '';
+  // The message a click brings: wait until the newest toast differs from the one showing before the click (an earlier toast can still be up).
+  const toastAfter = async (before, click) => {
+    await click();
+    for (let i = 0; i < 40; i++) {
+      const now = await toast();
+      if (now && now !== before) return now;
+      await page.waitForTimeout(150);
+    }
+    return '';
+  };
 
   // Examples menu: every example is offered alike (every model runs in the browser; none is "desktop only").
   await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
@@ -59,8 +69,7 @@ const check = (ok, what) => { console.log((ok ? 'PASS ' : 'FAIL ') + what); if (
   check(await missingCard.count() === 1, 'All shows cards marked with missing nodes');
   const tip = await missingCard.locator('.tpl-missing').getAttribute('title');
   await page.screenshot({ path: path.join(OUT, 'templates-all.png') });
-  await missingCard.click();
-  const t2 = await toast();
+  const t2 = await toastAfter(await toast(), () => missingCard.click());
   check(/does not have these nodes yet/.test(t2) && tip && t2.includes(tip.replace(/^.*yet: /, '').split(',')[0]), `a missing-node template names its missing nodes (${t2.slice(0, 140)})`);
 
   check(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors.slice(0, 3).join(' || ') : ''));

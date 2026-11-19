@@ -187,7 +187,17 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             ?? throw new InvalidOperationException("This browser has no GPU the engine can use (it needs WebGPU).");
         // Model files stream into the origin-private file system and are reused on the next visit, never held whole in memory.
         // Every model, whatever its size: cached in the browser when there is room, streamed from the model host when not (StreamingModelSource).
-        var runtime = new MlRuntime(new StreamingModelSource(Hub), accelerator);
+        var source = new StreamingModelSource(Hub);
+        // Which files stream (no room in the browser's storage) and how far: the run's status shows downloads, not streams.
+        source.Streaming += (file, bytes) => Console.WriteLine($"[models] streaming {file} ({bytes / 1e9:F2} GB): no room to store it in this browser");
+        source.CacheFallback += file => Console.WriteLine($"[models] the browser refused to store {file}: it streams from now on");
+        long lastLogged = 0;
+        source.OnProgress += (read, length) =>
+        {
+            long step = Math.Max(length / 10, 1);
+            if (read / step != lastLogged / step || read >= length) { lastLogged = read; Console.WriteLine($"[models] streamed {read / 1e9:F2} of {length / 1e9:F2} GB"); }
+        };
+        var runtime = new MlRuntime(source, accelerator);
         if (accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator gpu) _ = WatchDeviceAsync(gpu.NativeAccelerator.NativeDevice, runtime);
         return runtime;
     }

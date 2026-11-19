@@ -227,3 +227,10 @@ FetchRangeStream (16 MiB ReadAhead) and HttpModelDownloader's segments (16 MiB, 
 one 27 GB file is ~1,700 calls per load. TJ's observation: likely the cause of past HF throttling (why models.spawndev.com is used so much).
 Suggested: resolve once, range the CDN URL (`Response.url` after the 302), re-resolve on expiry; respect the `ratelimit` header. Matters to
 SpawnGen since StreamingModelSource (2026-11-19) streams what the browser cannot store.
+
+## GAP-ML-TRELLIS-BROWSER-HUNG (2026-11-19, sent to Tuvok)
+
+TRELLIS.2 image to 3D in Chrome on the RX 590 (D3D12, live site 574b0b6, ML 5.8.23): kernels precompile by ~7 s, no StageDone for ~12 min, then
+DXGI_ERROR_DEVICE_HUNG at 722.5 s and 724.7 s in two runs (same point: one dispatch or batch over the 2 s Windows watchdog on this card, most
+likely; the library's figures are from an RTX 4070). ?perop=1 times only GraphExecutor ops (RMBG's 491, slowest 679 ms), not TRELLIS's kernels.
+Asked: does the demo complete on a slower card; is there a TRELLIS per-dispatch trace.

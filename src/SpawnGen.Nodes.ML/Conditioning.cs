@@ -49,7 +49,20 @@ public sealed record CondEntry(float[] Embeddings, int[] Shape)
     public int[]? AudioCodes { get; init; }
     /// <summary>ComfyUI's "frame_rate" (LTXVConditioning: the video's frames a second, which LTX models are told).</summary>
     public double? FrameRate { get; init; }
+    /// <summary>
+    /// ComfyUI's "keyframe_idxs" (LTXVAddGuide): [3, guide tokens, 2], each guide token's pixel-space box [start, end) per axis (time, height, width),
+    /// the RoPE positions the guide's appended latent frames take; chained guides' boxes concatenated in add order. Null: no guide.
+    /// </summary>
+    public float[]? KeyframeBoxes { get; init; }
+    /// <summary>ComfyUI's "guide_attention_entries" (LTXVAddGuide): one per guide, in add order.</summary>
+    public IReadOnlyList<GuideAttention>? GuideAttention { get; init; }
 }
+
+/// <summary>
+/// One keyframe guide's attention entry (ComfyUI's guide_attention_entries item): its token count (pre_filter_count = latent frames x height x width),
+/// strength, optional pixel-space attention mask, and latent shape [frames, height, width].
+/// </summary>
+public sealed record GuideAttention(int Count, float Strength, MaskBatch? PixelMask, int[] LatentShape);
 
 /// <summary>CONDITIONING: a list of entries, each guiding the sampler on its own.</summary>
 [Socket("CONDITIONING")]

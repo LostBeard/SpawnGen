@@ -70,11 +70,14 @@ internal static class SamplingCore
             var original = format.ProcessIn(latent.Data.AsSpan(b * per, per).ToArray());
             var noise = settings.AddNoise ? InitialNoise(settings.Seed, b, latent) : new float[per];
             var x0 = sampling.NoiseScaling(sigmas[0], noise, original, sampling.IsMaxDenoise(sigmas[0]));
-            var mask = ResizedMask(latent.NoiseMask, b, h, w);
+            float[]? frameMask = null;
+            var mask = latent.IsNested ? NestedMask(latent, b, out frameMask) : ResizedMask(latent.NoiseMask, b, h, w);
+            unet.FrameMask = frameMask;
             unet.FirstFrameClean = latent.IsVideo && FirstFrameOnlyKept(mask, latent.Frames, plane / latent.Frames);
             var run = new GuidanceRun(guider, ch, h, w, Samplers.DisablesCfg1Optimization(settings.Sampler)) { BatchIndex = b, BatchSize = batch };
             int item = b;
-            Samplers.DenoiseFn denoise = (x, sigma) => InpaintedCall(x, sigma, mask, model.Patches?.DenoiseMask, runSigmas, sampling, original, noise, plane,
+            bool clean = diffusion.InpaintsWithCleanLatent;
+            Samplers.DenoiseFn denoise = (x, sigma) => InpaintedCall(x, sigma, mask, model.Patches?.DenoiseMask, runSigmas, sampling, original, noise, plane, clean,
                 input => run.PredictAsync(input, sigma,
                     (cond, scheduled, options) => EvaluateAsync(unet, cond, input, sigma, scheduled, options, sampling, format, latent, original, item, ct),
                     (cond, at, options) => EvaluateAsync(unet, cond, at, sigma, true, options, sampling, format, latent, original, item, ct),
@@ -207,11 +210,11 @@ internal static class SamplingCore
     /// itself on the way out. Differential Diffusion's function, when set, turns the mask into the step's mask first.
     /// </summary>
     internal static async Task<float[]> InpaintedCall(float[] sample, double sigma, float[]? mask, Func<double, float[], double[], ModelSampling, float[]>? denoiseMask,
-        double[] runSigmas, ModelSampling sampling, float[] original, float[] inpaintNoise, int plane, Func<float[], Task<float[]>> predict)
+        double[] runSigmas, ModelSampling sampling, float[] original, float[] inpaintNoise, int plane, bool cleanLatent, Func<float[], Task<float[]>> predict)
     {
         if (mask is null) return await predict(sample);
         var m = denoiseMask is null ? mask : denoiseMask(sigma, mask, runSigmas, sampling);
-        var noised = sampling.NoiseScaling(sigma, inpaintNoise, original);
+        var noised = cleanLatent ? original : sampling.NoiseScaling(sigma, inpaintNoise, original);
         var result = await predict(Blend(sample, noised, m, plane));
         return Blend(result, original, m, plane);
     }
@@ -279,6 +282,36 @@ internal static class SamplingCore
     }
 
     /// <summary>Picture <paramref name="index"/> of a mask batch (repeated when shorter) at h x w (bilinear), or null without a mask.</summary>
+    /// <summary>
+    /// An audio + video latent's noise mask for batch item <paramref name="index"/>, over its packed values (the video part's per-frame mask spread
+    /// over the frame, the audio part's all ones, as ComfyUI's is), and the video part's per-frame values; nulls without a mask. ComfyUI blends the
+    /// packed latent with it as for any noise mask and gives LTX-2 the per-frame values as its denoise_mask (measured with a keyframe guide).
+    /// </summary>
+    internal static float[]? NestedMask(LatentBatch latent, int index, out float[]? frameMask)
+    {
+        frameMask = null;
+        if (latent.PartMasks is not { } masks || masks.All(m => m is null)) return null;
+        var full = new float[latent.ItemSize];
+        int offset = 0;
+        for (int part = 0; part < latent.Parts!.Count; part++)
+        {
+            var shape = latent.Parts[part];
+            int n = 1;
+            for (int d = 1; d < shape.Length; d++) n *= shape[d];
+            if (masks[part] is not { } m) { Array.Fill(full, 1f, offset, n); offset += n; continue; }
+            if (shape.Length != 5) throw new NotSupportedException("A noise mask on the audio part of an audio + video latent is not measured yet in SpawnGen.");
+            int ch = shape[1], frames = shape[2], plane = shape[3] * shape[4];
+            var video = new LatentBatch([1, ch, frames, shape[3], shape[4]]) { NoiseMask = new MaskBatch(1, m.Height, m.Width, m.Data.AsSpan(BatchSlot(m.Batch, Math.Max(m.Batch, index + 1), index) * m.Height * m.Width, m.Height * m.Width).ToArray()) };
+            var perFrame = LTXVAddGuide.FrameMask(video);
+            for (int c = 0; c < ch; c++)
+                for (int f = 0; f < frames; f++)
+                    Array.Fill(full, perFrame[f], offset + (c * frames + f) * plane, plane);
+            if (part == 0) frameMask = perFrame;
+            offset += n;
+        }
+        return full;
+    }
+
     internal static float[]? ResizedMask(MaskBatch? mask, int index, int h, int w)
     {
         if (mask is null) return null;

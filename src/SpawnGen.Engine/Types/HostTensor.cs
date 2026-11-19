@@ -77,6 +77,12 @@ public sealed class LatentBatch : HostTensor
     /// <summary>The parts' shapes of a packed audio + video latent, in order (each with this latent's batch); null for any other latent.</summary>
     public IReadOnlyList<int[]>? Parts { get; init; }
 
+    /// <summary>
+    /// A packed audio + video latent's noise mask, per part in <see cref="Parts"/>' order, each as that part's own <see cref="NoiseMask"/> (the video
+    /// part's frames stacked); a null entry is all ones (ComfyUI's audio part of the mask is all ones, measured). Null: no noise mask.
+    /// </summary>
+    public IReadOnlyList<MaskBatch?>? PartMasks { get; init; }
+
     /// <summary>ComfyUI's LATENT "type" key ("audio" on ACE-Step's and LTX-2's audio latents and on what LTX-2's audio + video nodes pass on).</summary>
     public string? Type { get; init; }
 
@@ -100,9 +106,12 @@ public sealed class LatentBatch : HostTensor
             Array.Copy(video.Data, i * vn, data, i * (vn + an), vn);
             Array.Copy(audio.Data, i * an, data, i * (vn + an) + vn, an);
         }
+        // ComfyUI's NestedTensor noise mask (measured with a keyframe guide, 2026-11-18): the video part's per-frame mask and the audio part's all ones.
+        if (audio.NoiseMask is not null) throw new NotSupportedException("An audio latent with a noise mask in an audio + video latent is not measured yet in SpawnGen.");
         return new LatentBatch([b, 1, vn + an], data)
         {
             Parts = [[.. video.Shape], [.. audio.Shape]],
+            PartMasks = video.NoiseMask is null ? null : [video.NoiseMask, null],
             Type = audio.Type ?? video.Type,
             DownscaleRatioSpacial = audio.DownscaleRatioSpacial ?? video.DownscaleRatioSpacial,
             DownscaleRatioTemporal = audio.DownscaleRatioTemporal ?? video.DownscaleRatioTemporal,
@@ -121,7 +130,11 @@ public sealed class LatentBatch : HostTensor
             for (int d = 1; d < shape.Length; d++) n *= shape[d];
             var data = new float[b * n];
             for (int i = 0; i < b; i++) Array.Copy(Data, i * total + offset, data, i * n, n);
-            parts.Add(new LatentBatch([b, .. shape[1..]], data) { Type = Type, DownscaleRatioSpacial = DownscaleRatioSpacial, DownscaleRatioTemporal = DownscaleRatioTemporal });
+            parts.Add(new LatentBatch([b, .. shape[1..]], data)
+            {
+                Type = Type, DownscaleRatioSpacial = DownscaleRatioSpacial, DownscaleRatioTemporal = DownscaleRatioTemporal,
+                NoiseMask = PartMasks is { } masks ? masks[parts.Count] : null,
+            });
             offset += n;
         }
         return parts;
@@ -138,6 +151,7 @@ public sealed class LatentBatch : HostTensor
         new([batch, .. template.Shape[1..]], data)
         {
             Parts = template.Parts?.Select(p => (int[])[batch, .. p[1..]]).ToArray(),
+            PartMasks = template.PartMasks,
             Type = template.Type, DownscaleRatioSpacial = template.DownscaleRatioSpacial, DownscaleRatioTemporal = template.DownscaleRatioTemporal,
         };
 
@@ -145,7 +159,7 @@ public sealed class LatentBatch : HostTensor
     public LatentBatch With(LatentBatch source) =>
         new LatentBatch(Shape, Data)
         {
-            NoiseMask = source.NoiseMask, BatchIndex = source.BatchIndex, Parts = Parts ?? source.Parts,
+            NoiseMask = source.NoiseMask, BatchIndex = source.BatchIndex, Parts = Parts ?? source.Parts, PartMasks = source.PartMasks,
             Type = source.Type, DownscaleRatioSpacial = source.DownscaleRatioSpacial, DownscaleRatioTemporal = source.DownscaleRatioTemporal,
         };
 

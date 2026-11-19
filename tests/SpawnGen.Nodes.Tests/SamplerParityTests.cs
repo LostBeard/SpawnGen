@@ -198,7 +198,7 @@ public class SamplerParityTests
             Samplers.DenoiseFn model = (x, sigma) =>
             {
                 calls++;
-                return SamplingCore.InpaintedCall(x, sigma, mask, handle.Patches.DenoiseMask, runSigmas, sampling, latent, noise, 12,
+                return SamplingCore.InpaintedCall(x, sigma, mask, handle.Patches.DenoiseMask, runSigmas, sampling, latent, noise, 12, false,
                     input => run.PredictAsync(input, sigma, (cond, scheduled, _) => standIn.Evaluate(cond, scheduled, input, sigma)));
             };
             var x0 = sampling.NoiseScaling(sigmas[0], noise, latent, sampling.IsMaxDenoise(sigmas[0]));

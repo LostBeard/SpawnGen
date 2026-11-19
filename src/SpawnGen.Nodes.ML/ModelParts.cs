@@ -28,6 +28,12 @@ public abstract class UNetRun : IDisposable
     /// <summary>Image to video: the first latent frame is the start picture, kept (a video model runs its tokens at timestep 0). Set per batch item.</summary>
     public bool FirstFrameClean { get; set; }
 
+    /// <summary>
+    /// LTX-2: the video part's noise mask per latent frame (guide frames included), ComfyUI's denoise_mask; each frame runs at sigma x its value.
+    /// Set per batch item by the sampler for an audio + video latent with a noise mask; null when there is none.
+    /// </summary>
+    public float[]? FrameMask { get; set; }
+
     /// <summary>The extra input channels an inpainting UNet takes besides the latent (0 for an ordinary one).</summary>
     public virtual int ConcatChannels => 0;
 
@@ -72,6 +78,12 @@ public interface IDiffusionModel
 
     /// <summary>The run's settings (<see cref="SpawnGen.Engine.Execution.RunSettings"/>), given before each run; a model with none to use ignores them.</summary>
     void UseRunSettings(IReadOnlyDictionary<string, string>? settings) { }
+
+    /// <summary>
+    /// Whether a noise mask's kept part is held at the clean latent at every step (ComfyUI's LTX models, measured 2026-11-18 on keyframe-guided calls:
+    /// the model input is x m + latent (1 - m)) instead of the latent noised to the step's sigma (every other model).
+    /// </summary>
+    bool InpaintsWithCleanLatent => false;
 
     UNetRun BeginRun(Accelerator accelerator);
 }

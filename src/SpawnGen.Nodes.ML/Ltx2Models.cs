@@ -175,6 +175,9 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
 
     public UNetRun BeginRun(Accelerator accelerator) => new Ltx2Run(this);
 
+    /// <summary>ComfyUI's LTX models hold a noise mask's kept frames at the clean latent at every step (measured with keyframe guides, 2026-11-18).</summary>
+    public bool InpaintsWithCleanLatent => true;
+
     async Task<Ltx2AvModel> ModelAsync(int F, int H, int W, int Ta, CancellationToken ct)
     {
         if (_model is not null && _size == (F, H, W, Ta)) return _model;
@@ -236,7 +239,9 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
                 if (!sameStep) { _step.Clear(); _stepInput = (float[])input.Clone(); _stepSigma = timestep; }
                 var ltx = await model.ModelAsync(video[2], video[3], video[4], audio[2], cancellationToken);
                 if (input.Length != ltx.PackedLength) throw new ArgumentException($"The packed latent has {input.Length} values; the model expects {ltx.PackedLength}.");
-                var partner = _known.FirstOrDefault(e => !ReferenceEquals(e, entry) && !_step.ContainsKey(e) && e.FrameRate == entry.FrameRate) ?? entry;
+                var guide = Guide(entry, FrameMask, video[3], video[4]);
+                // the CFG halves share a call only when they carry the same keyframe guides (LTXVAddGuide puts them on both)
+                var partner = _known.FirstOrDefault(e => !ReferenceEquals(e, entry) && !_step.ContainsKey(e) && e.FrameRate == entry.FrameRate && SameGuides(e, entry)) ?? entry;
                 int n = input.Length, ctx = entry.Embeddings.Length;
                 _context ??= model.Accelerator.Allocate1D<float>(2L * ctx);
                 _context.View.SubView(0, ctx).CopyFromCPU(entry.Embeddings);
@@ -244,7 +249,7 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
                 var packed = new float[2 * n];
                 input.CopyTo(packed, 0);
                 input.CopyTo(packed, n);
-                var both = await ltx.DenoiseAsync(packed, [timestep, timestep], _context.View, (float)fps, cancellationToken);
+                var both = await ltx.DenoiseAsync(packed, [timestep, timestep], _context.View, (float)fps, guide, cancellationToken);
                 denoised = both[..n];
                 _step[entry] = denoised;
                 if (!ReferenceEquals(partner, entry)) _step[partner] = both[n..(2 * n)];
@@ -259,6 +264,56 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
             _context?.Dispose();
             _context = null;
             _step.Clear();
+        }
+
+        static bool SameGuides(CondEntry a, CondEntry b) =>
+            (a.KeyframeBoxes is null && b.KeyframeBoxes is null)
+            || (a.KeyframeBoxes is not null && b.KeyframeBoxes is not null && a.KeyframeBoxes.AsSpan().SequenceEqual(b.KeyframeBoxes)
+                && (a.GuideAttention ?? []).SequenceEqual(b.GuideAttention ?? []));
+
+        /// <summary>
+        /// SpawnDev.ILGPU.ML's keyframe guide for this entry (ComfyUI's LTXVAddGuide conditioning on the call): the appended guide frames, their boxes,
+        /// the per-frame denoise mask and each guide token's attention strength (its guide's strength, times its attention mask averaged over the
+        /// token's 32 x 32 pixel cell; the pixel mask's reduction is not measured beyond a uniform mask). Null when there is neither a guide nor a
+        /// frame mask that holds anything back (no change to the call).
+        /// </summary>
+        internal static Ltx2Guide? Guide(CondEntry entry, float[]? frameMask, int h, int w)
+        {
+            int guideFrames = entry.KeyframeBoxes is null ? 0 : entry.GuideAttention?.Sum(g => g.LatentShape[0]) ?? 0;
+            bool masked = frameMask is not null && Array.Exists(frameMask, v => v != 1f);
+            if (guideFrames == 0 && !masked) return null;
+            float strength = entry.GuideAttention is [var first, ..] ? first.Strength : 1f;
+            float[]? tokens = null;
+            if (guideFrames > 0)
+            {
+                var list = new List<float>();
+                foreach (var g in entry.GuideAttention!)
+                {
+                    var cells = g.PixelMask is null ? null : Cells(g.PixelMask, g.LatentShape[1], g.LatentShape[2]);
+                    for (int f = 0; f < g.LatentShape[0]; f++)
+                        for (int i = 0; i < g.LatentShape[1] * g.LatentShape[2]; i++)
+                            list.Add(g.Strength * (cells?[i] ?? 1f));
+                }
+                tokens = [.. list];
+            }
+            return new Ltx2Guide(guideFrames, entry.KeyframeBoxes ?? [], strength, frameMask ?? [], tokens!);
+        }
+
+        /// <summary>A pixel-space mask's mean over each 32 x 32 cell of an h x w latent grid (the mask resized to 32 h x 32 w first, bilinear).</summary>
+        static float[] Cells(MaskBatch mask, int h, int w)
+        {
+            var frame = mask.Data.AsSpan(0, mask.Height * mask.Width).ToArray();
+            var full = mask.Height == 32 * h && mask.Width == 32 * w ? frame : SpawnGen.Nodes.Core.TorchInterpolate.Resize(frame, 1, mask.Height, mask.Width, 32 * h, 32 * w, "bilinear");
+            var cells = new float[h * w];
+            for (int r = 0; r < h; r++)
+                for (int c = 0; c < w; c++)
+                {
+                    double sum = 0;
+                    for (int y = 0; y < 32; y++)
+                        for (int x = 0; x < 32; x++) sum += full[(r * 32 + y) * 32 * w + c * 32 + x];
+                    cells[r * w + c] = (float)(sum / 1024);
+                }
+            return cells;
         }
     }
 

@@ -136,8 +136,9 @@ public sealed class LTXVConcatAVLatent
     {
         if (!videoLatent.IsVideo) throw new ArgumentException($"video_latent is [{string.Join(", ", videoLatent.Shape)}]; Concat AV Latent takes a video latent there.");
         if (!audioLatent.IsAudio) throw new ArgumentException($"audio_latent is [{string.Join(", ", audioLatent.Shape)}]; Concat AV Latent takes an audio latent there.");
-        if (videoLatent.NoiseMask is not null || audioLatent.NoiseMask is not null || videoLatent.BatchIndex is not null || audioLatent.BatchIndex is not null)
-            throw new NotSupportedException("Concat AV Latent with a noise mask or batch indexes is not measured yet in SpawnGen.");
+        // The video part's noise mask (LTXVImgToVideoInplace, LTXVAddGuide) travels with it; ComfyUI's audio part of the mask is all ones (measured).
+        if (videoLatent.BatchIndex is not null || audioLatent.BatchIndex is not null)
+            throw new NotSupportedException("Concat AV Latent with batch indexes is not measured yet in SpawnGen.");
         return LatentBatch.Nested(videoLatent, audioLatent);
     }
 }
@@ -166,9 +167,10 @@ public sealed class LTXVConditioning
 }
 
 /// <summary>
-/// LTXVCropGuides: removes keyframe guides from the conditioning and their frames from the latent. SpawnGen has no keyframe guides yet, so the
-/// conditioning passes through; the latent comes back as ComfyUI gives it (measured, no guides): its keys dropped and a noise mask of ones over every
-/// latent frame. ComfyUI fails on an audio + video latent (measured), so the latent is the video one (Separate AV Latent first).
+/// LTXVCropGuides: removes the keyframe guides LTXVAddGuide appended: their latent frames from the end of the latent, and their boxes
+/// (keyframe_idxs) from both conditionings (guide_attention_entries stay, as in ComfyUI). Measured with ComfyUI (2026-11-18): the latent comes back
+/// with its keys dropped and a noise mask of ones over the remaining frames (with and without guides). ComfyUI fails on an audio + video latent
+/// (measured), so the latent is the video one (Separate AV Latent first).
 /// </summary>
 [VideoLatents]
 [Node("LTXVCropGuides", Category = "model/conditioning/ltxv", DisplayName = "LTXVCropGuides", OutputNames = ["positive", "negative", "latent"])]
@@ -177,8 +179,164 @@ public sealed class LTXVCropGuides
     public (Conditioning Positive, Conditioning Negative, LatentBatch Latent) Execute(Conditioning positive, Conditioning negative, LatentBatch latent)
     {
         if (!latent.IsVideo) throw new ArgumentException($"LTXVCropGuides takes a video latent; this one is [{string.Join(", ", latent.Shape)}].");
-        var ones = MaskBatch.Filled(latent.Batch, latent.Frames, 1, 1f);
-        return (positive, negative, new LatentBatch(latent.Shape, latent.Data) { NoiseMask = ones, BatchIndex = latent.BatchIndex });
+        int guides = LTXVAddGuide.GuideFrames(positive);
+        int frames = latent.Frames - guides;
+        if (frames < 1) throw new ArgumentException($"The latent has {latent.Frames} frames, fewer than the {guides} guide frames its conditioning names.");
+        var data = guides == 0 ? latent.Data : LTXVAddGuide.TakeFrames(latent, 0, frames);
+        var ones = MaskBatch.Filled(latent.Batch, frames, 1, 1f);
+        Conditioning Crop(Conditioning c) => guides == 0 ? c : c.Map(e => e with { KeyframeBoxes = null });
+        return (Crop(positive), Crop(negative),
+            new LatentBatch([latent.Batch, latent.Channels, frames, latent.Height, latent.Width], data) { NoiseMask = ones, BatchIndex = latent.BatchIndex });
+    }
+}
+
+/// <summary>
+/// LTXVAddGuide: a picture or video as a keyframe guide for LTX-2. Measured black box with ComfyUI (2026-11-18, _scratch/probe/ltx2 guide .. guide5):
+/// <list type="bullet">
+/// <item>The frames are center-cropped and resized (bilinear) to the latent's pixel size (32 per latent cell), a video cut to its first 8 k + 1
+/// frames, VAE-encoded and APPENDED to the latent as extra latent frames; their noise mask is 1 - strength (the latent's other keys dropped).</item>
+/// <item>A picture keeps its pixel frame: frame_idx p (negative from the end of the video) gives the time box (p, p + 1).</item>
+/// <item>A video goes to latent frame L = 0 for frame 0, else ceil(p / 8). At L = 0 its whole encode is appended (time boxes (0, 1), then
+/// (1 + 8 (k - 1), 1 + 8 k)); at L &gt; 0 ComfyUI encodes [f0, f0, f1 .. f(n - 2)] (the first frame repeated, cut back to 8 k + 1), drops the first
+/// latent frame and appends the rest as latent frames L, L + 1, ... (a guide past the latent's end is ComfyUI's error).</item>
+/// <item>Each guide token's box: its time box, then height and width [32 r, 32 (r + 1)) and [32 c, 32 (c + 1)), frame by frame, row by row; both
+/// conditionings get the boxes (keyframe_idxs) and an attention entry (count, strength, the optional pixel mask, latent shape); chained guides
+/// append in order.</item>
+/// </list>
+/// Not yet: ComfyUI's optional iclora_parameters input (IC-LoRA templates), a latent batch above 1.
+/// </summary>
+[VideoLatents]
+[Node("LTXVAddGuide", Category = "model/conditioning/ltxv", DisplayName = "LTXVAddGuide", OutputNames = ["positive", "negative", "latent"])]
+public sealed class LTXVAddGuide
+{
+    public async Task<(Conditioning Positive, Conditioning Negative, LatentBatch Latent)> ExecuteAsync(Conditioning positive, Conditioning negative, VaeHandle vae,
+        LatentBatch latent,
+        [Input(Tooltip = "Image or video to condition the latent video on. Must be 8*n + 1 frames. If the video is not 8*n + 1 frames, it will be cropped to the nearest 8*n + 1 frames.")] ImageBatch image,
+        [Input(Min = -9999, Max = 9999, Tooltip = "Frame index to start the conditioning at. For single-frame images or videos with 1-8 frames, any frame_idx value is acceptable. For videos with 9+ frames, frame_idx must be divisible by 8, otherwise it will be rounded down to the nearest multiple of 8. Negative values are counted from the end of the video.")] int frameIdx = 0,
+        [Input(Min = 0.0, Max = 10.0, Step = 0.01)] double strength = 1.0,
+        [Input(Optional = true, Tooltip = "Optional pixel-space spatial mask. Controls per-region conditioning influence via self-attention, multiplied by strength.")] MaskBatch? attentionMask = null)
+    {
+        if (vae.Vae is not Ltx2VideoVaeModel ltxVae)
+            throw new NotSupportedException($"LTXVAddGuide takes LTX-2's VAE (Load Checkpoint of an LTX-2 checkpoint); {vae.Vae.Name} is not.");
+        if (!latent.IsVideo) throw new ArgumentException($"LTXVAddGuide takes a video latent; this one is [{string.Join(", ", latent.Shape)}].");
+        if (latent.Batch != 1 || latent.BatchIndex is not null) throw new NotSupportedException("LTXVAddGuide on a latent batch above 1 or with batch indexes is not measured yet in SpawnGen.");
+        int h = latent.Height, w = latent.Width, guidesBefore = GuideFrames(positive), videoFrames = latent.Frames - guidesBefore;
+        int pixelFrames = (videoFrames - 1) * 8 + 1;
+        int n = (image.Batch - 1) / 8 * 8 + 1;
+        var frames = new SpawnGen.Nodes.Core.ImageScale().Execute(Slice(image, 0, n), "bilinear", w * 32, h * 32, "center");
+        int p = frameIdx < 0 ? pixelFrames + frameIdx : frameIdx;
+        LatentBatch encoded;
+        var times = new List<(float Start, float End)>();
+        if (n == 1)
+        {
+            encoded = await ltxVae.EncodeVideoAsync(frames);
+            times.Add((p, p + 1));
+        }
+        else
+        {
+            int l = p <= 0 ? 0 : (p + 7) / 8;
+            if (l == 0)
+            {
+                encoded = await ltxVae.EncodeVideoAsync(frames);
+                for (int k = 0; k < encoded.Frames; k++) times.Add(k == 0 ? (0, 1) : (1 + 8 * (k - 1), 1 + 8 * k));
+            }
+            else
+            {
+                // the first frame repeated, cut back to n frames: [f0, f0, f1 .. f(n - 2)]; the first latent frame dropped
+                var shifted = Concat(Slice(frames, 0, 1), Slice(frames, 0, n - 1));
+                var all = await ltxVae.EncodeVideoAsync(shifted);
+                encoded = new LatentBatch([1, all.Channels, all.Frames - 1, h, w], TakeFrames(all, 1, all.Frames - 1));
+                if (l + encoded.Frames > videoFrames) throw new ArgumentException("Conditioning frames exceed the length of the latent sequence.");
+                for (int k = 0; k < encoded.Frames; k++) { int g = l + k; times.Add((1 + 8 * (g - 1), 1 + 8 * g)); }
+            }
+        }
+        int added = encoded.Frames, total = latent.Frames + added, plane = h * w;
+        var data = new float[latent.Channels * total * plane];
+        for (int c = 0; c < latent.Channels; c++)
+        {
+            Array.Copy(latent.Data, c * latent.Frames * plane, data, c * total * plane, latent.Frames * plane);
+            Array.Copy(encoded.Data, c * added * plane, data, (c * total + latent.Frames) * plane, added * plane);
+        }
+        var mask = new float[total];
+        FrameMask(latent).CopyTo(mask, 0);
+        for (int f = latent.Frames; f < total; f++) mask[f] = (float)(1 - strength);
+        int tokens = added * plane;
+        var boxes = new float[3 * tokens * 2];
+        for (int k = 0, t = 0; k < added; k++)
+            for (int r = 0; r < h; r++)
+                for (int c = 0; c < w; c++, t++)
+                {
+                    boxes[(0 * tokens + t) * 2] = times[k].Start; boxes[(0 * tokens + t) * 2 + 1] = times[k].End;
+                    boxes[(1 * tokens + t) * 2] = 32 * r; boxes[(1 * tokens + t) * 2 + 1] = 32 * (r + 1);
+                    boxes[(2 * tokens + t) * 2] = 32 * c; boxes[(2 * tokens + t) * 2 + 1] = 32 * (c + 1);
+                }
+        var entry = new GuideAttention(tokens, (float)strength, attentionMask, [added, h, w]);
+        Conditioning Add(Conditioning cond) => cond.Map(e => e with
+        {
+            KeyframeBoxes = e.KeyframeBoxes is null ? boxes : AppendBoxes(e.KeyframeBoxes, boxes),
+            GuideAttention = [.. e.GuideAttention ?? [], entry],
+        });
+        return (Add(positive), Add(negative),
+            new LatentBatch([1, latent.Channels, total, h, w], data) { NoiseMask = new MaskBatch(1, total, 1, mask) });
+    }
+
+    /// <summary>The latent frames the conditioning's keyframe guides appended (0 without guides).</summary>
+    internal static int GuideFrames(Conditioning conditioning) =>
+        conditioning.Entries.Count == 0 || conditioning.Entries[0].KeyframeBoxes is null ? 0 : conditioning.Entries[0].GuideAttention?.Sum(g => g.LatentShape[0]) ?? 0;
+
+    /// <summary>Latent frames [first, first + count) of every channel of a video latent.</summary>
+    internal static float[] TakeFrames(LatentBatch latent, int first, int count)
+    {
+        int plane = latent.Height * latent.Width, frames = latent.Frames;
+        var o = new float[latent.Batch * latent.Channels * count * plane];
+        for (int b = 0; b < latent.Batch; b++)
+            for (int c = 0; c < latent.Channels; c++)
+                Array.Copy(latent.Data, ((b * latent.Channels + c) * frames + first) * plane, o, (b * latent.Channels + c) * count * plane, count * plane);
+        return o;
+    }
+
+    /// <summary>A video latent's per-frame noise mask (all ones without one); a mask that varies inside a frame is refused.</summary>
+    internal static float[] FrameMask(LatentBatch latent)
+    {
+        var mask = Enumerable.Repeat(1f, latent.Frames).ToArray();
+        if (latent.NoiseMask is not { } m) return mask;
+        if (m.Height * m.Width % latent.Frames != 0) throw new NotSupportedException("A video latent whose noise mask is not per frame is not measured yet in SpawnGen's LTX-2 nodes.");
+        int per = m.Height * m.Width / latent.Frames;
+        for (int f = 0; f < latent.Frames; f++)
+        {
+            mask[f] = m.Data[f * per];
+            for (int i = 1; i < per; i++)
+                if (m.Data[f * per + i] != mask[f]) throw new NotSupportedException("A video latent whose noise mask varies inside a frame is not measured yet in SpawnGen's LTX-2 nodes.");
+        }
+        return mask;
+    }
+
+    static float[] AppendBoxes(float[] a, float[] b)
+    {
+        int ta = a.Length / 6, tb = b.Length / 6, t = ta + tb;
+        var o = new float[t * 6];
+        for (int axis = 0; axis < 3; axis++)
+        {
+            Array.Copy(a, axis * ta * 2, o, axis * t * 2, ta * 2);
+            Array.Copy(b, axis * tb * 2, o, (axis * t + ta) * 2, tb * 2);
+        }
+        return o;
+    }
+
+    static ImageBatch Slice(ImageBatch image, int first, int count)
+    {
+        int per = image.Height * image.Width * image.Channels;
+        var o = new ImageBatch(count, image.Height, image.Width, image.Channels);
+        Array.Copy(image.Data, (long)first * per, o.Data, 0, (long)count * per);
+        return o;
+    }
+
+    static ImageBatch Concat(ImageBatch a, ImageBatch b)
+    {
+        var o = new ImageBatch(a.Batch + b.Batch, a.Height, a.Width, a.Channels);
+        a.Data.CopyTo(o.Data, 0);
+        b.Data.CopyTo(o.Data, a.Data.Length);
+        return o;
     }
 }
 

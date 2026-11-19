@@ -286,6 +286,140 @@ public class Ltx2ModelTests
     }
 
     /// <summary>
+    /// LTXVAddGuide and LTXVCropGuides against ComfyUI (2026-11-18 probes: _DevComms 2026-11-18-0400 and _scratch/probe/ltx2 guide2 .. guide5): the
+    /// appended latent frames, the noise mask, the guide tokens' boxes (keyframe_idxs, exact) for a picture at frame 0 / -1, strength 0.5, a
+    /// picture of another size than the latent, an attention mask, two chained guides (and their crop), and video guides at frame 16 (9 frames,
+    /// the first frame repeated and the first latent dropped) and frame 8 (17 frames).
+    /// </summary>
+    [Test, Explicit(Needs)]
+    public async Task LTXVAddGuide_matches_ComfyUI()
+    {
+        var (runtime, services) = Runtime();
+        using var _r = runtime;
+        NodeContext Ctx(string type) => Context(services, type);
+        var (_, _, vae) = await new CheckpointLoaderSimple().ExecuteAsync(Checkpoint, Ctx("CheckpointLoaderSimple"), services);
+        var picture = new ImageBatch(1, 192, 256, 3, Raw("ltx2_venc_input_f32_1x192x256x3.raw"));
+        var empty = new Conditioning([new CondEntry(new float[4], [1, 1, 4]) { FrameRate = 25 }]);
+        var report = new List<string>();
+        void Latent(string name, LatentBatch ours, string fixture)
+        {
+            double e = RelRms(ours.Data, Raw(fixture));
+            report.Add($"{name} {e:E2}");
+            Assert.That(double.IsFinite(e) && e < 1e-4, $"{name} {e:E2}: {string.Join("; ", report)}");
+        }
+        void Exact(string name, float[] ours, string fixture) =>
+            Assert.That(ours, Is.EqualTo(Raw(fixture)).Within(0), $"{name} must equal ComfyUI's");
+        float[] Mask(LatentBatch l) => l.NoiseMask!.Data;
+
+        var lat17 = new EmptyLTXVLatentVideo().Execute(256, 192, 17, 1);
+        var (p0, n0, l0) = await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, lat17, picture, 0, 1.0);
+        Latent("picture at 0", l0, "addguide_guide_i0_s10_latent_samples_f32_1x128x4x6x8.raw");
+        Exact("mask, strength 1", Mask(l0), "addguide_guide_i0_s10_latent_noise_mask_f32_1x1x4x1x1.raw");
+        Exact("boxes, frame 0", p0.Entries[0].KeyframeBoxes!, "addguide_guide_i0_s10_pos_0_keyframe_idxs_f32_1x3x48x2.raw");
+        Assert.That(n0.Entries[0].KeyframeBoxes, Is.EqualTo(p0.Entries[0].KeyframeBoxes), "the negative gets the same boxes");
+        var (cp, _, cl) = new LTXVCropGuides().Execute(p0, n0, l0);
+        Exact("crop (all zeros: an empty latent)", cl.Data, "addguide_guide_i0_s10_crop_latent_samples_f32_1x128x3x6x8.raw");
+        Exact("crop mask", Mask(cl), "addguide_guide_i0_s10_crop_latent_noise_mask_f32_1x1x3x1x1.raw");
+        Assert.That(cp.Entries[0].KeyframeBoxes, Is.Null);
+        Assert.That(cp.Entries[0].GuideAttention, Has.Count.EqualTo(1), "guide_attention_entries stay, as in ComfyUI");
+
+        var (pl, _, ll) = await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, lat17, picture, -1, 1.0);
+        Latent("picture at -1", ll, "addguide_guide_i-1_s10_latent_samples_f32_1x128x4x6x8.raw");
+        Exact("boxes, frame -1", pl.Entries[0].KeyframeBoxes!, "addguide_guide_i-1_s10_pos_0_keyframe_idxs_f32_1x3x48x2.raw");
+        var (_, _, lh) = await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, lat17, picture, 0, 0.5);
+        Exact("mask, strength 0.5", Mask(lh), "addguide_guide_i0_s05_latent_noise_mask_f32_1x1x4x1x1.raw");
+
+        var (ps, _, ls) = await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, new EmptyLTXVLatentVideo().Execute(320, 320, 9, 1), picture, 0, 1.0);
+        Latent("picture into 320 x 320", ls, "addguide_size_320x320_latent_samples_f32_1x128x3x10x10.raw");
+        Exact("boxes, 320 x 320", ps.Entries[0].KeyframeBoxes!, "addguide_size_320x320_pos_0_keyframe_idxs_f32_1x3x100x2.raw");
+
+        var solid = MaskBatch.Filled(1, 192, 256, 0.5f);
+        var (pm, _, lm) = await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, lat17, picture, 0, 0.8, solid);
+        Exact("mask, strength 0.8 with an attention mask", Mask(lm), "addguide_mask_latent_noise_mask_f32_1x1x4x1x1.raw");
+        Assert.That((pm.Entries[0].GuideAttention![0].Strength, pm.Entries[0].GuideAttention![0].PixelMask), Is.EqualTo((0.8f, solid)));
+
+        var (p1, n1, l1) = await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, lat17, picture, 0, 1.0);
+        var (p2, n2, l2) = await new LTXVAddGuide().ExecuteAsync(p1, n1, vae, l1, picture, -1, 0.7);
+        Latent("two guides", l2, "addguide_two_latent_samples_f32_1x128x5x6x8.raw");
+        Exact("two guides' mask", Mask(l2), "addguide_two_latent_noise_mask_f32_1x1x5x1x1.raw");
+        Exact("two guides' boxes", p2.Entries[0].KeyframeBoxes!, "addguide_two_pos_0_keyframe_idxs_f32_1x3x96x2.raw");
+        Exact("two guides cropped", new LTXVCropGuides().Execute(p2, n2, l2).Latent.Data, "addguide_two_crop_latent_samples_f32_1x128x3x6x8.raw");
+
+        // video guides of distinct frames: 0 picture, 1 flipped rows, 2 flipped columns, 3 both, 4 .. 7 the same inverted, 8 picture (17: then 1 .. 8 again)
+        ImageBatch Map(Func<int, int, int, int> source, bool invert)
+        {
+            var o = new ImageBatch(1, 192, 256, 3);
+            for (int y = 0; y < 192; y++)
+                for (int x = 0; x < 256; x++)
+                    for (int c = 0; c < 3; c++)
+                    {
+                        float v = picture.Data[source(y, x, c)];
+                        o.Data[(y * 256 + x) * 3 + c] = invert ? 1 - v : v;
+                    }
+            return o;
+        }
+        ImageBatch[] Eight(bool invert) =>
+        [
+            Map((y, x, c) => (y * 256 + x) * 3 + c, invert), Map((y, x, c) => ((191 - y) * 256 + x) * 3 + c, invert),
+            Map((y, x, c) => (y * 256 + 255 - x) * 3 + c, invert), Map((y, x, c) => ((191 - y) * 256 + 255 - x) * 3 + c, invert),
+        ];
+        ImageBatch[] first = [.. Eight(false), .. Eight(true)];
+        ImageBatch Video(IEnumerable<ImageBatch> frames)
+        {
+            var list = frames.ToList();
+            var v = new ImageBatch(list.Count, 192, 256, 3);
+            for (int i = 0; i < list.Count; i++) list[i].Data.CopyTo(v.Data, i * list[i].Data.Length);
+            return v;
+        }
+        var nine = Video([.. first, picture]);
+        var seventeen = Video([.. first, picture, .. first[1..], picture]);
+        var lat33 = new EmptyLTXVLatentVideo().Execute(256, 192, 33, 1);
+        var (_, _, lv9) = await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, lat33, nine, 16, 1.0);
+        Latent("9-frame video at 16", lv9, "addguide_d9_i16_latent_samples_f32_1x128x6x6x8.raw");
+        var (pv17, _, lv17) = await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, lat33, seventeen, 8, 1.0);
+        Latent("17-frame video at 8", lv17, "addguide_d17_i8_latent_samples_f32_1x128x7x6x8.raw");
+        Exact("boxes, 17-frame video at 8", pv17.Entries[0].KeyframeBoxes!, "addguide_d17_i8_pos_0_keyframe_idxs_f32_1x3x96x2.raw");
+        Assert.ThrowsAsync<ArgumentException>(async () => await new LTXVAddGuide().ExecuteAsync(empty, empty, vae, lat33, seventeen, -1, 1.0),
+            "a guide past the latent's end is ComfyUI's error");
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: " + string.Join("; ", report));
+    }
+
+    /// <summary>
+    /// A keyframe-guided LTX-2 sample against ComfyUI (_DevComms 2026-11-18-0600, guidecall_s10 / s06): the 192 x 256 picture as a guide at the last
+    /// frame of a 128 x 96, 9-frame video, strength 1 and 0.6, cfg 4, euler, LTXVScheduler 2 steps, seed 10. The sampler's input (the guide frame
+    /// appended, its mask) and its output latent (video and audio) are compared: the per-frame denoise mask, the guide tokens' boxes and, at 0.6, the
+    /// ln(strength) attention bias all reach the model.
+    /// </summary>
+    [TestCase(1.0, "s10"), TestCase(0.6, "s06"), Explicit(Needs)]
+    public async Task A_keyframe_guided_sample_matches_ComfyUI(double strength, string tag)
+    {
+        var (runtime, services) = Runtime();
+        using var _r = runtime;
+        NodeContext Ctx(string type) => Context(services, type);
+        var clip = await ClipAsync(services);
+        var pos = await new CLIPTextEncode().ExecuteAsync(Prompt.GetProperty("positive").GetString()!, clip, Ctx("CLIPTextEncode"));
+        var neg = await new CLIPTextEncode().ExecuteAsync(Prompt.GetProperty("negative").GetString()!, clip, Ctx("CLIPTextEncode"));
+        var (positive, negative) = new LTXVConditioning().Execute(pos, neg, 25);
+        var (model, _, vae) = await new CheckpointLoaderSimple().ExecuteAsync(Checkpoint, Ctx("CheckpointLoaderSimple"), services);
+        var audioVae = await new LTXVAudioVAELoader().ExecuteAsync(Checkpoint, services);
+        var picture = new ImageBatch(1, 192, 256, 3, Raw("ltx2_venc_input_f32_1x192x256x3.raw"));
+        var (gp, gn, glat) = await new LTXVAddGuide().ExecuteAsync(positive, negative, vae, new EmptyLTXVLatentVideo().Execute(128, 96, 9, 1), picture, -1, strength);
+        double inErr = RelRms(glat.Data, Raw($"addguide_call_{tag}_guide_av_in_samples_part0_f32_1x128x3x3x4.raw"));
+        Assert.That(glat.NoiseMask!.Data, Is.EqualTo(Raw($"addguide_call_{tag}_guide_av_in_noise_mask_part0_f32_1x1x3x1x1.raw")).Within(1e-7));
+        var av = new LTXVConcatAVLatent().Execute(glat, new LTXVEmptyLatentAudio().Execute(9, 25, 1, audioVae));
+        var (output, _) = await new SamplerCustomAdvanced().ExecuteAsync(new RandomNoise().Execute(10), new CFGGuider().Execute(model, gp, gn, 4.0),
+            new KSamplerSelect().Execute("euler"), new LTXVScheduler().Execute(2, 2.05, 0.95, true, 0.1, av), av, Ctx("SamplerCustomAdvanced"), services);
+        var (video, audio) = new LTXVSeparateAVLatent().Execute(output);
+        double v = RelRms(video.Data, Raw($"addguide_call_{tag}_guide_out_samples_part0_f32_1x128x3x3x4.raw")),
+            a = RelRms(audio.Data, Raw($"addguide_call_{tag}_guide_out_samples_part1_f32_1x8x9x16.raw"));
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: strength {strength}: sampler input (guide appended) {inErr:E2}; final latent video {v:E2}, audio {a:E2} (relative RMS vs ComfyUI)");
+        Assert.That(inErr, Is.LessThan(1e-4));
+        Assert.That(video.NoiseMask!.Data, Is.EqualTo(glat.NoiseMask.Data), "the output keeps the guide frame's mask, as ComfyUI's");
+        Assert.That(v, Is.LessThan(3e-4));
+        Assert.That(a, Is.LessThan(3e-4));
+    }
+
+    /// <summary>
     /// The run settings for speed (ltx2.host_cache_gb, ltx2.read_ahead_gb: SpawnDev.ILGPU.ML's streamed-block cache and read-ahead) must not change the
     /// result: the same small sample three times on the one model the runtime keeps (defaults; cache 4 GB + read-ahead 2 GB + precision "fp32", which
     /// changes nothing outside CUDA; the same again, now from the cache) gives the same latents bit for bit. On CUDA "fp32" is a different arithmetic,

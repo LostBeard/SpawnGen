@@ -654,9 +654,13 @@
                                         {
                                             <span class="tpl-badge tpl-missing" title="@("SpawnGen does not have these nodes yet: " + string.Join(", ", status.MissingNodes))">@status.MissingNodes.Length missing node@(status.MissingNodes.Length == 1 ? "" : "s")</span>
                                         }
-                                        else if (!status.Ready)
+                                        else if (status.MissingModels.Length > 0)
                                         {
                                             <span class="tpl-badge tpl-models" title="@(ModelsNote(status))">needs models</span>
+                                        }
+                                        else if (!status.Ready)
+                                        {
+                                            <span class="tpl-badge tpl-untested" title="@(UntestedNote(status))">not run in SpawnGen yet</span>
                                         }
                                         else
                                         {
@@ -1042,7 +1046,7 @@
     static readonly (string Mode, string Label, string Tip)[] TemplateShowModes =
     [
         ("opens", "Opens", "Templates whose every node SpawnGen has (no paid partner API)"),
-        ("ready", "Ready", "Templates whose every node and model file this engine has: Queue runs them"),
+        ("ready", "Ready", "Templates whose every node and model file this engine has, with models SpawnGen has run: Queue runs them"),
         ("all", "All", "Every template, with what each one lacks"),
     ];
 
@@ -1053,6 +1057,9 @@
             _templateStatus[t.Name] = status = _templateNeeds.Check(t.Name, Registry, _offeredFiles ??= TemplateNeeds.OfferedFiles(Registry));
         return status;
     }
+
+    static string UntestedNote(TemplateStatus status) =>
+        "SpawnGen has not run these models yet (they may not load, or fail on Queue): " + string.Join(", ", status.UnverifiedModels);
 
     string ModelsNote(TemplateStatus status) =>
         (_engine is BrowserEngine ? "This browser does not have these model files: " : "Not in your models folder (Models to add them): ") + string.Join(", ", status.MissingModels);
@@ -1129,7 +1136,8 @@
             await OpenBytesAsync((t.Title ?? t.Name) + ".json", bytes);
             if (t.OpenSource == false) ShowMessage("This template runs on a paid partner API, which SpawnGen does not call.");
             else if (TemplateStatusOf(t) is { Opens: false } missing) ShowMessage("SpawnGen does not have these nodes yet (marked \"missing\"): " + string.Join(", ", missing.MissingNodes));
-            else if (TemplateStatusOf(t) is { Ready: false } needs) ShowMessage(ModelsNote(needs));
+            else if (TemplateStatusOf(t) is { Ready: false, MissingModels.Length: > 0 } needs) ShowMessage(ModelsNote(needs));
+            else if (TemplateStatusOf(t) is { Ready: false } untested) ShowMessage(UntestedNote(untested));
         }
         catch (HttpRequestException ex) { ShowMessage("Could not load the template: " + ex.Message); }
     }

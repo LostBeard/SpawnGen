@@ -7,14 +7,19 @@ namespace SpawnGen.Editor;
 /// tools/templates-manifest/make_manifest.py).</summary>
 public sealed record TemplateNeed(string[] Nodes, string[] Models);
 
-/// <summary>How a template stands on an engine: the nodes it lacks, then the model files its loaders do not list.</summary>
-public sealed record TemplateStatus(string[] MissingNodes, string[] MissingModels)
+/// <summary>
+/// How a template stands on an engine: the nodes it lacks, the model files its loaders do not list, and the model files SpawnGen has not run
+/// yet (no measured run of that model: verified-models.json). A template whose models are listed but not verified opens and may fail on Queue.
+/// </summary>
+public sealed record TemplateStatus(string[] MissingNodes, string[] MissingModels, string[] UnverifiedModels)
 {
+    public TemplateStatus(string[] missingNodes, string[] missingModels) : this(missingNodes, missingModels, []) { }
+
     /// <summary>Every node is there: the template opens without "(missing)" nodes.</summary>
     public bool Opens => MissingNodes.Length == 0;
 
-    /// <summary>Every node and every model file is there: Queue can run it (it may still be too large for the device).</summary>
-    public bool Ready => Opens && MissingModels.Length == 0;
+    /// <summary>Every node is there and every model file is listed and has run in SpawnGen: Queue runs it (it may still be too large for the device).</summary>
+    public bool Ready => Opens && MissingModels.Length == 0 && UnverifiedModels.Length == 0;
 }
 
 /// <summary>
@@ -28,7 +33,10 @@ public sealed class TemplateNeeds
 
     readonly Dictionary<string, TemplateNeed> _needs;
 
-    TemplateNeeds(string commit, Dictionary<string, TemplateNeed> needs) { Commit = commit; _needs = needs; }
+    /// <summary>The model files SpawnGen has run or measured (null: the list predates them, every listed file counts).</summary>
+    readonly HashSet<string>? _verified;
+
+    TemplateNeeds(string commit, Dictionary<string, TemplateNeed> needs, HashSet<string>? verified) { Commit = commit; _needs = needs; _verified = verified; }
 
     /// <summary>Reads template-needs.json: {"commit": ..., "templates": {name: {"nodes": [...], "models": [...]}}}.</summary>
     public static TemplateNeeds Parse(string json)
@@ -38,7 +46,9 @@ public sealed class TemplateNeeds
         var needs = new Dictionary<string, TemplateNeed>(StringComparer.Ordinal);
         foreach (var t in root.GetProperty("templates").EnumerateObject())
             needs[t.Name] = new TemplateNeed(Strings(t.Value, "nodes"), Strings(t.Value, "models"));
-        return new TemplateNeeds(root.GetProperty("commit").GetString() ?? "", needs);
+        HashSet<string>? verified = root.TryGetProperty("verified_models", out var v)
+            ? new HashSet<string>(v.EnumerateArray().Select(x => x.GetString() ?? ""), StringComparer.OrdinalIgnoreCase) : null;
+        return new TemplateNeeds(root.GetProperty("commit").GetString() ?? "", needs, verified);
 
         static string[] Strings(JsonElement e, string name) =>
             e.TryGetProperty(name, out var a) ? [.. a.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0)] : [];
@@ -64,7 +74,8 @@ public sealed class TemplateNeeds
         if (!_needs.TryGetValue(template, out var need)) return null;
         var nodes = need.Nodes.Where(n => registry.GetSchema(n) is null).ToArray();
         var models = need.Models.Where(m => !offeredFiles.Contains(FileName(m))).ToArray();
-        return new TemplateStatus(nodes, models);
+        var unverified = _verified is null ? [] : need.Models.Where(m => offeredFiles.Contains(FileName(m)) && !_verified.Contains(FileName(m))).ToArray();
+        return new TemplateStatus(nodes, models, unverified);
     }
 
     static string FileName(string path)

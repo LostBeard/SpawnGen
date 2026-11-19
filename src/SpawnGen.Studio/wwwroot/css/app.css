@@ -65,6 +65,7 @@ body { background: var(--bg-2); color: var(--fg); font-family: system-ui, "Segoe
 .templates .tpl-missing { background: #c94040; color: #fff; }
 .templates .tpl-models { background: #3a6ea5; color: #fff; }
 .templates .tpl-ready { background: #2e8b57; color: #fff; }
+.templates .tpl-untested { background: #8a6d1f; color: #fff; }
 .templates .tpl-api { position: absolute; top: 6px; right: 6px; background: #d9a520; color: #111; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 8px; }
 .templates .tpl-title { padding: 6px 8px 2px; color: var(--fg-strong); font-weight: 600; font-size: 13px; }
 .templates .tpl-desc { margin: 0 8px 8px; color: var(--fg-dim); font-size: 12px; line-height: 1.35; max-height: calc(3 * 1.35em); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

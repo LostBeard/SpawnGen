@@ -50,10 +50,17 @@ def main(repo):
             out[name] = {"nodes": sorted(nodes - FRONTEND - subgraphs), "models": sorted(models)}
     target = os.path.join(os.path.dirname(__file__), "..", "..", "src", "SpawnGen.Studio", "wwwroot", "template-needs.json")
     with open(target, "w", encoding="utf-8", newline="\n") as f:
-        json.dump({"source": "Comfy-Org/workflow_templates", "commit": commit, "templates": out}, f, separators=(",", ":"), sort_keys=True)
+        json.dump({"source": "Comfy-Org/workflow_templates", "commit": commit, "templates": out, "verified_models": verified()}, f,
+                  separators=(",", ":"), sort_keys=True)
         f.write("\n")
     print(commit, len(out), "templates,", os.path.getsize(target), "bytes")
     write_catalog(base, commit)
+
+
+def verified():
+    """The model files SpawnGen has run or measured (verified-models.json, each with its evidence): Ready needs every file of a template here."""
+    path = os.path.join(os.path.dirname(__file__), "verified-models.json")
+    return sorted(json.load(open(path, encoding="utf-8"))["files"])
 
 
 HF_URL = re.compile(r"^https://huggingface\.co/([^/]+/[^/]+)/resolve/([^/]+)/(.+?)(\?.*)?$")

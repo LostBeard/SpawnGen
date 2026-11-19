@@ -47,6 +47,34 @@ public class TemplateNeedsTests
     }
 
     [Test]
+    public void A_listed_model_SpawnGen_has_not_run_keeps_a_template_out_of_Ready()
+    {
+        // Found 2026-11-19: Wan 2.2 14B's template showed "ready" because its files are listed, though SpawnGen runs only the 5B model.
+        var registry = EditorDocumentFixtures.Registry();
+        var needs = TemplateNeeds.Parse("""
+            {"commit": "c", "verified_models": ["ran_before.safetensors"], "templates": {
+              "verified": {"nodes": ["KSampler"], "models": ["ran_before.safetensors"]},
+              "untested": {"nodes": ["KSampler"], "models": ["ran_before.safetensors", "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors"]}}}
+            """);
+        var offered = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ran_before.safetensors", "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors" };
+        Assert.That(needs.Check("verified", registry, offered)!.Ready, Is.True);
+        var untested = needs.Check("untested", registry, offered)!;
+        Assert.That(untested.Opens, Is.True);
+        Assert.That(untested.MissingModels, Is.Empty);
+        Assert.That(untested.UnverifiedModels, Is.EqualTo(new[] { "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors" }));
+        Assert.That(untested.Ready, Is.False);
+    }
+
+    [Test]
+    public void The_shipped_list_names_the_verified_models_and_not_Wan_14B()
+    {
+        var json = System.Text.Json.JsonDocument.Parse(NeedsJson()).RootElement.GetProperty("verified_models");
+        var verified = json.EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.That(verified, Does.Contain("ltx-2-19b-dev-fp8.safetensors").And.Contain("z_image_turbo_bf16.safetensors"));
+        Assert.That(verified.Any(v => v!.Contains("14B")), Is.False);
+    }
+
+    [Test]
     public void The_shipped_list_is_for_the_commit_the_Studio_and_the_server_open()
     {
         var needs = TemplateNeeds.Parse(NeedsJson());

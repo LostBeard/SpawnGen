@@ -22,7 +22,7 @@ public sealed class TrellisImageTo3D
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
         // The weights are 2.5 GB files per stage: the browser needs the library's range-streaming source for them (RangeStreamModelSource), which this node does not set up yet.
-        if (runtime.Accelerator.AcceleratorType is global::ILGPU.Runtime.AcceleratorType.WebGPU or global::ILGPU.Runtime.AcceleratorType.WebGL or global::ILGPU.Runtime.AcceleratorType.Wasm)
+        if (GpuHelpers.IsBrowser(runtime.Accelerator))
             throw new NotSupportedException("Image to 3D runs on the desktop engines (CUDA or OpenCL) for now: in the browser the 10 GB of weights need range streaming, which is not wired into this node yet.");
         int w = image.Width, h = image.Height;
 

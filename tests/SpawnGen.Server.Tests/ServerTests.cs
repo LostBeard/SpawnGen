@@ -671,12 +671,16 @@ public class ServerTests
     [Test]
     public async Task The_examples_picture_is_put_in_the_input_folder_and_listed()
     {
-        var copied = await File.ReadAllBytesAsync(Path.Combine(_dir, "input", "example.png"));
-        var served = await _http.GetByteArrayAsync("/examples/example.png");
-        Assert.That(copied, Is.EqualTo(served), "the Studio's examples/example.png, as it serves it");
-        Assert.That(ImageDecoder.Decode(copied) is { Width: 512, Height: 512 }, "a 512 x 512 picture");
         var info = JsonNode.Parse(await _http.GetStringAsync("/object_info/LoadImage"))!;
-        Assert.That(info["LoadImage"]!["input"]!["required"]!["image"]![0]!.AsArray().Select(n => (string)n!), Does.Contain("example.png"));
+        var listed = info["LoadImage"]!["input"]!["required"]!["image"]![0]!.AsArray().Select(n => (string)n!).ToList();
+        foreach (var name in new[] { "example.png", "example_inpaint.png" })
+        {
+            var copied = await File.ReadAllBytesAsync(Path.Combine(_dir, "input", name));
+            var served = await _http.GetByteArrayAsync("/examples/" + name);
+            Assert.That(copied, Is.EqualTo(served), $"the Studio's examples/{name}, as it serves it");
+            Assert.That(ImageDecoder.Decode(copied) is { Width: 512, Height: 512 }, $"{name}: a 512 x 512 picture");
+            Assert.That(listed, Does.Contain(name));
+        }
     }
 
     [Test]

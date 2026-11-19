@@ -609,7 +609,11 @@
                 <div class="templates" @onclick:stopPropagation>
                     <div class="tpl-head">
                         <input placeholder="Search ComfyUI's templates..." value="@_templateFilter" @oninput="OnTemplateFilter" />
-                        <span class="tpl-count">@shownTemplates.Count</span>
+                        @foreach (var (mode, label, tip) in TemplateShowModes)
+                        {
+                            var showMode = mode;
+                            <button class="tpl-show @(_templateShow == showMode ? "on" : "")" title="@tip" @onclick="() => { _templateShow = showMode; _templateLimit = 60; }">@label (@TemplatesShown(showMode).Count())</button>
+                        }
                         <button title="Close" @onclick="() => { _templatesOpen = false; _studio?.Focus(); }">&#x2715;</button>
                     </div>
                     <div class="tpl-groups">
@@ -641,6 +645,21 @@
                                     @if (entry.OpenSource == false)
                                     {
                                         <span class="tpl-api" title="Runs on a paid partner API (an account with the provider)">API</span>
+                                    }
+                                    else if (TemplateStatusOf(entry) is { } status)
+                                    {
+                                        @if (!status.Opens)
+                                        {
+                                            <span class="tpl-badge tpl-missing" title="@("SpawnGen does not have these nodes yet: " + string.Join(", ", status.MissingNodes))">@status.MissingNodes.Length missing node@(status.MissingNodes.Length == 1 ? "" : "s")</span>
+                                        }
+                                        else if (!status.Ready)
+                                        {
+                                            <span class="tpl-badge tpl-models" title="@(ModelsNote(status))">needs models</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="tpl-badge tpl-ready" title="Every node and model file is here">ready</span>
+                                        }
                                     }
                                 </div>
                                 <div class="tpl-title">@(entry.Title ?? entry.Name)</div>
@@ -1004,8 +1023,37 @@
     sealed record TemplateEntry(string Name, string? Title, string? Description, List<string>? Tags, List<string>? Models, bool? OpenSource, string? MediaSubtype);
     sealed record TemplateGroup(string? Title, string? Category, List<TemplateEntry>? Templates);
 
-    /// <summary>Comfy-Org's templates (MIT) for the browser engine; the server serves the same files at /templates (its own cached copies).</summary>
-    const string TemplatesUpstream = "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates/";
+    /// <summary>
+    /// Comfy-Org's templates (MIT) for the browser engine, at the commit wwwroot/template-needs.json was read from (tools/templates-manifest); the
+    /// server serves the same commit's files at /templates (ServerOptions.TemplatesSource). A test keeps the three in step.
+    /// </summary>
+    internal const string TemplatesUpstream = "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/2fbb6d071de37a5f61e9910f7295e72eeb0f9e66/templates/";
+
+    /// <summary>What each template needs (nodes, model files), and the model files this engine's loaders offer (read when the browser opens).</summary>
+    TemplateNeeds? _templateNeeds;
+    HashSet<string>? _offeredFiles;
+    readonly Dictionary<string, TemplateStatus?> _templateStatus = new(StringComparer.Ordinal);
+
+    /// <summary>Which templates the browser shows: "opens" (no paid API, every node here; the default), "ready" (and every model file), "all".</summary>
+    string _templateShow = "opens";
+
+    static readonly (string Mode, string Label, string Tip)[] TemplateShowModes =
+    [
+        ("opens", "Opens", "Templates whose every node SpawnGen has (no paid partner API)"),
+        ("ready", "Ready", "Templates whose every node and model file this engine has: Queue runs them"),
+        ("all", "All", "Every template, with what each one lacks"),
+    ];
+
+    TemplateStatus? TemplateStatusOf(TemplateEntry t)
+    {
+        if (_templateNeeds is null) return null;
+        if (!_templateStatus.TryGetValue(t.Name, out var status))
+            _templateStatus[t.Name] = status = _templateNeeds.Check(t.Name, Registry, _offeredFiles ??= TemplateNeeds.OfferedFiles(Registry));
+        return status;
+    }
+
+    string ModelsNote(TemplateStatus status) =>
+        (_engine is BrowserEngine ? "This browser does not have these model files: " : "Not in your models folder (Models to add them): ") + string.Join(", ", status.MissingModels);
 
     List<TemplateGroup>? _templateIndex;
     string? _templateError;
@@ -1021,7 +1069,16 @@
     {
         _templatesOpen = !_templatesOpen;
         _templateLimit = 60;
-        if (!_templatesOpen || _templateIndex is not null) return;
+        // The engine's model files may have changed since the last look (a download, a scan): read them again.
+        _offeredFiles = null;
+        _templateStatus.Clear();
+        if (!_templatesOpen) return;
+        if (_templateNeeds is null)
+        {
+            try { _templateNeeds = TemplateNeeds.Parse(await Http.GetStringAsync("template-needs.json")); }
+            catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException) { _templateNeeds = null; _templateShow = "all"; }
+        }
+        if (_templateIndex is not null) return;
         StateHasChanged();
         try
         {
@@ -1035,8 +1092,18 @@
         }
     }
 
-    /// <summary>The templates of the chosen group (or all, once each), whose name, title, description, tags or models hold every word typed.</summary>
-    IEnumerable<TemplateEntry> TemplatesShown()
+    /// <summary>The templates of the chosen group (or all, once each), whose name, title, description, tags or models hold every word typed,
+    /// that the show mode keeps (<see cref="_templateShow"/>).</summary>
+    IEnumerable<TemplateEntry> TemplatesShown() => TemplatesShown(_templateShow);
+
+    IEnumerable<TemplateEntry> TemplatesShown(string mode) => TemplatesMatching().Where(t => mode switch
+    {
+        "opens" => t.OpenSource != false && TemplateStatusOf(t) is { Opens: true },
+        "ready" => t.OpenSource != false && TemplateStatusOf(t) is { Ready: true },
+        _ => true,
+    });
+
+    IEnumerable<TemplateEntry> TemplatesMatching()
     {
         if (_templateIndex is null) yield break;
         var words = _templateFilter.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -1058,11 +1125,16 @@
             var bytes = await Http.GetByteArrayAsync(TemplateUrl(t.Name + ".json"));
             _templatesOpen = false;
             await OpenBytesAsync((t.Title ?? t.Name) + ".json", bytes);
+            if (t.OpenSource == false) ShowMessage("This template runs on a paid partner API, which SpawnGen does not call.");
+            else if (TemplateStatusOf(t) is { Opens: false } missing) ShowMessage("SpawnGen does not have these nodes yet (marked \"missing\"): " + string.Join(", ", missing.MissingNodes));
+            else if (TemplateStatusOf(t) is { Ready: false } needs) ShowMessage(ModelsNote(needs));
         }
         catch (HttpRequestException ex) { ShowMessage("Could not load the template: " + ex.Message); }
     }
 
-    sealed record ExampleEntry(string Name, string File, string Note);
+    /// <summary>An example (examples/index.json). <see cref="Desktop"/>: it runs only on the desktop engines (its models are too large for a browser):
+    /// in the browser the menu says so, and opening it shows the graph with that note.</summary>
+    sealed record ExampleEntry(string Name, string File, string Note, bool Desktop = false);
     List<ExampleEntry>? _examples;
 
     /// <summary>The list of example workflows (examples/index.json next to the page) as a menu; each opens in its own tab.</summary>
@@ -1071,7 +1143,8 @@
         try { _examples ??= await Http.GetFromJsonAsync<List<ExampleEntry>>("examples/index.json"); }
         catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException) { _examples = null; }
         var items = new List<MenuItem> { new("Starter graph in this tab", LoadExample) };
-        foreach (var example in _examples ?? []) items.Add(new(example.Name, () => _ = OpenExampleAsync(example)));
+        bool browser = _engine is BrowserEngine;
+        foreach (var example in _examples ?? []) items.Add(new(browser && example.Desktop ? example.Name + " (desktop app)" : example.Name, () => _ = OpenExampleAsync(example)));
         if (_examples is null) ShowMessage("The example list could not be read.");
         _openSub = null;
         _menu = new MenuState(new Point(8, 6), items);
@@ -1083,7 +1156,9 @@
         {
             var bytes = await Http.GetByteArrayAsync("examples/" + example.File);
             await OpenBytesAsync(example.Name + ".json", bytes);
-            ShowMessage(example.Note);
+            ShowMessage(example.Desktop && _engine is BrowserEngine
+                ? "This example runs in the SpawnGen desktop app (CUDA or OpenCL): its models are too large for a browser. " + example.Note
+                : example.Note);
         }
         catch (HttpRequestException ex) { ShowMessage("Could not load the example: " + ex.Message); }
     }

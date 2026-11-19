@@ -1,0 +1,31 @@
+{
+  "1": {
+    "class_type": "LtxVideo",
+    "inputs": {
+      "prompt": "A glossy red apple slowly turning on a weathered wooden table, soft window light, shallow depth of field, a gentle camera push in",
+      "width": 512,
+      "height": 352,
+      "length": 25,
+      "frame_rate": 24,
+      "seed": 42,
+      "start_strength": 1.0,
+      "end_strength": 1.0,
+      "upscale": false,
+      "precision": "q8"
+    }
+  },
+  "2": {
+    "class_type": "SaveAnimatedWEBP",
+    "inputs": {
+      "images": [
+        "1",
+        0
+      ],
+      "filename_prefix": "SpawnGen-video",
+      "fps": 24,
+      "lossless": false,
+      "quality": 90,
+      "method": "default"
+    }
+  }
+}

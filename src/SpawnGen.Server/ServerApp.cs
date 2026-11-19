@@ -429,16 +429,20 @@ public static class ServerApp
     // ---- files ----
 
     /// <summary>
-    /// The examples' Load Image picture (ComfyUI ships input/example.png the same way): the Studio's examples/example.png (made with FLUX.2 Klein 4B,
-    /// Apache-2.0; see docs/EXAMPLE-PICTURE.md) is put in the input folder when that has no example.png. A file of that name already there is kept.
+    /// The examples' Load Image pictures (ComfyUI ships input/example.png the same way): the Studio's examples/example.png and example_inpaint.png
+    /// (example.png with the coat transparent, the Inpainting example's mask; made with FLUX.2 Klein 4B, Apache-2.0; see docs/EXAMPLE-PICTURE.md)
+    /// are put in the input folder when it has no file of that name. A file of that name already there is kept.
     /// </summary>
     static void CopyExamplePicture(WebApplication app, string inputPath)
     {
-        var target = Path.Combine(inputPath, "example.png");
-        if (File.Exists(target) || app.Environment.WebRootFileProvider.GetFileInfo("examples/example.png") is not { Exists: true } example) return;
-        using var from = example.CreateReadStream();
-        using var to = File.Create(target);
-        from.CopyTo(to);
+        foreach (var name in new[] { "example.png", "example_inpaint.png" })
+        {
+            var target = Path.Combine(inputPath, name);
+            if (File.Exists(target) || app.Environment.WebRootFileProvider.GetFileInfo("examples/" + name) is not { Exists: true } example) continue;
+            using var from = example.CreateReadStream();
+            using var to = File.Create(target);
+            from.CopyTo(to);
+        }
     }
 
     /// <summary>The file under <paramref name="root"/>, or null when the request tries to leave it (a path-traversal attempt).</summary>

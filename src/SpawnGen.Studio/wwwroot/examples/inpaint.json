@@ -8,7 +8,7 @@
   "2": {
     "class_type": "LoadImage",
     "inputs": {
-      "image": "example.png"
+      "image": "example_inpaint.png"
     }
   },
   "3": {
@@ -45,7 +45,7 @@
   "5": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "a blue ceramic vase",
+      "text": "a blue denim jacket",
       "clip": [
         "1",
         1

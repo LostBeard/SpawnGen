@@ -1,0 +1,41 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "example.png"
+    }
+  },
+  "2": {
+    "class_type": "LtxVideo",
+    "inputs": {
+      "prompt": "The woman in the red coat smiles and waves at the camera with her right hand, then lowers it, plain light grey studio background, steady camera",
+      "width": 352,
+      "height": 512,
+      "length": 25,
+      "frame_rate": 24,
+      "seed": 42,
+      "start_image": [
+        "1",
+        0
+      ],
+      "start_strength": 1.0,
+      "end_strength": 1.0,
+      "upscale": false,
+      "precision": "q8"
+    }
+  },
+  "3": {
+    "class_type": "SaveAnimatedWEBP",
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "filename_prefix": "SpawnGen-video",
+      "fps": 24,
+      "lossless": false,
+      "quality": 90,
+      "method": "default"
+    }
+  }
+}

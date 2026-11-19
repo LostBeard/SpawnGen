@@ -20,9 +20,9 @@
     "note": "SD-Turbo at 256 px, then 512 px."
   },
   {
-    "name": "Inpainting (paint the mask yourself)",
+    "name": "Inpainting (redraw the masked coat)",
     "file": "inpaint.json",
-    "note": "Upload a picture, right-click Load Image > Open in Mask Editor, paint, Queue."
+    "note": "The coat in the example picture is already masked (transparent), so Queue redraws it from the prompt. For your own: upload a picture, right-click Load Image > Open in Mask Editor, paint, Queue."
   },
   {
     "name": "FLUX.2 Klein text to image",
@@ -38,6 +38,16 @@
     "name": "FLUX.2 Klein picture edit",
     "file": "flux2-klein-edit.json",
     "note": "Edits the picture you load, following the prompt."
+  },
+  {
+    "name": "Text to video (LTX-Video 2B)",
+    "file": "ltx-video-t2v.json",
+    "note": "A one-second clip (25 frames at 24 fps) from a prompt, saved as an animated WEBP. The first run downloads about 8 GB of weights."
+  },
+  {
+    "name": "Picture to video (LTX-Video 2B)",
+    "file": "ltx-video-i2v.json",
+    "note": "The example picture as the first frame of a one-second clip; the prompt says what happens next. The first run downloads about 8 GB of weights."
   },
   {
     "name": "LLM writes the prompt, SD-Turbo draws it",
@@ -67,11 +77,12 @@
   {
     "name": "Speak and listen (Kokoro, then Parakeet)",
     "file": "speech.json",
-    "note": "Text to speech, then the speech back to text (the listener needs a desktop GPU)."
+    "note": "Text to speech (Kokoro), then the speech back to text (Parakeet)."
   },
   {
     "name": "Image to 3D model (TRELLIS.2)",
     "file": "image-to-3d.json",
-    "note": "Upload a picture of one object, pick it in Load Image, Queue; right-click Save 3D Model > View 3D model. About 10 GB the first time."
+    "note": "Upload a picture of one object, pick it in Load Image, Queue; right-click Save 3D Model > View 3D model. About 10 GB the first time.",
+    "desktop": true
   }
 ]

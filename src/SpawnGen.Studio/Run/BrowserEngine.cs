@@ -57,19 +57,26 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     /// <summary>Done when the examples' Load Image picture is in this page's inputs (or could not be fetched); the input listing waits for it.</summary>
     readonly Task _example;
 
+    /// <summary>The examples' Load Image pictures, put in the inputs when missing (see <see cref="AddExamplePictureAsync"/>).</summary>
+    internal static readonly string[] ExamplePictures = ["example.png", "example_inpaint.png"];
+
     /// <summary>
-    /// The examples' Load Image picture (ComfyUI ships input/example.png the same way): examples/example.png from the page's own files, made with
-    /// FLUX.2 Klein 4B (Apache-2.0; docs/EXAMPLE-PICTURE.md), as this page's input example.png. Offline or missing, the inputs are simply without it.
+    /// The examples' Load Image pictures (ComfyUI ships input/example.png the same way): <see cref="ExamplePictures"/> from the page's own
+    /// examples folder, made with FLUX.2 Klein 4B (Apache-2.0; docs/EXAMPLE-PICTURE.md), as this page's inputs. example_inpaint.png is example.png
+    /// with the coat transparent, so the Inpainting example has a mask out of the box. Offline or missing, the inputs are simply without them.
     /// </summary>
     async Task AddExamplePictureAsync()
     {
-        try
+        foreach (var name in ExamplePictures)
         {
-            if (_inputs.Exists("example.png")) return;
-            var bytes = await _http.GetByteArrayAsync("examples/example.png");
-            if (!_inputs.Exists("example.png")) await _inputs.SaveAsync("example.png", bytes);
+            try
+            {
+                if (_inputs.Exists(name)) continue;
+                var bytes = await _http.GetByteArrayAsync("examples/" + name);
+                if (!_inputs.Exists(name)) await _inputs.SaveAsync(name, bytes);
+            }
+            catch (HttpRequestException) { }
         }
-        catch (HttpRequestException) { }
     }
 
     void ReportPerOpTimings(string eventType)

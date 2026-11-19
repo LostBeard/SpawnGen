@@ -15,6 +15,20 @@ public interface IMlRuntimeProvider
 /// <summary>Host to GPU tensor plumbing shared by the ML nodes. Latents and embeddings are small, so values cross nodes on the host.</summary>
 internal static class GpuHelpers
 {
+    /// <summary>Whether the accelerator is a browser's (WebGPU, WebGL or Wasm).</summary>
+    public static bool IsBrowser(Accelerator accelerator) =>
+        accelerator.AcceleratorType is global::ILGPU.Runtime.AcceleratorType.WebGPU or global::ILGPU.Runtime.AcceleratorType.WebGL or global::ILGPU.Runtime.AcceleratorType.Wasm;
+
+    /// <summary>
+    /// Stops a model too large for a browser before any download starts, with a message a visitor can act on (the desktop app runs it).
+    /// <paramref name="what"/> names the model and its size ("LTX-2 (a 19B model and a 12B text encoder, about 40 GB)").
+    /// </summary>
+    public static void DesktopOnly(Accelerator accelerator, string what)
+    {
+        if (IsBrowser(accelerator))
+            throw new NotSupportedException($"{what} runs in the SpawnGen desktop app (CUDA or OpenCL): it is too large for a browser.");
+    }
+
     static readonly ConditionalWeakTable<Accelerator, ElementWiseKernels> Kernels = new();
 
     /// <summary>The runtime: a registered <see cref="MlRuntime"/> (desktop, tests) or whatever the host's <see cref="IMlRuntimeProvider"/> creates (browser).</summary>

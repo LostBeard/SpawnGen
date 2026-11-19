@@ -8,13 +8,14 @@
     }
   },
   "2": {
-    "class_type": "SaveAudio",
+    "class_type": "SaveAudioAdvanced",
     "inputs": {
       "audio": [
         "1",
         0
       ],
-      "filename_prefix": "speech"
+      "filename_prefix": "speech",
+      "format": "flac"
     }
   },
   "3": {

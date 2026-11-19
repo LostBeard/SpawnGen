@@ -73,6 +73,60 @@ public class LtxVideoTests
         Assert.That(Directory.GetFiles(outDir, "ltx_frame_*.png"), Has.Length.EqualTo(50), "25 frames, two runs");
     }
 
+    /// <summary>
+    /// Picture to video (the Studio's "Picture to video" example): the example picture as the start frame at strength 1 must come back as the
+    /// clip's first frame (centre-cropped to the output), portrait and landscape. Writes ltx_i2v.txt (the mean absolute difference per size)
+    /// and the frames under ltx_i2v_out. Found 2026-11-19: the example's clip did not start from the picture.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT, a GPU and the LTX-Video files (~8 GB, downloaded on first use).")]
+    [TestCase(352, 512)]
+    [TestCase(512, 352)]
+    public async Task Picture_to_video_starts_from_the_picture(int width, int height)
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        var repo = new DirectoryInfo(AppContext.BaseDirectory);
+        while (repo is not null && !File.Exists(Path.Combine(repo.FullName, "SpawnGen.slnx"))) repo = repo.Parent;
+        var pictureBytes = File.ReadAllBytes(Path.Combine(repo!.FullName, "src", "SpawnGen.Studio", "wwwroot", "examples", "example.png"));
+        var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "ltx_i2v_out", $"{width}x{height}");
+        Directory.CreateDirectory(outDir);
+        var inputs = new MemoryInputStore();
+        await inputs.SaveAsync("example.png", pictureBytes);
+        var previous = InputFiles.Store;
+        InputFiles.Store = inputs;
+        try
+        {
+            using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+            var executor = new PromptExecutor(Registry(), new Services(runtime, new OutputOptions { Directory = outDir, TempDirectory = outDir }));
+            var g = new PromptGraph();
+            g.Add("1", "LoadImage", ("image", "example.png"));
+            g.Add("2", "LtxVideo", ("prompt", "The woman in the red coat smiles and waves at the camera, plain light grey studio background, steady camera"),
+                ("width", (long)width), ("height", (long)height), ("length", 9L), ("frame_rate", 24.0), ("seed", 42L), ("start_image", PromptInput.Link("1")),
+                ("start_strength", 1.0), ("upscale", false), ("precision", "q8"));
+            g.Add("3", "SaveImage", ("images", PromptInput.Link("2")), ("filename_prefix", "frame"));
+            await executor.ExecuteAsync(g);
+        }
+        finally { InputFiles.Store = previous; }
+
+        var first = ImageDecoder.Decode(File.ReadAllBytes(Directory.GetFiles(outDir, "frame_*.png").Order().First()));
+        var picture = ImageDecoder.Decode(pictureBytes);
+        // The picture scaled to cover the output, centre-cropped (what LtxCondition.Image documents), sampled at each output pixel's centre.
+        double scale = Math.Max(width / (double)picture.Width, height / (double)picture.Height);
+        double ox = (picture.Width * scale - width) / 2, oy = (picture.Height * scale - height) / 2, diff = 0;
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+            {
+                int sx = Math.Clamp((int)((x + 0.5 + ox) / scale), 0, picture.Width - 1), sy = Math.Clamp((int)((y + 0.5 + oy) / scale), 0, picture.Height - 1);
+                for (int c = 0; c < 3; c++)
+                    diff += Math.Abs(first.Data[(y * width + x) * 3 + c] - picture.Data[(sy * picture.Width + sx) * 3 + c]);
+            }
+        diff /= width * height * 3;
+        var line = $"{width}x{height}: first frame vs the start picture, mean |difference| {diff:F4}";
+        File.AppendAllText(Path.Combine(TestContext.CurrentContext.WorkDirectory, "ltx_i2v.txt"), line + Environment.NewLine);
+        TestContext.Out.WriteLine(line + Environment.NewLine + outDir);
+        Assert.That(diff, Is.LessThan(0.08), "the clip starts from the picture (an unrelated frame differs by about 0.2 or more)");
+    }
+
     /// <summary>Per-stage timing of the library's LTX pipeline on this device, twice in one process (the second without downloads or first compiles). Writes ltx_stages.txt.</summary>
     [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT, a GPU and the LTX-Video files (~8 GB, downloaded on first use).")]
     public async Task Stage_timing_at_512x352()

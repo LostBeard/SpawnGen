@@ -7,6 +7,25 @@ work that changes it. What is already done and how well it matches ComfyUI is in
 browser, with no Python. SpawnGen also works out the SpawnDev libraries on a real project: what SpawnGen needs from SpawnDev.ILGPU.ML
 (Tuvok) or SpawnDev.Codecs (Geordi) is asked of them, ranked by what it unlocks, never worked around and never treated as a stop.
 
+## The site is the doorstep (2026-11-19, TJ)
+
+TJ: the GitHub Pages site is where people decide whether to try SpawnGen; if it does not work there, no one tries the desktop app. After every
+Pages deploy: run EVERY example to the end on the live site in Chrome on the real GPU (`tools/studio-browser-test/drive-site-examples.js`,
+default URL the live site; look at each screenshot, out/site-ex-<n>.png), the template browser drive (`drive-template-status.js`), the
+upload / App drives; report what was not covered. Found and fixed 2026-11-19 (first full pass, 14 of 15 examples ran):
+- Inpainting ran but redrew nothing (example.png has no transparency, so the mask was empty): example_inpaint.png (coat transparent) ships
+  beside example.png; ExamplesTests fails any example that uses Load Image's MASK on a picture without one.
+- Image to 3D (TRELLIS.2) is desktop-only: the Examples menu says "(desktop app)" in the browser (index.json "desktop": true).
+- No video examples: Text to video and Picture to video (LTX-Video 2B 0.9.8 distilled, the existing node; about 8 GB of weights on first run).
+  LTX-2 (about 40 GB) now refuses in the browser before downloading (GpuHelpers.DesktopOnly).
+- Templates showed ComfyUI's whole catalog (772) alike, most with "(missing)" nodes: wwwroot/template-needs.json (tools/templates-manifest)
+  lists each template's nodes and model files at a pinned Comfy-Org/workflow_templates commit (the Studio and the server open that commit);
+  the browser shows Opens (every node here, the default; 100), Ready (every model file too; 6 in a browser), All, with a badge per card.
+- The Speech example saved with Save Audio (FLAC) (DEPRECATED): now Save Audio (Advanced), flac; its note no longer says the listener needs a
+  desktop GPU (Parakeet ran in the browser).
+Open, measured: FLUX 3 Klein's first run in the browser took 20 min (download); the Upscale example's nodes overlap. Next for the site: run the Wan 2.2 5B Turbo node in the browser (the library serves it; never tried
+there), then decide whether it is an example; the template "Ready" set for the browser (6) grows only with hosted model files.
+
 ## Resume here (state at 2026-11-14 end of day)
 
 - **2026-11-16: ml-local-flux1 merged into main** on SpawnDev.ILGPU.ML 5.8.18 + SpawnDev.ILGPU 5.4.34 (nuget.org): Z-Image, FLUX.1

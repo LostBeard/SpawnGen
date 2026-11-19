@@ -35,11 +35,12 @@ fs.copyFileSync(APPLE, PEAR);
     await page.setInputFiles('.toolbar input[type=file][accept=".json,.png"]', path.join(__dirname, 'depth-missing.json'));
     await page.waitForTimeout(1500);
   };
-  const runs = async () => parseInt(((await page.textContent('.toolbar')).match(/History \((\d+)\)/) || [])[1] || '0', 10);
+  // A model's first run can hold the page's one thread for 20 s and more (Depth Anything: PLANS.md, browser freeze): read with a long timeout.
+  const runs = async () => parseInt(((await page.textContent('.toolbar', { timeout: 120000 })).match(/History \((\d+)\)/) || [])[1] || '0', 10);
   const waitForRun = async before => {
     for (let i = 0; i < 300; i++) {
       await page.waitForTimeout(1000);
-      if ((await runs()) > before && !/Running|Queued/.test(await page.textContent('.status'))) return true;
+      if ((await runs()) > before && !/Running|Queued/.test(await page.textContent('.status', { timeout: 120000 }))) return true;
     }
     return false;
   };

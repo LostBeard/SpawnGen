@@ -1132,9 +1132,7 @@
         catch (HttpRequestException ex) { ShowMessage("Could not load the template: " + ex.Message); }
     }
 
-    /// <summary>An example (examples/index.json). <see cref="Desktop"/>: it runs only on the desktop engines (its models are too large for a browser):
-    /// in the browser the menu says so, and opening it shows the graph with that note.</summary>
-    sealed record ExampleEntry(string Name, string File, string Note, bool Desktop = false);
+    sealed record ExampleEntry(string Name, string File, string Note);
     List<ExampleEntry>? _examples;
 
     /// <summary>The list of example workflows (examples/index.json next to the page) as a menu; each opens in its own tab.</summary>
@@ -1143,8 +1141,7 @@
         try { _examples ??= await Http.GetFromJsonAsync<List<ExampleEntry>>("examples/index.json"); }
         catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException) { _examples = null; }
         var items = new List<MenuItem> { new("Starter graph in this tab", LoadExample) };
-        bool browser = _engine is BrowserEngine;
-        foreach (var example in _examples ?? []) items.Add(new(browser && example.Desktop ? example.Name + " (desktop app)" : example.Name, () => _ = OpenExampleAsync(example)));
+        foreach (var example in _examples ?? []) items.Add(new(example.Name, () => _ = OpenExampleAsync(example)));
         if (_examples is null) ShowMessage("The example list could not be read.");
         _openSub = null;
         _menu = new MenuState(new Point(8, 6), items);
@@ -1156,9 +1153,7 @@
         {
             var bytes = await Http.GetByteArrayAsync("examples/" + example.File);
             await OpenBytesAsync(example.Name + ".json", bytes);
-            ShowMessage(example.Desktop && _engine is BrowserEngine
-                ? "This example runs in the SpawnGen desktop app (CUDA or OpenCL): its models are too large for a browser. " + example.Note
-                : example.Note);
+            ShowMessage(example.Note);
         }
         catch (HttpRequestException ex) { ShowMessage("Could not load the example: " + ex.Message); }
     }

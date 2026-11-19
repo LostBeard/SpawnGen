@@ -425,7 +425,6 @@ public sealed class LTXAVTextEncoderLoader
     {
         if (device != "default") throw new NotSupportedException("SpawnGen runs LTX-2's text encoder on the GPU (device default).");
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        GpuHelpers.DesktopOnly(runtime.Accelerator, Ltx2Checkpoint.Ltx2Size);
         var gemma = ModelFolders.Locate(ModelFolders.TextEncoders, textEncoder);
         if (!MlRuntime.KnownCheckpoints.TryGetValue(ckptName, out var repo) || MlRuntime.CheckpointDetails[ckptName].File is not { } file)
             throw new FileNotFoundException($"Checkpoint '{ckptName}' was not found.");

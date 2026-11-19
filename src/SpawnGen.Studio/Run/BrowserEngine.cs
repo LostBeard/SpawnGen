@@ -133,7 +133,8 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         var accelerator = await context.CreatePreferredAcceleratorAsync()
             ?? throw new InvalidOperationException("This browser has no GPU the engine can use (it needs WebGPU).");
         // Model files stream into the origin-private file system and are reused on the next visit, never held whole in memory.
-        return new MlRuntime(Hub, accelerator);
+        // Every model, whatever its size: cached in the browser when there is room, streamed from the model host when not (StreamingModelSource).
+        return new MlRuntime(new StreamingModelSource(Hub), accelerator);
     }
 
     HubModelSource? _hub;

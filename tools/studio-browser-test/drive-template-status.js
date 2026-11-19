@@ -1,6 +1,6 @@
 // The template browser as a visitor meets it: the show modes (Opens, the default; Ready; All) with their counts, a status badge on every
 // non-API card, a template from the default list opening with no missing-node note, one with missing nodes saying which; and the Examples menu
-// marking the desktop-only examples. STUDIO_URL (default http://localhost:5280/).
+// offering every example alike. STUDIO_URL (default http://localhost:5280/).
 const { chromium } = require('playwright-core');
 const fs = require('fs');
 const path = require('path');
@@ -20,13 +20,12 @@ const check = (ok, what) => { console.log((ok ? 'PASS ' : 'FAIL ') + what); if (
   await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(3000);
   const toast = async () => (await page.locator('.toast').first().textContent({ timeout: 4000 }).catch(() => '')) || '';
 
-  // Examples menu: the desktop-only example says so in the browser.
+  // Examples menu: every example is offered alike (every model runs in the browser; none is "desktop only").
   await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
   const items = (await page.locator('.menu li').allTextContents()).map(s => s.trim());
-  check(items.some(s => s === 'Image to 3D model (TRELLIS.2) (desktop app)'), 'Examples: Image to 3D is marked (desktop app)');
+  check(items.includes('Image to 3D model (TRELLIS.2)') && !items.some(s => /desktop/i.test(s)), 'Examples: Image to 3D is offered like the rest (no desktop label)');
   check(items.includes('Text to video (LTX-Video 2B)') && items.includes('Picture to video (LTX-Video 2B)'), 'Examples: the two LTX-Video examples are listed');
-  await page.locator('.menu li', { hasText: 'Image to 3D model' }).first().click();
-  check(/desktop app/.test(await toast()), 'Opening Image to 3D in the browser says it runs in the desktop app');
+  await page.keyboard.press('Escape'); await page.mouse.click(800, 860);
   await page.waitForTimeout(500);
 
   await page.click('button:has-text("Templates")');

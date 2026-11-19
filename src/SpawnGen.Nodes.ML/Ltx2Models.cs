@@ -25,14 +25,8 @@ internal static class Ltx2Checkpoint
     /// The checkpoint's parts as ComfyUI's Load Checkpoint gives them: the model, no text encoder (ComfyUI warns "no CLIP/text encoder weights in
     /// checkpoint"; LTX-2's comes from Load LTXV Audio Text Encoder) and the video VAE.
     /// </summary>
-    public static (ModelHandle, ClipHandle, VaeHandle) Load(MlRuntime runtime, string name, string repo, string file)
-    {
-        GpuHelpers.DesktopOnly(runtime.Accelerator, Ltx2Size);
-        return (new ModelHandle(new Ltx2DiffusionModel(runtime, name, repo, file)), new ClipHandle(new NoTextEncoder(name)), new VaeHandle(new Ltx2VideoVaeModel(runtime, name, repo, file)));
-    }
-
-    /// <summary>What <see cref="GpuHelpers.DesktopOnly"/> says of LTX-2 in a browser.</summary>
-    public const string Ltx2Size = "LTX-2 (a 19B model and a 12B text encoder, about 40 GB of weights)";
+    public static (ModelHandle, ClipHandle, VaeHandle) Load(MlRuntime runtime, string name, string repo, string file) =>
+        (new ModelHandle(new Ltx2DiffusionModel(runtime, name, repo, file)), new ClipHandle(new NoTextEncoder(name)), new VaeHandle(new Ltx2VideoVaeModel(runtime, name, repo, file)));
 
     sealed class NoTextEncoder(string name) : ITextEncoderModel
     {

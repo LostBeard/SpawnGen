@@ -21,9 +21,8 @@ public sealed class TrellisImageTo3D
         [Input(OptionsProvider = nameof(TextureSizes))] string textureSize = "2048", [Input(OptionsProvider = nameof(Resolutions))] string resolution = "512")
     {
         var runtime = await GpuHelpers.RuntimeAsync(services);
-        // The weights are 2.5 GB files per stage: the browser needs the library's range-streaming source for them (RangeStreamModelSource), which this node does not set up yet.
-        if (GpuHelpers.IsBrowser(runtime.Accelerator))
-            throw new NotSupportedException("Image to 3D runs on the desktop engines (CUDA or OpenCL) for now: in the browser the 10 GB of weights need range streaming, which is not wired into this node yet.");
+        // The weights are 2.5 GB files per stage. In the browser the engine's model source caches what fits and streams the rest with range
+        // requests (StreamingModelSource, the ML demo's recipe for TRELLIS.2), so the node is the same on every engine.
         int w = image.Width, h = image.Height;
 
         // The object's outline: the mask given, or the background cut-out.

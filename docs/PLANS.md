@@ -15,9 +15,12 @@ default URL the live site; look at each screenshot, out/site-ex-<n>.png), the te
 upload / App drives; report what was not covered. Found and fixed 2026-11-19 (first full pass, 14 of 15 examples ran):
 - Inpainting ran but redrew nothing (example.png has no transparency, so the mask was empty): example_inpaint.png (coat transparent) ships
   beside example.png; ExamplesTests fails any example that uses Load Image's MASK on a picture without one.
-- Image to 3D (TRELLIS.2) is desktop-only: the Examples menu says "(desktop app)" in the browser (index.json "desktop": true).
+- Image to 3D (TRELLIS.2) refused in the browser ("range streaming not wired into this node yet"). TJ: ALL ML runs in the browser and on
+  the desktop; no model is desktop-only (the ML demo itself runs image-to-3D and text-to-3D). Fixed at the engine, not per node: the browser
+  engine's model source is StreamingModelSource (the ML demo's TRELLIS.2 recipe applied per file: cache in OPFS what fits, stream the rest
+  with range requests), so TRELLIS.2 and LTX-2 run in the browser with no special case. A "desktop app" label and an LTX-2 browser refusal
+  added earlier the same day were reverted.
 - No video examples: Text to video and Picture to video (LTX-Video 2B 0.9.8 distilled, the existing node; about 8 GB of weights on first run).
-  LTX-2 (about 40 GB) now refuses in the browser before downloading (GpuHelpers.DesktopOnly).
 - Templates showed ComfyUI's whole catalog (772) alike, most with "(missing)" nodes: wwwroot/template-needs.json (tools/templates-manifest)
   lists each template's nodes and model files at a pinned Comfy-Org/workflow_templates commit (the Studio and the server open that commit);
   the browser shows Opens (every node here, the default; 100), Ready (every model file too; 6 in a browser), All, with a badge per card.

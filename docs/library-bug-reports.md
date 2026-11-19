@@ -210,3 +210,11 @@ conditioning at 4.4e-6 / 7.9e-6 on the RX 590 (QwenImageTests).
 
 **Resolved (2026-11-15):** SpawnDev.ILGPU.ML **5.8.18-local.7** takes the length per encoder (`maxTokens`), each call any length up to it,
 unpadded = padded bit for bit. SpawnGen sizes the encoder to the prompt: no length limit; conditioning 4.2e-6 / 8.2e-6 on the RX 590.
+
+## SpawnDev.ILGPU.ML: an LTX-2 frame mask without guide frames (2026-11-19, asked of Tuvok)
+
+ComfyUI's LTXVImgToVideoInplace keeps the start picture IN PLACE (latent frame 0, noise mask [1 - strength, 1, ...]); the model then runs that
+frame at sigma x mask and holds it at the clean latent. SpawnDev.ILGPU.ML 5.8.22 takes per-frame masks only inside an `Ltx2Guide` with at least one
+guide frame (`Ltx2AvModel.DenoiseAsync`: "guide frames 0 of N latent frames"). Asked: allow 0 guide frames (the mask as per-frame timestep
+multipliers, no boxes, no bias), or a frame-mask parameter without a guide. SpawnGen refuses the case with a clear message until then; the
+ComfyUI taps for the test are in Fixtures/ltx2/i2vcall_* (A_start_picture_sample_matches_ComfyUI, strength 1 and 0.6).

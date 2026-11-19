@@ -282,6 +282,10 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
             int guideFrames = entry.KeyframeBoxes is null ? 0 : entry.GuideAttention?.Sum(g => g.LatentShape[0]) ?? 0;
             bool masked = frameMask is not null && Array.Exists(frameMask, v => v != 1f);
             if (guideFrames == 0 && !masked) return null;
+            // SpawnDev.ILGPU.ML 5.8.22 takes a frame mask only with guide frames (Ltx2AvModel: "guide frames 0 of N"); asked of Tuvok 2026-11-19.
+            if (guideFrames == 0)
+                throw new NotSupportedException("LTX-2 with a start picture kept in place (LTXVImgToVideoInplace) needs SpawnDev.ILGPU.ML to take a frame mask without " +
+                    "guide frames; requested (2026-11-19). LTXVAddGuide at frame 0 works now.");
             float strength = entry.GuideAttention is [var first, ..] ? first.Strength : 1f;
             float[]? tokens = null;
             if (guideFrames > 0)

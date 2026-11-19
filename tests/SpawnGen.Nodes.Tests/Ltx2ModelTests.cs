@@ -420,6 +420,39 @@ public class Ltx2ModelTests
     }
 
     /// <summary>
+    /// LTX-2 image to video through the sampler against ComfyUI (2026-11-19, graph_run.py stage i2vcall): LTXVImgToVideoInplace keeps the 192 x 256
+    /// picture as frame 0 of a 128 x 96, 9-frame video, strength 1 and 0.6, cfg 4, euler, LTXVScheduler 2 steps, seed 10. The kept frame runs at
+    /// sigma x its mask and is held at the clean latent, as with keyframe guides.
+    /// </summary>
+    [TestCase(1.0, "s10"), TestCase(0.6, "s06"), Explicit(Needs)]
+    public async Task A_start_picture_sample_matches_ComfyUI(double strength, string tag)
+    {
+        var (runtime, services) = Runtime();
+        using var _r = runtime;
+        NodeContext Ctx(string type) => Context(services, type);
+        var clip = await ClipAsync(services);
+        var pos = await new CLIPTextEncode().ExecuteAsync(Prompt.GetProperty("positive").GetString()!, clip, Ctx("CLIPTextEncode"));
+        var neg = await new CLIPTextEncode().ExecuteAsync(Prompt.GetProperty("negative").GetString()!, clip, Ctx("CLIPTextEncode"));
+        var (positive, negative) = new LTXVConditioning().Execute(pos, neg, 25);
+        var (model, _, vae) = await new CheckpointLoaderSimple().ExecuteAsync(Checkpoint, Ctx("CheckpointLoaderSimple"), services);
+        var audioVae = await new LTXVAudioVAELoader().ExecuteAsync(Checkpoint, services);
+        var picture = new ImageBatch(1, 192, 256, 3, Raw("ltx2_venc_input_f32_1x192x256x3.raw"));
+        var start = await new LTXVImgToVideoInplace().ExecuteAsync(vae, picture, new EmptyLTXVLatentVideo().Execute(128, 96, 9, 1), strength);
+        double inErr = RelRms(start.Data, Raw($"i2vcall_{tag}_i2v_av_in_samples_part0_f32_1x128x2x3x4.raw"));
+        Assert.That(start.NoiseMask!.Data, Is.EqualTo(Raw($"i2vcall_{tag}_i2v_av_in_noise_mask_part0_f32_1x1x2x1x1.raw")).Within(1e-7));
+        var av = new LTXVConcatAVLatent().Execute(start, new LTXVEmptyLatentAudio().Execute(9, 25, 1, audioVae));
+        var (output, _) = await new SamplerCustomAdvanced().ExecuteAsync(new RandomNoise().Execute(10), new CFGGuider().Execute(model, positive, negative, 4.0),
+            new KSamplerSelect().Execute("euler"), new LTXVScheduler().Execute(2, 2.05, 0.95, true, 0.1, av), av, Ctx("SamplerCustomAdvanced"), services);
+        var (video, audio) = new LTXVSeparateAVLatent().Execute(output);
+        double v = RelRms(video.Data, Raw($"i2vcall_{tag}_i2v_out_samples_part0_f32_1x128x2x3x4.raw")),
+            a = RelRms(audio.Data, Raw($"i2vcall_{tag}_i2v_out_samples_part1_f32_1x8x9x16.raw"));
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: strength {strength}: sampler input {inErr:E2}; final latent video {v:E2}, audio {a:E2} (relative RMS vs ComfyUI)");
+        Assert.That(inErr, Is.LessThan(1e-4));
+        Assert.That(v, Is.LessThan(3e-4));
+        Assert.That(a, Is.LessThan(3e-4));
+    }
+
+    /// <summary>
     /// The run settings for speed (ltx2.host_cache_gb, ltx2.read_ahead_gb: SpawnDev.ILGPU.ML's streamed-block cache and read-ahead) must not change the
     /// result: the same small sample three times on the one model the runtime keeps (defaults; cache 4 GB + read-ahead 2 GB + precision "fp32", which
     /// changes nothing outside CUDA; the same again, now from the cache) gives the same latents bit for bit. On CUDA "fp32" is a different arithmetic,

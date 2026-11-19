@@ -24,6 +24,33 @@ public static class CheckpointCatalog
 
     static readonly SortedSet<string> LoraFiles = new(StringComparer.Ordinal);
 
+    /// <summary>LoRAs the model host serves (HostedModels): name to Hugging Face repo and path. A local file of the same name wins.</summary>
+    static readonly Dictionary<string, (string Repo, string File)> HostedLoras = new(StringComparer.Ordinal);
+
+    /// <summary>Where Load LoRA reads <paramref name="name"/> from: the models folder's loras, or the model host for a hosted one.</summary>
+    public static (string Repo, string File) LocateLora(string name)
+    {
+        lock (Gate) return HostedLoras.TryGetValue(name, out var at) ? at : (LocalLorasRepo, name);
+    }
+
+    /// <summary>Lists a LoRA the model host serves; a name already listed (a local file) is kept. Returns whether it was added.</summary>
+    public static bool AddHostedLora(string name, string repo, string file)
+    {
+        lock (Gate)
+        {
+            if (LoraFiles.Contains(name)) return false;
+            LoraFiles.Add(name);
+            HostedLoras[name] = (repo, file);
+            return true;
+        }
+    }
+
+    /// <summary>Lists a single-file checkpoint the model host serves (downloaded on first use); a name already listed is kept.</summary>
+    public static bool AddHostedCheckpoint(string name, string repo, string file)
+    {
+        lock (Gate) return Entries.TryAdd(name, Remote(repo, file));
+    }
+
     /// <summary>The LoRA files Load LoRA offers (paths under <c>&lt;models&gt;/loras</c>, as ComfyUI lists them).</summary>
     public static IReadOnlyList<string> Loras { get { lock (Gate) return [.. LoraFiles]; } }
 
@@ -34,7 +61,12 @@ public static class CheckpointCatalog
         if (!Directory.Exists(dir)) return 0;
         int added = 0;
         foreach (var path in Directory.EnumerateFiles(dir, "*.safetensors", SearchOption.AllDirectories))
-            lock (Gate) if (LoraFiles.Add(Path.GetRelativePath(dir, path))) added++;
+            lock (Gate)
+            {
+                var name = Path.GetRelativePath(dir, path);
+                // A local file replaces a hosted LoRA of the same name.
+                if (HostedLoras.Remove(name) || LoraFiles.Add(name)) added++;
+            }
         return added;
     }
 
@@ -97,7 +129,7 @@ public static class CheckpointCatalog
             var name = Path.GetRelativePath(dir, path);
             lock (Gate)
             {
-                if (Entries.TryGetValue(name, out var known) && known.Folder != RemoteOnly) continue; // already listed (a local file, or an ONNX checkpoint)
+                if (Entries.TryGetValue(name, out var known) && known.Folder != RemoteOnly) continue; // already listed (a local file, or an ONNX checkpoint); a hosted one is replaced
                 Entries[name] = new Entry(LocalCheckpointsRepo, new MlRuntime.CheckpointInfo(0, File: name), "checkpoints");
             }
             added++;

@@ -20,13 +20,20 @@ public sealed class LoraLoader
         [Input(Min = -100.0, Max = 100.0, Step = 0.01, Tooltip = "How strongly to modify the CLIP model. This value can be negative.")] double strengthClip = 1.0) =>
         (strengthModel == 0 ? model : WithLora(model, loraName, strengthModel), strengthClip == 0 ? clip : WithLora(clip, loraName, strengthClip));
 
+    /// <summary>The LoRA as a weight step, read where it is listed from (the models folder, or the model host).</summary>
+    static LoraUse Use(string loraName, double strength)
+    {
+        var (repo, file) = CheckpointCatalog.LocateLora(loraName);
+        return new LoraUse(repo, file, (float)strength);
+    }
+
     /// <summary>A copy of the model handle with the LoRA added to its weight steps.</summary>
     public static ModelHandle WithLora(ModelHandle model, string loraName, double strength) =>
-        new(model.Model, model.Sampling) { Patches = model.Patches, Weights = [.. model.Weights, new LoraUse(CheckpointCatalog.LocalLorasRepo, loraName, (float)strength)] };
+        new(model.Model, model.Sampling) { Patches = model.Patches, Weights = [.. model.Weights, Use(loraName, strength)] };
 
     /// <summary>A copy of the CLIP handle (its layer kept) with the LoRA added to its weight steps.</summary>
     public static ClipHandle WithLora(ClipHandle clip, string loraName, double strength) =>
-        new(clip.Encoder) { Layer = clip.Layer, Weights = [.. clip.Weights, new LoraUse(CheckpointCatalog.LocalLorasRepo, loraName, (float)strength)] };
+        new(clip.Encoder) { Layer = clip.Layer, Weights = [.. clip.Weights, Use(loraName, strength)] };
 }
 
 /// <summary>Load LoRA (model only).</summary>

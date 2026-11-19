@@ -14,7 +14,8 @@ matches what they open; a test keeps the three in step. To move to a newer commi
 
 then put the printed commit in TemplatesUpstream and ServerOptions.TemplatesSource.
 """
-import json, os, subprocess, sys
+import json, os, re, subprocess, sys
+from collections import Counter
 
 FRONTEND = {"Note", "MarkdownNote", "Reroute", "PrimitiveNode"}
 MODEL_EXT = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".onnx", ".sft")
@@ -52,6 +53,42 @@ def main(repo):
         json.dump({"source": "Comfy-Org/workflow_templates", "commit": commit, "templates": out}, f, separators=(",", ":"), sort_keys=True)
         f.write("\n")
     print(commit, len(out), "templates,", os.path.getsize(target), "bytes")
+    write_catalog(base, commit)
+
+
+HF_URL = re.compile(r"^https://huggingface\.co/([^/]+/[^/]+)/resolve/([^/]+)/(.+?)(\?.*)?$")
+
+
+def write_catalog(base, commit):
+    """The model files the templates name, with where ComfyUI gets each one (properties.models: a Hugging Face URL and the models sub-folder),
+    as src/SpawnGen.Studio/wwwroot/model-catalog.json. Both engines register these files (HostedModels), so a loader lists them and the model
+    source fetches them from Hugging Face on first use (CORS allows the browser). A name in several repos takes the repo most templates use."""
+    seen = {}
+
+    def walk(wf):
+        if not isinstance(wf, dict): return   # a non-workflow JSON in the folder (an index of another kind)
+        for n in wf.get("nodes") or []:
+            for m in ((n.get("properties") or {}).get("models") or []):
+                if not isinstance(m, dict) or not isinstance(m.get("name"), str): continue
+                hit = HF_URL.match(m.get("url") or "")
+                if not hit or not m.get("directory"): continue
+                key = (hit.group(1), hit.group(3), m["directory"])
+                seen.setdefault(m["name"].replace("\\", "/").split("/")[-1], Counter())[key] += 1
+        for g in ((wf.get("definitions") or {}).get("subgraphs") or []): walk(g)
+
+    for path in sorted(os.listdir(base)):
+        if path.endswith(".json") and path != "index.json":
+            try: walk(json.load(open(os.path.join(base, path), encoding="utf-8")))
+            except (ValueError, OSError): pass
+    models = {}
+    for name, counts in sorted(seen.items()):
+        (repo, file, folder), _ = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+        models[name] = {"repo": repo, "path": file, "folder": folder}
+    target = os.path.join(os.path.dirname(__file__), "..", "..", "src", "SpawnGen.Studio", "wwwroot", "model-catalog.json")
+    with open(target, "w", encoding="utf-8", newline="\n") as f:
+        json.dump({"source": "Comfy-Org/workflow_templates", "commit": commit, "models": models}, f, separators=(",", ":"), sort_keys=True)
+        f.write("\n")
+    print(len(models), "hosted model files,", os.path.getsize(target), "bytes")
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ public static class ServerApp
 
         var app = builder.Build();
         CopyExamplePicture(app, options.InputPath);
+        RegisterHostedModels(app);
         // ComfyUI answers every route both as /x and /api/x (its frontend uses /api/...): the prefix is taken off before routing.
         app.Use((context, next) =>
         {
@@ -433,6 +434,15 @@ public static class ServerApp
     /// (example.png with the coat transparent, the Inpainting example's mask; made with FLUX.2 Klein 4B, Apache-2.0; see docs/EXAMPLE-PICTURE.md)
     /// are put in the input folder when it has no file of that name. A file of that name already there is kept.
     /// </summary>
+    static void RegisterHostedModels(WebApplication app)
+    {
+        // The model files ComfyUI's templates name, fetched from Hugging Face on first use (HostedModels); files in the models folder win.
+        if (app.Environment.WebRootFileProvider.GetFileInfo("model-catalog.json") is not { Exists: true } catalog) return;
+        using var reader = new StreamReader(catalog.CreateReadStream());
+        try { Console.WriteLine($"[models] {HostedModels.LoadJson(reader.ReadToEnd())} hosted model files listed (model-catalog.json)"); }
+        catch (System.Text.Json.JsonException ex) { Console.WriteLine("[models] model-catalog.json could not be read: " + ex.Message); }
+    }
+
     static void CopyExamplePicture(WebApplication app, string inputPath)
     {
         foreach (var name in new[] { "example.png", "example_inpaint.png" })

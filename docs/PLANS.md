@@ -33,6 +33,11 @@ upload / App drives; report what was not covered. Found and fixed 2026-11-19 (fi
   VAE (SD checkpoints): they need an unload that reloads on demand, if the full sequence still runs out of GPU memory.
 - Hugging Face counts every /resolve/ range request (3,000 per 5 min anonymous); Tuvok is moving ML's three readers to resolve once and range
   the CDN URL (library-bug-reports.md GAP-ML-HF-RESOLVER-RATE).
+- Hosted model files (2026-11-19): wwwroot/model-catalog.json (tools/templates-manifest, the same pinned template commit) lists the 403
+  model files ComfyUI's templates name with the Hugging Face repo, path and models folder ComfyUI fetches each from; both engines register
+  them (HostedModels: the loaders of diffusion_models / text_encoders / vae / controlnet / latent_upscale_models / checkpoints / loras list
+  them; a file in the models folder wins). In the browser the template list's Ready went from 6 to 97 of 100, and ComfyUI's SDXL Turbo
+  template ran to the end in the local browser Studio with its 6.9 GB checkpoint fetched from Hugging Face (228 s, drive-template-run.js).
 Open, measured: FLUX 3 Klein's first run in the browser took 20 min (download); the Upscale example's nodes overlap. Next for the site: run the Wan 2.2 5B Turbo node in the browser (the library serves it; never tried
 there), then decide whether it is an example; the template "Ready" set for the browser (6) grows only with hosted model files.
 

@@ -54,10 +54,27 @@ public static class ModelFolders
                 {
                     var name = Path.GetRelativePath(dir, path);
                     lock (Gate)
-                        if (Files[kind].TryAdd(name, ("local/" + folder, name))) added++;
+                    {
+                        // A local file replaces a hosted one of the same name (HostedModels registers before or after a scan).
+                        if (Files[kind].TryGetValue(name, out var known) && known.Repo.StartsWith("local/", StringComparison.Ordinal)) continue;
+                        Files[kind][name] = ("local/" + folder, name);
+                        added++;
+                    }
                 }
             }
         return added;
+    }
+
+    /// <summary>The kind a ComfyUI models sub-folder belongs to ("unet" -> diffusion_models), or null for a folder no loader here reads.</summary>
+    public static string? KindOf(string folder) => Folders.FirstOrDefault(f => f.Value.Contains(folder)).Key;
+
+    /// <summary>
+    /// Lists a file the model host serves (HostedModels: Hugging Face <paramref name="repo"/> at <paramref name="file"/>), fetched on first use.
+    /// A file of that name already listed (from the models folder) is kept. Returns whether it was added.
+    /// </summary>
+    public static bool AddHosted(string kind, string name, string repo, string file)
+    {
+        lock (Gate) return Files[kind].TryAdd(name, (repo, file));
     }
 
     /// <summary>The names of a kind's files, sorted.</summary>

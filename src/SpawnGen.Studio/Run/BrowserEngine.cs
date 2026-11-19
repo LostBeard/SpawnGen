@@ -38,6 +38,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _http = http;
         InputFiles.Store = _inputs;
         _example = AddExamplePictureAsync();
+        _hosted = RegisterHostedModelsAsync();
         // WebP, GIF and BMP for Load Image decode on the page's GPU (SpawnDev.Codecs over WebGPU), opened on the first such picture.
         CodecsImages.Install(async () => (await GetAsync()).Accelerator);
         CodecsAudio.Install(async () => (await GetAsync()).Accelerator);
@@ -91,6 +92,17 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     /// <summary>Done when the examples' Load Image picture is in this page's inputs (or could not be fetched); the input listing waits for it.</summary>
     readonly Task _example;
+    readonly Task _hosted;
+
+    /// <summary>
+    /// The model files ComfyUI's templates name (model-catalog.json next to the page): the loaders list them, and they come from Hugging Face on
+    /// first use (StreamingModelSource: stored in the browser when there is room, streamed when not). Offline, the loaders list what is cached.
+    /// </summary>
+    async Task RegisterHostedModelsAsync()
+    {
+        try { Console.WriteLine($"[models] {HostedModels.LoadJson(await _http.GetStringAsync("model-catalog.json"))} hosted model files listed"); }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException) { Console.WriteLine("[models] model-catalog.json: " + ex.Message); }
+    }
 
     /// <summary>The examples' Load Image pictures, put in the inputs when missing (see <see cref="AddExamplePictureAsync"/>).</summary>
     internal static readonly string[] ExamplePictures = ["example.png", "example_inpaint.png"];

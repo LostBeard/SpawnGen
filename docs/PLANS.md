@@ -38,6 +38,10 @@ upload / App drives; report what was not covered. Found and fixed 2026-11-19 (fi
   them (HostedModels: the loaders of diffusion_models / text_encoders / vae / controlnet / latent_upscale_models / checkpoints / loras list
   them; a file in the models folder wins). In the browser the template list's Ready went from 6 to 97 of 100, and ComfyUI's SDXL Turbo
   template ran to the end in the local browser Studio with its 6.9 GB checkpoint fetched from Hugging Face (228 s, drive-template-run.js).
+- Hugging Face Space (2026-11-19, TJ's idea: traction where ML people are): https://huggingface.co/spaces/LostBeard/spawngen (static SDK,
+  app at lostbeard-spawngen.static.hf.space). It serves the GitHub Pages AOT build with the base href "/" and tools/hf-space/README.md as its
+  card (the models it uses: those models' pages list the Space). tools/hf-space/publish.sh [pages-run] publishes a Pages run (gh + hf). The
+  Space redirects / to /index.html: the Studio answers that route too. Run the site drives against the Space URL after each publish.
 Open, measured: FLUX 3 Klein's first run in the browser took 20 min (download); the Upscale example's nodes overlap. Next for the site: run the Wan 2.2 5B Turbo node in the browser (the library serves it; never tried
 there), then decide whether it is an example; the template "Ready" set for the browser (6) grows only with hosted model files.
 

@@ -67,8 +67,12 @@ public class ServerTests
         _app = ServerApp.Build(
             ["--urls", "http://127.0.0.1:0", $"--SpawnGen:ModelsPath={_dir}/models", $"--SpawnGen:OutputPath={_dir}/output",
              $"--SpawnGen:InputPath={_dir}/input", $"--SpawnGen:TempPath={_dir}/temp", $"--SpawnGen:UserPath={_dir}/user", "--environment", "Development"],
-            builder => builder.Services.AddSingleton(new NodeRegistry()
-                .AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(SpawnGen.Nodes.ML.KSampler).Assembly).AddAssembly(typeof(WaitNode).Assembly)));
+            builder =>
+            {
+                builder.Services.AddSingleton(new NodeRegistry()
+                    .AddAssembly(typeof(SaveImage).Assembly).AddAssembly(typeof(SpawnGen.Nodes.ML.KSampler).Assembly).AddAssembly(typeof(WaitNode).Assembly));
+                builder.Services.AddSingleton(SharedGpu.Runtime);
+            });
         await _app.StartAsync();
         var address = _app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
         _http = new HttpClient { BaseAddress = new Uri(address) };

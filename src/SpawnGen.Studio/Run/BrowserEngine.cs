@@ -57,12 +57,14 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _bus.Published += e =>
         {
             if (_perOp) ReportPerOpTimings(e.Type);
+            if (_nodeTimes) ReportNodeTimes(e.Type, e.Data);
             EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
         };
         _queue = new PromptQueue(registry, this, _bus) { BeforeRun = ReplaceLostDeviceAsync, RunFailed = NoteLostDevice };
         // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the
         // slowest ones to the console when a run ends. For finding the single op that overruns a GPU watchdog.
         try { _perOp = _js.Get<string>("location.search")?.Contains("perop=1") == true; } catch (Exception) { }
+        try { _nodeTimes = _js.Get<string>("location.search")?.Contains("nodetimes=1") == true; } catch (Exception) { }
         // Test switch: ?testhooks=1 adds window.spawngenLoseGpu(), which destroys the engine's WebGPU device (a real device loss, as a GPU reset
         // gives), for tools/studio-browser-test/drive-device-lost.js.
         try
@@ -101,6 +103,24 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     }
 
     readonly bool _perOp;
+
+    // Debug switch: ?nodetimes=1 prints each node's time when it hands over to the next one, and the run's total. A node that leaves its work on
+    // the GPU returns before the GPU is done: that time shows in the next node that waits (the total is exact).
+    readonly bool _nodeTimes;
+    readonly System.Diagnostics.Stopwatch _runClock = new();
+    string? _timedNode;
+    double _timedFrom;
+
+    void ReportNodeTimes(string eventType, JsonNode? data)
+    {
+        double now = _runClock.Elapsed.TotalMilliseconds;
+        if (eventType == "execution_start") { _runClock.Restart(); _timedNode = null; return; }
+        if (eventType is not ("executing" or "execution_success" or "execution_error")) return;
+        if (_timedNode is { } done) Console.WriteLine($"[nodetimes] node {done}: {now - _timedFrom:F0} ms");
+        _timedNode = eventType == "executing" ? (string?)data?["node"] : null;
+        _timedFrom = now;
+        if (eventType != "executing") Console.WriteLine($"[nodetimes] run: {now:F0} ms ({eventType})");
+    }
 
     /// <summary>Done when the examples' Load Image picture is in this page's inputs (or could not be fetched); the input listing waits for it.</summary>
     readonly Task _example;

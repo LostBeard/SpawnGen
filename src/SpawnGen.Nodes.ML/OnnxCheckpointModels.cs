@@ -108,6 +108,17 @@ internal sealed class OnnxCheckpointModels : ICheckpointModels
         }
     }
 
+    public bool DecodesOnDevice => true;
+
+    /// <summary>The ONNX VAE on the device: the latent view goes in as it is, the picture is copied (x 1, exact) out of the session's pooled output.</summary>
+    public async Task DecodeOnDeviceAsync(ILGPU.Runtime.ArrayView1D<float, ILGPU.Stride1D.Dense> latent, int h, int w, ILGPU.Runtime.ArrayView1D<float, ILGPU.Stride1D.Dense> image,
+        CancellationToken cancellationToken = default)
+    {
+        var outputs = await Vae.RunAsync(new Dictionary<string, Tensor> { [Vae.InputNames[0]] = new Tensor(latent, [1, Checkpoint.LatentChannels, h, w]) });
+        int count = 3 * h * 8 * w * 8;
+        GpuHelpers.CopyOut(_runtime.Accelerator, outputs[Vae.OutputNames[0]], image.SubView(0, count), count);
+    }
+
     public async Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken)
     {
         var acc = _runtime.Accelerator;

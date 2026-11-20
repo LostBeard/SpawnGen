@@ -36,6 +36,10 @@ internal static class GpuHelpers
     /// Reads the first <paramref name="count"/> values of a tensor back to the host. Asynchronous on purpose: a browser GPU cannot be read
     /// synchronously. The tensor may be a view into a larger pooled buffer, so it is copied out first.
     /// </summary>
+    /// <summary>The first <paramref name="count"/> values of a tensor (maybe a view into a pooled buffer) copied into <paramref name="into"/> on the device (x 1: exact).</summary>
+    public static void CopyOut(Accelerator accelerator, Tensor tensor, ArrayView1D<float, Stride1D.Dense> into, int count) =>
+        Kernels.GetValue(accelerator, a => new ElementWiseKernels(a)).Scale(tensor.Data.SubView(0, count), into, count, 1f);
+
     public static async Task<float[]> ReadAsync(Accelerator accelerator, Tensor tensor, int count)
     {
         var kernels = Kernels.GetValue(accelerator, a => new ElementWiseKernels(a));

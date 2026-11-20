@@ -120,6 +120,18 @@ public class VideoNodeTests
                 File.WriteAllBytes(Path.Combine(keep, $"node_webpanimencoder_run{run}_{runtime.Accelerator.Name.Replace(' ', '_')}.webp"), webp);
             }
         }
+        // The LTX example's own save: lossy, quality 90, method 4 (default) at 24 fps. Steadier on the desktop than the browser's run-to-run swings.
+        for (int run = 1; run <= 2; run++)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var webp = await SaveAnimatedWEBP.EncodeAsync(frames, 24, 90, runtime.Accelerator, lossless: false, method: 4);
+            report.AppendLine($"node lossy q90 run {run}: {clock.Elapsed.TotalSeconds:F1} s, {webp.Length} bytes, SHA-256 {Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(webp))[..16]}");
+            if (Environment.GetEnvironmentVariable("SPAWNGEN_WEBP_OUT") is { Length: > 0 } keepLossy)
+            {
+                Directory.CreateDirectory(keepLossy);
+                File.WriteAllBytes(Path.Combine(keepLossy, $"node_lossy_q90_run{run}_{runtime.Accelerator.Name.Replace(' ', '_')}.webp"), webp);
+            }
+        }
         // The full-frame call SpawnGen made with Codecs 1.0.1 (every frame whole, no sub-frame search), for comparison.
         var packed = new List<ReadOnlyMemory<byte>>();
         var infos = new List<SpawnDev.Codecs.Images.ImageFrameInfo>();

@@ -7,6 +7,13 @@ work that changes it. What is already done and how well it matches ComfyUI is in
 browser, with no Python. SpawnGen also works out the SpawnDev libraries on a real project: what SpawnGen needs from SpawnDev.ILGPU.ML
 (Tuvok) or SpawnDev.Codecs (Geordi) is asked of them, ranked by what it unlocks, never worked around and never treated as a stop.
 
+## Next deploy (TJ, 2026-11-20)
+
+One Pages + Hugging Face Space deploy when SpawnDev.Codecs 1.1.2 is on nuget.org: merge branch codecs-1.1.2-local (Codecs 1.1.2 +
+ILGPU 5.4.41), suite, drives; deploy; then every example and the UI drives on both live URLs. It carries the animated-preview / download
+fix TJ reported, the device-tensor work, ML 5.8.24 (TRELLIS.2 and Wan Turbo in the browser) and the faster WebP save. ML 5.8.25
+(device-frames branch) goes in a later deploy.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

@@ -34,6 +34,10 @@ buffers freed); (b) the browser's JS result store and device-buffer saves; (c) S
 `ArrayView1D` animation encoder); (d) the LTX / Wan / LTX-2 nodes on the library's device frames; (e) Save Image / Preview Image (Codecs'
 GPU PNG), Save Video / WEBM / Audio, VAE Decode / Encode, Load Image; (f) every remaining node that touches `.Data` in bulk, by use.
 Each step: the Text to video example timed in Chrome on the RX 590 before and after (node time, total, page heap), the suite, the drives.
+**Status (2026-11-19 evening):** (a) done (90ade44, DeviceTensorTests red-checked); (b) + (c) done (0728817: JS-side browser results,
+Save Animated WEBP on the device, ComfyUI parity byte for byte on CPU and RX 590). Waiting: Tuvok's DeviceFrames (ML 5.8.25-local.2) for (d);
+Geordi's exact-size EncodeAnimationToDeviceAsync / ToUint8ArrayAsync (replaces the worst-case output buffers). Input files (Load Image's
+uploads) are still a .NET MemoryInputStore: move them to JS with (e).
 
 ## The site is the doorstep (2026-11-19, TJ)
 

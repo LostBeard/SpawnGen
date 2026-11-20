@@ -123,6 +123,49 @@ public class PngTextTests
         Assert.That(PngReader.ReadText(png)["parameters"], Is.EqualTo(value));
     }
 
+    /// <summary>
+    /// The page looks for a dropped or opened picture's workflow chunk by chunk (Studio.OpenFileAsync over the browser File's slices), so the
+    /// pixels never come to .NET: the same text as <see cref="PngReader.ReadText"/>, including a text chunk after the picture data, and not one
+    /// byte of an IDAT chunk's data read.
+    /// </summary>
+    [Test]
+    public async Task Text_read_piece_by_piece_matches_and_never_reads_the_pixels()
+    {
+        var rng = new Random(3);
+        var picture = new ImageBatch(1, 256, 256, 3, Enumerable.Range(0, 256 * 256 * 3).Select(_ => (float)rng.NextDouble()).ToArray());
+        var png = PngWriter.Encode(picture, 0, new Dictionary<string, string> { ["workflow"] = "{\"nodes\":[]}", ["prompt"] = "{}" });
+        // a tEXt chunk after the picture data, just before IEND (allowed by the PNG spec; ReadText finds it too)
+        var late = System.Text.Encoding.ASCII.GetBytes("tEXt").Concat(System.Text.Encoding.Latin1.GetBytes("late\0after the pixels")).ToArray();
+        uint crc = 0xFFFFFFFF;
+        foreach (var b in late) { crc ^= b; for (int k = 0; k < 8; k++) crc = (crc & 1) != 0 ? 0xEDB88320 ^ (crc >> 1) : crc >> 1; }
+        var chunk = BigEndian((uint)(late.Length - 4)).Concat(late).Concat(BigEndian(crc ^ 0xFFFFFFFF)).ToArray();
+        png = png.Take(png.Length - 12).Concat(chunk).Concat(png.Skip(png.Length - 12)).ToArray();
+
+        var idat = new List<(long From, long To)>();
+        for (long pos = 8; pos + 12 <= png.Length;)
+        {
+            long len = (png[pos] << 24) | (png[pos + 1] << 16) | (png[pos + 2] << 8) | png[pos + 3];
+            if (System.Text.Encoding.ASCII.GetString(png, (int)pos + 4, 4) == "IDAT") idat.Add((pos + 8, pos + 8 + len));
+            pos += 12 + len;
+        }
+        Assert.That(idat, Is.Not.Empty);
+
+        long readBytes = 0;
+        var text = await PngReader.ReadTextAsync(png.Length, (offset, count) =>
+        {
+            foreach (var (from, to) in idat)
+                Assert.That(offset + count <= from || offset >= to, Is.True, $"read {offset}+{count} overlaps picture data {from}..{to}");
+            readBytes += count;
+            return Task.FromResult(png.AsSpan((int)offset, count).ToArray());
+        });
+        Assert.That(text, Is.EqualTo(PngReader.ReadText(png)));
+        Assert.That(text!["late"], Is.EqualTo("after the pixels"));
+        Assert.That(text["workflow"], Is.EqualTo("{\"nodes\":[]}"));
+        Assert.That(readBytes, Is.LessThan(png.Length / 10), "only headers and text were read");
+        Assert.That(await PngReader.ReadTextAsync(3, (o, c) => Task.FromResult(new byte[c])), Is.Null, "too short to be a PNG");
+        Assert.That(await PngReader.ReadTextAsync(20, (o, c) => Task.FromResult(new byte[c])), Is.Null, "not a PNG");
+    }
+
     [Test]
     public void A_PNG_without_text_and_a_non_PNG_give_an_empty_map()
     {

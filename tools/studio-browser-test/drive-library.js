@@ -51,13 +51,18 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   check('clicking a category collapses it', (await page.locator('.lib-node').count()) < shown, `${shown} -> ${await page.locator('.lib-node').count()}`);
   await page.screenshot({ path: path.join(OUT, 'library.png') });
 
-  await page.mouse.click(1000, 800); // give the canvas focus
+  // give the canvas focus on an empty spot: (1000, 800) landed on the Blur Image node dropped above and opened its number editor, so the
+  // N presses were typed into that field and the check passed or failed by timing (2026-11-20)
+  await page.mouse.click(1200, 600);
+  check('the canvas has the keyboard', await page.evaluate(() => document.activeElement?.tagName === 'CANVAS'),
+    await page.evaluate(() => document.activeElement?.tagName));
   await page.keyboard.press('n');
   await page.waitForTimeout(400);
   check('the N key closes the library', (await page.locator('.library').count()) === 0);
   await page.keyboard.press('n');
   await page.waitForTimeout(400);
-  check('and opens it again', (await page.locator('.library').count()) === 1);
+  check('and opens it again', (await page.locator('.library').count()) === 1,
+    await page.evaluate(() => { const a = document.activeElement; return `focus ${a ? a.tagName + '.' + a.className : 'none'}`; }));
 
   check('no browser errors', problems.length === 0, problems.join(' | '));
   await browser.close();

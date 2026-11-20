@@ -16,6 +16,33 @@ public static partial class PngReader
     /// The text entries of a PNG (tEXt, zTXt and iTXt chunks) by keyword. ComfyUI stores the run's <c>prompt</c> and the editor's <c>workflow</c>
     /// this way, so a generated picture carries the graph that made it. Returns an empty map for a file that is not a PNG or has none.
     /// </summary>
+    /// <summary>
+    /// <see cref="ReadText"/> for a file read piece by piece (<paramref name="read"/>(offset, count) returns those bytes): only the chunk headers
+    /// and the text chunks are read, never the pixels, so a browser File stays in JS when the page only looks for its workflow (AGENTS.md
+    /// rule 4). Null when the file is not a PNG.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<string, string>?> ReadTextAsync(long length, Func<long, int, Task<byte[]>> read)
+    {
+        if (length < 8 || !(await read(0, 8)).AsSpan().SequenceEqual(Signature)) return null;
+        using var text = new MemoryStream();
+        text.Write(Signature);
+        for (long pos = 8; pos + 12 <= length;)
+        {
+            var header = await read(pos, 8);
+            long len = BinaryPrimitives.ReadUInt32BigEndian(header);
+            if (pos + 12 + len > length) break;
+            string type = System.Text.Encoding.ASCII.GetString(header, 4, 4);
+            if (type is "tEXt" or "zTXt" or "iTXt")
+            {
+                text.Write(header);
+                text.Write(await read(pos + 8, checked((int)len + 4))); // the data and its CRC
+            }
+            if (type == "IEND") break;
+            pos += 12 + len;
+        }
+        return ReadText(text.ToArray());
+    }
+
     public static IReadOnlyDictionary<string, string> ReadText(byte[] png)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);

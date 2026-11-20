@@ -52,8 +52,10 @@ GPU PNG), Save Video / WEBM / Audio, VAE Decode / Encode, Load Image; (f) every 
 Each step: the Text to video example timed in Chrome on the RX 590 before and after (node time, total, page heap), the suite, the drives.
 **Status (2026-11-19 evening):** (a) done (90ade44, DeviceTensorTests red-checked); (b) + (c) done (0728817: JS-side browser results,
 Save Animated WEBP on the device, ComfyUI parity byte for byte on CPU and RX 590). Waiting: Tuvok's DeviceFrames (ML 5.8.25-local.2) for (d);
-Geordi's exact-size EncodeAnimationToDeviceAsync / ToUint8ArrayAsync (replaces the worst-case output buffers). Input files (Load Image's
-uploads) are still a .NET MemoryInputStore: move them to JS with (e).
+Geordi's exact-size EncodeAnimationToDeviceAsync / ToUint8ArrayAsync (replaces the worst-case output buffers). Input files: done 2026-11-20 (A):
+uploads, drops, the mask editor's PNG and the example pictures stay in JS (IInputStore.OpenAsync / SaveAsync(StoredBytes), the engines'
+UploadFileAsync(Blob), the drop handled in C#, a PNG's workflow found chunk by chunk). Next (B): Load Image decodes on the device from those
+JS bytes (Codecs' ArrayView decoders), after a parity corpus test against the host decoder (Pillow-measured: EXIF, 16-bit, palette, JPEG).
 (e) part 1 done (996f1aa): Save Image / Preview Image / every SaveTempAsync preview encode a device picture with Codecs' GPU PNG
 (DevicePictureTests, red-checked). Audit after it (2026-11-19): IVaeModel is float[] in / out with a .NET NHWC loop (VaePictures.FromVae),
 and UNetRun.PredictAsync is float[] in / out, called every step and CFG branch while the sampler math runs in .NET. By bytes moved the

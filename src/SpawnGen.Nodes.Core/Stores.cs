@@ -114,11 +114,20 @@ public interface IInputStore
     /// <summary>Whether a file or folder is there.</summary>
     bool Exists(string path);
 
-    /// <summary>The file's bytes (<see cref="FileNotFoundException"/> when missing).</summary>
+    /// <summary>The file's bytes as a managed array (<see cref="FileNotFoundException"/> when missing): for nodes that read it on the host.</summary>
     Task<byte[]> ReadAsync(string path);
+
+    /// <summary>
+    /// The file where the store keeps it, without copying it (<see cref="FileNotFoundException"/> when missing): the browser's files are JS
+    /// bytes, which a GPU decoder or a blob URL takes as they are (AGENTS.md rule 4); <see cref="StoredBytes.Read"/> copies one to .NET.
+    /// </summary>
+    Task<StoredBytes> OpenAsync(string path);
 
     /// <summary>Stores a file (creating its folders) and returns its path.</summary>
     Task<string> SaveAsync(string path, byte[] data);
+
+    /// <summary>Stores a file the host already holds where the store keeps files (the browser: a JS file the page read), and returns its path.</summary>
+    Task<string> SaveAsync(string path, StoredBytes data);
 }
 
 /// <summary>
@@ -456,6 +465,10 @@ public sealed class MemoryResultStore(Func<byte[], StoredBytes>? fromManaged = n
     public override async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, ArrayView1D<byte, Stride1D.Dense> data) =>
         Store(type, subfolder, filename, fromDevice is null ? new ManagedBytes(await data.CopyToHostAsync()) : await fromDevice(data));
 
+    /// <summary>A file the host already holds where this store keeps files (the browser: a picture uploaded into the outputs, read in JS), kept as it is.</summary>
+    public Task<ResultFile> WriteStoredAsync(string type, string subfolder, string filename, StoredBytes data) =>
+        Task.FromResult(Store(type, subfolder, filename, data));
+
     ResultFile Store(string type, string subfolder, string filename, StoredBytes bytes)
     {
         StorePaths.CheckFileName(filename);
@@ -536,6 +549,12 @@ public abstract class InputStore : IInputStore
     public abstract Task<byte[]> ReadAsync(string path);
     public abstract Task<string> SaveAsync(string path, byte[] data);
 
+    /// <summary>The file as a managed array (a store that keeps files elsewhere overrides this).</summary>
+    public virtual async Task<StoredBytes> OpenAsync(string path) => new ManagedBytes(await ReadAsync(path));
+
+    /// <summary>Stores the bytes as a managed array (a store that keeps files elsewhere overrides this).</summary>
+    public virtual Task<string> SaveAsync(string path, StoredBytes data) => SaveAsync(path, data.Read());
+
     /// <summary>The path in the store's form, or <see cref="ArgumentException"/> when it would leave the input folder.</summary>
     protected static string Relative(string path) =>
         StorePaths.Normalize(path ?? "") ?? throw new ArgumentException($"'{path}' is outside the input folder.", nameof(path));
@@ -576,11 +595,15 @@ public sealed class DiskInputStore(Func<string> directory) : InputStore
     }
 }
 
-/// <summary>Input files kept in memory (the browser). Names are listed case-insensitively, as NTFS lists them.</summary>
-public sealed class MemoryInputStore : InputStore
+/// <summary>
+/// Input files kept in memory (the browser). Where the bytes live is the host's choice, as for <see cref="MemoryResultStore"/>:
+/// <c>fromManaged</c> stores a file handed over as a managed array (by default a copy of it; the browser keeps it in JS), and a
+/// <see cref="StoredBytes"/> (a file the page read in JS) is kept as it is. Names are listed case-insensitively, as NTFS lists them.
+/// </summary>
+public sealed class MemoryInputStore(Func<byte[], StoredBytes>? fromManaged = null) : InputStore
 {
     readonly Lock _gate = new();
-    readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
+    readonly Dictionary<string, StoredBytes> _files = new(StringComparer.Ordinal);
     readonly HashSet<string> _folders = new(StringComparer.Ordinal);
 
     public override IReadOnlyList<StoreEntry> Entries(string folder)
@@ -603,21 +626,25 @@ public sealed class MemoryInputStore : InputStore
         lock (_gate) return rel.Length == 0 || _files.ContainsKey(rel) || _folders.Contains(rel);
     }
 
-    public override Task<byte[]> ReadAsync(string path)
+    public override async Task<byte[]> ReadAsync(string path) => (await OpenAsync(path)).Read();
+
+    public override Task<StoredBytes> OpenAsync(string path)
     {
         var rel = Relative(path);
         lock (_gate)
             return _files.TryGetValue(rel, out var data) ? Task.FromResult(data) : throw new FileNotFoundException($"There is no input file '{path}'.", path);
     }
 
-    public override Task<string> SaveAsync(string path, byte[] data)
+    public override Task<string> SaveAsync(string path, byte[] data) => SaveAsync(path, fromManaged?.Invoke(data) ?? new ManagedBytes((byte[])data.Clone()));
+
+    public override Task<string> SaveAsync(string path, StoredBytes data)
     {
         var rel = Relative(path);
         if (rel.Length == 0) throw new ArgumentException("A file needs a name.", nameof(path));
         lock (_gate)
         {
             for (int s = rel.IndexOf('/'); s >= 0; s = rel.IndexOf('/', s + 1)) _folders.Add(rel[..s]);
-            _files[rel] = (byte[])data.Clone();
+            _files[rel] = data;
         }
         return Task.FromResult(rel);
     }

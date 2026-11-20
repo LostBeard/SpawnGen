@@ -37,7 +37,9 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         public override long Length => Data.Length;
         public override byte[] Read() => (byte[])Data;
     }
-    readonly MemoryInputStore _inputs = new();
+    // Input files stay in JS too: an upload or a dropped file is read in JS (a File's ArrayBuffer) and kept there; a file made in .NET is
+    // copied in once. Load Image's picture and the canvas's blob URL take the JS bytes as they are.
+    readonly MemoryInputStore _inputs = new(data => new JsBytes((Uint8Array)data));
 
     /// <summary>The pictures uploaded to this engine (Load Image reads them when this engine runs).</summary>
     public IInputStore Inputs => _inputs;
@@ -98,7 +100,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         if (_runtime is { IsCompletedSuccessfully: true } task && task.Result.Accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator gpu)
         {
             Console.WriteLine("[gpu] test hook: destroying the WebGPU device");
-            gpu.NativeAccelerator.NativeDevice.Destroy();
+            gpu.NativeAccelerator.NativeDevice?.Destroy();
         }
     }
 
@@ -151,10 +153,13 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             try
             {
                 if (_inputs.Exists(name)) continue;
-                var bytes = await _http.GetByteArrayAsync("examples/" + name);
-                if (!_inputs.Exists(name)) await _inputs.SaveAsync(name, bytes);
+                // fetched in JS, so the picture never comes to .NET (the page's base href, as HttpClient's base address)
+                using var response = await _js.Fetch("examples/" + name);
+                if (!response.Ok) continue;
+                using var buffer = await response.ArrayBuffer();
+                if (!_inputs.Exists(name)) await _inputs.SaveAsync(name, new JsBytes(new Uint8Array(buffer)));
             }
-            catch (HttpRequestException) { }
+            catch (Exception) { } // offline: the inputs are simply without them
         }
     }
 
@@ -245,7 +250,8 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             if (read / step != lastLogged / step || read >= length) { lastLogged = read; Console.WriteLine($"[models] streamed {read / 1e9:F2} of {length / 1e9:F2} GB"); }
         };
         var runtime = new MlRuntime(source, accelerator);
-        if (accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator gpu) _ = WatchDeviceAsync(gpu.NativeAccelerator.NativeDevice, runtime);
+        // an open WebGPU accelerator has its device; watch it for loss
+        if (accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator { NativeAccelerator.NativeDevice: { } device }) _ = WatchDeviceAsync(device, runtime);
         return runtime;
     }
 
@@ -363,10 +369,10 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     /// An input file's bytes, or null when there is none: a workflow's example.png this page never had must not throw out of a render (the App
     /// Builder's preview threw FileNotFoundException for it, TJ 2026-11-18).
     /// </summary>
-    byte[]? ReadInput(string path)
+    StoredBytes? ReadInput(string path)
     {
         if (path.Length == 0 || !_inputs.Exists(path)) return null;
-        try { return _inputs.ReadAsync(path).GetAwaiter().GetResult(); }
+        try { return _inputs.OpenAsync(path).GetAwaiter().GetResult(); }
         catch (Exception ex) when (ex is FileNotFoundException or UnauthorizedAccessException) { return null; } // a folder of that name
     }
 
@@ -376,12 +382,16 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _ => "image/png",
     };
 
-    public async Task<string?> UploadImageAsync(string name, byte[] png, string type = "input") => type switch
+    /// <summary>The file is read in JS (its ArrayBuffer) and kept there: the upload never comes to .NET.</summary>
+    public async Task<string?> UploadFileAsync(string name, Blob file, string type = "input")
     {
-        "input" => await _inputs.SaveAsync(Path.GetFileName(name), png),
-        "output" or "temp" => (await _results.WriteAsync(type, "", Path.GetFileName(name), png)).Filename,
-        _ => null,
-    };
+        if (type is not ("input" or "output" or "temp")) return null;
+        using var buffer = await file.ArrayBuffer();
+        var data = new JsBytes(new Uint8Array(buffer));
+        return type == "input"
+            ? await _inputs.SaveAsync(Path.GetFileName(name), data)
+            : (await _results.WriteStoredAsync(type, "", Path.GetFileName(name), data)).Filename;
+    }
 
     public async Task<IReadOnlyList<string>> ListInputImagesAsync()
     {

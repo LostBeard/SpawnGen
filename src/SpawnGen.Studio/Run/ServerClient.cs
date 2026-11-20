@@ -2,12 +2,14 @@ using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
+using SpawnDev.SpawnJS;
+using SpawnDev.SpawnJS.JSObjects;
 
 namespace SpawnGen.Studio.Run;
 
 
 /// <summary>Talks to the SpawnGen server that served this page: queues prompts over HTTP and receives progress over a WebSocket (the ComfyUI protocol).</summary>
-public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposable
+public sealed class ServerClient(HttpClient http, SpawnJSRuntime js) : IEngineClient, IAsyncDisposable
 {
     readonly CancellationTokenSource _stop = new();
     ClientWebSocket? _socket;
@@ -139,12 +141,15 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
     public Task CancelQueuedAsync(string promptId) =>
         http.PostAsJsonAsync("queue", new JsonObject { ["delete"] = new JsonArray(promptId) }, _stop.Token);
 
-    public async Task<string?> UploadImageAsync(string name, byte[] png, string type = "input")
+    /// <summary>Posts the file from JS (a FormData holding the Blob, through fetch), so its bytes never come to .NET.</summary>
+    public async Task<string?> UploadFileAsync(string name, Blob file, string type = "input")
     {
-        using var form = new MultipartFormDataContent { { new ByteArrayContent(png), "image", name }, { new StringContent(type), "type" } };
-        using var response = await http.PostAsync("upload/image", form, _stop.Token);
-        if (!response.IsSuccessStatusCode) return null;
-        return (string?)(await response.Content.ReadFromJsonAsync<JsonObject>(_stop.Token))?["name"];
+        using var form = new FormData();
+        form.Append("image", file, name);
+        form.Append("type", type);
+        using var response = await js.Fetch(new Uri(http.BaseAddress!, "upload/image").ToString(), new FetchOptions { Method = "POST", Body = form });
+        if (!response.Ok) return null;
+        return (string?)JsonNode.Parse(await response.Text())?["name"];
     }
 
     public async Task<SpawnGen.Runtime.ModelCacheInfo> GetModelCacheAsync()

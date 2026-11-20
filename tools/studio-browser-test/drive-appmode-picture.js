@@ -45,7 +45,10 @@ const APPLE = path.join(__dirname, 'apple.png');
   await page.click('.app-builder-bar button:has-text("Next")'); await page.waitForTimeout(400);
   await page.click('.app-default button:has-text("Apply")'); await page.waitForTimeout(800);
   check('Apply shows the app', (await page.locator('.appmode:not(.preview)').count()) === 1);
-  await page.setInputFiles('.appmode:not(.preview) .app-field input[type=file]', APPLE);
+  // the app's "Upload a picture" button opens the page's file picker (the same one a node's upload button opens, so the file is read in JS)
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 10000 }),
+    page.locator('.appmode:not(.preview) .app-field button:has-text("Upload a picture")').first().click()]);
+  await chooser.setFiles(APPLE);
   await page.waitForTimeout(1500);
   const app = page.locator('.appmode:not(.preview) .app-field').first();
   check('the app shows the uploaded picture and chose it', (await app.locator('img.app-picture').count()) === 1

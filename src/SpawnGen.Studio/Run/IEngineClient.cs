@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using SpawnDev.SpawnJS.JSObjects;
 
 namespace SpawnGen.Studio.Run;
 
@@ -32,9 +33,10 @@ public interface IEngineClient
 
     /// <summary>
     /// Makes a file available to the file nodes (ComfyUI's /upload/image): into the input folder, or the output folder with <paramref name="type"/>
-    /// "output" (Load Image (from Outputs)). Returns the name it is stored under, null when the engine refuses it.
+    /// "output" (Load Image (from Outputs)). Returns the name it is stored under, null when the engine refuses it. The file is the page's own
+    /// JS Blob (a picked or dropped File, the mask editor's PNG): it goes to the engine from JS and never into .NET (AGENTS.md rule 4).
     /// </summary>
-    Task<string?> UploadImageAsync(string name, byte[] png, string type = "input");
+    Task<string?> UploadFileAsync(string name, Blob file, string type = "input");
 
     /// <summary>The model files this engine has downloaded and the downloads in progress (the model manager).</summary>
     Task<SpawnGen.Runtime.ModelCacheInfo> GetModelCacheAsync();

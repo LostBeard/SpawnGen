@@ -180,17 +180,6 @@ public partial class Studio
         Registry.GetSchema(node.ClassType)?.Inputs.FirstOrDefault(i => i.Name == widget)?.Widget is { } combo
         && node.Widgets.GetValueOrDefault(widget) is string name && PicturePreviewUrl(name, combo) is { Length: > 0 } url ? url : null;
 
-    /// <summary>A picture uploaded from the app goes to the engine's inputs and into the input it was uploaded for.</summary>
-    async Task OnAppPictureChosenAsync(InputFileChangeEventArgs e, EditorNode node, string widget)
-    {
-        try
-        {
-            var combo = Registry.GetSchema(node.ClassType)?.Inputs.FirstOrDefault(i => i.Name == widget)?.Widget;
-            if (await UploadForComboAsync(e.File, combo) is { } value) SetAppInput(node, widget, value);
-        }
-        catch (IOException ex) { ShowMessage($"Could not read {e.File.Name}: {ex.Message}"); }
-    }
-
     /// <summary>The run the app's output area shows, and its results from the app's output nodes (all its results when none are chosen).</summary>
     (HistoryEntry? Run, List<RunItem> Items) AppResults()
     {

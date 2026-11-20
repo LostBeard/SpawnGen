@@ -20,25 +20,13 @@
         <span class="dismiss">x</span>
     </div>
     <script>
-        // Lets files be dropped on the editor: they go to the page (OnFileDropped) as bytes.
-        window.spawngenEnableDrop = function (dotnetRef, selector) {
-            const el = document.querySelector(selector);
-            el.addEventListener("dragover", e => e.preventDefault());
-            el.addEventListener("drop", async e => {
-                e.preventDefault();
-                const node = e.dataTransfer.getData("text/spawngen-node");
-                if (node) { const r = el.getBoundingClientRect(); await dotnetRef.invokeMethodAsync("OnNodeDropped", node, e.clientX - r.left, e.clientY - r.top); return; }
-                for (const f of e.dataTransfer.files)
-                    await dotnetRef.invokeMethodAsync("OnFileDropped", f.name, new Uint8Array(await f.arrayBuffer()));
-            });
-        };
         // A node dragged out of the library carries its class name.
         document.addEventListener("dragstart", e => {
             const n = e.target.closest && e.target.closest("[data-node]");
             if (n) { e.dataTransfer.setData("text/spawngen-node", n.dataset.node); e.dataTransfer.effectAllowed = "copy"; }
         });
         // The mask editor: paint over a picture, get it back as a PNG whose painted pixels are transparent (what Load Image turns into its mask).
-        // Resolves with the PNG bytes, or null when cancelled or the picture cannot be read.
+        // Resolves with the PNG as a Blob (it stays in JS), or null when cancelled or the picture cannot be read.
         window.spawngenMaskEditor = function (imageUrl) {
             return new Promise(async resolve => {
                 const img = new Image();
@@ -105,7 +93,7 @@
                     const tmp = document.createElement("canvas"); tmp.width = w; tmp.height = h;
                     tmp.getContext("2d").putImageData(d, 0, 0);
                     octx.drawImage(tmp, 0, 0);
-                    out.toBlob(async blob => finish(blob ? new Uint8Array(await blob.arrayBuffer()) : null), "image/png");
+                    out.toBlob(blob => finish(blob || null), "image/png");
                 };
             });
         };

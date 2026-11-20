@@ -151,8 +151,16 @@ Image's names (`%batch_num%` is the picture's index while the counter is the one
 ComfyUI's do), its PNG text (prompt, then each extra_pnginfo entry) and the preview prefixes (ComfyUI_temp_ / comfy.compare.a_temp_ / b_temp_ with
 the same five letters, comfy.bboxes.background_temp_ for the first background picture only). Preview Image's files carry the prompt; the previews
 of Compare Images, Preview Mask and the other newer nodes carry no text, as ComfyUI's. Deliberate differences: ComfyUI (PyAV) fails with
-"Invalid argument" on grey, grey + alpha, 1-bit, grey JPEG and 16-bit PNGs; SpawnGen loads them as Pillow does (a 16-bit picture by its high
-bytes); PngReader now reads 1-, 2- and 4-bit grey and palette PNGs (PNG spec 7.2, 13.12). Temporary files are numbered as ComfyUI numbers them
+"Invalid argument" on the grey, grey + alpha, 1-bit, grey JPEG and 16-bit PNGs of Fixtures/image_nodes; SpawnGen loads them. PngReader reads 1-, 2-
+and 4-bit grey and palette PNGs (PNG spec 7.2, 13.12).
+Load Image decoding is held to correctness (TJ 2026-11-20), checked on one file per case (Fixtures/decode_corpus, tools/decode-corpus:
+make_corpus.py writes them, make_reference.py computes the spec-correct picture with its own PNG decoder and libjpeg for JPEG;
+LoadImageCorpusTests, 42 files): PNG exact (16-bit samples kept at 16 bits, s / 65535; Adam7-interlaced pictures; a grey or RGB tRNS colour
+transparent; the eXIf orientation applied), JPEG within libjpeg's freedom (all eight EXIF orientations, mirrors too; CMYK with Adobe's inverted
+values, (255 - C)(255 - K) / 255 rounded as Pillow; YCCK refused with the reason). Measured with ComfyUI's Load Image on the same files
+(tools/decode-corpus/run_comfy.py, 2026-11-20; it loads these grey and 16-bit files): JPEG as ffmpeg's rgb24 (4:2:0 up to 36/255 off libjpeg),
+grey as v x 256 / 65535 (white is 0.996), 16-bit colour within 0.1/255 of s / 65535, EXIF mirrors (orientations 2, 4, 5, 7) not applied, a
+CMYK JPEG given a mask of 1/255; SpawnGen keeps the correct values. Temporary files are numbered as ComfyUI numbers them
 (prefix_00001_.png), in both of SpawnGen's stores.
 Deliberate differences (SpawnGen is more forgiving where ComfyUI fails): Convert Image to Mask with channel "alpha" on an image without alpha gives a mask of ones (ComfyUI: IndexError); Image Blur / Image Sharpen with a radius as large as the picture keep mirroring the edges (ComfyUI: PyTorch's reflect-padding error).
 Deliberate difference: Convert Image Color Space computes every pixel in double precision and rounds once, so it gives the exact values where

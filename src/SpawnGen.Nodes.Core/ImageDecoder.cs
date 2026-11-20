@@ -75,7 +75,7 @@ public static class ImageDecoder
     /// </summary>
     public static ImageBatch DecodePillowRgb(byte[] data)
     {
-        if (IsPng(data)) return PngReader.Decode(data, out _, pillowGray16: true);
+        if (IsPng(data)) return PngReader.Decode(data, out _, pillowRgb: true);
         if (JpegReader.IsJpeg(data)) return JpegReader.Decode(data, applyOrientation: false);
         throw Unsupported(data, codecsMissing: false);
     }

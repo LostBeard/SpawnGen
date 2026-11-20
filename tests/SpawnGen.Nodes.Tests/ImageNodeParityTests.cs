@@ -70,15 +70,18 @@ public class ImageNodeParityTests
             return;
         }
 
-        // ComfyUI raises on this picture; SpawnGen loads it as Pillow sees it (a 16-bit grey picture: its high bytes).
+        // ComfyUI raises on this picture; SpawnGen loads it. A 16-bit picture keeps its 16 bits (TJ 2026-11-20: decoding is held to
+        // correctness; the exact values are checked against the PNG specification in LoadImageCorpusTests), so here it is within one 8-bit
+        // step of what Pillow's 8-bit view (the high byte) gives.
         Assert.That(fx.GetProperty("error").GetString(), Does.StartWith("ArgumentError"));
         int n = image.Height * image.Width;
+        float pillowTolerance = file.Contains("16") ? 1 / 255f : (float)tolerance;
         if (fx.GetProperty("pillow_rgba").ValueKind == JsonValueKind.Null)
         {
             var high = fx.GetProperty("high_byte").EnumerateArray().Select(e => e.GetInt32()).ToArray();
             Assert.That(high, Has.Length.EqualTo(n));
             for (int i = 0; i < n; i++)
-                for (int c = 0; c < 3; c++) Assert.That(image.Data[i * 3 + c], Is.EqualTo(high[i] / 255f), $"{file} pixel {i}");
+                for (int c = 0; c < 3; c++) Assert.That(image.Data[i * 3 + c], Is.EqualTo(high[i] / 255f).Within(pillowTolerance), $"{file} pixel {i}");
             Assert.That(mask.Shape, Is.EqualTo(new[] { 1, 64, 64 }));
             return;
         }
@@ -87,8 +90,8 @@ public class ImageNodeParityTests
         bool hasAlpha = file is "la.png" or "rgba16.png";
         for (int i = 0; i < n; i++)
         {
-            for (int c = 0; c < 3; c++) Assert.That(image.Data[i * 3 + c], Is.EqualTo(rgba[i * 4 + c] / 255f).Within(tolerance), $"{file} pixel {i}");
-            if (hasAlpha) Assert.That(mask.Data[i], Is.EqualTo(1f - rgba[i * 4 + 3] / 255f), $"{file} mask {i}");
+            for (int c = 0; c < 3; c++) Assert.That(image.Data[i * 3 + c], Is.EqualTo(rgba[i * 4 + c] / 255f).Within(pillowTolerance), $"{file} pixel {i}");
+            if (hasAlpha) Assert.That(mask.Data[i], Is.EqualTo(1f - rgba[i * 4 + 3] / 255f).Within(pillowTolerance), $"{file} mask {i}");
         }
         Assert.That(mask.Shape, Is.EqualTo(hasAlpha ? new[] { 1, image.Height, image.Width } : new[] { 1, 64, 64 }));
     }

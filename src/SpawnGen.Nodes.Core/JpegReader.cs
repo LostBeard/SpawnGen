@@ -117,21 +117,9 @@ public static class JpegReader
 
         void ReadExif(int p, int end)
         {
-            // "Exif\0\0" then a TIFF header; only the orientation tag of the first IFD matters.
+            // "Exif\0\0" then the TIFF data, whose first IFD holds the orientation (ExifOrientation)
             if (end - p < 14 || d[p] != 'E' || d[p + 1] != 'x' || d[p + 2] != 'i' || d[p + 3] != 'f') return;
-            int t = p + 6;
-            bool little = d[t] == 'I';
-            int U16t(int o) => little ? d[o] | (d[o + 1] << 8) : (d[o] << 8) | d[o + 1];
-            int U32t(int o) => little ? d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24) : (d[o] << 24) | (d[o + 1] << 16) | (d[o + 2] << 8) | d[o + 3];
-            if (U16t(t + 2) != 42) return;
-            int ifd = t + U32t(t + 4);
-            if (ifd < t || ifd + 2 > end) return;
-            int entries = U16t(ifd);
-            for (int i = 0; i < entries && ifd + 2 + (i + 1) * 12 <= end; i++)
-            {
-                int e = ifd + 2 + i * 12;
-                if (U16t(e) == 0x0112) { int v = U16t(e + 8); if (v is >= 1 and <= 8) _orientation = v; return; }
-            }
+            _orientation = ExifOrientation.Read(d.AsSpan(p + 6, end - (p + 6)));
         }
 
         void ReadQuant(int p, int end)
@@ -158,7 +146,7 @@ public static class JpegReader
             _width = U16(p + 3);
             int n = d[p + 5];
             if (_width == 0 || _height == 0) throw new InvalidDataException("JPEG has no size (DNL is not supported).");
-            if (n is not (1 or 3)) throw new NotSupportedException($"JPEG with {n} components is not supported (greyscale and colour are).");
+            if (n is not (1 or 3 or 4)) throw new NotSupportedException($"JPEG with {n} components is not supported (greyscale, colour and CMYK are).");
             _components = new Component[n];
             for (int i = 0; i < n; i++)
             {
@@ -448,8 +436,13 @@ public static class JpegReader
             var planes = _components.Select(Plane).ToArray();
             var img = new ImageBatch(1, _height, _width, 3);
             bool ycc = _components.Length == 3 && _adobeTransform != 0;
+            // CMYK (4 components): an Adobe APP14 marker means the values are stored inverted (Photoshop's convention, which libjpeg / Pillow
+            // follow); RGB = (255 - C)(255 - K) / 255 rounded, as Pillow's CMYK -> RGB conversion (measured on files with a real K channel).
+            // YCCK (Adobe transform 2) is not read: no file to check it against.
+            bool cmyk = _components.Length == 4, inverted = cmyk && _adobeTransform >= 0;
+            if (cmyk && _adobeTransform == 2) throw new NotSupportedException("JPEG in YCCK colour (Adobe transform 2) is not supported yet (CMYK is).");
             if (_components.Length == 3 && _adobeTransform < 0 && _components[0].Id == 'R' && _components[1].Id == 'G' && _components[2].Id == 'B') ycc = false;
-            var vals = new float[3];
+            var vals = new float[4];
             for (int y = 0; y < _height; y++)
                 for (int x = 0; x < _width; x++)
                 {
@@ -461,6 +454,13 @@ public static class JpegReader
                     }
                     float r, g, b;
                     if (_components.Length == 1) r = g = b = vals[0];
+                    else if (cmyk)
+                    {
+                        int Byte(float v) => (int)Math.Clamp(MathF.Round(v), 0f, 255f);
+                        int Ink(float v) => inverted ? Byte(v) : 255 - Byte(v); // 255 - C (etc.): how much light the ink lets through
+                        int k = Ink(vals[3]);
+                        r = (Ink(vals[0]) * k + 127) / 255; g = (Ink(vals[1]) * k + 127) / 255; b = (Ink(vals[2]) * k + 127) / 255;
+                    }
                     else if (ycc)
                     {
                         float Y = vals[0], cb = vals[1] - 128f, cr = vals[2] - 128f;
@@ -472,33 +472,7 @@ public static class JpegReader
                     img.Data[o + 1] = Math.Clamp(MathF.Round(g), 0f, 255f) / 255f;
                     img.Data[o + 2] = Math.Clamp(MathF.Round(b), 0f, 255f) / 255f;
                 }
-            return applyOrientation ? Orient(img, _orientation) : img;
-        }
-
-        /// <summary>Applies the EXIF orientation (1 = as stored; 2 mirror; 3 rotate 180; 4 flip; 5 transpose; 6 rotate 90 cw; 7 transverse; 8 rotate 270 cw).</summary>
-        static ImageBatch Orient(ImageBatch img, int orientation)
-        {
-            if (orientation == 1) return img;
-            int w = img.Width, h = img.Height;
-            bool swap = orientation >= 5;
-            int nw = swap ? h : w, nh = swap ? w : h;
-            var o = new ImageBatch(1, nh, nw, 3);
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    var (nx, ny) = orientation switch
-                    {
-                        2 => (w - 1 - x, y),
-                        3 => (w - 1 - x, h - 1 - y),
-                        4 => (x, h - 1 - y),
-                        5 => (y, x),
-                        6 => (h - 1 - y, x),
-                        7 => (h - 1 - y, w - 1 - x),
-                        _ => (y, w - 1 - x),
-                    };
-                    Array.Copy(img.Data, (y * w + x) * 3, o.Data, (ny * nw + nx) * 3, 3);
-                }
-            return o;
+            return applyOrientation ? ExifOrientation.Apply(img, _orientation) : img;
         }
     }
 }

@@ -1,0 +1,300 @@
+{
+ "jpeg_420.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_422.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_444.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_cmyk.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_cmyk_k.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_gray.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_orientation1.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_orientation2.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_orientation3.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_orientation4.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_orientation5.jpg": {
+  "exact": false,
+  "height": 97,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 61
+ },
+ "jpeg_orientation6.jpg": {
+  "exact": false,
+  "height": 97,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 61
+ },
+ "jpeg_orientation7.jpg": {
+  "exact": false,
+  "height": 97,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 61
+ },
+ "jpeg_orientation8.jpg": {
+  "exact": false,
+  "height": 97,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 61
+ },
+ "jpeg_progressive_420.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_progressive_444.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_q50_420.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "jpeg_restart_420.jpg": {
+  "exact": false,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_gray1.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_gray16.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_gray16_low_values.png": {
+  "exact": true,
+  "height": 61,
+  "image_float": true,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_gray2.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_gray4.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_gray8.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_gray8_interlaced.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_gray8_trns.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_gray_alpha8.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_palette1.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_palette2.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_palette4.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_palette4_interlaced.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_palette8.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_palette8_trns.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_rgb16.png": {
+  "exact": true,
+  "height": 61,
+  "image_float": true,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_rgb16_interlaced.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_rgb8.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_rgb8_interlaced.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 64,
+  "mask_width": 64,
+  "width": 97
+ },
+ "png_rgb8_trns.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_rgba16.png": {
+  "exact": true,
+  "height": 61,
+  "image_float": true,
+  "mask_float": true,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_rgba8.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_rgba8_interlaced.png": {
+  "exact": true,
+  "height": 61,
+  "mask_height": 61,
+  "mask_width": 97,
+  "width": 97
+ },
+ "png_rgba8_orientation6.png": {
+  "exact": true,
+  "height": 97,
+  "mask_height": 97,
+  "mask_width": 61,
+  "width": 61
+ }
+}

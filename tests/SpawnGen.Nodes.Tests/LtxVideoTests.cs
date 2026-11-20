@@ -49,6 +49,7 @@ public class LtxVideoTests
         var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
         if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
         var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "ltx_out");
+        if (Directory.Exists(outDir)) Directory.Delete(outDir, true); // an earlier run's frames would be counted (100 for 50, 2026-11-20)
         Directory.CreateDirectory(outDir);
         using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
         var executor = new PromptExecutor(Registry(), new Services(runtime, new OutputOptions { Directory = outDir, TempDirectory = outDir }));
@@ -89,6 +90,7 @@ public class LtxVideoTests
         while (repo is not null && !File.Exists(Path.Combine(repo.FullName, "SpawnGen.slnx"))) repo = repo.Parent;
         var pictureBytes = File.ReadAllBytes(Path.Combine(repo!.FullName, "src", "SpawnGen.Studio", "wwwroot", "examples", "example.png"));
         var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "ltx_i2v_out", $"{width}x{height}");
+        if (Directory.Exists(outDir)) Directory.Delete(outDir, true); // only this run's frames
         Directory.CreateDirectory(outDir);
         var inputs = new MemoryInputStore();
         await inputs.SaveAsync("example.png", pictureBytes);

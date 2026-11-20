@@ -18,7 +18,15 @@ has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchd
 
 ## Next deploy (TJ, 2026-11-20)
 
-One Pages + Hugging Face Space deploy when SpawnDev.Codecs 1.1.2 is on nuget.org: merge branch codecs-1.1.2-local (Codecs 1.1.2 +
+**2026-11-20 evening: main is ready for it.** device-frames merged on the released libraries: SpawnDev.ILGPU.ML 5.8.25, SpawnDev.Codecs
+1.1.3 (the WebGPU / RX 590 PNG fix, so branch codecs-1.1.3-local is retired: it only bumped versions) and SpawnDev.ILGPU 5.4.43 (Data:
+WebGL rows sized to the device's MAX_TEXTURE_SIZE, so Chrome without a GPU runs). Suite 3394 / 0 / 3; LTX-Video desktop GPU test on the
+RX 590 passes with the frames on the device (cold 96.6 s, warm 50.2 s, the clip decodes). Before the deploy: the Save Image examples and
+Text to video in Chrome against a local publish (PNGs decode), Data's --disable-gpu appmode drive. Then deploy and the full live check on
+both URLs (every example, the UI drives, TRELLIS on the HF Space). FLUX.2 Klein picture edit still trips the RX 590's driver watchdog
+(also on the live site, so not this merge): Tuvok's per-block submits, ML 5.8.26-local.1.
+
+Earlier plan (kept for the record): one Pages + Hugging Face Space deploy when SpawnDev.Codecs 1.1.2 is on nuget.org: merge branch codecs-1.1.2-local (Codecs 1.1.2 +
 ILGPU 5.4.41), suite, drives; deploy; then every example and the UI drives on both live URLs. It carries the animated-preview / download
 fix TJ reported, the device-tensor work, ML 5.8.24 (TRELLIS.2 and Wan Turbo in the browser) and the faster WebP save. ML 5.8.25
 (device-frames branch) goes in a later deploy.

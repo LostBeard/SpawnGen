@@ -28,7 +28,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     // and its .NET array dropped; .NET reads one back only when a node loads it.
     readonly MemoryResultStore _results = new(
         data => new JsBytes((Uint8Array)data),
-        async view => { var cv = (ILGPU.IContiguousArrayView)view.BaseView; return new JsBytes(await cv.Buffer.CopyToHostUint8ArrayAsync(cv.IndexInBytes, view.Length)); });
+        async view => new JsBytes(await view.CopyToHostUint8ArrayAsync())); // ILGPU 5.4.41's view overload (Data, 2026-11-20): exactly the view, into JS
 
     /// <summary>A result held in a JS Uint8Array.</summary>
     sealed class JsBytes(Uint8Array data) : StoredBytes

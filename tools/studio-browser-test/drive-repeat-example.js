@@ -1,6 +1,7 @@
 // Times one Examples-menu entry run several times in one page (the models stay loaded after the first), for before / after measurements of a
 // change: each run's own time as the History panel records it (Started to finished, to 0.1 s) and the wall time seen here (polled every 100 ms).
-// EXAMPLE (a substring of the menu label, default "Text to image (SD-Turbo"), RUNS (default 5), STUDIO_URL (default local :5280).
+// EXAMPLE (a substring of the menu label, default "Text to image (SD-Turbo") or PROMPT_FILE (an API JSON to open instead), RUNS (default 5),
+// STUDIO_URL (default local :5280).
 // Models come from the persistent profile out/site-profile (shared with drive-site-examples.js). Prints one line per run and a summary.
 const { chromium } = require('playwright-core');
 const path = require('path');
@@ -25,8 +26,15 @@ const RUNS = parseInt(process.env.RUNS || '5', 10);
   let timing = [];
   page.on('console', m => { const t = m.text(); if (/^\[(nodetimes|perop)\]/.test(t)) timing.push(t); });
   await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(4000);
-  await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
-  await page.locator('.menu li', { hasText: EXAMPLE }).first().click(); await page.waitForTimeout(2000);
+  if (process.env.PROMPT_FILE) {
+    // A fixed prompt (API JSON) instead of an Examples entry: with a fixed seed its upstream nodes are cached after run 1, so the warm runs
+    // time the output node alone (e.g. Save Animated WEBP's encode).
+    await page.selectOption('select.engine', { label: 'This browser (WebGPU)' });
+    await page.setInputFiles('input[accept=".json,.png"]', process.env.PROMPT_FILE); await page.waitForTimeout(2000);
+  } else {
+    await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
+    await page.locator('.menu li', { hasText: EXAMPLE }).first().click(); await page.waitForTimeout(2000);
+  }
   await page.click('button:has-text("History")'); await page.waitForTimeout(500);
   const status = async () => (await page.locator('.status').first().textContent({ timeout: 60000 }).catch(() => '')) ?? '';
   const pageSeconds = [], wall = [];
@@ -49,6 +57,6 @@ const RUNS = parseInt(process.env.RUNS || '5', 10);
   if (timing.length) console.log('last run:\n  ' + timing.join('\n  '));
   const warm = pageSeconds.slice(1).filter(x => !isNaN(x)).sort((a, b) => a - b);
   const median = warm.length ? warm[Math.floor(warm.length / 2)] : NaN;
-  console.log(`SUMMARY ${EXAMPLE}: first ${pageSeconds[0]} s; warm median ${median} s of ${warm.length} (${warm.join(', ')}); errors: ${problems.length ? problems.join(' | ') : 'none'}`);
+  console.log(`SUMMARY ${process.env.PROMPT_FILE || EXAMPLE}: first ${pageSeconds[0]} s; warm median ${median} s of ${warm.length} (${warm.join(', ')}); errors: ${problems.length ? problems.join(' | ') : 'none'}`);
   await context.close();
 })().catch(e => { console.error('SCRIPT ERROR', e); process.exit(2); });

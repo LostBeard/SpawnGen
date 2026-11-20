@@ -46,6 +46,12 @@ fs.mkdirSync(OUT, { recursive: true });
   }
   await page.waitForTimeout(2000);
   check('the run finished', !/fail|error/i.test(await page.textContent('.status')), (await page.textContent('.status')).trim().slice(0, 80));
+  // A node's error is drawn on the canvas, not logged (2026-11-20: Save Animated WEBP failed and only the node said so): the History
+  // entry's state says whether the run succeeded.
+  if (!(await page.locator('.hist-entry').count())) { await page.click('button:has-text("History")'); await page.waitForTimeout(800); }
+  const state = ((await page.locator('.hist-entry .hist-title').first().textContent().catch(() => '')) ?? '').trim();
+  check('the run succeeded (History says done)', state.endsWith('done'), state.slice(0, 80));
+  await page.click('button:has-text("History")'); await page.waitForTimeout(500); // closed again: the canvas checks need the node in view
 
   // The canvas repaints the playing frames: two samples half a frame apart differ (nothing else on the page moves).
   const sample = () => page.evaluate(() => {

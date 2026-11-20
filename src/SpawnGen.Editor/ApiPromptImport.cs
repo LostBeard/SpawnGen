@@ -76,11 +76,32 @@ public static class ApiPromptImport
             int column = depth[key];
             node.X = Margin + column * ColumnWidth;
             node.Y = Margin + rowTop.GetValueOrDefault(column);
-            rowTop[column] = rowTop.GetValueOrDefault(column) + hits.Geometry(node).Bounds.Height + RowGap;
+            rowTop[column] = rowTop.GetValueOrDefault(column) + LaidOutHeight(doc, hits, node) + RowGap;
         }
         doc.ClearHistory();
         return warnings;
     }
+
+    /// <summary>
+    /// The node's height with the picture it will show, measured as NodeLayout assumes a picture before it loads (square): a node with a picture
+    /// upload combo (Load Image ...) gets its chosen picture once the page has drawn it, and an output node taking an IMAGE (Save Image,
+    /// Preview Image, Save Animated WEBP ...) gets its result picture after a run. Without the room either grew over the node below it (live
+    /// site, 2026-11-20: the Upscale example's Load Image over Load Upscale Model; Remove the background's first Save Image under the second).
+    /// </summary>
+    static double LaidOutHeight(EditorDocument doc, HitTester hits, EditorNode node)
+    {
+        if (node.Previews.Count > 0 || doc.Registry.GetSchema(node.ClassType) is not { } schema || !ShowsPicture(doc, node, schema))
+            return hits.Geometry(node).Bounds.Height;
+        node.Previews = [new NodePreview("")];
+        try { return hits.Geometry(node).Bounds.Height; }
+        finally { node.Previews = []; }
+    }
+
+    static bool ShowsPicture(EditorDocument doc, EditorNode node, NodeSchema schema) =>
+        (schema.IsOutputNode && schema.Inputs.Any(i => i.Type.Name == "IMAGE"))
+        || (UploadWidget.ComboFor(schema) is { Widget.Upload: "image" } input
+            && doc.Graph.LinkInto(node.Id, input.Name) is null
+            && !string.IsNullOrEmpty(node.Widgets.GetValueOrDefault(input.Name) as string));
 
     /// <summary>True when the JSON is an API-format prompt (an object of nodes, each with a <c>class_type</c>) rather than a workflow.</summary>
     public static bool Looks(string json)

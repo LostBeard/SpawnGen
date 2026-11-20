@@ -101,7 +101,7 @@ upload / App drives; report what was not covered. Found and fixed 2026-11-19 (fi
   as that widget with the inner value and the port's label, its value goes to the inner widget when the graph runs, and saving writes the
   values into the definition's inner nodes with the instance's widgets_values empty, as ComfyUI does (PromotedWidgetTests on the template,
   red-checked). 49 of the 100 templates whose nodes all exist use promoted widgets.
-Open, measured: FLUX 3 Klein's first run in the browser took 20 min (download); the Upscale example's nodes overlap. Wan 2.2 5B Turbo now runs in the browser (ML 5.8.24, RX 590 Chrome: 1280x704 x 9 in 421 s warm, ab6f7ef);
+Open, measured: FLUX 3 Klein's first run in the browser took 20 min (download). Fixed 2026-11-20: Upscale, Remove the background and Pose and object detection had nodes that grew over their neighbours once pictures showed (ApiPromptImport reserves the square picture; ExamplesTests checks every example). Not covered: a tall portrait picture in a user's own API prompt can still grow past the square room. Wan 2.2 5B Turbo now runs in the browser (ML 5.8.24, RX 590 Chrome: 1280x704 x 9 in 421 s warm, ab6f7ef);
 next decide whether it is an example (its weights are ~12 GB); the template "Ready" set for the browser (6) grows only with hosted model files.
 
 ## Resume here (state at 2026-11-14 end of day)

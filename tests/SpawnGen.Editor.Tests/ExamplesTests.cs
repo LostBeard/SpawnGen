@@ -92,6 +92,33 @@ public class ExamplesTests
         }
         finally { InputFiles.Store = previous; }
     }
+
+    [TestCaseSource(nameof(Files))]
+    public void No_two_nodes_of_an_example_overlap_once_its_pictures_show(string file)
+    {
+        // The page lays an example out, then shows each Load Image's chosen picture under its widgets (Studio.SyncPicturePreviews): the
+        // Upscale example's Load Image grew over Load Upscale Model below it (live site, 2026-11-20). Give each node the picture it will show,
+        // at the shipped picture's real size, and each output node taking an IMAGE its result picture after a run (Remove the background's
+        // first Save Image ended up under the second); the examples' results are square or wider than tall, so square is the tallest. No two
+        // nodes may touch.
+        var registry = EditorDocumentFixtures.Registry();
+        var doc = new EditorDocument(registry);
+        ApiPromptImport.Load(File.ReadAllText(Path.Combine(ExamplesFolder(), file)), doc);
+        foreach (var node in doc.Graph.Nodes)
+            if (node.Widgets.GetValueOrDefault("image") is string name && ShippedPictures.Contains(name))
+            {
+                var picture = ImageDecoder.Decode(File.ReadAllBytes(Path.Combine(ExamplesFolder(), name)), out _);
+                node.Previews = [new NodePreview(name, picture.Width, picture.Height)];
+            }
+            else if (registry.GetSchema(node.ClassType) is { IsOutputNode: true } schema && schema.Inputs.Any(i => i.Type.Name == "IMAGE"))
+                node.Previews = [new NodePreview("result", 512, 512)];
+        var hits = new HitTester(doc);
+        var nodes = doc.Graph.Nodes.ToList();
+        for (int i = 0; i < nodes.Count; i++)
+            for (int j = i + 1; j < nodes.Count; j++)
+                Assert.That(hits.Geometry(nodes[i]).Bounds.Intersects(hits.Geometry(nodes[j]).Bounds), Is.False,
+                    $"{file}: {nodes[i].ClassType} and {nodes[j].ClassType} overlap");
+    }
 }
 
 /// <summary>The registry the editor tests use (the Fixtures class of the document tests).</summary>

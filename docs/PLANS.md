@@ -13,7 +13,7 @@ The live deploy (a24eb38, Codecs 1.1.2) saves Save Image PNGs that no decoder op
 deflate stream (every chunk CRC valid). CPU and OpenCL encode the same 512x512 picture correctly. Affects every example ending in Save
 Image (SD-Turbo, Image to image, ...). Asked of Geordi with the exact failing pixels; when a Codecs -local lands: the browser repro
 (drive-site-examples ONLY='SD-Turbo, 1 step|Image to image' against a local publish), then the next deploy. drive-site-examples now fails
-any run whose result picture cannot be decoded (the old check passed this). TRELLIS on the HF Space is retested in that deploy (ML 5.8.25
+any run whose result picture cannot be decoded (the old check passed this). TJ (2026-11-20): no interim host-PNG workaround on the site; wait for the correct fix in Codecs. TRELLIS on the HF Space is retested in that deploy (ML 5.8.25
 has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchdog twice).
 
 ## Next deploy (TJ, 2026-11-20)

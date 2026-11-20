@@ -294,11 +294,29 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     internal static JsonObject SettingsJson(IReadOnlyDictionary<string, string> settings) =>
         new(settings.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value))));
 
-    /// <summary>Results live in memory here, so the picture itself is the URL (a data URL); "" when there is no such file.</summary>
-    public string ViewUrl(string filename, string? subfolder, string? type) =>
-        (type == "input" ? ReadInput(string.IsNullOrEmpty(subfolder) ? filename : $"{subfolder}/{filename}") : _results.Get(type ?? "output", filename, subfolder ?? "")) is { } bytes
-            ? $"data:{MediaType(filename)};base64," + Convert.ToBase64String(bytes)
-            : "";
+    readonly System.Threading.Lock _urlGate = new();
+    readonly Dictionary<(string Type, string Folder, string Name), (byte[] Data, string Url)> _urls = [];
+
+    /// <summary>
+    /// Results live in memory here: the URL is a blob URL of the file's bytes, made once per file (TJ, 2026-11-19: a base64 data URL built in .NET
+    /// for every view made the LTX example's WEBP slow to show). A file written again under the same name gets a new URL and the old one is revoked.
+    /// "" when there is no such file.
+    /// </summary>
+    public string ViewUrl(string filename, string? subfolder, string? type)
+    {
+        var key = (type ?? "output", subfolder ?? "", filename);
+        var bytes = key.Item1 == "input" ? ReadInput(string.IsNullOrEmpty(subfolder) ? filename : $"{subfolder}/{filename}") : _results.Get(key.Item1, filename, key.Item2);
+        if (bytes is null) return "";
+        lock (_urlGate)
+        {
+            if (_urls.TryGetValue(key, out var known) && ReferenceEquals(known.Data, bytes)) return known.Url;
+            using var blob = new Blob(new[] { bytes }, new BlobOptions { Type = MediaType(filename) });
+            var url = URL.CreateObjectURL(blob);
+            if (known.Url is { } stale) URL.RevokeObjectURL(stale);
+            _urls[key] = (bytes, url);
+            return url;
+        }
+    }
 
     /// <summary>
     /// An input file's bytes, or null when there is none: a workflow's example.png this page never had must not throw out of a render (the App

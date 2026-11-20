@@ -166,7 +166,38 @@
             const input = document.querySelector('.toolbar input[type=file][accept=".json,.png"]');
             if (input) input.click();
         };
-        // Saves a picture (a data or same-origin URL) as a file download.
+        // Plays an animated picture (Save Animated WEBP / PNG, a GIF) on a canvas of its own, which the node canvas draws every frame: a canvas
+        // drawImage of an animated <img> shows only its first frame (the HTML spec's rule; TJ 2026-11-19: the LTX example's WEBP sat still).
+        // WebCodecs' ImageDecoder decodes one frame at a time, so only one frame is held. Returns null where ImageDecoder is missing; the canvas
+        // stays 0 x 0 for a still picture or a type the browser cannot decode (the caller then shows the <img> as before).
+        window.spawngenAnimate = function (url) {
+            if (typeof ImageDecoder === "undefined") return null;
+            const canvas = document.createElement("canvas");
+            canvas.width = 0; canvas.height = 0;
+            (async () => {
+                const blob = await (await fetch(url)).blob();
+                if (!blob.type || !(await ImageDecoder.isTypeSupported(blob.type))) return;
+                const decoder = new ImageDecoder({ data: blob.stream(), type: blob.type });
+                try {
+                    await decoder.tracks.ready;
+                    const track = decoder.tracks.selectedTrack;
+                    if (!track || !track.animated) return;
+                    await decoder.completed;
+                    const ctx = canvas.getContext("2d");
+                    for (let index = 0; !canvas.spawngenStop; index = (index + 1) % track.frameCount) {
+                        const frame = (await decoder.decode({ frameIndex: index })).image;
+                        if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) { canvas.width = frame.displayWidth; canvas.height = frame.displayHeight; }
+                        ctx.drawImage(frame, 0, 0);
+                        const ms = frame.duration ? frame.duration / 1000 : 100;
+                        frame.close();
+                        await new Promise(r => setTimeout(r, Math.max(16, ms)));
+                    }
+                } finally { decoder.close(); }
+            })().catch(e => console.warn("spawngenAnimate", e));
+            return canvas;
+        };
+        window.spawngenAnimateStop = function (canvas) { if (canvas) canvas.spawngenStop = true; };
+        // Saves a picture (a data, blob or same-origin URL) as a file download.
         window.spawngenDownloadUrl = function (name, url) {
             const a = document.createElement("a");
             a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();

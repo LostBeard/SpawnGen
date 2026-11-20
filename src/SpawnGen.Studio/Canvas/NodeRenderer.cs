@@ -37,8 +37,12 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
 
     public void UseMeasureContext(CanvasRenderingContext2D ctx) => _measureContext = ctx;
 
+    /// <summary>Whether the last <see cref="Draw"/> showed an animated result: the canvas then keeps repainting so it plays.</summary>
+    public bool AnimationDrawn { get; private set; }
+
     public void Draw(CanvasRenderingContext2D ctx, double cssWidth, double cssHeight, double pixelRatio)
     {
+        AnimationDrawn = false;
         var vp = view.Viewport;
         var doc = view.Document;
 
@@ -480,12 +484,16 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         RoundRect(ctx, area, 5);
         ctx.FillStyle = Theme.Current.TextBoxFill;
         ctx.Fill();
+        // An animated result plays: its frames come from a canvas of its own, and the canvas is redrawn while one is in view.
+        var playing = preview.Animated && image is not null ? images.GetAnimation(preview.Url) : null;
+        if (preview.Animated) AnimationDrawn = true;
         if (image is not null)
         {
             ctx.Save();
             RoundRect(ctx, area, 5);
             ctx.Clip();
-            ctx.DrawImage(image, area.X, area.Y, area.Width, area.Height);
+            if (playing is not null) ctx.DrawImage(playing, area.X, area.Y, area.Width, area.Height);
+            else ctx.DrawImage(image, area.X, area.Y, area.Width, area.Height);
             ctx.Restore();
             if (node.CompareWith is { } other && images.Get(other.Url, (_, _) => view.Invalidate()) is { } second)
             {

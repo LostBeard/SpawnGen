@@ -63,11 +63,15 @@ public sealed class StudioCanvas : IDisposable
     {
         try
         {
+            var lastDraw = DateTime.MinValue;
             while (await _timer.WaitForNextTickAsync(_stop.Token))
             {
                 if (SyncSize()) _dirty = true;
+                // An animated result in view: repaint about 30 times a second so it plays (its frames advance on their own canvas).
+                if (!_dirty && _renderer.AnimationDrawn && (DateTime.UtcNow - lastDraw).TotalMilliseconds >= 33) _dirty = true;
                 if (!_dirty) continue;
                 _dirty = false;
+                lastDraw = DateTime.UtcNow;
                 BeforeDraw?.Invoke();
                 _renderer.Draw(_ctx, _cssWidth, _cssHeight, _ratio);
             }

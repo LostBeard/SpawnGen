@@ -96,6 +96,7 @@ function framesStart(b) {
       setTimeout(() => res(-2), 8000);
     }));
     const bytes = src.startsWith('data:') ? Buffer.from(src.split(',')[1], 'base64')
+      : src.startsWith('blob:') ? Buffer.from(await page.evaluate(async s => Array.from(new Uint8Array(await (await fetch(s)).arrayBuffer())), src))
       : Buffer.from(await (await page.request.get(new URL(src, STUDIO).href)).body());
     files[engine] = bytes;
     fs.writeFileSync(path.join(OUT, `drive-audio-${engine}.${FORMAT}`), bytes);

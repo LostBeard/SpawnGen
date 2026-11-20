@@ -1,4 +1,4 @@
-// Sound in the real page, on the in-page engine (no GPU, no model): upload a WAV, Load Audio -> Save Audio, the History panel offers an audio player for
+// Sound in the real page, on the in-page engine (WebGPU, no model): upload a WAV, Load Audio -> Save Audio, the History panel offers an audio player for
 // the saved file and the node says which file it wrote. A tone is made here and uploaded.
 const { chromium } = require('playwright-core');
 const fs = require('fs');
@@ -19,7 +19,7 @@ function wav(seconds, rate, freq) {
 
 (async () => {
   fs.writeFileSync(path.join(OUT, 'tone.wav'), wav(0.5, 16000, 440));
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--disable-gpu', '--enable-unsafe-webgpu'] });
+  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
   const problems = [];
   page.on('console', m => { if (m.type() === 'error') problems.push(m.text()); });
@@ -31,20 +31,23 @@ function wav(seconds, rate, freq) {
   await page.waitForSelector('canvas');
   await page.waitForTimeout(3500);
   await page.selectOption('select.engine', { label: 'This browser (WebGPU)' });
-  await page.setInputFiles('input[accept=".png,.jpg,.jpeg,.wav"]', path.join(OUT, 'tone.wav'));
+  await page.setInputFiles('input[type=file][accept*=".wav"]', path.join(OUT, 'tone.wav'));
   await page.waitForTimeout(800);
   await page.setInputFiles('input[accept=".json,.png"]', path.join(__dirname, 'audio-workflow.json'));
   await page.waitForTimeout(1200);
   await page.click('button:has-text("History")');
   await page.waitForSelector('.history');
   await page.locator('button:has-text("Queue")').click();
-  for (let i = 0; i < 40; i++) { await page.waitForTimeout(500); if (i > 2 && await page.locator('button:has-text("Queue")').isVisible()) break; }
+  // Done when the status no longer says Running / Queued (Queue stays visible while a run goes on).
+  for (let i = 0; i < 240; i++) { await page.waitForTimeout(500); if (i > 2 && !/Running|Queued/.test(await page.textContent('.status'))) break; }
   await page.waitForTimeout(800);
   await page.screenshot({ path: path.join(OUT, 'audio.png') });
+  if (!(await page.locator('.hist-entry').count())) { await page.click('button:has-text("History")'); await page.waitForTimeout(800); } // the panel starts closed
   const players = await page.locator('.hist-entry audio').count();
   check('the history entry has an audio player', players === 1, `${players}`);
   const src = await page.locator('.hist-entry audio').first().getAttribute('src');
-  check('it plays a WAV data URL of the saved sound', /^data:audio\/wav;base64,UklGR/.test(src || ''), (src || '').slice(0, 40));
+  const head = src ? await page.evaluate(async s => Array.from(new Uint8Array(await (await fetch(s)).arrayBuffer()).subarray(0, 4)), src) : [];
+  check('it plays a FLAC blob URL of the saved sound', /^blob:/.test(src || '') && Buffer.from(head).toString() === 'fLaC', (src || '').slice(0, 40));
   const duration = await page.locator('.hist-entry audio').first().evaluate(a => new Promise(r => { if (a.duration) return r(a.duration); a.onloadedmetadata = () => r(a.duration); a.load(); setTimeout(() => r(-1), 3000); }));
   check('the browser decodes it: half a second long', Math.abs(duration - 0.5) < 0.02, String(duration));
   check('no browser errors', problems.length === 0, problems.join(' | '));

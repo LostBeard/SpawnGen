@@ -196,4 +196,5 @@ public sealed class EditorGraph
 }
 
 /// <summary>An image a node produced (a result shown inside the node). <see cref="Width"/> and <see cref="Height"/> are 0 until the picture has loaded.</summary>
-public sealed record NodePreview(string Url, double Width = 0, double Height = 0);
+/// <summary>A node's result picture. <paramref name="Animated"/>: an animated picture (ComfyUI's ui "animated"), which the canvas plays.</summary>
+public sealed record NodePreview(string Url, double Width = 0, double Height = 0, bool Animated = false);

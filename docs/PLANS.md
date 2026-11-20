@@ -54,8 +54,11 @@ Each step: the Text to video example timed in Chrome on the RX 590 before and af
 Save Animated WEBP on the device, ComfyUI parity byte for byte on CPU and RX 590). Waiting: Tuvok's DeviceFrames (ML 5.8.25-local.2) for (d);
 Geordi's exact-size EncodeAnimationToDeviceAsync / ToUint8ArrayAsync (replaces the worst-case output buffers). Input files: done 2026-11-20 (A):
 uploads, drops, the mask editor's PNG and the example pictures stay in JS (IInputStore.OpenAsync / SaveAsync(StoredBytes), the engines'
-UploadFileAsync(Blob), the drop handled in C#, a PNG's workflow found chunk by chunk). Next (B): Load Image decodes on the device from those
-JS bytes (Codecs' ArrayView decoders), after a parity corpus test against the host decoder (Pillow-measured: EXIF, 16-bit, palette, JPEG).
+UploadFileAsync(Blob), the drop handled in C#, a PNG's workflow found chunk by chunk). (B) on branch load-image-device (74774e4): Load Image decodes on the
+device (IPictureDecoder / GpuPictureDecoder over Codecs), exact on the decode corpus on CPU, OpenCL and WebGPU (RX 590). Merge after: Codecs'
+WebGPU PNG decode finishes a 512x512 picture (today >2 min / driver watchdog; Geordi, after 1.1.3), the server tests' 9 s -> 152 s (GPU
+runtime opened per test) is fixed, and Codecs 1.1.4-local.1 (PNG eXIf orientation) for CodecsDecodeCorpusTests. Load Image's host decoders
+were made correct first (efb0832: 16-bit, tRNS, interlaced, PNG orientation, CMYK; TJ: decoding is held to correctness, not ComfyUI's PyAV).
 (e) part 1 done (996f1aa): Save Image / Preview Image / every SaveTempAsync preview encode a device picture with Codecs' GPU PNG
 (DevicePictureTests, red-checked). Audit after it (2026-11-19): IVaeModel is float[] in / out with a .NET NHWC loop (VaePictures.FromVae),
 and UNetRun.PredictAsync is float[] in / out, called every step and CFG branch while the sampler math runs in .NET. By bytes moved the

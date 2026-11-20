@@ -35,46 +35,28 @@ public sealed class SaveAnimatedWEBP
             throw new NotSupportedException($"Lossy WebP is encoded with libwebp's method 4 (\"default\") on the GPU; method \"{method}\" is not available yet.");
         if (images.Channels is not (3 or 4)) throw new ArgumentException($"WebP needs 3 or 4 channels, got {images.Channels}.", nameof(images));
         var accelerator = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
-        var (file, length) = await EncodeOnDeviceAsync(images, fps, quality, accelerator, lossless, m, ExifWriter.ComfyMetadata(Results.Metadata(context)));
         int w = images.Width, h = images.Height;
         var prefix = SavePrefix.ComputeVars(filenamePrefix, w, h, DateTime.Now);
-        ResultFile saved;
-        using (file) saved = (await Results.For(services).SaveDeviceAsync("output", prefix, file, length, "webp")).AsImage(w, h);
+        var store = Results.For(services);
+        var saved = (await EncodeOnDeviceAsync(images, fps, quality, accelerator, lossless, m, ExifWriter.ComfyMetadata(Results.Metadata(context)),
+            file => store.SaveDeviceAsync("output", prefix, file, "webp"))).AsImage(w, h);
         var ui = new UiOutput("images", new object[] { saved });
         if (images.Batch > 1) ui["animated"] = new object[] { true };
         return (images, ui);
     }
 
     /// <summary>The batch as a WebP file (animated for more than one picture), each frame int(1000 / fps) ms; <paramref name="method"/> is libwebp's 0-6.</summary>
-    public static async Task<byte[]> EncodeAsync(ImageBatch images, double fps, int quality, Accelerator accelerator,
-        bool lossless = true, int method = 4, byte[]? exif = null)
-    {
-        var (file, length) = await EncodeOnDeviceAsync(images, fps, quality, accelerator, lossless, method, exif);
-        using (file) return await file.View.SubView(0, length).CopyToHostAsync();
-    }
-
-    // Output bounds until Codecs' exact-size device overloads (EncodeAnimationToDeviceAsync / ToUint8ArrayAsync, Geordi 2026-11-19) are out.
-    // Lossless (Geordi: valid): per frame the encoder's own still bound, the EXIF and the container.
-    static long LosslessBound(int w, int h, int frames, int exif) =>
-        frames * (WebPLosslessEncoderGpu.GetMaxEncodedSize(w, h) + 64L) + Chunk(exif) + 1024;
-
-    // Lossy: Geordi's formula for his GetMaxAnimationEncodedSize (a guarantee; the encoder fails rather than exceed partition 0's capacity):
-    // VP8 <= 10 + (4096 + 64 mbs) + 7625 mbs + 1024, ALPH <= 1 + w h, each frame chunk(16 + chunk(ALPH) + chunk(VP8)), plus RIFF, VP8X, ANIM, EXIF.
-    static long LossyBound(int w, int h, int frames, int exif)
-    {
-        long mbs = (long)((w + 15) / 16) * ((h + 15) / 16);
-        long vp8 = 10 + (4096 + 64 * mbs) + 7625 * mbs + 1024, alph = 1 + (long)w * h;
-        return 12 + Chunk(10) + Chunk(6) + frames * Chunk(16 + Chunk(alph) + Chunk(vp8)) + Chunk(exif);
-    }
-
-    static long Chunk(long payload) => 8 + payload + (payload & 1);
+    public static Task<byte[]> EncodeAsync(ImageBatch images, double fps, int quality, Accelerator accelerator,
+        bool lossless = true, int method = 4, byte[]? exif = null) =>
+        EncodeOnDeviceAsync(images, fps, quality, accelerator, lossless, method, exif, file => file.CopyToHostAsync());
 
     /// <summary>
-    /// <see cref="EncodeAsync"/> on the device: the file in a device buffer the caller disposes, and its length. The pictures go to RGBA8 in
-    /// <see cref="ImageKernels.ToRgba8"/> (ComfyUI's truncation) and the encoder reads them there.
+    /// <see cref="EncodeAsync"/> on the device: <paramref name="consume"/> gets exactly the file as a device view, valid while it runs (an animation
+    /// is Codecs' EncodeAnimationToDeviceAsync: a view of the encoder's own buffer, no worst-case buffer; a single picture uses Codecs' bound).
+    /// The pictures go to RGBA8 in <see cref="ImageKernels.ToRgba8"/> (ComfyUI's truncation) and the encoder reads them there.
     /// </summary>
-    public static async Task<(MemoryBuffer1D<byte, Stride1D.Dense> File, int Length)> EncodeOnDeviceAsync(ImageBatch images, double fps, int quality,
-        Accelerator accelerator, bool lossless = true, int method = 4, byte[]? exif = null)
+    public static async Task<T> EncodeOnDeviceAsync<T>(ImageBatch images, double fps, int quality, Accelerator accelerator, bool lossless, int method,
+        byte[]? exif, Func<ArrayView1D<byte, Stride1D.Dense>, Task<T>> consume)
     {
         if (fps <= 0) throw new ArgumentOutOfRangeException(nameof(fps), "The frame rate must be above 0.");
         if (images.Channels is not (3 or 4)) throw new ArgumentException($"WebP needs 3 or 4 channels, got {images.Channels}.", nameof(images));
@@ -85,34 +67,30 @@ public sealed class SaveAnimatedWEBP
         ImageKernels.ToRgba8(accelerator, await images.ToDeviceAsync(accelerator), images.Channels, rgba.View);
         ArrayView1D<byte, Stride1D.Dense> bytes = rgba.View.BaseView.Cast<byte>();
         var frames = Enumerable.Range(0, n).Select(i => bytes.SubView(i * pixels * 4, pixels * 4)).ToList();
-        var file = accelerator.Allocate1D<byte>(lossless ? LosslessBound(w, h, n, exif.Length) : LossyBound(w, h, n, exif.Length));
-        try
+        int[] durations = [.. Enumerable.Repeat(duration, n)];
+        if (lossless)
         {
-            int length;
-            if (lossless)
-            {
-                using var enc = new WebPLosslessEncoderGpu(accelerator);
-                // Exact = false is libwebp's default (it may change the colour under fully transparent pixels).
-                length = n == 1
-                    ? await enc.EncodeAsync(frames[0], w, h, file.View, new WebPEncodeOptions { Quality = quality, Exact = false, Exif = exif })
-                    : await enc.EncodeAnimationAsync(frames, w, h, [.. Enumerable.Repeat(duration, n)], file.View,
-                        new WebPEncodeOptions { Quality = quality, Exact = false }, new WebPAnimEncoderOptions { Exif = exif });
-            }
-            else
-            {
-                using var enc = new WebPLossyEncoderGpu(accelerator);
-                // A single picture takes Pillow's still path, which strips the "Exif\0\0" prefix before libwebp writes the chunk.
-                length = n == 1
-                    ? await enc.EncodeAsync(frames[0], w, h, file.View, new WebPLossyEncodeOptions { Quality = quality, Method = m, Exif = exif[6..] })
-                    : await enc.EncodeAnimationAsync(frames, w, h, [.. Enumerable.Repeat(duration, n)], file.View,
-                        new WebPLossyEncodeOptions { Quality = quality, Method = m }, new WebPAnimEncoderOptions { Exif = exif });
-            }
-            return (file, length);
+            using var enc = new WebPLosslessEncoderGpu(accelerator);
+            // Exact = false is libwebp's default (it may change the colour under fully transparent pixels).
+            if (n > 1)
+                return await consume(await enc.EncodeAnimationToDeviceAsync(frames, w, h, durations,
+                    new WebPEncodeOptions { Quality = quality, Exact = false }, new WebPAnimEncoderOptions { Exif = exif }));
+            var still = new WebPEncodeOptions { Quality = quality, Exact = false, Exif = exif };
+            using var file = accelerator.Allocate1D<byte>(WebPLosslessEncoderGpu.GetMaxEncodedSize(w, h, still));
+            int length = await enc.EncodeAsync(frames[0], w, h, file.View, still);
+            return await consume(file.View.SubView(0, length));
         }
-        catch
+        else
         {
-            file.Dispose();
-            throw;
+            using var enc = new WebPLossyEncoderGpu(accelerator);
+            if (n > 1)
+                return await consume(await enc.EncodeAnimationToDeviceAsync(frames, w, h, durations,
+                    new WebPLossyEncodeOptions { Quality = quality, Method = m }, new WebPAnimEncoderOptions { Exif = exif }));
+            // A single picture takes Pillow's still path, which strips the "Exif\0\0" prefix before libwebp writes the chunk.
+            var still = new WebPLossyEncodeOptions { Quality = quality, Method = m, Exif = exif[6..] };
+            using var file = accelerator.Allocate1D<byte>(WebPLossyEncoderGpu.GetMaxEncodedSize(w, h, still));
+            int length = await enc.EncodeAsync(frames[0], w, h, file.View, still);
+            return await consume(file.View.SubView(0, length));
         }
     }
 }

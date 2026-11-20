@@ -28,7 +28,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     // and its .NET array dropped; .NET reads one back only when a node loads it.
     readonly MemoryResultStore _results = new(
         data => new JsBytes((Uint8Array)data),
-        async (buffer, length) => new JsBytes(await buffer.CopyToHostUint8ArrayAsync(0, length)));
+        async view => { var cv = (ILGPU.IContiguousArrayView)view.BaseView; return new JsBytes(await cv.Buffer.CopyToHostUint8ArrayAsync(cv.IndexInBytes, view.Length)); });
 
     /// <summary>A result held in a JS Uint8Array.</summary>
     sealed class JsBytes(Uint8Array data) : StoredBytes

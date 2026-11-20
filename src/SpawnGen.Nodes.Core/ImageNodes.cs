@@ -147,13 +147,13 @@ internal readonly record struct EncodedFile(byte[]? Host, MemoryBuffer1D<byte, S
     public async Task<ResultFile> SaveAsync(IResultStore store, string type, string prefix, string extension, bool trailingUnderscore)
     {
         if (Device is not { } d) return await store.SaveAsync(type, prefix, Host!, extension, trailingUnderscore);
-        using (d) return await store.SaveDeviceAsync(type, prefix, d, Length, extension, trailingUnderscore);
+        using (d) return await store.SaveDeviceAsync(type, prefix, d.View.SubView(0, Length), extension, trailingUnderscore);
     }
 
     public async Task<ResultFile> WriteAsync(IResultStore store, string type, string folder, string filename)
     {
         if (Device is not { } d) return await store.WriteAsync(type, folder, filename, Host!);
-        using (d) return await store.WriteDeviceAsync(type, folder, filename, d, Length);
+        using (d) return await store.WriteDeviceAsync(type, folder, filename, d.View.SubView(0, Length));
     }
 }
 

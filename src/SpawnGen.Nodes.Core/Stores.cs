@@ -71,14 +71,14 @@ public interface IResultStore
     Task<ResultFile> SaveStreamAsync(string type, string prefix, string extension, Func<Stream, Task> write, bool trailingUnderscore = true);
 
     /// <summary>
-    /// <see cref="SaveAsync"/> for a file a GPU encoder wrote into <paramref name="data"/> (its first <paramref name="length"/> bytes): the
-    /// bytes go where the store keeps files without passing through .NET where it can (the browser keeps them in JS; a folder store writes
-    /// them to disk, a terminal sink).
+    /// <see cref="SaveAsync"/> for a file a GPU encoder wrote: <paramref name="data"/> is exactly the file, on the device. The bytes go where the
+    /// store keeps files without passing through .NET where it can (the browser keeps them in JS; a folder store writes them to disk, a terminal
+    /// sink). The view need only stay valid until the returned task completes.
     /// </summary>
-    Task<ResultFile> SaveDeviceAsync(string type, string prefix, MemoryBuffer1D<byte, Stride1D.Dense> data, long length, string extension, bool trailingUnderscore = true);
+    Task<ResultFile> SaveDeviceAsync(string type, string prefix, ArrayView1D<byte, Stride1D.Dense> data, string extension, bool trailingUnderscore = true);
 
-    /// <summary><see cref="WriteAsync"/> for a file in a device buffer (its first <paramref name="length"/> bytes), kept as <see cref="SaveDeviceAsync"/> keeps it.</summary>
-    Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length);
+    /// <summary><see cref="WriteAsync"/> for a file on the device (exactly the file), kept as <see cref="SaveDeviceAsync"/> keeps it.</summary>
+    Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, ArrayView1D<byte, Stride1D.Dense> data);
 
     /// <summary>Writes a file under its own name into an existing folder (<see cref="DirectoryNotFoundException"/> when it is missing); replaces a file of that name.</summary>
     Task<ResultFile> WriteAsync(string type, string subfolder, string filename, byte[] data);
@@ -328,7 +328,7 @@ public abstract class ResultStore : IResultStore
         finally { _saving.Release(); }
     }
 
-    public async Task<ResultFile> SaveDeviceAsync(string type, string prefix, MemoryBuffer1D<byte, Stride1D.Dense> data, long length, string extension,
+    public async Task<ResultFile> SaveDeviceAsync(string type, string prefix, ArrayView1D<byte, Stride1D.Dense> data, string extension,
         bool trailingUnderscore = true)
     {
         var (subfolder, name) = SavePrefix.Split(prefix);
@@ -337,14 +337,14 @@ public abstract class ResultStore : IResultStore
         {
             CreateFolder(type, subfolder);
             var counter = SavePrefix.NextCounter(List(type, subfolder) ?? [], name);
-            return await WriteDeviceAsync(type, subfolder, SavePrefix.FileName(name, counter, extension, trailingUnderscore), data, length);
+            return await WriteDeviceAsync(type, subfolder, SavePrefix.FileName(name, counter, extension, trailingUnderscore), data);
         }
         finally { _saving.Release(); }
     }
 
-    /// <summary>Writes a file from a device buffer; by default copied to the host and written with <see cref="WriteAsync"/> (a file on disk is a terminal sink).</summary>
-    public virtual async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length) =>
-        await WriteAsync(type, subfolder, filename, await data.View.SubView(0, length).CopyToHostAsync());
+    /// <summary>Writes a file from the device; by default copied to the host and written with <see cref="WriteAsync"/> (a file on disk is a terminal sink).</summary>
+    public virtual async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, ArrayView1D<byte, Stride1D.Dense> data) =>
+        await WriteAsync(type, subfolder, filename, await data.CopyToHostAsync());
 
     /// <summary>Writes a file from a stream writer; by default through memory and <see cref="WriteAsync"/>.</summary>
     protected virtual async Task<ResultFile> WriteStreamAsync(string type, string subfolder, string filename, Func<Stream, Task> write)
@@ -441,7 +441,7 @@ public sealed class ManagedBytes(byte[] data) : StoredBytes
 /// <c>fromDevice</c> one a GPU encoder wrote (by default both are managed arrays; the browser keeps both in JS).
 /// </summary>
 public sealed class MemoryResultStore(Func<byte[], StoredBytes>? fromManaged = null,
-    Func<MemoryBuffer1D<byte, Stride1D.Dense>, long, Task<StoredBytes>>? fromDevice = null) : ResultStore
+    Func<ArrayView1D<byte, Stride1D.Dense>, Task<StoredBytes>>? fromDevice = null) : ResultStore
 {
     readonly Lock _gate = new();
     readonly HashSet<(string Type, string Folder)> _folders = [];
@@ -453,10 +453,8 @@ public sealed class MemoryResultStore(Func<byte[], StoredBytes>? fromManaged = n
     public override Task<ResultFile> WriteAsync(string type, string subfolder, string filename, byte[] data) =>
         Task.FromResult(Store(type, subfolder, filename, fromManaged?.Invoke(data) ?? new ManagedBytes((byte[])data.Clone())));
 
-    public override async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length) =>
-        Store(type, subfolder, filename, fromDevice is null
-            ? new ManagedBytes(await data.View.SubView(0, length).CopyToHostAsync())
-            : await fromDevice(data, length));
+    public override async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, ArrayView1D<byte, Stride1D.Dense> data) =>
+        Store(type, subfolder, filename, fromDevice is null ? new ManagedBytes(await data.CopyToHostAsync()) : await fromDevice(data));
 
     ResultFile Store(string type, string subfolder, string filename, StoredBytes bytes)
     {

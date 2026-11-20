@@ -160,3 +160,12 @@ public sealed class AudioLatentsAttribute : Attribute { }
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class NestedLatentsAttribute : Attribute { }
+
+/// <summary>
+/// The node takes its IMAGE / LATENT / MASK inputs wherever they are (on the GPU or the host) and moves what it needs itself
+/// (<see cref="SpawnGen.Engine.Types.HostTensor.ToDeviceAsync"/>, <see cref="SpawnGen.Engine.Types.HostTensor.ToHostAsync"/>). Every other node
+/// gets its tensor inputs on the host: the executor copies a device tensor down once before the node runs (AGENTS.md rule 4: only host nodes
+/// pay a copy).
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
+public sealed class DeviceTensorsAttribute : Attribute;

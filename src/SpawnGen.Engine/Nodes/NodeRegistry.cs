@@ -55,6 +55,10 @@ public sealed class RegisteredNode
     bool? _takesVideoLatents;
     /// <summary>Whether the node's class is marked <see cref="VideoLatentsAttribute"/>.</summary>
     bool TakesVideoLatents => _takesVideoLatents ??= Type.IsDefined(typeof(VideoLatentsAttribute), false);
+
+    /// <summary>The node is marked <see cref="DeviceTensorsAttribute"/>: its tensor inputs are passed as they are (else the executor brings them to the host).</summary>
+    public bool TakesDeviceTensors => _takesDeviceTensors ??= Type?.IsDefined(typeof(DeviceTensorsAttribute), false) == true; // a remote node has no type
+    bool? _takesDeviceTensors;
     bool? _takesAudioLatents;
     /// <summary>Whether the node's class is marked <see cref="AudioLatentsAttribute"/>.</summary>
     bool TakesAudioLatents => _takesAudioLatents ??= Type.IsDefined(typeof(AudioLatentsAttribute), false);

@@ -77,6 +77,8 @@ public sealed class PromptExecutor
             Cache.Trim();
             var outputs = validation.OutputNodeIds.Distinct(StringComparer.Ordinal).Where(run.Values.ContainsKey)
                 .ToDictionary(id => id, id => run.Values[id], StringComparer.Ordinal);
+            // GPU memory of this run's tensors that no cache entry holds and no caller is handed back is freed now.
+            Cache.ReleaseUnheld(run.Values.Values, outputs.Values);
             var finished = new ExecutionResult
             {
                 PromptId = promptId,
@@ -235,6 +237,8 @@ public sealed class PromptExecutor
                 NodeOutputs one;
                 try
                 {
+                    // A host node reads its tensors on the host: device tensors come down once here (awaited: WebGPU reads back asynchronously).
+                    if (!registered.TakesDeviceTensors) await Tensors.ToHostAsync(slice.Values).ConfigureAwait(false);
                     one = await registered.InvokeAsync(slice, Context(id, node, i)).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { throw; }

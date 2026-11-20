@@ -1,23 +1,122 @@
+using ILGPU;
+using ILGPU.Runtime;
+using SpawnDev.ILGPU;
+
 using SpawnGen.Engine.Nodes;
 
 namespace SpawnGen.Engine.Types;
 
-/// <summary>Dense float32 tensor on the host.</summary>
-public class HostTensor
+/// <summary>
+/// A dense float32 tensor (IMAGE, LATENT, MASK) held on the host (<see cref="Data"/>), on an accelerator (<see cref="View"/>: an owned ILGPU buffer),
+/// or both. AGENTS.md rule 4 (TJ, 2026-11-19): a GPU node's output stays on the GPU and the next GPU node takes it there; only a host node's inputs
+/// are copied to the host, once (the executor awaits <see cref="ToHostAsync"/> before a node not marked <see cref="Nodes.DeviceTensorsAttribute"/>
+/// runs). A tensor is not changed after the node that made it returns it. <see cref="Dispose"/> frees the device buffer (the result cache does when
+/// no entry holds the tensor any more).
+/// </summary>
+public class HostTensor : IDisposable
 {
+    float[]? _data;
+    MemoryBuffer1D<float, Stride1D.Dense>? _device;
+    Task? _toHost;
+    bool _disposed;
+
     public HostTensor(int[] shape, float[]? data = null)
     {
         Shape = shape;
+        Length = CheckedLength(shape);
+        _data = data ?? new float[Length];
+        if (_data.Length != Length)
+            throw new ArgumentException($"Data length {_data.Length} does not match shape [{string.Join(",", shape)}].", nameof(data));
+    }
+
+    /// <summary>A tensor whose values are in <paramref name="device"/> (owned from now on: disposed with the tensor).</summary>
+    protected HostTensor(int[] shape, MemoryBuffer1D<float, Stride1D.Dense> device)
+    {
+        Shape = shape;
+        Length = CheckedLength(shape);
+        if (device.Length < Length)
+            throw new ArgumentException($"The device buffer holds {device.Length} values; shape [{string.Join(",", shape)}] needs {Length}.", nameof(device));
+        _device = device;
+    }
+
+    static int CheckedLength(int[] shape)
+    {
         var length = 1L;
         foreach (var d in shape) length *= d;
         if (length > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(shape), "Tensor is too large.");
-        Data = data ?? new float[length];
-        if (Data.Length != length)
-            throw new ArgumentException($"Data length {Data.Length} does not match shape [{string.Join(",", shape)}].", nameof(data));
+        return (int)length;
     }
 
     public int[] Shape { get; }
-    public float[] Data { get; }
+
+    /// <summary>The number of values.</summary>
+    public int Length { get; }
+
+    /// <summary>
+    /// The values on the host. A device-only tensor throws: a node that reads values on the host is not marked <see cref="Nodes.DeviceTensorsAttribute"/>
+    /// (the executor then brings its inputs over first), or a device-aware node awaits <see cref="ToHostAsync"/> itself.
+    /// </summary>
+    public float[] Data => _data ?? throw new InvalidOperationException(_disposed
+        ? $"{this} was disposed."
+        : $"{this} is on the GPU only: await ToHostAsync() before reading Data (the executor does for nodes not marked [DeviceTensors]).");
+
+    /// <summary>Whether the values are on the host (<see cref="Data"/> may be read).</summary>
+    public bool OnHost => _data is not null;
+
+    /// <summary>Whether the values are on an accelerator.</summary>
+    public bool OnDevice => _device is not null;
+
+    /// <summary>The accelerator holding the values, or null.</summary>
+    public Accelerator? DeviceAccelerator => _device?.Accelerator;
+
+    /// <summary>The values on the device (exactly <see cref="Length"/> long); throws when the tensor is not on a device (see <see cref="ToDeviceAsync"/>).</summary>
+    public ArrayView1D<float, Stride1D.Dense> View =>
+        _device is { } d ? d.View.SubView(0, Length) : throw new InvalidOperationException($"{this} is not on a device: await ToDeviceAsync(accelerator) first.");
+
+    /// <summary>Brings the values to the host (one copy; the device buffer stays). Does nothing when they are there already.</summary>
+    public Task ToHostAsync()
+    {
+        if (_data is not null) return Task.CompletedTask;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _toHost ??= CopyDownAsync();
+    }
+
+    async Task CopyDownAsync()
+    {
+        var device = _device ?? throw new InvalidOperationException($"{this} has no values.");
+        _data = await device.View.SubView(0, Length).CopyToHostAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The values on <paramref name="accelerator"/>: the tensor's own buffer when it is there, else one upload from the host (kept for later
+    /// nodes). A tensor on another accelerator (after a lost device) is brought to the host first.
+    /// </summary>
+    public async Task<ArrayView1D<float, Stride1D.Dense>> ToDeviceAsync(Accelerator accelerator)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_device is { } d && d.Accelerator == accelerator) return View;
+        if (_data is null) await ToHostAsync().ConfigureAwait(false);
+        var old = _device;
+        _device = accelerator.Allocate1D(_data!);
+        old?.Dispose();
+        return View;
+    }
+
+    /// <summary>
+    /// The tensors this one carries (a latent's noise mask and its parts' masks): the executor brings them to the host with it, and they live as
+    /// long as it does.
+    /// </summary>
+    public virtual IEnumerable<HostTensor> Carried => [];
+
+    /// <summary>Frees the device buffer. The host values, when there are any, stay readable; a device-only tensor is gone.</summary>
+    public void Dispose()
+    {
+        if (_device is null) return;
+        _device.Dispose();
+        _device = null;
+        if (_data is null) _disposed = true;
+        GC.SuppressFinalize(this);
+    }
 
     /// <summary>The kind and shape ("ImageBatch [1, 512, 512, 3]"): how Preview as Text shows a tensor, also inside a list.</summary>
     public override string ToString() => $"{GetType().Name} [{string.Join(", ", Shape)}]";
@@ -29,6 +128,13 @@ public sealed class ImageBatch : HostTensor
 {
     public ImageBatch(int batch, int height, int width, int channels = 3, float[]? data = null)
         : base([batch, height, width, channels], data) { }
+
+    ImageBatch(int batch, int height, int width, int channels, MemoryBuffer1D<float, Stride1D.Dense> device)
+        : base([batch, height, width, channels], device) { }
+
+    /// <summary>Pictures whose values are in <paramref name="device"/> (NHWC, 0..1; owned from now on).</summary>
+    public static ImageBatch FromDevice(int batch, int height, int width, int channels, MemoryBuffer1D<float, Stride1D.Dense> device) =>
+        new(batch, height, width, channels, device);
 
     public int Batch => Shape[0];
     public int Height => Shape[1];
@@ -55,6 +161,15 @@ public sealed class LatentBatch : HostTensor
 
     /// <summary>A latent of any layout above (the keys, mask and parts are set with an object initializer).</summary>
     public LatentBatch(int[] shape, float[]? data = null) : base(shape, data) { }
+
+    LatentBatch(int[] shape, MemoryBuffer1D<float, Stride1D.Dense> device) : base(shape, device) { }
+
+    /// <summary>A latent whose values are in <paramref name="device"/> (owned from now on); keys, mask and parts as with the other constructors.</summary>
+    public static LatentBatch FromDevice(int[] shape, MemoryBuffer1D<float, Stride1D.Dense> device) => new(shape, device);
+
+    /// <summary>The noise mask and the parts' masks.</summary>
+    public override IEnumerable<HostTensor> Carried =>
+        (NoiseMask is { } m ? [m] : Array.Empty<HostTensor>()).Concat(PartMasks?.OfType<HostTensor>() ?? []);
 
     /// <summary>An audio latent [batch, channels, length] (ComfyUI's 3-D LATENT; ACE-Step 1.5: 64 channels, 25 frames per second).</summary>
     public static LatentBatch Audio(int batch, int channels, int length, float[]? data = null) => new([batch, channels, length], data);
@@ -181,6 +296,11 @@ public sealed class LatentBatch : HostTensor
 public sealed class MaskBatch : HostTensor
 {
     public MaskBatch(int batch, int height, int width, float[]? data = null) : base([batch, height, width], data) { }
+
+    MaskBatch(int batch, int height, int width, MemoryBuffer1D<float, Stride1D.Dense> device) : base([batch, height, width], device) { }
+
+    /// <summary>Masks whose values are in <paramref name="device"/> (NHW, 0..1; owned from now on).</summary>
+    public static MaskBatch FromDevice(int batch, int height, int width, MemoryBuffer1D<float, Stride1D.Dense> device) => new(batch, height, width, device);
 
     public int Batch => Shape[0];
     public int Height => Shape[1];

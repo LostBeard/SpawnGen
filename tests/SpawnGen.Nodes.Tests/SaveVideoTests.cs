@@ -88,8 +88,6 @@ public class SaveVideoTests
         using var acc = ilgpu.CreateCPUAccelerator(0);
         using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()), acc);
         var store = new MemoryResultStore();
-        byte[]? written = null;
-        store.Saved += (_, data) => written = data;
         var dump = Environment.GetEnvironmentVariable("SPAWNGEN_DUMP_DIR");
         var services = new Services(store, runtime);
         var encoding = new DynamicChoice("re-encode", new Dictionary<string, object?> { ["crf"] = 20.0 });
@@ -98,6 +96,7 @@ public class SaveVideoTests
         var (_, ui) = await new SaveVideo().ExecuteAsync(new VideoClip(Frames(3, width, 64), 24.0), NodeCtx(services), services, "video/probe_mkv", format);
 
         var file = (ResultFile)((object[])ui["images"]!)[0];
+        var written = store.Get(file.Type, file.Filename, file.Subfolder);
         Assert.That((file.Filename, file.Subfolder, file.Type), Is.EqualTo(("probe_mkv_00001_.mkv", "video", "output")));
         var m = file.Metadata!;
         Assert.That((m.Kind, m.Width, m.Height, m.Duration, m.Fps, m.FrameCount), Is.EqualTo(("video", width, 64, (double?)0.125, (double?)24.0, (int?)null)));
@@ -117,8 +116,6 @@ public class SaveVideoTests
         using var acc = ilgpu.CreateCPUAccelerator(0);
         using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()), acc);
         var store = new MemoryResultStore();
-        byte[]? written = null;
-        store.Saved += (_, data) => written = data;
         var services = new Services(store, runtime);
         var frames = Frames(3, 70, 50);
         var encoding = new DynamicChoice("re-encode", new Dictionary<string, object?> { ["crf"] = 4.0 });
@@ -127,6 +124,7 @@ public class SaveVideoTests
         var (_, ui) = await new SaveVideo().ExecuteAsync(new VideoClip(frames, 24.0), NodeCtx(services), services, "video/odd", format);
 
         var file = (ResultFile)((object[])ui["images"]!)[0];
+        var written = store.Get(file.Type, file.Filename, file.Subfolder);
         Assert.That((file.Filename, file.Metadata!.Width, file.Metadata.Height), Is.EqualTo(("odd_00001_.webm", 70, 50)));
         var video = await new WebMVideoLoaderGpu(acc).LoadAsync(written!);
         Assert.That((video.Width, video.Height, video.Frames.Count), Is.EqualTo((70, 50, 3)));

@@ -1,5 +1,8 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
+using ILGPU;
+using ILGPU.Runtime;
+using SpawnDev.ILGPU;
 
 namespace SpawnGen.Nodes.Core;
 
@@ -66,6 +69,13 @@ public interface IResultStore
     /// to disk).
     /// </summary>
     Task<ResultFile> SaveStreamAsync(string type, string prefix, string extension, Func<Stream, Task> write, bool trailingUnderscore = true);
+
+    /// <summary>
+    /// <see cref="SaveAsync"/> for a file a GPU encoder wrote into <paramref name="data"/> (its first <paramref name="length"/> bytes): the
+    /// bytes go where the store keeps files without passing through .NET where it can (the browser keeps them in JS; a folder store writes
+    /// them to disk, a terminal sink).
+    /// </summary>
+    Task<ResultFile> SaveDeviceAsync(string type, string prefix, MemoryBuffer1D<byte, Stride1D.Dense> data, long length, string extension, bool trailingUnderscore = true);
 
     /// <summary>Writes a file under its own name into an existing folder (<see cref="DirectoryNotFoundException"/> when it is missing); replaces a file of that name.</summary>
     Task<ResultFile> WriteAsync(string type, string subfolder, string filename, byte[] data);
@@ -315,6 +325,24 @@ public abstract class ResultStore : IResultStore
         finally { _saving.Release(); }
     }
 
+    public async Task<ResultFile> SaveDeviceAsync(string type, string prefix, MemoryBuffer1D<byte, Stride1D.Dense> data, long length, string extension,
+        bool trailingUnderscore = true)
+    {
+        var (subfolder, name) = SavePrefix.Split(prefix);
+        await _saving.WaitAsync();
+        try
+        {
+            CreateFolder(type, subfolder);
+            var counter = SavePrefix.NextCounter(List(type, subfolder) ?? [], name);
+            return await WriteDeviceAsync(type, subfolder, SavePrefix.FileName(name, counter, extension, trailingUnderscore), data, length);
+        }
+        finally { _saving.Release(); }
+    }
+
+    /// <summary>Writes a file from a device buffer; by default copied to the host and written with <see cref="WriteAsync"/> (a file on disk is a terminal sink).</summary>
+    protected virtual async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length) =>
+        await WriteAsync(type, subfolder, filename, await data.View.SubView(0, length).CopyToHostAsync());
+
     /// <summary>Writes a file from a stream writer; by default through memory and <see cref="WriteAsync"/>.</summary>
     protected virtual async Task<ResultFile> WriteStreamAsync(string type, string subfolder, string filename, Func<Stream, Task> write)
     {
@@ -384,31 +412,59 @@ public sealed class DiskResultStore(OutputOptions options) : ResultStore
     public override IReadOnlyList<string> FilesNewestFirst(string type) => StorePaths.FilesNewestFirst(Root(type));
 }
 
-/// <summary>Results kept in memory (the browser).</summary>
-public sealed class MemoryResultStore : ResultStore
+/// <summary>
+/// A stored result's bytes: a managed array, or in the browser a JS <c>Uint8Array</c> (AGENTS.md rule 4: browser bulk data stays in JS), which
+/// .NET reads only when a node loads the file.
+/// </summary>
+public abstract class StoredBytes
+{
+    /// <summary>The size in bytes.</summary>
+    public abstract long Length { get; }
+
+    /// <summary>The bytes as a managed array (a copy out of JS for a JS-held file).</summary>
+    public abstract byte[] Read();
+}
+
+/// <summary>Bytes held in a managed array (the desktop, the tests).</summary>
+public sealed class ManagedBytes(byte[] data) : StoredBytes
+{
+    public byte[] Data { get; } = data;
+    public override long Length => Data.LongLength;
+    public override byte[] Read() => Data;
+}
+
+/// <summary>
+/// Results kept in memory (the browser). Where the bytes live is the host's choice: <c>fromManaged</c> stores a file a host node wrote,
+/// <c>fromDevice</c> one a GPU encoder wrote (by default both are managed arrays; the browser keeps both in JS).
+/// </summary>
+public sealed class MemoryResultStore(Func<byte[], StoredBytes>? fromManaged = null,
+    Func<MemoryBuffer1D<byte, Stride1D.Dense>, long, Task<StoredBytes>>? fromDevice = null) : ResultStore
 {
     readonly Lock _gate = new();
     readonly HashSet<(string Type, string Folder)> _folders = [];
-    readonly Dictionary<(string Type, string Folder, string Name), (byte[] Data, long Order)> _files = [];
+    readonly Dictionary<(string Type, string Folder, string Name), (StoredBytes Data, long Order)> _files = [];
     long _order;
-
-    /// <summary>Raised after every file is written, with the file and its bytes.</summary>
-    public event Action<ResultFile, byte[]>? Saved;
 
     bool FolderExists(string type, string folder) => folder.Length == 0 || _folders.Contains((type, folder));
 
-    public override Task<ResultFile> WriteAsync(string type, string subfolder, string filename, byte[] data)
+    public override Task<ResultFile> WriteAsync(string type, string subfolder, string filename, byte[] data) =>
+        Task.FromResult(Store(type, subfolder, filename, fromManaged?.Invoke(data) ?? new ManagedBytes((byte[])data.Clone())));
+
+    protected override async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length) =>
+        Store(type, subfolder, filename, fromDevice is null
+            ? new ManagedBytes(await data.View.SubView(0, length).CopyToHostAsync())
+            : await fromDevice(data, length));
+
+    ResultFile Store(string type, string subfolder, string filename, StoredBytes bytes)
     {
         StorePaths.CheckFileName(filename);
         var folder = Folder(subfolder);
         lock (_gate)
         {
             if (!FolderExists(type, folder)) throw new DirectoryNotFoundException($"There is no folder '{folder}' in the {type} folder.");
-            _files[(type, folder, filename)] = ((byte[])data.Clone(), ++_order);
+            _files[(type, folder, filename)] = (bytes, ++_order);
         }
-        var file = new ResultFile(filename, folder, type);
-        Saved?.Invoke(file, data);
-        return Task.FromResult(file);
+        return new ResultFile(filename, folder, type);
     }
 
     public override void CreateFolder(string type, string subfolder)
@@ -432,7 +488,10 @@ public sealed class MemoryResultStore : ResultStore
 
     static string? Parent(string folder) => folder.LastIndexOf('/') is var s && s < 0 ? "" : folder[..s];
 
-    public override byte[]? Get(string type, string filename, string subfolder = "")
+    public override byte[]? Get(string type, string filename, string subfolder = "") => GetStored(type, filename, subfolder)?.Read();
+
+    /// <summary>The file's bytes where they are kept (a JS-held file is not copied into .NET), or null.</summary>
+    public StoredBytes? GetStored(string type, string filename, string subfolder = "")
     {
         var folder = Folder(subfolder);
         lock (_gate) return _files.TryGetValue((type, folder, filename), out var file) ? file.Data : null;

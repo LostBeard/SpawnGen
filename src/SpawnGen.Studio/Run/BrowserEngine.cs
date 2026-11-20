@@ -24,7 +24,19 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     readonly SpawnJSRuntime _js;
     readonly HttpClient _http;
     readonly RunEventBus _bus = new();
-    readonly MemoryResultStore _results = new();
+    // Results stay in JS (AGENTS.md rule 4): a GPU encoder's file goes from the device into a Uint8Array, a host node's file is copied in once
+    // and its .NET array dropped; .NET reads one back only when a node loads it.
+    readonly MemoryResultStore _results = new(
+        data => new JsBytes((Uint8Array)data),
+        async (buffer, length) => new JsBytes(await buffer.CopyToHostUint8ArrayAsync(0, length)));
+
+    /// <summary>A result held in a JS Uint8Array.</summary>
+    sealed class JsBytes(Uint8Array data) : StoredBytes
+    {
+        public Uint8Array Data { get; } = data;
+        public override long Length => Data.Length;
+        public override byte[] Read() => (byte[])Data;
+    }
     readonly MemoryInputStore _inputs = new();
 
     /// <summary>The pictures uploaded to this engine (Load Image reads them when this engine runs).</summary>
@@ -295,7 +307,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         new(settings.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value))));
 
     readonly System.Threading.Lock _urlGate = new();
-    readonly Dictionary<(string Type, string Folder, string Name), (byte[] Data, string Url)> _urls = [];
+    readonly Dictionary<(string Type, string Folder, string Name), (object Data, string Url)> _urls = [];
 
     /// <summary>
     /// Results live in memory here: the URL is a blob URL of the file's bytes, made once per file (TJ, 2026-11-19: a base64 data URL built in .NET
@@ -305,12 +317,18 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     public string ViewUrl(string filename, string? subfolder, string? type)
     {
         var key = (type ?? "output", subfolder ?? "", filename);
-        var bytes = key.Item1 == "input" ? ReadInput(string.IsNullOrEmpty(subfolder) ? filename : $"{subfolder}/{filename}") : _results.Get(key.Item1, filename, key.Item2);
+        // A result's blob is made from its JS bytes (nothing crosses into .NET); an input file is still a .NET array (the input store is next).
+        object? bytes = key.Item1 == "input" ? ReadInput(string.IsNullOrEmpty(subfolder) ? filename : $"{subfolder}/{filename}") : _results.GetStored(key.Item1, filename, key.Item2);
         if (bytes is null) return "";
         lock (_urlGate)
         {
             if (_urls.TryGetValue(key, out var known) && ReferenceEquals(known.Data, bytes)) return known.Url;
-            using var blob = new Blob(new[] { bytes }, new BlobOptions { Type = MediaType(filename) });
+            using var blob = bytes switch
+            {
+                JsBytes js => new Blob(new TypedArray[] { js.Data }, new BlobOptions { Type = MediaType(filename) }),
+                StoredBytes stored => new Blob(new[] { stored.Read() }, new BlobOptions { Type = MediaType(filename) }),
+                _ => new Blob(new[] { (byte[])bytes }, new BlobOptions { Type = MediaType(filename) }),
+            };
             var url = URL.CreateObjectURL(blob);
             if (known.Url is { } stale) URL.RevokeObjectURL(stale);
             _urls[key] = (bytes, url);

@@ -159,9 +159,8 @@ public class MaskUtilityTests
         g.Add("2", "FeatherMask", ("mask", PromptInput.Link("1")), ("left", 64), ("top", 16), ("right", 0), ("bottom", 0));
         g.Add("3", "MaskPreview", ("mask", PromptInput.Link("2")));
         var store = new MemoryResultStore();
-        var saved = new List<byte[]>();
-        store.Saved += (_, png) => saved.Add(png);
         var result = await new PromptExecutor(Registry(), new Services(store)).ExecuteAsync(g);
+        var saved = store.FilesNewestFirst("temp").Select(name => store.Get("temp", name)!).ToList();
 
         var outputs = result.Outputs["3"];
         var mask = (MaskBatch)outputs.Values.Single()!;

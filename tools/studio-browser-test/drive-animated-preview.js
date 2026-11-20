@@ -32,7 +32,7 @@ fs.mkdirSync(OUT, { recursive: true });
     '1': { class_type: 'LoadImage', inputs: { image: 'example.png' } },
     '2': { class_type: 'ImageInvert', inputs: { image: ['1', 0] } },
     '3': { class_type: 'ImageBatch', inputs: { image1: ['1', 0], image2: ['2', 0] } },
-    '4': { class_type: 'SaveAnimatedWEBP', inputs: { images: ['3', 0], filename_prefix: 'animcheck', fps: 2, lossless: false, quality: 80, method: 'default' } },
+    '4': { class_type: 'SaveAnimatedWEBP', inputs: { images: ['3', 0], filename_prefix: 'animcheck', fps: 2, lossless: process.env.LOSSLESS === '1', quality: 80, method: 'default' } },
   };
   const promptPath = path.join(OUT, 'animated-prompt.json');
   fs.writeFileSync(promptPath, JSON.stringify(prompt));

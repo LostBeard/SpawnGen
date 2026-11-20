@@ -17,6 +17,21 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
     args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-webgpu-developer-features'],
   });
   const page = context.pages()[0] || await context.newPage();
+  // Every result file the page turns into a blob URL is kept, so each run's pictures can be decoded: a run that "ends" with a file nobody can
+  // open is a failure (2026-11-20: the live site's Save Image PNGs had a broken deflate stream and the drive still said PASS).
+  await page.addInitScript(() => {
+    window.__resultBlobs = [];
+    const make = URL.createObjectURL;
+    URL.createObjectURL = function (b) { const u = make.call(URL, b); if (b instanceof Blob) window.__resultBlobs.push(b); return u; };
+  });
+  const undecodable = async from => page.evaluate(async from => {
+    const bad = [];
+    for (const b of window.__resultBlobs.slice(from)) {
+      if (!/^image\/(png|webp|jpeg|gif)$/.test(b.type)) continue;
+      try { (await createImageBitmap(b)).close(); } catch (e) { bad.push(`${b.type} ${b.size} B: ${e.message}`); }
+    }
+    return bad;
+  }, from);
   let problems = [];
   page.on('console', m => { if (m.type() === 'error') problems.push(m.text().slice(0, 300)); });
   page.on('pageerror', e => problems.push('PAGEERROR ' + e.message.slice(0, 300)));
@@ -34,7 +49,7 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
     problems = [];
     await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
     await page.locator('.menu li', { hasText: label }).first().click(); await page.waitForTimeout(2000);
-    const before = await runs(), t0 = Date.now();
+    const before = await runs(), t0 = Date.now(), blobsBefore = await page.evaluate(() => window.__resultBlobs.length);
     await page.click('button:has-text("Queue")');
     let outcome = 'timed out', detail = '', toasts = new Set();
     while (Date.now() - t0 < MAX) {
@@ -46,6 +61,7 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
       if ((await runs()) > before && !/Running|Queued/.test(status)) { outcome = 'ran'; break; }
     }
     const secs = Math.round((Date.now() - t0) / 1000);
+    if (outcome === 'ran') { await page.waitForTimeout(1500); for (const bad of await undecodable(blobsBefore)) problems.push('UNDECODABLE RESULT ' + bad); }
     const shot = path.join(OUT, `site-ex-${i + 1}.png`);
     await page.screenshot({ path: shot }).catch(() => {});
     const errs = problems.filter(p => !/powerPreference/.test(p));

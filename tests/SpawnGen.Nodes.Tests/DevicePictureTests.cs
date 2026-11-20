@@ -53,6 +53,45 @@ public class DevicePictureTests
         await Check(runtime.Accelerator, channels);
     }
 
+    /// <summary>
+    /// A real 512x512 picture (ComfyUI's SD 1.5 apple) at the size Save Image writes on the site: the 37x23 check above passed while the live site
+    /// (a24eb38, Codecs 1.1.2) saved PNGs whose deflate stream did not decompress ("invalid bit length repeat"), so the encoder is checked at
+    /// production scale too: the file must decode to exactly the picture that went in.
+    /// </summary>
+    [Test]
+    public async Task Save_Image_encodes_a_real_512_picture_on_the_CPU_accelerator()
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var accelerator = context.CreateCPUAccelerator(0);
+        await CheckPhoto(accelerator);
+    }
+
+    [Test]
+    [Explicit("Needs a GPU (OpenCL / CUDA).")]
+    public async Task Save_Image_encodes_a_real_512_picture_on_the_GPU()
+    {
+        using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()));
+        TestContext.Out.WriteLine(runtime.Accelerator.Name);
+        await CheckPhoto(runtime.Accelerator);
+    }
+
+    static async Task CheckPhoto(Accelerator accelerator)
+    {
+        var source = PngReader.Decode(File.ReadAllBytes(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "canny", "apple.png")));
+        using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()), accelerator);
+        var store = new MemoryResultStore();
+        var services = new Services(store, runtime);
+        services.Encoder = new GpuPictureEncoder(services);
+        using var images = ImageBatch.FromDevice(1, source.Height, source.Width, source.Channels, accelerator.Allocate1D(source.Data));
+        var (_, ui) = await new SaveImage().ExecuteAsync(images, NodeCtx(services), services, "photo");
+        Assert.That(images.OnHost, Is.False, "the picture never came to the host");
+        var file = ((IEnumerable<object>)ui["images"]!).Cast<ResultFile>().Single();
+        var png = store.Get(file.Type, file.Filename, file.Subfolder)!;
+        var decoded = PngReader.Decode(png);
+        Assert.That((decoded.Width, decoded.Height, decoded.Channels), Is.EqualTo((source.Width, source.Height, source.Channels)));
+        Assert.That(decoded.Data, Is.EqualTo(source.Data), "the 8-bit picture comes back exactly");
+    }
+
     static async Task Check(Accelerator accelerator, int channels)
     {
         const int batch = 2, h = 23, w = 37;

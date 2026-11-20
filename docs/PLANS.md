@@ -7,6 +7,15 @@ work that changes it. What is already done and how well it matches ComfyUI is in
 browser, with no Python. SpawnGen also works out the SpawnDev libraries on a real project: what SpawnGen needs from SpawnDev.ILGPU.ML
 (Tuvok) or SpawnDev.Codecs (Geordi) is asked of them, ranked by what it unlocks, never worked around and never treated as a stop.
 
+## Live site bug (2026-11-20): Save Image's PNGs are broken in the browser
+
+The live deploy (a24eb38, Codecs 1.1.2) saves Save Image PNGs that no decoder opens: SpawnDev.Codecs' PngEncoderGpu on WebGPU writes a bad
+deflate stream (every chunk CRC valid). CPU and OpenCL encode the same 512x512 picture correctly. Affects every example ending in Save
+Image (SD-Turbo, Image to image, ...). Asked of Geordi with the exact failing pixels; when a Codecs -local lands: the browser repro
+(drive-site-examples ONLY='SD-Turbo, 1 step|Image to image' against a local publish), then the next deploy. drive-site-examples now fails
+any run whose result picture cannot be decoded (the old check passed this). TRELLIS on the HF Space is retested in that deploy (ML 5.8.25
+has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchdog twice).
+
 ## Next deploy (TJ, 2026-11-20)
 
 One Pages + Hugging Face Space deploy when SpawnDev.Codecs 1.1.2 is on nuget.org: merge branch codecs-1.1.2-local (Codecs 1.1.2 +

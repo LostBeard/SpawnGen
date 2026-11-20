@@ -7,6 +7,34 @@ work that changes it. What is already done and how well it matches ComfyUI is in
 browser, with no Python. SpawnGen also works out the SpawnDev libraries on a real project: what SpawnGen needs from SpawnDev.ILGPU.ML
 (Tuvok) or SpawnDev.Codecs (Geordi) is asked of them, ranked by what it unlocks, never worked around and never treated as a stop.
 
+## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
+
+**Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,
+LATENT and MASK are `HostTensor`s (a managed `float[]`), so the site's Text to video example moves every frame GPU -> .NET floats (54 MB
+for 25 x 512x352) -> a .NET pixel loop (SaveAnimatedWebpNode.Rgba) -> back to the GPU encoder -> the file to a .NET `byte[]` -> a JS Blob.
+The libraries already take and give GPU buffers (Codecs 1.1.1: `ArrayView1D` frames in and the file out for WebP / FLAC / Opus); only
+SpawnGen's types and the ML pipelines' host-only video results force the copies.
+
+**Design.**
+1. `HostTensor` (IMAGE / LATENT / MASK) gets device residency: an owned ILGPU buffer on the runtime's accelerator, a host array, or both.
+   `Data` is the host array and throws while the tensor is device-only; `ToHostAsync()` / `ToDeviceAsync(accelerator)` copy once and keep
+   both. Tensors are immutable once a node returns them. SpawnGen.Engine references SpawnDev.ILGPU.
+2. The executor brings a node's tensor inputs to the host (awaited, so WebGPU's async readback works) unless the node is marked
+   `[Node(DeviceTensors = true)]`: every host node keeps working unchanged, and each node converted to device work drops its copy.
+3. Ownership: the result cache counts references to each tensor across its entries (Save nodes pass their input through) and disposes the
+   device buffer when the last one goes (eviction, Clear, a lost device). A tensor no entry holds is disposed when the prompt ends.
+4. Results: `IResultStore.SaveAsync` takes the file as a device buffer too. The desktop / server write it to disk (a terminal file sink).
+   The browser's store keeps every result as a JS `Uint8Array` (written once from the device with `CopyToHostUint8ArrayAsync`); the page's
+   blob URL is made from it in JS; .NET reads a result back only when a node loads one (Load Image (from Outputs)).
+5. The ML video pipelines (LTX-Video, Wan 2.2, LTX-2) return their frames on the device: asked of Tuvok (the library returns a buffer the
+   caller owns, IMAGE's layout [F, H, W, 3] in 0..1). Then VAE Decode, the samplers' latents and Load Image (Codecs' GPU decoders) the same.
+
+**Order.** (a) device residency + executor + cache ownership (engine tests: host nodes unchanged, a device chain never touches the host,
+buffers freed); (b) the browser's JS result store and device-buffer saves; (c) Save Animated WEBP from the device (RGBA kernel, Codecs'
+`ArrayView1D` animation encoder); (d) the LTX / Wan / LTX-2 nodes on the library's device frames; (e) Save Image / Preview Image (Codecs'
+GPU PNG), Save Video / WEBM / Audio, VAE Decode / Encode, Load Image; (f) every remaining node that touches `.Data` in bulk, by use.
+Each step: the Text to video example timed in Chrome on the RX 590 before and after (node time, total, page heap), the suite, the drives.
+
 ## The site is the doorstep (2026-11-19, TJ)
 
 TJ: the GitHub Pages site is where people decide whether to try SpawnGen; if it does not work there, no one tries the desktop app. After every

@@ -78,6 +78,9 @@ function withLateText(png, keyword, text) {
   await page.screenshot({ path: path.join(OUT, 'drop-depth.png') });
   check('the Depth map example runs on the dropped picture (see out/drop-depth.png)', ran && !/fail|error/i.test(await toast()), await toast());
 
+  // a JPEG (no workflow chunk to look for) is a picture too: it goes to the inputs from JS
+  await drop('dropped-photo.jpg', fs.readFileSync(path.join(__dirname, '..', '..', 'tests', 'SpawnGen.Nodes.Tests', 'Fixtures', 'decode_corpus', 'jpeg_420.jpg')), 'image/jpeg');
+  check('a dropped JPEG is added as an input picture', /dropped-photo\.jpg was added as an input picture/.test(await toast()), await toast());
   await drop('dropped-json.json', Buffer.from(workflow, 'utf8'), 'application/json');
   check('a dropped workflow .json opens in its own tab', (await tabNames()).includes('dropped-json'), (await tabNames()).join(', '));
 

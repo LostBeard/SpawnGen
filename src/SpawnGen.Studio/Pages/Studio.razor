@@ -1320,6 +1320,16 @@
                     return;
                 }
             }
+            else if (UploadKindOf(name) is { } kind)
+            {
+                // a picture (JPEG, WebP, GIF, BMP), sound or video file: it goes to the inputs from JS, as a PNG without a workflow does
+                if (_engine is null) { ShowMessage($"There is no engine to load {name} into."); return; }
+                var stored = await _engine.UploadFileAsync(name, file);
+                await RefreshInputImagesAsync();
+                var what = kind switch { "image" => "picture", "audio" => "sound", _ => "video" };
+                ShowMessage(stored is null ? $"Could not add {name}." : $"{name} was added as an input {what} ({stored}).");
+                return;
+            }
             else json = await file.Text();
 
             OpenWorkflowText(json, System.IO.Path.GetFileNameWithoutExtension(name), source, null);

@@ -41,7 +41,11 @@ public sealed class TrellisImageTo3D
 
         var generator = await runtime.GetOrLoadPipelineAsync("trellis2", () => Task.FromResult(
             new Trellis2ImageTo3D(runtime.Accelerator, Trellis2Weights.FromModelSource(runtime.ModelSource))));
-        generator.StageDone = (stage, seconds) => context.Status($"{stage} ({seconds:0} s)");
+        generator.StageDone = (stage, seconds) => { Console.WriteLine($"[Trellis2] stage {stage}: {seconds:F1} s"); context.Status($"{stage} ({seconds:0} s)"); };
+        // The steps before the first stage (pipeline, weights, image prep, DINOv3), each drained before its line: the console names where a run
+        // stopped (a WebGPU device loss on a slower card ran 12 silent minutes before this trace existed), the node shows how far it got.
+        generator.Trace = line => { Console.WriteLine("[Trellis2] " + line); context.Status(line.TrimStart('+', ' ')); };
+        generator.TraceSync = true;
 
         var options = new Trellis2Options
         {

@@ -234,3 +234,8 @@ TRELLIS.2 image to 3D in Chrome on the RX 590 (D3D12, live site 574b0b6, ML 5.8.
 DXGI_ERROR_DEVICE_HUNG at 722.5 s and 724.7 s in two runs (same point: one dispatch or batch over the 2 s Windows watchdog on this card, most
 likely; the library's figures are from an RTX 4070). ?perop=1 times only GraphExecutor ops (RMBG's 491, slowest 679 ms), not TRELLIS's kernels.
 Asked: does the demo complete on a slower card; is there a TRELLIS per-dispatch trace.
+Update (ML 5.8.24-local.2: per-block browser submits + Trellis2ImageTo3D.Trace): on the RX 590 in Chrome the run now passes DINOv3 and all
+three flows (ss flow sample 560.6 s, shape flow 79.1 s, tex flow 45.3 s; ss decode 2.7 s, shape decode + mesh 4.8 s for 2,110,568 triangles,
+tex decode 5.2 s), then DEVICE_HUNG ~10 s after tex decode: the step after it (simplify to 150k faces / remesh / atlas / 2048 bake) still
+submits over 2 s on this card. Sent to Tuvok (his sparse-conv chunking for the decoders, local.3, is separate).
+Resolved (ML 5.8.24-local.3, 2026-11-19): the distance searches and decoder convs are chunked; on the RX 590 in Chrome the whole run completes (871 s, remesh 19.0 s). Closes GAP-ML-TRELLIS-BROWSER-HUNG once 5.8.24 is on nuget.org.

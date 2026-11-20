@@ -23,6 +23,8 @@ fs.mkdirSync(OUT, { recursive: true });
     const s = m.text();
     if (m.type() === 'error') { problems.push(s); console.log(t(), 'console error:', s.slice(0, 300)); }
     else if (/\[models\]|\[gpu\]|Wan|lost/i.test(s) && !/Downloading/.test(s)) console.log(t(), 'log:', s.slice(0, 300));
+    // A lost device or a failed run is a failure even when the page logs it as information (2026-11-19: the hang printed "errors: none").
+    if (/device was lost|a run failed/i.test(s)) problems.push(s.slice(0, 300));
   });
   page.on('pageerror', e => { problems.push('PAGEERROR ' + e.message); console.log(t(), 'PAGEERROR', e.message.slice(0, 300)); });
   await page.goto(URL);

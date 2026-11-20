@@ -56,7 +56,7 @@ public sealed class Wan22Video
         var request = new WanRequest
         {
             Prompt = prompt, NegativePrompt = negativePrompt, Width = width, Height = height, Frames = length, Steps = steps,
-            GuidanceScale = cfg, Shift = shift, Seed = seed, Sampler = sampler == "few_step" ? WanSampler.FewStep : WanSampler.UniPC, RgbaFrames = true, TiledDecode = tiledDecode,
+            GuidanceScale = cfg, Shift = shift, Seed = seed, Sampler = sampler == "few_step" ? WanSampler.FewStep : WanSampler.UniPC, DeviceFrames = true, TiledDecode = tiledDecode,
             ImageRgb = rgb, ImageWidth = startImage?.Width ?? 0, ImageHeight = startImage?.Height ?? 0,
         };
         var progress = new Progress<WanProgress>(p =>
@@ -80,23 +80,16 @@ static class VideoFrames
         return rgb;
     }
 
-    /// <summary>A generated clip's frames as an IMAGE batch (0..1).</summary>
+    /// <summary>
+    /// A generated clip's frames as an IMAGE batch on the GPU (AGENTS.md rule 4): the pipeline was asked for DeviceFrames, ComfyUI's
+    /// clamp((x + 1) / 2, 0, 1) in NHWC [F, H, W, 3], so nothing comes to the host and the values are ComfyUI's floats (the old path rebuilt
+    /// them from 8-bit RGBA / 255). The IMAGE takes the buffer over (TakeDeviceFrames) and the video is disposed.
+    /// </summary>
     public static ImageBatch Images(WanVideo video)
     {
-        var frames = new ImageBatch(video.Frames, video.Height, video.Width, 3);
-        int pixels = video.Width * video.Height;
-        for (int f = 0; f < video.Frames; f++)
-        {
-            var rgba = video.GetFrameRgba(f);
-            int o = f * pixels * 3;
-            for (int i = 0; i < pixels; i++)
-            {
-                frames.Data[o + i * 3] = rgba[i * 4] / 255f;
-                frames.Data[o + i * 3 + 1] = rgba[i * 4 + 1] / 255f;
-                frames.Data[o + i * 3 + 2] = rgba[i * 4 + 2] / 255f;
-            }
-        }
-        return frames;
+        using (video)
+            return ImageBatch.FromDevice(video.Frames, video.Height, video.Width, 3,
+                video.TakeDeviceFrames() ?? throw new InvalidOperationException("The pipeline returned no device frames (DeviceFrames was not set)."));
     }
 }
 
@@ -147,7 +140,7 @@ public sealed class LtxVideo
             conditions.Add(LtxCondition.Image(VideoFrames.Rgb(endImage), endImage.Width, endImage.Height, length - 1, (float)endStrength));
         var request = new LtxRequest
         {
-            Prompt = prompt, Width = width, Height = height, Frames = length, FrameRate = (float)frameRate, Seed = seed, Upscale = upscale, RgbaFrames = true,
+            Prompt = prompt, Width = width, Height = height, Frames = length, FrameRate = (float)frameRate, Seed = seed, Upscale = upscale, DeviceFrames = true,
             Conditions = conditions.Count > 0 ? conditions : null,
         };
         var progress = new Progress<WanProgress>(p =>

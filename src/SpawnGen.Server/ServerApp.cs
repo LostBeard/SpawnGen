@@ -233,8 +233,18 @@ public static class ServerApp
             if (root is null) return Results.BadRequest("type must be input, output or temp");
             var subfolder = form["subfolder"].ToString();
             if (SafePath(root, subfolder, name) is not { } target) return Results.BadRequest("the subfolder leaves the folder");
-            if (File.Exists(target) && (string?)form["overwrite"] != "true")
-                target = SafePath(root, subfolder, name = $"{Path.GetFileNameWithoutExtension(name)}_{Guid.NewGuid().ToString("N")[..6]}{Path.GetExtension(name)}")!;
+            // A taken name, measured with ComfyUI's /upload/image (2026-11-20): a file with the same BYTES there is reused (nothing written;
+            // the same pixels in other bytes count as different), else "name (1).ext", "name (2).ext" ... until a name holds the same bytes
+            // or is free; overwrite=true replaces the file. The same for every type and file kind.
+            if ((string?)form["overwrite"] != "true")
+            {
+                string stem = Path.GetFileNameWithoutExtension(name), ext = Path.GetExtension(name);
+                for (int i = 1; File.Exists(target); i++)
+                {
+                    if (await SameBytesAsync(target, file)) return Results.Json(new { name, subfolder, type });
+                    target = SafePath(root, subfolder, name = $"{stem} ({i}){ext}")!;
+                }
+            }
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             await using (var output = File.Create(target)) await file.CopyToAsync(output);
             return Results.Json(new { name, subfolder, type });
@@ -453,6 +463,22 @@ public static class ServerApp
             using var from = example.CreateReadStream();
             using var to = File.Create(target);
             from.CopyTo(to);
+        }
+    }
+
+    /// <summary>Whether the file on disk holds exactly the uploaded bytes (length first, then both streamed: a video is not read into memory).</summary>
+    static async Task<bool> SameBytesAsync(string path, IFormFile upload)
+    {
+        if (new FileInfo(path).Length != upload.Length) return false;
+        await using var disk = File.OpenRead(path);
+        await using var sent = upload.OpenReadStream();
+        var a = new byte[81920]; var b = new byte[81920];
+        while (true)
+        {
+            int n = await disk.ReadAtLeastAsync(a, a.Length, throwOnEndOfStream: false);
+            int m = await sent.ReadAtLeastAsync(b, b.Length, throwOnEndOfStream: false);
+            if (n != m || !a.AsSpan(0, n).SequenceEqual(b.AsSpan(0, m))) return false;
+            if (n == 0) return true;
         }
     }
 

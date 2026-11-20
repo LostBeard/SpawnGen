@@ -50,7 +50,7 @@ fs.copyFileSync(APPLE, PEAR);
     await page.mouse.click(...COMBO);
     await page.waitForSelector('.widget-edit select');
     await page.waitForTimeout(300);
-    const v = await page.$eval('.widget-edit select', s => ({ value: s.value, first: s.options[0].text }));
+    const v = await page.$eval('.widget-edit select', s => ({ value: s.value, first: s.options[0].text, selected: s.options[s.selectedIndex]?.text }));
     await page.mouse.click(800, 250); // click away on the canvas: the dropdown closes without a choice
     await page.waitForTimeout(300);
     v.closed = (await page.locator('.widget-edit').count()) === 0;
@@ -67,7 +67,8 @@ fs.copyFileSync(APPLE, PEAR);
   // 0. The example as it ships: example.png is there, shown in the node, and the depth map runs.
   await openDepth();
   let v = await comboValue();
-  check('the Depth map example finds the shipped example.png', v.value === 'example.png' && v.first === 'example.png', JSON.stringify(v));
+  // chosen and listed (not "(not found)"); on a server the list also holds whatever else its input folder has, so example.png need not be first
+  check('the Depth map example finds the shipped example.png', v.value === 'example.png' && v.selected === 'example.png', JSON.stringify(v));
   let before = await runs();
   await page.click('button:has-text("Queue")');
   check('the Depth map example runs as it ships (see out/upload-0-example.png)', await waitForRun(before), await toast());
@@ -78,8 +79,11 @@ fs.copyFileSync(APPLE, PEAR);
   await page.screenshot({ path: path.join(OUT, 'upload-1-opened.png') });
   v = await comboValue();
   check('a missing picture shows as "(not found)" in the dropdown, still chosen', v.value === 'not-here.png' && /not-here\.png \(not found\)/.test(v.first), JSON.stringify(v));
+  const beforeRefusal = problems.length;
   await page.click('button:has-text("Queue")');
   await page.waitForTimeout(1500);
+  // a server answers this refused prompt with HTTP 400, which the browser logs as a failed resource: expected here, not a page error
+  problems.splice(beforeRefusal, problems.length - beforeRefusal, ...problems.slice(beforeRefusal).filter(p => !/status of 400/.test(p)));
   check('Queue refuses the missing not-here.png and says which', /not-here\.png/.test(await toast()), await toast());
   await page.screenshot({ path: path.join(OUT, 'upload-2-error.png') });
 

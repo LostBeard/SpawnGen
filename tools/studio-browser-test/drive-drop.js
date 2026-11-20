@@ -20,9 +20,9 @@ function crc32(bytes) {
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
-/** apple.png with a tEXt "workflow" chunk inserted just before IEND (after every IDAT). */
-function withLateWorkflow(png, workflow) {
-  const body = Buffer.concat([Buffer.from('tEXt', 'ascii'), Buffer.from('workflow\0', 'latin1'), Buffer.from(workflow, 'latin1')]);
+/** The PNG with a tEXt chunk (keyword, text) inserted just before IEND (after every IDAT). */
+function withLateText(png, keyword, text) {
+  const body = Buffer.concat([Buffer.from('tEXt', 'ascii'), Buffer.from(keyword + '\0', 'latin1'), Buffer.from(text, 'latin1')]);
   const len = Buffer.alloc(4); len.writeUInt32BE(body.length - 4);
   const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
   return Buffer.concat([png.subarray(0, png.length - 12), len, body, crc, png.subarray(png.length - 12)]);
@@ -51,18 +51,23 @@ function withLateWorkflow(png, workflow) {
     await page.waitForTimeout(1500);
   };
 
-  await drop('dropped-picture-workflow.png', withLateWorkflow(apple, workflow), 'image/png');
+  await drop('dropped-picture-workflow.png', withLateText(apple, 'workflow', workflow), 'image/png');
   check('a dropped PNG with its workflow after the picture data opens it in its own tab', (await tabNames()).includes('dropped-picture-workflow'), (await tabNames()).join(', '));
 
   await drop('dropped-plain.png', apple, 'image/png');
   check('a dropped PNG with no workflow is added as an input picture', /dropped-plain\.png/.test(await toast()) && /input picture/.test(await toast()), await toast());
+  // a taken name, as ComfyUI's /upload/image does it (measured 2026-11-20): the same bytes reuse it, other bytes are numbered
+  await drop('dropped-plain.png', apple, 'image/png');
+  check('the same picture dropped again keeps its name (nothing stored twice)', /input picture \(dropped-plain\.png\)/.test(await toast()), await toast());
+  await drop('dropped-plain.png', withLateText(apple, 'note', 'other bytes'), 'image/png');
+  check('other bytes under that name become "dropped-plain (1).png"', /input picture \(dropped-plain \(1\)\.png\)/.test(await toast()), await toast());
   // Load Image offers the dropped picture, and the Depth map example runs on it: Load Image decodes the file the page kept in JS.
   await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
   await page.click('.menu li:has-text("Depth map")'); await page.waitForTimeout(1500);
   await page.mouse.click(400, 507); // the example fits the view the same way every time: Load Image's image combo (drive-upload.js)
   await page.waitForSelector('.widget-edit select');
   const options = await page.$$eval('.widget-edit select option', os => os.map(o => o.value));
-  check('Load Image lists the dropped picture', options.includes('dropped-plain.png'), options.join(', '));
+  check('Load Image lists the dropped pictures, each once', [...options].filter(o => o.startsWith('dropped-plain')).sort().join('|') === 'dropped-plain (1).png|dropped-plain.png', options.join(', '));
   await page.selectOption('.widget-edit select', 'dropped-plain.png'); await page.waitForTimeout(500);
   await page.mouse.click(800, 250); await page.waitForTimeout(300);
   const runs = async () => parseInt(((await page.textContent('.toolbar', { timeout: 120000 })).match(/History \((\d+)\)/) || [])[1] || '0', 10);

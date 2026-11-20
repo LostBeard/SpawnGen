@@ -2489,6 +2489,14 @@
     async Task RefreshInputImagesAsync()
     {
         if (_engine is null) return;
+        if (ReferenceEquals(_engine, Server) && await Server.FetchSchemasAsync() is { Count: > 0 } schemas)
+        {
+            // The combos show the server's lists as they were when they were read (ApplyEngineChoices): read them again, or a file just
+            // uploaded (or added on the server) shows as "(not found)" in Load Image while the server has it. ComfyUI's page re-reads
+            // object_info after an upload too.
+            _serverSchemas = schemas;
+            ApplyEngineChoices();
+        }
         var names = await _engine.ListInputImagesAsync();
         // The server's pictures and folders stay on the server: its store here is only the choice list. Switching back to the browser engine
         // must give Load Image the browser's own pictures again.

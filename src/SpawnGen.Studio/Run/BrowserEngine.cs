@@ -382,15 +382,42 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _ => "image/png",
     };
 
-    /// <summary>The file is read in JS (its ArrayBuffer) and kept there: the upload never comes to .NET.</summary>
+    /// <summary>
+    /// The file is read in JS (its ArrayBuffer) and kept there: the upload never comes to .NET. A taken name follows ComfyUI's /upload/image
+    /// (measured 2026-11-20, as the server does): the same bytes there are reused, else "name (1).ext", "name (2).ext" ... until a name holds
+    /// the same bytes or is free.
+    /// </summary>
     public async Task<string?> UploadFileAsync(string name, Blob file, string type = "input")
     {
         if (type is not ("input" or "output" or "temp")) return null;
         using var buffer = await file.ArrayBuffer();
         var data = new JsBytes(new Uint8Array(buffer));
-        return type == "input"
-            ? await _inputs.SaveAsync(Path.GetFileName(name), data)
-            : (await _results.WriteStoredAsync(type, "", Path.GetFileName(name), data)).Filename;
+        name = Path.GetFileName(name);
+        string stem = Path.GetFileNameWithoutExtension(name), ext = Path.GetExtension(name);
+        Func<string, Task<StoredBytes?>> existing = type == "input"
+            ? async n => _inputs.Exists(n) ? await _inputs.OpenAsync(n) : null
+            : n => Task.FromResult(_results.GetStored(type, n, ""));
+        for (int i = 1; await existing(name) is { } there; i++)
+        {
+            if (await SameBytesAsync(there, data)) return name;
+            name = $"{stem} ({i}){ext}";
+        }
+        return type == "input" ? await _inputs.SaveAsync(name, data) : (await _results.WriteStoredAsync(type, "", name, data)).Filename;
+    }
+
+    /// <summary>Whether two stored files hold the same bytes: JS files are compared by their SHA-256 digests in JS (32 bytes come to .NET, the files do not).</summary>
+    async Task<bool> SameBytesAsync(StoredBytes a, StoredBytes b)
+    {
+        if (a.Length != b.Length) return false;
+        if (a is not JsBytes ja || b is not JsBytes jb) return a.Read().AsSpan().SequenceEqual(b.Read());
+        using var window = _js.WindowThis;
+        using var crypto = window!.Crypto;
+        using var subtle = crypto.Subtle;
+        using var da = await subtle.Digest("SHA-256", ja.Data);
+        using var db = await subtle.Digest("SHA-256", jb.Data);
+        using var ua = new Uint8Array(da);
+        using var ub = new Uint8Array(db);
+        return ((byte[])ua).AsSpan().SequenceEqual((byte[])ub);
     }
 
     public async Task<IReadOnlyList<string>> ListInputImagesAsync()

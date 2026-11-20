@@ -633,6 +633,37 @@ public class ServerTests
         Assert.That(File.Exists(Path.Combine(_dir, "..", "escape", "x.png")), Is.False);
     }
 
+    /// <summary>
+    /// A name already taken, measured with ComfyUI's /upload/image on the reference server (2026-11-20), step by step: new -> name; the same bytes
+    /// again -> the same name; other bytes -> "name (1)"; those again -> "name (1)"; overwrite=true -> name (replaced); the first bytes again ->
+    /// "name (2)" (name and name (1) both hold other bytes now); the same pixels with an extra text chunk -> different. SpawnGen used to add a
+    /// random suffix to every upload of a taken name, so the same picture uploaded twice was stored twice under new names.
+    /// </summary>
+    [Test]
+    public async Task An_upload_to_a_taken_name_reuses_the_same_bytes_and_numbers_other_bytes_as_ComfyUI_does()
+    {
+        var first = PngWriter.Encode(new ImageBatch(1, 8, 8, 3));
+        var other = PngWriter.Encode(new ImageBatch(1, 8, 8, 3, Enumerable.Repeat(0.5f, 8 * 8 * 3).ToArray()));
+        var samePixelsOtherBytes = PngWriter.Encode(new ImageBatch(1, 8, 8, 3), 0, new Dictionary<string, string> { ["note"] = "x" });
+        async Task<string> Upload(byte[] bytes, string name, bool overwrite = false)
+        {
+            using var form = new MultipartFormDataContent { { new ByteArrayContent(bytes), "image", name } };
+            if (overwrite) form.Add(new StringContent("true"), "overwrite");
+            var reply = await _http.PostAsync("/upload/image", form);
+            Assert.That(reply.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            return (string)(await reply.Content.ReadFromJsonAsync<JsonObject>())!["name"]!;
+        }
+        Assert.That(await Upload(first, "probe.png"), Is.EqualTo("probe.png"));
+        Assert.That(await Upload(first, "probe.png"), Is.EqualTo("probe.png"), "the same bytes again: the same name");
+        Assert.That(await Upload(other, "probe.png"), Is.EqualTo("probe (1).png"), "other bytes: numbered");
+        Assert.That(await Upload(other, "probe.png"), Is.EqualTo("probe (1).png"), "those bytes again: the numbered name that holds them");
+        Assert.That(await Upload(other, "probe.png", overwrite: true), Is.EqualTo("probe.png"), "overwrite replaces");
+        Assert.That(await Upload(first, "probe.png"), Is.EqualTo("probe (2).png"), "the first bytes are nowhere now");
+        Assert.That(await Upload(samePixelsOtherBytes, "probe.png"), Is.EqualTo("probe (3).png"), "same pixels, other bytes: different");
+        Assert.That(File.ReadAllBytes(Path.Combine(_dir, "input", "probe.png")), Is.EqualTo(other));
+        Assert.That(Directory.GetFiles(Path.Combine(_dir, "input"), "probe*").Length, Is.EqualTo(4), "nothing stored twice");
+    }
+
     [Test]
     public async Task A_video_can_be_uploaded_for_Load_Video()
     {

@@ -85,10 +85,12 @@ public class AeVaeTests
         // Decode ComfyUI's own latent of A, and the synthetic latent.
         var comfyA = new LatentBatch(1, 16, 24, 32, Raw(Dir, "ae_enc_256x192_samples_f32_1x16x24x32.raw"));
         var decA = await new VAEDecode().ExecuteAsync(comfyA, vae, context, services);
+        await decA.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
         Assert.That((decA.Width, decA.Height), Is.EqualTo((256, 192)));
         double decodeA = RelRms(decA.Data, Raw(Dir, "ae_dec_of_enc_256x192_images_f32_1x192x256x3.raw"));
         var synthetic = new LatentBatch(1, 16, 24, 32, Raw(Dir, "ae_lat_1x16x24x32.raw"));
         var decS = await new VAEDecode().ExecuteAsync(synthetic, vae, context, services);
+        await decS.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
         double decodeS = RelRms(decS.Data, Raw(Dir, "ae_dec_synthetic_24x32_images_f32_1x192x256x3.raw"));
 
         // Ours, for a look at where any difference sits (ae_ours_*.raw next to the test assembly).
@@ -110,6 +112,37 @@ public class AeVaeTests
     }
 
     /// <summary>The library's ae encoder, stage by stage, on picture A (SdVae.Tap): ae_tap_&lt;stage&gt;_&lt;h&gt;x&lt;w&gt;x&lt;c&gt;.raw, channel-last.</summary>
+    /// <summary>
+    /// VAE Decode on the device (PLANS "Tensors stay on the GPU", 2026-11-19) gives the host path's IMAGE bit for bit: the library's host decode is its
+    /// device decode plus a copy, and ImageKernels.FromVae is VaePictures.FromVae's clamp((x + 1) / 2, 0, 1). The pictures stay on the GPU.
+    /// </summary>
+    [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT with vae/ae.safetensors and a GPU.")]
+    public async Task Decode_on_the_device_equals_the_host_path_bit_for_bit()
+    {
+        var root = Environment.GetEnvironmentVariable("SPAWNGEN_MODELS_ROOT");
+        if (string.IsNullOrEmpty(root)) Assert.Ignore("SPAWNGEN_MODELS_ROOT is not set.");
+        ModelFolders.Scan(root!);
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var services = new Services(runtime);
+        var context = (NodeContext)Activator.CreateInstance(typeof(NodeContext), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
+            ["1", "X", services, CancellationToken.None, null, new Lazy<string>(() => "{}"), new Dictionary<string, string>(), null, null, 0], null)!;
+        var vae = await new VAELoader().ExecuteAsync("ae.safetensors", context, services);
+        Assert.That(vae.Vae.DecodesOnDevice);
+        var one = Raw(Dir, "ae_lat_1x16x24x32.raw");
+        var two = one.Concat(one.Select(v => -v)).ToArray(); // a batch of two, the second one different
+        var latent = new LatentBatch(2, 16, 24, 32, two);
+
+        var device = await new VAEDecode().ExecuteAsync(latent, vae, context, services);
+        Assert.That(device.OnHost, Is.False, "the pictures stay on the GPU");
+        await device.ToHostAsync();
+
+        var host = new ImageBatch(2, 192, 256, 3);
+        for (int b = 0; b < 2; b++)
+            VaePictures.FromVae(await vae.Vae.DecodeAsync(two.AsSpan(b * 16 * 24 * 32, 16 * 24 * 32).ToArray(), 24, 32), host, b);
+        Assert.That(device.Data, Is.EqualTo(host.Data));
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: {device.Data.Length} values equal");
+    }
+
     [Test, Explicit("Needs SPAWNGEN_MODELS_ROOT with vae/ae.safetensors and a GPU; a diagnostic.")]
     public async Task Encoder_stage_taps_for_picture_A()
     {

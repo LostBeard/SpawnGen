@@ -1,3 +1,5 @@
+using SpawnGen.Engine.Execution;
+using ILGPU;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 using SpawnGen.Nodes.Core;
@@ -152,13 +154,19 @@ static class VaePictures
     }
 }
 
-[VideoLatents]
+[VideoLatents, DeviceTensors]
 [Node("VAEDecode", Category = "model/latent", DisplayName = "VAE Decode")]
 public sealed class VAEDecode
 {
-    /// <summary>Each latent decoded to a picture the VAE's downscale (8, FLUX.2's 16) times its size, (v + 1) / 2 clamped to 0..1; a video latent to its frames.</summary>
+    /// <summary>
+    /// Each latent decoded to a picture the VAE's downscale (8, FLUX.2's 16) times its size, (v + 1) / 2 clamped to 0..1; a video latent to its frames.
+    /// With a VAE that decodes on the device (Stable Diffusion's, FLUX.1's ae, TAESD) the latent goes up once and the pictures stay on the GPU
+    /// (AGENTS.md rule 4): Save Image / Preview Image then encode them there.
+    /// </summary>
     public async Task<ImageBatch> ExecuteAsync(LatentBatch samples, VaeHandle vae, NodeContext context, IServiceProvider services)
     {
+        if (!samples.IsVideo && vae.Vae is not IVideoVaeModel && vae.Vae.DecodesOnDevice) return await DecodeOnDeviceAsync(samples, vae.Vae, context, services);
+        await Tensors.ToHostAsync([samples]);
         if (samples.IsVideo) return await VideoVae.DecodeAsync(vae.Vae, samples, context.CancellationToken);
         if (vae.Vae is IVideoVaeModel) throw new NotSupportedException($"{vae.Vae.Name} is a video VAE; it decodes video latents.");
         int h = samples.Height, w = samples.Width, f = vae.Vae.Downscale;
@@ -166,6 +174,30 @@ public sealed class VAEDecode
         for (int b = 0; b < samples.Batch; b++)
             VaePictures.FromVae(await vae.Vae.DecodeAsync(VaePictures.Frame(samples, b), h, w, context.CancellationToken), image, b);
         return image;
+    }
+
+    static async Task<ImageBatch> DecodeOnDeviceAsync(LatentBatch samples, IVaeModel vae, NodeContext context, IServiceProvider services)
+    {
+        var accelerator = (await GpuHelpers.RuntimeAsync(services)).Accelerator;
+        int h = samples.Height, w = samples.Width, f = vae.Downscale, size = samples.Channels * h * w;
+        long picture = 3L * h * f * w * f;
+        var latent = await samples.ToDeviceAsync(accelerator);
+        using var decoded = accelerator.Allocate1D<float>(picture);
+        var output = accelerator.Allocate1D<float>(picture * samples.Batch);
+        try
+        {
+            for (int b = 0; b < samples.Batch; b++)
+            {
+                await vae.DecodeOnDeviceAsync(latent.SubView((long)b * size, size), h, w, decoded.View, context.CancellationToken);
+                ImageKernels.FromVae(accelerator, decoded.View, output.View.SubView(b * picture, picture));
+            }
+            return ImageBatch.FromDevice(samples.Batch, h * f, w * f, 3, output);
+        }
+        catch
+        {
+            output.Dispose();
+            throw;
+        }
     }
 }
 

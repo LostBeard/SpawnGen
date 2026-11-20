@@ -17,6 +17,26 @@ public static class ImageKernels
     }
 
     static readonly ConditionalWeakTable<Accelerator, Loaded> Kernels = new();
+    static readonly ConditionalWeakTable<Accelerator, Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, long>> FromVaeKernels = new();
+
+    /// <summary>
+    /// ComfyUI's VAE Decode output: a decoder's picture <paramref name="chw"/> [3, H, W] channel-first in -1..1 to IMAGE's NHWC in 0..1,
+    /// <c>clamp((x + 1) / 2, 0, 1)</c> (NaN stays NaN, as Math.Clamp and torch.clamp leave it), into <paramref name="nhwc"/> (3 H W values).
+    /// </summary>
+    public static void FromVae(Accelerator accelerator, ArrayView1D<float, Stride1D.Dense> chw, ArrayView1D<float, Stride1D.Dense> nhwc)
+    {
+        if (chw.Length != nhwc.Length || chw.Length % 3 != 0) throw new ArgumentException("the picture and the IMAGE must both hold 3 planes.");
+        if (chw.Length > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(chw), "Too many values for one launch.");
+        FromVaeKernels.GetValue(accelerator, a => a.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, long>(FromVaeKernel))
+            ((int)chw.Length, chw, nhwc, chw.Length / 3);
+    }
+
+    static void FromVaeKernel(Index1D i, ArrayView1D<float, Stride1D.Dense> chw, ArrayView1D<float, Stride1D.Dense> nhwc, long plane)
+    {
+        long p = i.X / 3, k = i.X % 3;
+        float v = (chw[k * plane + p] + 1f) / 2f;
+        nhwc[i] = v < 0f ? 0f : v > 1f ? 1f : v;
+    }
 
     /// <summary>
     /// ComfyUI's IMAGE -> Pillow conversion, <c>np.clip(255 * x, 0, 255).astype(uint8)</c> (truncated; NaN gives 0), opaque without alpha:

@@ -42,6 +42,11 @@ internal sealed class SafetensorsCheckpointModels : ICheckpointModels
 
     public Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken) => _ck.Vae!.DecodeAsync(latent, h, w, cancellationToken);
 
+    public bool DecodesOnDevice => _ck.Vae is not null;
+
+    public Task DecodeOnDeviceAsync(ILGPU.Runtime.ArrayView1D<float, ILGPU.Stride1D.Dense> latent, int h, int w, ILGPU.Runtime.ArrayView1D<float, ILGPU.Stride1D.Dense> image,
+        CancellationToken cancellationToken = default) => _ck.Vae!.DecodeAsync(latent, h, w, image, cancellationToken);
+
     public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken) => _ck.Vae!.EncodeAsync(image, H, W, cancellationToken);
 
     internal static async Task<SafetensorsCheckpointModels> LoadAsync(MlRuntime runtime, string repoId, string file, Action<string, int>? onProgress)

@@ -208,6 +208,7 @@ public class QwenImageEditTests
         Assert.That(latent.Shape, Is.EqualTo(new[] { 1, 16, 1, 24, 32 }));
         double latentErr = RelRms(latent.Data, Raw("qe_graph1_out_samples_f32_1x16x1x24x32.raw"));
         var picture = await new VAEDecode().ExecuteAsync(latent, vae, Ctx("VAEDecode"), services);
+        await picture.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
         var seconds = clock.Elapsed.TotalSeconds;
         // Each call against ComfyUI's (its four calls: prompt and negative at sigma 1, then at 0.75): the input, and the denoised estimate.
         var calls = new List<string>();

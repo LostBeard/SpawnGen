@@ -190,6 +190,7 @@ public class QwenImageTests
         double enc = RelRms(latent.Data, Raw("qi_enc_256x192_samples_f32_1x16x1x24x32.raw"));
         var comfyLatent = new LatentBatch(1, 16, 1, 24, 32, Raw("qi_enc_256x192_samples_f32_1x16x1x24x32.raw"));
         var decoded = await new VAEDecode().ExecuteAsync(comfyLatent, vae, Context(services, "VAEDecode"), services);
+        await decoded.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
         Assert.That(new[] { decoded.Batch, decoded.Height, decoded.Width }, Is.EqualTo(new[] { 1, 192, 256 }));
         double dec = RelRms(decoded.Data, Raw("qi_dec_of_enc_256x192_images_f32_1x192x256x3.raw"));
         // The constants the model's latent space uses are the VAE file's own.

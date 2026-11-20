@@ -125,6 +125,7 @@ public class QwenImageEdit2511Tests
         Assert.That(latent.Shape, Is.EqualTo(new[] { 1, 16, 1, 24, 32 }));
         double latentErr = RelRms(latent.Data, Raw(Dir, "q11_1_out_samples_f32_1x16x1x24x32.raw"));
         var picture = await new VAEDecode().ExecuteAsync(latent, vae, Ctx("VAEDecode"), services);
+        await picture.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
         var seconds = clock.Elapsed.TotalSeconds;
         var theirs = PngReader.Decode(File.ReadAllBytes(Path.Combine(Dir, "comfyui_picture_2511_256x192.png")));
         double mse = 0;

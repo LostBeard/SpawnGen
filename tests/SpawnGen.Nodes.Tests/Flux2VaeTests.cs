@@ -72,10 +72,12 @@ public class Flux2VaeTests
         // Decode ComfyUI's own latent of A, and the synthetic latent.
         var comfyA = new LatentBatch(1, 128, 12, 16, Raw("enc_256x192_samples_f32_1x128x12x16.raw"));
         var decA = await new VAEDecode().ExecuteAsync(comfyA, vae, context, services);
+        await decA.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
         Assert.That((decA.Width, decA.Height), Is.EqualTo((256, 192)));
         double decodeA = RelRms(decA.Data, Raw("dec_of_enc_256x192_images_f32_1x192x256x3.raw"));
         var synthetic = new LatentBatch(1, 128, 12, 16, Raw("f2_lat_1x128x12x16.raw"));
         var decS = await new VAEDecode().ExecuteAsync(synthetic, vae, context, services);
+        await decS.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
         double decodeS = RelRms(decS.Data, Raw("dec_synthetic_12x16_images_f32_1x192x256x3.raw"));
 
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: encode A {encA:E2}, encode B {encB:E2}, decode A {decodeA:E2}, decode synthetic {decodeS:E2} (relative RMS vs ComfyUI)");

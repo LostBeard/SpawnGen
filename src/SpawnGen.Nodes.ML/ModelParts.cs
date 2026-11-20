@@ -1,3 +1,4 @@
+using ILGPU;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.Preprocessing;
@@ -62,6 +63,15 @@ internal interface ICheckpointModels : IDisposable
     UNetRun BeginRun(Accelerator accelerator);
     Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken);
     Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken);
+    /// <summary>Whether <see cref="DecodeOnDeviceAsync"/> works for this VAE (the library has a device decode for it).</summary>
+    bool DecodesOnDevice => false;
+
+    /// <summary>
+    /// The device decode (AGENTS.md rule 4): <paramref name="latent"/> [C, h, w] UNSCALED to <paramref name="image"/> [3, D h, D w] channel-first in
+    /// -1..1, both on the runtime's accelerator; only when <see cref="DecodesOnDevice"/>.
+    /// </summary>
+    Task DecodeOnDeviceAsync(ArrayView1D<float, Stride1D.Dense> latent, int h, int w, ArrayView1D<float, Stride1D.Dense> image, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"{GetType().Name} decodes on the host only.");
 }
 
 /// <summary>A diffusion model (MODEL): a checkpoint's UNet or one loaded alone.</summary>
@@ -116,6 +126,15 @@ public interface IVaeModel
     SdVae? SdVae { get; }
     Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default);
     Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default);
+    /// <summary>Whether <see cref="DecodeOnDeviceAsync"/> works for this VAE (the library has a device decode for it).</summary>
+    bool DecodesOnDevice => false;
+
+    /// <summary>
+    /// The device decode (AGENTS.md rule 4): <paramref name="latent"/> [C, h, w] UNSCALED to <paramref name="image"/> [3, D h, D w] channel-first in
+    /// -1..1, both on the runtime's accelerator; only when <see cref="DecodesOnDevice"/>.
+    /// </summary>
+    Task DecodeOnDeviceAsync(ArrayView1D<float, Stride1D.Dense> latent, int h, int w, ArrayView1D<float, Stride1D.Dense> image, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"{GetType().Name} decodes on the host only.");
     /// <summary>Pixels per latent cell along each side: 8 for the Stable Diffusion family's VAEs, 16 for FLUX.2's (a 2 x 2 patch of its 8x VAE).</summary>
     int Downscale => 8;
 }
@@ -295,6 +314,11 @@ internal sealed class StandaloneVae(string name, SdVae vae) : IVaeModel, IDispos
 
     public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default) => SdVae.EncodeAsync(image, H, W, cancellationToken);
 
+    public bool DecodesOnDevice => true;
+
+    public Task DecodeOnDeviceAsync(ArrayView1D<float, Stride1D.Dense> latent, int h, int w, ArrayView1D<float, Stride1D.Dense> image, CancellationToken cancellationToken = default) =>
+        SdVae.DecodeAsync(latent, h, w, image, cancellationToken);
+
     public void Dispose() => SdVae.Dispose();
 }
 
@@ -307,6 +331,11 @@ internal sealed class StandaloneTaesd(string name, SdTaesd tae) : IVaeModel, IDi
     public SdVae? SdVae => null;
 
     public Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default) => tae.DecodeAsync(latent, h, w, cancellationToken);
+
+    public bool DecodesOnDevice => true;
+
+    public Task DecodeOnDeviceAsync(ArrayView1D<float, Stride1D.Dense> latent, int h, int w, ArrayView1D<float, Stride1D.Dense> image, CancellationToken cancellationToken = default) =>
+        tae.DecodeAsync(latent, h, w, image, cancellationToken);
 
     public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default) =>
         tae.HasEncoder ? tae.EncodeAsync(image, H, W, cancellationToken) : throw new NotSupportedException($"{Name} has no encoder (only the decoder was loaded).");

@@ -80,6 +80,11 @@ public sealed class Checkpoint : IDiffusionModel, ITextEncoderModel, IVaeModel, 
 
     public Task<float[]> DecodeAsync(float[] latent, int h, int w, CancellationToken cancellationToken = default) => _models.DecodeAsync(latent, h, w, cancellationToken);
 
+    public bool DecodesOnDevice => _models.DecodesOnDevice;
+
+    public Task DecodeOnDeviceAsync(ILGPU.Runtime.ArrayView1D<float, ILGPU.Stride1D.Dense> latent, int h, int w, ILGPU.Runtime.ArrayView1D<float, ILGPU.Stride1D.Dense> image,
+        CancellationToken cancellationToken = default) => _models.DecodeOnDeviceAsync(latent, h, w, image, cancellationToken);
+
     public Task<float[]> EncodeImageAsync(float[] image, int H, int W, CancellationToken cancellationToken = default) => _models.EncodeImageAsync(image, H, W, cancellationToken);
 
     /// <summary>

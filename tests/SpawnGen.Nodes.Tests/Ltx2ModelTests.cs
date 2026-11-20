@@ -112,6 +112,7 @@ public class Ltx2ModelTests
         double videoErr = RelRms(video.Data, Raw("ltx2_dec_video_latent_samples_f32_1x128x2x2x2.raw")),
             audioErr = RelRms(audio.Data, Raw("ltx2_dec_audio_latent_samples_f32_1x8x9x16.raw"));
         var frames = await new VAEDecode().ExecuteAsync(video, vae, Ctx("VAEDecode"), services);
+        await frames.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
         var clipOut = await new LTXVAudioVAEDecode().ExecuteAsync(audio, audioVae, Ctx("LTXVAudioVAEDecode"));
         Assert.That((frames.Batch, frames.Height, frames.Width), Is.EqualTo((9, 64, 64)));
         Assert.That((clipOut.ChannelCount, clipOut.Length, clipOut.SampleRate), Is.EqualTo((2, 7920, 24000)));
@@ -526,6 +527,7 @@ public class Ltx2ModelTests
             stages.Add($"sample (2 steps) {Lap():0} s");
             var (video, audio) = new LTXVSeparateAVLatent().Execute(output);
             var frames = await new VAEDecode().ExecuteAsync(video, vae, Ctx("VAEDecode"), services);
+            await frames.ToHostAsync(); // VAE Decode may leave the pictures on the GPU
             stages.Add($"video decode {Lap():0} s ({frames.Batch} x {frames.Height} x {frames.Width})");
             var clipOut = await new LTXVAudioVAEDecode().ExecuteAsync(audio, audioVae, Ctx("LTXVAudioVAEDecode"));
             stages.Add($"audio decode {Lap():0} s ({clipOut.Length} samples)");

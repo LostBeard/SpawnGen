@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using ILGPU;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU;
 using SpawnDev.ILGPU.ML;
@@ -36,6 +37,29 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         public Uint8Array Data { get; } = data;
         public override long Length => Data.Length;
         public override byte[] Read() => (byte[])Data;
+
+        /// <summary>A header: only those bytes come to .NET.</summary>
+        public override byte[] Read(long offset, int count)
+        {
+            using var part = Data.Slice(offset, offset + count);
+            return (byte[])part;
+        }
+
+        /// <summary>The file to the GPU straight from JS (Load Image's GPU decode): it never comes to .NET.</summary>
+        public override MemoryBuffer1D<byte, Stride1D.Dense> Upload(Accelerator accelerator)
+        {
+            var buffer = accelerator.Allocate1D<byte>(Data.Length);
+            try
+            {
+                SpawnDev.Codecs.DeviceTransfer.Upload(buffer.View, Data); // IBrowserMemoryBuffer.CopyFromJS: JS -> GPU
+                return buffer;
+            }
+            catch
+            {
+                buffer.Dispose();
+                throw;
+            }
+        }
     }
     // Input files stay in JS too: an upload or a dropped file is read in JS (a File's ArrayBuffer) and kept there; a file made in .NET is
     // copied in once. Load Image's picture and the canvas's blob URL take the JS bytes as they are.
@@ -204,10 +228,12 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         if (serviceType == typeof(IResultStore)) return _results;
         if (serviceType == typeof(IMlRuntimeProvider)) return this;
         if (serviceType == typeof(IPictureEncoder)) return _pictureEncoder ??= new GpuPictureEncoder(this);
+        if (serviceType == typeof(IPictureDecoder)) return _pictureDecoder ??= new GpuPictureDecoder(this);
         return null;
     }
 
     GpuPictureEncoder? _pictureEncoder;
+    GpuPictureDecoder? _pictureDecoder;
 
     /// <summary>Opens the GPU on first use (the first ML node to run asks for it) and keeps it.</summary>
     public Task<MlRuntime> GetAsync() => _runtime ??= CreateRuntimeAsync();

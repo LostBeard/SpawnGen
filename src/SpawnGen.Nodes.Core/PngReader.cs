@@ -43,6 +43,28 @@ public static partial class PngReader
         return ReadText(text.ToArray());
     }
 
+    /// <summary>
+    /// A PNG's colour type (IHDR) and EXIF orientation (eXIf, 1 without one) read piece by piece as <see cref="ReadTextAsync"/> does: chunk
+    /// headers, IHDR and eXIf only, never the pixels. Null when the file is not a PNG. For a GPU decode of a file kept in JS.
+    /// </summary>
+    public static async Task<(int ColorType, int Orientation)?> ReadLayoutAsync(long length, Func<long, int, Task<byte[]>> read)
+    {
+        if (length < 33 || !(await read(0, 8)).AsSpan().SequenceEqual(Signature)) return null;
+        int colorType = -1, orientation = 1;
+        for (long pos = 8; pos + 12 <= length;)
+        {
+            var header = await read(pos, 8);
+            long len = BinaryPrimitives.ReadUInt32BigEndian(header);
+            if (pos + 12 + len > length) break;
+            string type = System.Text.Encoding.ASCII.GetString(header, 4, 4);
+            if (type == "IHDR" && len >= 13) colorType = (await read(pos + 8, 13))[9];
+            else if (type == "eXIf" && len > 0 && len < 1 << 20) orientation = ExifOrientation.Read(await read(pos + 8, (int)len));
+            else if (type == "IEND") break;
+            pos += 12 + len;
+        }
+        return colorType < 0 ? null : (colorType, orientation);
+    }
+
     public static IReadOnlyDictionary<string, string> ReadText(byte[] png)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);

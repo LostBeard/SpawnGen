@@ -435,6 +435,15 @@ public abstract class StoredBytes
 
     /// <summary>The bytes as a managed array (a copy out of JS for a JS-held file).</summary>
     public abstract byte[] Read();
+
+    /// <summary><paramref name="count"/> bytes from <paramref name="offset"/> as a managed array: a header (metadata), never the pixels.</summary>
+    public virtual byte[] Read(long offset, int count) => Read().AsSpan(checked((int)offset), count).ToArray();
+
+    /// <summary>
+    /// The file in a new device buffer on <paramref name="accelerator"/> (the caller disposes it), for a GPU decoder: a JS-held file goes there
+    /// from JS (AGENTS.md rule 4); a managed one is copied up from its array (a file read from disk: the terminal source).
+    /// </summary>
+    public virtual MemoryBuffer1D<byte, Stride1D.Dense> Upload(Accelerator accelerator) => accelerator.Allocate1D(Read());
 }
 
 /// <summary>Bytes held in a managed array (the desktop, the tests).</summary>
@@ -443,6 +452,7 @@ public sealed class ManagedBytes(byte[] data) : StoredBytes
     public byte[] Data { get; } = data;
     public override long Length => Data.LongLength;
     public override byte[] Read() => Data;
+    public override byte[] Read(long offset, int count) => Data.AsSpan(checked((int)offset), count).ToArray();
 }
 
 /// <summary>

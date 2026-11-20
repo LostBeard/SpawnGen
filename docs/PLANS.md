@@ -38,6 +38,11 @@ Each step: the Text to video example timed in Chrome on the RX 590 before and af
 Save Animated WEBP on the device, ComfyUI parity byte for byte on CPU and RX 590). Waiting: Tuvok's DeviceFrames (ML 5.8.25-local.2) for (d);
 Geordi's exact-size EncodeAnimationToDeviceAsync / ToUint8ArrayAsync (replaces the worst-case output buffers). Input files (Load Image's
 uploads) are still a .NET MemoryInputStore: move them to JS with (e).
+(e) part 1 done (996f1aa): Save Image / Preview Image / every SaveTempAsync preview encode a device picture with Codecs' GPU PNG
+(DevicePictureTests, red-checked). Audit after it (2026-11-19): IVaeModel is float[] in / out with a .NET NHWC loop (VaePictures.FromVae),
+and UNetRun.PredictAsync is float[] in / out, called every step and CFG branch while the sampler math runs in .NET. By bytes moved the
+order is: (d) video frames (Tuvok DeviceFrames), (f) VAE decode / encode on the device (asked of Tuvok: every VAE, NHWC 0..1 out), (g) the
+model forward on device views (asked of Tuvok) + SpawnGen's sampler math as device kernels (latents stay on the device between steps).
 
 ## The site is the doorstep (2026-11-19, TJ)
 

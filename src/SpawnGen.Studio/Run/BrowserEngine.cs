@@ -178,8 +178,11 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     {
         if (serviceType == typeof(IResultStore)) return _results;
         if (serviceType == typeof(IMlRuntimeProvider)) return this;
+        if (serviceType == typeof(IPictureEncoder)) return _pictureEncoder ??= new GpuPictureEncoder(this);
         return null;
     }
+
+    GpuPictureEncoder? _pictureEncoder;
 
     /// <summary>Opens the GPU on first use (the first ML node to run asks for it) and keeps it.</summary>
     public Task<MlRuntime> GetAsync() => _runtime ??= CreateRuntimeAsync();

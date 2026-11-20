@@ -1,3 +1,5 @@
+using ILGPU;
+using ILGPU.Runtime;
 using SpawnGen.Engine.Nodes;
 using SpawnGen.Engine.Types;
 
@@ -71,8 +73,25 @@ internal static class Results
         var store = For(services);
         var files = new List<object>();
         for (int i = 0; i < Math.Min(images.Batch, count ?? images.Batch); i++)
-            files.Add((await store.SaveAsync("temp", prefix, PngWriter.Encode(images, i, metadata))).AsImage(images.Width, images.Height));
+        {
+            var png = await PngAsync(images, i, metadata, services);
+            files.Add((await png.SaveAsync(store, "temp", prefix, "png", true)).AsImage(images.Width, images.Height));
+        }
         return files;
+    }
+
+    /// <summary>
+    /// Picture <paramref name="index"/> as an 8-bit PNG with <paramref name="text"/>: on the GPU when the picture is there and a
+    /// <see cref="IPictureEncoder"/> is registered (AGENTS.md rule 4: the pixels never come to .NET), else <see cref="PngWriter"/> on the host.
+    /// </summary>
+    internal static async Task<EncodedFile> PngAsync(ImageBatch images, int index, IReadOnlyDictionary<string, string>? text, IServiceProvider services)
+    {
+        if (images.OnDevice && services.GetService(typeof(IPictureEncoder)) is IPictureEncoder gpu
+            && await gpu.EncodePngAsync(images, index, text) is { } file)
+            return new EncodedFile(null, file.File, file.Length);
+        await images.ToHostAsync();
+        var bytes = PngWriter.Encode(images, index, text);
+        return new EncodedFile(bytes, null, bytes.Length);
     }
 
     internal static string RandomLetters() => string.Create(5, 0, (span, _) =>
@@ -88,14 +107,18 @@ internal static class Results
     internal static Task<List<object>> SaveImagesAsync(ImageBatch images, NodeContext? context, IServiceProvider services, string type, string prefix)
     {
         var metadata = Metadata(context);
-        return SaveEachAsync(images, services, type, prefix, i => PngWriter.Encode(images, i, metadata), "png", trailingUnderscore: true);
+        return SaveEachAsync(images, services, type, prefix, i => PngAsync(images, i, metadata, services), "png", trailingUnderscore: true);
     }
 
     /// <summary>
     /// <see cref="SaveImagesAsync"/>'s naming with any file format: <paramref name="encode"/> gives picture i's file. Save Image (Advanced) names its
     /// files without the "_" before the dot (<c>{prefix}_00001.png</c>); its counter and Save Image's are one (measured: each continues after the other's).
     /// </summary>
-    internal static async Task<List<object>> SaveEachAsync(ImageBatch images, IServiceProvider services, string type, string prefix, Func<int, byte[]> encode,
+    internal static Task<List<object>> SaveEachAsync(ImageBatch images, IServiceProvider services, string type, string prefix, Func<int, byte[]> encode,
+        string extension, bool trailingUnderscore) =>
+        SaveEachAsync(images, services, type, prefix, i => Task.FromResult(new EncodedFile(encode(i), null, 0)), extension, trailingUnderscore);
+
+    internal static async Task<List<object>> SaveEachAsync(ImageBatch images, IServiceProvider services, string type, string prefix, Func<int, Task<EncodedFile>> encode,
         string extension, bool trailingUnderscore)
     {
         var store = For(services);
@@ -103,7 +126,7 @@ internal static class Results
         if (!prefix.Contains("%batch_num%", StringComparison.Ordinal))
         {
             for (int i = 0; i < images.Batch; i++)
-                files.Add((await store.SaveAsync(type, prefix, encode(i), extension, trailingUnderscore)).AsImage(images.Width, images.Height));
+                files.Add((await (await encode(i)).SaveAsync(store, type, prefix, extension, trailingUnderscore)).AsImage(images.Width, images.Height));
             return files;
         }
         var (folder, name) = SavePrefix.Split(prefix);
@@ -112,10 +135,39 @@ internal static class Results
         for (int i = 0; i < images.Batch; i++)
         {
             var file = SavePrefix.FileName(name.Replace("%batch_num%", i.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal), counter + i, extension, trailingUnderscore);
-            files.Add((await store.WriteAsync(type, folder, file, encode(i))).AsImage(images.Width, images.Height));
+            files.Add((await (await encode(i)).WriteAsync(store, type, folder, file)).AsImage(images.Width, images.Height));
         }
         return files;
     }
+}
+
+/// <summary>An encoded file: bytes on the host, or a device buffer (owned: disposed once stored) with its length.</summary>
+internal readonly record struct EncodedFile(byte[]? Host, MemoryBuffer1D<byte, Stride1D.Dense>? Device, long Length)
+{
+    public async Task<ResultFile> SaveAsync(IResultStore store, string type, string prefix, string extension, bool trailingUnderscore)
+    {
+        if (Device is not { } d) return await store.SaveAsync(type, prefix, Host!, extension, trailingUnderscore);
+        using (d) return await store.SaveDeviceAsync(type, prefix, d, Length, extension, trailingUnderscore);
+    }
+
+    public async Task<ResultFile> WriteAsync(IResultStore store, string type, string folder, string filename)
+    {
+        if (Device is not { } d) return await store.WriteAsync(type, folder, filename, Host!);
+        using (d) return await store.WriteDeviceAsync(type, folder, filename, d, Length);
+    }
+}
+
+/// <summary>
+/// Encodes pictures that are on the GPU without bringing them to the host (SpawnGen.Nodes.ML registers one on the GPU hosts: Codecs' PNG
+/// encoder). Save Image, Preview Image and the other previews use it for a picture on the device.
+/// </summary>
+public interface IPictureEncoder
+{
+    /// <summary>
+    /// Picture <paramref name="index"/> as an 8-bit PNG (RGB for 3 channels, RGBA for 4: the colour type Pillow writes for ComfyUI) with
+    /// <paramref name="text"/> as text chunks, in a device buffer the caller disposes; null when this encoder cannot (another channel count).
+    /// </summary>
+    Task<(MemoryBuffer1D<byte, Stride1D.Dense> File, long Length)?> EncodePngAsync(ImageBatch images, int index, IReadOnlyDictionary<string, string>? text);
 }
 
 /// <summary>Shared by the Load Image nodes: reading a picture into an IMAGE and a MASK.</summary>
@@ -212,7 +264,7 @@ public sealed class LoadImageMask
 /// Save Image: each picture as a PNG in the output folder, named <c>{prefix}_00001_.png</c> and counting up (a "folder/" part of the prefix is a
 /// subfolder; %width%, %height% and %date:...% are filled in), with the prompt and the workflow as PNG text. The pictures are passed on.
 /// </summary>
-[Node(Category = "image", DisplayName = "Save Image", IsOutput = true, Description = "Saves the input images to your ComfyUI output directory.")]
+[Node(Category = "image", DisplayName = "Save Image", IsOutput = true, Description = "Saves the input images to your ComfyUI output directory."), DeviceTensors]
 public sealed class SaveImage
 {
     public async Task<(ImageBatch Images, UiOutput Ui)> ExecuteAsync(
@@ -226,7 +278,7 @@ public sealed class SaveImage
 }
 
 /// <summary>Preview Image: each picture as a temporary PNG shown in the node; nothing is kept in the output folder. The pictures are passed on.</summary>
-[Node(Category = "image", DisplayName = "Preview Image", IsOutput = true, Description = "Preview the images without saving them to the ComfyUI output directory.")]
+[Node(Category = "image", DisplayName = "Preview Image", IsOutput = true, Description = "Preview the images without saving them to the ComfyUI output directory."), DeviceTensors]
 public sealed class PreviewImage
 {
     public async Task<(ImageBatch Images, UiOutput Ui)> ExecuteAsync(ImageBatch images, NodeContext context, IServiceProvider services) =>

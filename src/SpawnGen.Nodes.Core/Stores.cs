@@ -77,6 +77,9 @@ public interface IResultStore
     /// </summary>
     Task<ResultFile> SaveDeviceAsync(string type, string prefix, MemoryBuffer1D<byte, Stride1D.Dense> data, long length, string extension, bool trailingUnderscore = true);
 
+    /// <summary><see cref="WriteAsync"/> for a file in a device buffer (its first <paramref name="length"/> bytes), kept as <see cref="SaveDeviceAsync"/> keeps it.</summary>
+    Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length);
+
     /// <summary>Writes a file under its own name into an existing folder (<see cref="DirectoryNotFoundException"/> when it is missing); replaces a file of that name.</summary>
     Task<ResultFile> WriteAsync(string type, string subfolder, string filename, byte[] data);
 
@@ -340,7 +343,7 @@ public abstract class ResultStore : IResultStore
     }
 
     /// <summary>Writes a file from a device buffer; by default copied to the host and written with <see cref="WriteAsync"/> (a file on disk is a terminal sink).</summary>
-    protected virtual async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length) =>
+    public virtual async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length) =>
         await WriteAsync(type, subfolder, filename, await data.View.SubView(0, length).CopyToHostAsync());
 
     /// <summary>Writes a file from a stream writer; by default through memory and <see cref="WriteAsync"/>.</summary>
@@ -450,7 +453,7 @@ public sealed class MemoryResultStore(Func<byte[], StoredBytes>? fromManaged = n
     public override Task<ResultFile> WriteAsync(string type, string subfolder, string filename, byte[] data) =>
         Task.FromResult(Store(type, subfolder, filename, fromManaged?.Invoke(data) ?? new ManagedBytes((byte[])data.Clone())));
 
-    protected override async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length) =>
+    public override async Task<ResultFile> WriteDeviceAsync(string type, string subfolder, string filename, MemoryBuffer1D<byte, Stride1D.Dense> data, long length) =>
         Store(type, subfolder, filename, fromDevice is null
             ? new ManagedBytes(await data.View.SubView(0, length).CopyToHostAsync())
             : await fromDevice(data, length));

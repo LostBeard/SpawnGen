@@ -36,6 +36,7 @@ public static class ServerApp
         // The GPU is only touched when the first ML node runs (resolving this singleton opens the accelerator).
         builder.Services.AddSingleton(_ => new DesktopModelSource(options.ModelsPath, MlRuntime.RepoFolders));
         builder.Services.AddSingleton(sp => new MlRuntime(sp.GetRequiredService<DesktopModelSource>()));
+        builder.Services.AddSingleton<SpawnGen.Nodes.Core.IPictureEncoder>(sp => new SpawnGen.Nodes.ML.GpuPictureEncoder(sp)); // Save Image's PNG on the GPU
         builder.Services.AddSingleton<EventHub>();
         builder.Services.AddSingleton(sp => new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>()));
         configure?.Invoke(builder);

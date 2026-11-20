@@ -25,8 +25,10 @@ public sealed class ServerClient(HttpClient http) : IEngineClient, IAsyncDisposa
     /// <summary>True when the page was served by a SpawnGen server (the Studio can also run alone, editing only).</summary>
     public async Task<bool> ProbeAsync()
     {
-        // A static host (GitHub Pages) has no server to ask: skip the request, which would only put a red 404 in the console.
-        if (http.BaseAddress?.Host.EndsWith(".github.io", StringComparison.OrdinalIgnoreCase) == true) return false;
+        // A static host (GitHub Pages, a static Hugging Face Space) has no server to ask: skip the request, which would only put a red 404 in
+        // the console (found on the Space by the live drives, 2026-11-20). A Docker Space could run a SpawnGen server, so only *.static.hf.space.
+        if (http.BaseAddress?.Host is { } host && (host.EndsWith(".github.io", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".static.hf.space", StringComparison.OrdinalIgnoreCase))) return false;
         try
         {
             using var response = await http.GetAsync("prompt", _stop.Token);

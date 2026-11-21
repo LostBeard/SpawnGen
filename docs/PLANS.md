@@ -21,7 +21,8 @@ has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchd
 **Resume Sunday 2026-11-22 (weekly quota reset; TJ asked all to wrap up 2026-11-20 ~19:40).** In order: (1) RX 590 runs of ML
 5.8.26-local.1 when Tuvok packs it (after Data's 5.4.43 gate): FLUX.2 Klein picture edit with ?perop=1 (driver watchdog today) and TRELLIS;
 (2) Geordi's PNG decode numbers on the RX 590 (Codecs 1.1.4-local.2, branch load-image-device: PNG eXIf + unfilter wavefront; WebGPU 512
-PNG was >2 min / TDR on 1.1.3); (3) the --disable-gpu question below; (4) the deploy and full live check. NV1080 hung 2026-11-20 ~17:40
+PNG was >2 min / TDR on 1.1.3); (3) drive-appmode.js: drop --disable-gpu and run it on the real GPU (TJ 2026-11-20: SwiftShader is never a target; the 1500 s
+SwiftShader run froze the PC; the open question below is dropped); (4) the deploy and full live check. NV1080 hung 2026-11-20 ~17:40
 after a low-virtual-memory warning (17:13) and two TDRs: heavy runs go through a RAM watchdog (kill this run's tree below 2 GB free).
 
 **2026-11-20 evening: main is ready for it.** device-frames merged on the released libraries: SpawnDev.ILGPU.ML 5.8.25, SpawnDev.Codecs

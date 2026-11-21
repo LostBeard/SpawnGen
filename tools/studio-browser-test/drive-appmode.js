@@ -65,9 +65,13 @@ fs.mkdirSync(OUT, { recursive: true });
   await page.locator('.app-field textarea').dispatchEvent('change');
   await page.waitForTimeout(300);
   await page.click('.app-run-row button:has-text("Run")');
-  const t0 = Date.now();
-  while (Date.now() - t0 < 240000 && (await page.locator('.app-results img').count()) === 0) await page.waitForTimeout(1000);
-  check('the app shows the picture of the run', (await page.locator('.app-results img').count()) >= 1, `${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  // RUN_SECONDS (default 240): the run includes the model download (a fresh profile each time) and, with --disable-gpu, SwiftShader's WebGL.
+  const t0 = Date.now(), runMs = parseInt(process.env.RUN_SECONDS || '240', 10) * 1000;
+  // 2026-11-20, --disable-gpu on ILGPU 5.4.43: no picture in 1500 s and the page stopped answering a screenshot (SwiftShader busy).
+  while (Date.now() - t0 < runMs && (await page.locator('.app-results img').count()) === 0) await page.waitForTimeout(1000);
+  const pictured = (await page.locator('.app-results img').count()) >= 1;
+  if (!pictured) await shot('appmode-run-timeout').catch(e => console.log('  (no screenshot: ' + e.message.split('\n')[0] + ')'));
+  check('the app shows the picture of the run', pictured, `${((Date.now() - t0) / 1000).toFixed(0)} s`);
   check('the run is listed in the strip', (await page.locator('.app-run').count()) >= 1);
   await page.waitForTimeout(800);
   await shot('app-5-result');

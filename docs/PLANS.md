@@ -18,11 +18,20 @@ has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchd
 
 ## Next deploy (TJ, 2026-11-20)
 
+**Resume Sunday 2026-11-22 (weekly quota reset; TJ asked all to wrap up 2026-11-20 ~19:40).** In order: (1) RX 590 runs of ML
+5.8.26-local.1 when Tuvok packs it (after Data's 5.4.43 gate): FLUX.2 Klein picture edit with ?perop=1 (driver watchdog today) and TRELLIS;
+(2) Geordi's PNG decode numbers on the RX 590 (Codecs 1.1.4-local.2, branch load-image-device: PNG eXIf + unfilter wavefront; WebGPU 512
+PNG was >2 min / TDR on 1.1.3); (3) the --disable-gpu question below; (4) the deploy and full live check. NV1080 hung 2026-11-20 ~17:40
+after a low-virtual-memory warning (17:13) and two TDRs: heavy runs go through a RAM watchdog (kill this run's tree below 2 GB free).
+
 **2026-11-20 evening: main is ready for it.** device-frames merged on the released libraries: SpawnDev.ILGPU.ML 5.8.25, SpawnDev.Codecs
 1.1.3 (the WebGPU / RX 590 PNG fix, so branch codecs-1.1.3-local is retired: it only bumped versions) and SpawnDev.ILGPU 5.4.43 (Data:
 WebGL rows sized to the device's MAX_TEXTURE_SIZE, so Chrome without a GPU runs). Suite 3394 / 0 / 3; LTX-Video desktop GPU test on the
 RX 590 passes with the frames on the device (cold 96.6 s, warm 50.2 s, the clip decodes). Before the deploy: the Save Image examples and
-Text to video in Chrome against a local publish (PNGs decode), Data's --disable-gpu appmode drive. Then deploy and the full live check on
+Text to video in Chrome against a local publish (PNGs decode): **done 2026-11-20 18:40, f2113aa non-AOT on :5300, RX 590: SD-Turbo 95 s,
+Image to image 19 s, Text to video 302 s cold, every picture decodes.** Data's --disable-gpu appmode drive on 5.4.43: Data's texture error
+is gone (no browser errors), but SD-Turbo gives no picture in 1500 s (RUN_SECONDS=1500) and the page stops answering: find out where it
+spends the time (download vs SwiftShader WebGL kernels) before telling Data. Then deploy and the full live check on
 both URLs (every example, the UI drives, TRELLIS on the HF Space). FLUX.2 Klein picture edit still trips the RX 590's driver watchdog
 (also on the live site, so not this merge): Tuvok's per-block submits, ML 5.8.26-local.1.
 

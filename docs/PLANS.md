@@ -18,7 +18,25 @@ has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchd
 
 ## Next deploy (TJ, 2026-11-20)
 
-One Pages + Hugging Face Space deploy when SpawnDev.Codecs 1.1.2 is on nuget.org: merge branch codecs-1.1.2-local (Codecs 1.1.2 +
+**Resume Sunday 2026-11-22 (weekly quota reset; TJ asked all to wrap up 2026-11-20 ~19:40).** In order: (1) RX 590 runs of ML
+5.8.26-local.1 when Tuvok packs it (after Data's 5.4.43 gate): FLUX.2 Klein picture edit with ?perop=1 (driver watchdog today) and TRELLIS;
+(2) Geordi's PNG decode numbers on the RX 590 (Codecs 1.1.4-local.2, branch load-image-device: PNG eXIf + unfilter wavefront; WebGPU 512
+PNG was >2 min / TDR on 1.1.3); (3) drive-appmode.js: drop --disable-gpu and run it on the real GPU (TJ 2026-11-20: SwiftShader is never a target; the 1500 s
+SwiftShader run froze the PC; the open question below is dropped); (4) the deploy and full live check. NV1080 hung 2026-11-20 ~17:40
+after a low-virtual-memory warning (17:13) and two TDRs: heavy runs go through a RAM watchdog (kill this run's tree below 2 GB free).
+
+**2026-11-20 evening: main is ready for it.** device-frames merged on the released libraries: SpawnDev.ILGPU.ML 5.8.25, SpawnDev.Codecs
+1.1.3 (the WebGPU / RX 590 PNG fix, so branch codecs-1.1.3-local is retired: it only bumped versions) and SpawnDev.ILGPU 5.4.43 (Data:
+WebGL rows sized to the device's MAX_TEXTURE_SIZE, so Chrome without a GPU runs). Suite 3394 / 0 / 3; LTX-Video desktop GPU test on the
+RX 590 passes with the frames on the device (cold 96.6 s, warm 50.2 s, the clip decodes). Before the deploy: the Save Image examples and
+Text to video in Chrome against a local publish (PNGs decode): **done 2026-11-20 18:40, f2113aa non-AOT on :5300, RX 590: SD-Turbo 95 s,
+Image to image 19 s, Text to video 302 s cold, every picture decodes.** Data's --disable-gpu appmode drive on 5.4.43: Data's texture error
+is gone (no browser errors), but SD-Turbo gives no picture in 1500 s (RUN_SECONDS=1500) and the page stops answering: find out where it
+spends the time (download vs SwiftShader WebGL kernels) before telling Data. Then deploy and the full live check on
+both URLs (every example, the UI drives, TRELLIS on the HF Space). FLUX.2 Klein picture edit still trips the RX 590's driver watchdog
+(also on the live site, so not this merge): Tuvok's per-block submits, ML 5.8.26-local.1.
+
+Earlier plan (kept for the record): one Pages + Hugging Face Space deploy when SpawnDev.Codecs 1.1.2 is on nuget.org: merge branch codecs-1.1.2-local (Codecs 1.1.2 +
 ILGPU 5.4.41), suite, drives; deploy; then every example and the UI drives on both live URLs. It carries the animated-preview / download
 fix TJ reported, the device-tensor work, ML 5.8.24 (TRELLIS.2 and Wan Turbo in the browser) and the faster WebP save. ML 5.8.25
 (device-frames branch) goes in a later deploy.
@@ -54,8 +72,11 @@ Each step: the Text to video example timed in Chrome on the RX 590 before and af
 Save Animated WEBP on the device, ComfyUI parity byte for byte on CPU and RX 590). Waiting: Tuvok's DeviceFrames (ML 5.8.25-local.2) for (d);
 Geordi's exact-size EncodeAnimationToDeviceAsync / ToUint8ArrayAsync (replaces the worst-case output buffers). Input files: done 2026-11-20 (A):
 uploads, drops, the mask editor's PNG and the example pictures stay in JS (IInputStore.OpenAsync / SaveAsync(StoredBytes), the engines'
-UploadFileAsync(Blob), the drop handled in C#, a PNG's workflow found chunk by chunk). Next (B): Load Image decodes on the device from those
-JS bytes (Codecs' ArrayView decoders), after a parity corpus test against the host decoder (Pillow-measured: EXIF, 16-bit, palette, JPEG).
+UploadFileAsync(Blob), the drop handled in C#, a PNG's workflow found chunk by chunk). (B) on branch load-image-device (74774e4): Load Image decodes on the
+device (IPictureDecoder / GpuPictureDecoder over Codecs), exact on the decode corpus on CPU, OpenCL and WebGPU (RX 590). Merge after: Codecs'
+WebGPU PNG decode finishes a 512x512 picture (today >2 min / driver watchdog; Geordi, after 1.1.3), the server tests' slowdown is fixed (done on the branch: one shared
+GPU runtime, 152 s -> 22 s), and Codecs 1.1.4-local.1 (PNG eXIf orientation) for CodecsDecodeCorpusTests. Load Image's host decoders
+were made correct first (efb0832: 16-bit, tRNS, interlaced, PNG orientation, CMYK; TJ: decoding is held to correctness, not ComfyUI's PyAV).
 (e) part 1 done (996f1aa): Save Image / Preview Image / every SaveTempAsync preview encode a device picture with Codecs' GPU PNG
 (DevicePictureTests, red-checked). Audit after it (2026-11-19): IVaeModel is float[] in / out with a .NET NHWC loop (VaePictures.FromVae),
 and UNetRun.PredictAsync is float[] in / out, called every step and CFG branch while the sampler math runs in .NET. By bytes moved the

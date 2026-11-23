@@ -18,6 +18,18 @@ has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchd
 
 ## Next deploy (TJ, 2026-11-20)
 
+**2026-11-23: main = SpawnDev.ILGPU 5.4.46 + SpawnDev.Codecs 1.1.4 + SpawnDev.ILGPU.ML 5.8.25 (811749f).** Suite 3394 / 0 / 3; the explicit
+GPU codec tests 12 / 12 on the RX 590 (OpenCL); in Chrome on the RX 590 (D3D12) against a local non-AOT publish: SD-Turbo 63 s, Image to
+image 16 s, Text to video 167 s (models already in OPFS), every result decodes and was looked at. Heavy runs go through
+`tools/run-guarded.ps1` (RAM watchdog, kills the run's tree below 2 GB free). In order now:
+(1) Tuvok's 5.8.26 gate on branch `ml-local-5826` (worktree `_scratch/wt-ml5826`, ML 5.8.26-local.2 = ML master c6deede1 on ILGPU 5.4.46,
+CompilerCachePolicy): FLUX.2 Klein picture edit with ?perop=1, then TRELLIS, in Chrome on the RX 590; then
+`CompilerCachePolicy.ModelWarmedUp(accelerator)` after the first complete run of the models SpawnGen builds from components (SD, Z-Image,
+Qwen-Image, FLUX.1, ACE-Step) with the browser heap before / after (_DevComms 2026-11-23-0830). (2) Geordi's numbers on Codecs 1.1.4: lossy
+Save Animated WEBP per frame in Chrome against 1.1.3, the PNG decode corpus + example.png on branch `load-image-device` (worktree
+`_scratch/wt-lid`, main merged in, not pushed until it builds and passes). (3) drive-appmode.js on the real GPU. (4) The deploy and the
+full live check on both URLs: with ML 5.8.26 if Tuvok releases it after (1), else as main is.
+
 **Resume Sunday 2026-11-22 (weekly quota reset; TJ asked all to wrap up 2026-11-20 ~19:40).** In order: (1) RX 590 runs of ML
 5.8.26-local.1 when Tuvok packs it (after Data's 5.4.43 gate): FLUX.2 Klein picture edit with ?perop=1 (driver watchdog today) and TRELLIS;
 (2) Geordi's PNG decode numbers on the RX 590 (Codecs 1.1.4-local.2, branch load-image-device: PNG eXIf + unfilter wavefront; WebGPU 512

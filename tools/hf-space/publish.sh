@@ -16,7 +16,13 @@ tar -xf "$work/art/artifact.tar" -C "$work/site"
 cd "$work/site"
 sed -i 's|<base href="/SpawnGen/" />|<base href="/" />|' index.html 404.html
 grep -q '<base href="/" />' index.html || { echo "index.html has no base href to rebase"; exit 1; }
-rm -f index.html.br index.html.gz 404.html.br 404.html.gz .nojekyll   # the precompressed copies still say /SpawnGen/
+rm -f .nojekyll
+# The Space sends files uncompressed: every runtime file goes up as its .gz copy only (one copy of each file; index.html reads gzboot.json).
+find . -type f \( -name "*.br" -o -name "*.gz" \) -delete   # an older build's extra copies, if any
+bash "$repo_root/tools/gzboot.sh" . all
 cp "$repo_root/tools/hf-space/README.md" README.md
 hf upload LostBeard/spawngen . . --type space --delete "*" --commit-message "SpawnGen Studio $commit (GitHub Pages run $run, base href /)"
+# Only the current build is ever needed there, and Hugging Face keeps every replaced file against the Space's 1 GB (2026-11-24: 5 builds
+# filled it): squash the history, then delete the stored large files the current commit no longer uses.
+python "$repo_root/tools/hf-space/keep_only_current.py" LostBeard/spawngen
 echo "https://huggingface.co/spaces/LostBeard/spawngen"

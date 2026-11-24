@@ -9,6 +9,9 @@
     <StudioAot Condition="'$(StudioAot)' == ''">false</StudioAot>
     <RunAOTCompilation>$(StudioAot)</RunAOTCompilation>
     <WasmStripILAfterAOT>false</WasmStripILAfterAOT>
+    <!-- One copy of each published file. The default adds a .gz and a .br copy of every file (three uploads of everything; nothing read the
+         .br ones). Where a host needs a compressed file, tools/gzboot.sh makes the one .gz it needs at deploy time. -->
+    <CompressionEnabled>false</CompressionEnabled>
   </PropertyGroup>
 
   <ItemGroup>

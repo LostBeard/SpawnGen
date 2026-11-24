@@ -18,6 +18,9 @@ const check = (ok, what) => { console.log((ok ? 'PASS ' : 'FAIL ') + what); if (
   const page = ctx.pages()[0] || await ctx.newPage();
   const logs = [];
   page.on('console', m => logs.push(m.text()));
+  // The model cache limit is set here, not left to what an earlier run stored in this profile: CACHE_GB (default 24; 0 = no limit).
+  // Both must pass: with a limit the library also lists and trims the cache, which once had no recovery of its own (ML 5.8.28-local.3).
+  await page.addInitScript(gb => { try { localStorage.setItem('spawngen.settings', JSON.stringify({ ModelCacheGb: gb })); } catch (e) { } }, parseFloat(process.env.CACHE_GB || '24'));
   await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(3500);
   const read = async sel => (await page.locator(sel).first().textContent({ timeout: 60000 }).catch(() => '')) || '';
   const runs = async () => parseInt(((await read('.toolbar')).match(/History \((\d+)\)/) || [])[1] || '0', 10);

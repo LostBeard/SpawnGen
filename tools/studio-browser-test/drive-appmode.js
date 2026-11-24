@@ -11,7 +11,7 @@ const OUT = path.join(__dirname, 'out');
 fs.mkdirSync(OUT, { recursive: true });
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--disable-gpu'] });
+  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-webgpu-developer-features'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, acceptDownloads: true });
   const problems = [];
   page.on('console', m => { if (m.type() === 'error') problems.push(m.text()); });
@@ -65,9 +65,9 @@ fs.mkdirSync(OUT, { recursive: true });
   await page.locator('.app-field textarea').dispatchEvent('change');
   await page.waitForTimeout(300);
   await page.click('.app-run-row button:has-text("Run")');
-  // RUN_SECONDS (default 240): the run includes the model download (a fresh profile each time) and, with --disable-gpu, SwiftShader's WebGL.
+  // RUN_SECONDS (default 240): the run includes the model download (a fresh profile each time). The browser runs on the real GPU: on a static
+  // site the app draws in the page (WebGPU); SwiftShader is never a target (TJ, 2026-11-20: a --disable-gpu run froze the PC for 25 minutes).
   const t0 = Date.now(), runMs = parseInt(process.env.RUN_SECONDS || '240', 10) * 1000;
-  // 2026-11-20, --disable-gpu on ILGPU 5.4.43: no picture in 1500 s and the page stopped answering a screenshot (SwiftShader busy).
   while (Date.now() - t0 < runMs && (await page.locator('.app-results img').count()) === 0) await page.waitForTimeout(1000);
   const pictured = (await page.locator('.app-results img').count()) >= 1;
   if (!pictured) await shot('appmode-run-timeout').catch(e => console.log('  (no screenshot: ' + e.message.split('\n')[0] + ')'));

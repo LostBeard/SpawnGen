@@ -177,6 +177,16 @@ static class Pictures
     /// Every frame as IMAGE, and MASK = 1 - alpha per frame. Measured with ComfyUI: a picture without alpha gets an empty 64 x 64 mask per frame
     /// (an RGB APNG of 4 frames: 4 x 64 x 64).
     /// </summary>
+    /// <summary>
+    /// A stored file: on the device through <see cref="IPictureDecoder"/> when one is registered and takes the file (the file goes there as the
+    /// store keeps it), else decoded on the host from its bytes.
+    /// </summary>
+    public static async Task<(ImageBatch Image, MaskBatch Mask)> LoadAsync(StoredBytes file, IServiceProvider? services)
+    {
+        if (services?.GetService(typeof(IPictureDecoder)) is IPictureDecoder gpu && await gpu.LoadAsync(file) is { } picture) return picture;
+        return await LoadAsync(file.Read());
+    }
+
     public static async Task<(ImageBatch Image, MaskBatch Mask)> LoadAsync(byte[] data)
     {
         var (images, alpha) = await ImageDecoder.DecodeFramesAsync(data);
@@ -201,14 +211,29 @@ static class Pictures
     }
 }
 
+/// <summary>
+/// A GPU decoder for Load Image (SpawnGen.Nodes.ML, SpawnDev.Codecs): the file goes to the device as the store keeps it (from JS in the browser)
+/// and the IMAGE and MASK come back on the device, so the picture never comes to .NET (AGENTS.md rule 4).
+/// </summary>
+public interface IPictureDecoder
+{
+    /// <summary>
+    /// The picture as Load Image gives it (IMAGE, and 1 - alpha as the MASK at full size when the picture can be transparent, a palette one
+    /// always; else the empty 64 x 64 mask), turned upright by its EXIF orientation; null when this decoder does not take the file (an
+    /// animation, a format it does not read): Load Image then decodes it on the host.
+    /// </summary>
+    Task<(ImageBatch Image, MaskBatch Mask)?> LoadAsync(StoredBytes file);
+}
+
 /// <summary>Load Image: a picture from the input folder; every frame of an animated one, and its transparency as a mask (1 = transparent).</summary>
 [Node(Category = "image", DisplayName = "Load Image", OutputNames = ["IMAGE", "MASK"])]
 public sealed class LoadImage
 {
     public static string[] ImageNames() => [.. InputFiles.Store.List(ImageDecoder.IsSupportedName)];
 
-    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames), Upload = "image")] string image) =>
-        await Pictures.LoadAsync(await InputFiles.Store.ReadAsync(Pictures.Annotated(image).Name));
+    public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(ImageNames), Upload = "image")] string image,
+        IServiceProvider? services = null) =>
+        await Pictures.LoadAsync(await InputFiles.Store.OpenAsync(Pictures.Annotated(image).Name), services);
 }
 
 /// <summary>
@@ -224,7 +249,7 @@ public sealed class LoadImageOutput
     public async Task<(ImageBatch Image, MaskBatch Mask)> ExecuteAsync([Input(OptionsProvider = nameof(OutputImages), Upload = "image", UploadFolder = "output")] string image, IServiceProvider services)
     {
         var (name, type) = Pictures.Annotated(image);
-        if (type is null or "input") return await Pictures.LoadAsync(await InputFiles.Store.ReadAsync(name));
+        if (type is null or "input") return await Pictures.LoadAsync(await InputFiles.Store.OpenAsync(name), services);
         name = name.Replace('\\', '/');
         int slash = name.LastIndexOf('/');
         var data = await Results.For(services).ReadAsync(type, slash < 0 ? "" : name[..slash], name[(slash + 1)..])

@@ -1,4 +1,8 @@
 using System.Text.Json;
+using ILGPU;
+using ILGPU.Runtime;
+using ILGPU.Runtime.CPU;
+using SpawnGen.Nodes.ML;
 using SpawnGen.Engine.Types;
 using SpawnGen.Nodes.Core;
 
@@ -75,5 +79,49 @@ public class LoadImageCorpusTests
             Check(file, image, mask);
         }
         finally { InputFiles.Store = saved; }
+    }
+
+    sealed class DeviceServices(MlRuntime runtime) : IServiceProvider
+    {
+        public IPictureDecoder? Decoder;
+        public object? GetService(Type t) => t == typeof(MlRuntime) ? runtime : t == typeof(IPictureDecoder) ? Decoder : null;
+    }
+
+    /// <summary>The same through Load Image's GPU decoder (Codecs on the device): the picture must stay on the device and be just as correct.</summary>
+    static async Task CheckOnDevice(Accelerator accelerator, string file)
+    {
+        using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()), accelerator);
+        var services = new DeviceServices(runtime);
+        services.Decoder = new GpuPictureDecoder(services);
+        var store = new MemoryInputStore();
+        await store.SaveAsync(file, File.ReadAllBytes(Path.Combine(Folder, file)));
+        var saved = InputFiles.Store;
+        InputFiles.Store = store;
+        try
+        {
+            var (image, mask) = await new LoadImage().ExecuteAsync(file, services);
+            Assert.That(image.OnDevice && !image.OnHost, Is.True, "the picture was decoded on the device and stayed there");
+            await image.ToHostAsync();
+            await mask.ToHostAsync();
+            Check(file, image, mask);
+        }
+        finally { InputFiles.Store = saved; }
+    }
+
+    [TestCaseSource(nameof(Files))]
+    public async Task Load_Image_on_the_device_decodes_the_file_correctly(string file)
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var accelerator = context.CreateCPUAccelerator(0);
+        await CheckOnDevice(accelerator, file);
+    }
+
+    [TestCaseSource(nameof(Files))]
+    [Explicit("Needs a GPU (OpenCL / CUDA).")]
+    public async Task Load_Image_on_the_GPU_decodes_the_file_correctly(string file)
+    {
+        using var runtime = new MlRuntime(new FolderModelSource(Path.GetTempPath()));
+        TestContext.Out.WriteLine(runtime.Accelerator.Name);
+        await CheckOnDevice(runtime.Accelerator, file);
     }
 }

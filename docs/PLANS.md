@@ -53,6 +53,14 @@ ILGPU 5.4.41), suite, drives; deploy; then every example and the UI drives on bo
 fix TJ reported, the device-tensor work, ML 5.8.24 (TRELLIS.2 and Wan Turbo in the browser) and the faster WebP save. ML 5.8.25
 (device-frames branch) goes in a later deploy.
 
+**Later 2026-11-23:** Tuvok's gate passed on the RX 590 in Chrome (ML 5.8.26-local.2: FLUX.2 Klein picture edit 105 s, 237 s with
+?perop=1, a correct edit; TRELLIS 1020 s non-AOT, GLB saved, mesh not opened; 0 driver resets); he is releasing ML 5.8.26. Branch
+`ml-local-5826` has MlRuntime.PromptSucceeded (the warm-up call) and drive-model-switch.js; merge it when 5.8.26 is on nuget.org. Still owed
+to Tuvok: the heap across a model switch (SD 1.5 safetensors -> FLUX.2 Klein -> SD 1.5, releases on / off). **`load-image-device` is merged**
+(Load Image decodes on the GPU from the file kept in JS): Chrome WebGPU on the RX 590 decodes the 512x512 example picture exactly in
+seconds (Codecs 1.1.3: over 2 min / driver watchdog), 11 corpus files exact in the browser, 42 / 42 on OpenCL; suite 3478 / 0 / 3. Owed to
+Geordi: lossy Save Animated WEBP per frame in Chrome, 1.1.4 against 1.1.3.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

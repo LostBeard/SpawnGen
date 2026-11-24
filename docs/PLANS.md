@@ -136,6 +136,15 @@ three new drives against a local publish). A new Studio setting must be applied 
 Decisions waiting on TJ: the Hugging Face Space (storage limit, still the 5.8.26 build); model freeing on the desktop server; the
 default cache limit; Geordi's parallel-encode design for slow cards (RX 590: two encodes together only 1.10x).
 
+**2026-11-24 13:50: main = ML 5.8.28, live (Pages run 45447954796), and checked: 17 / 17 examples in one page, drive-cache-cleared (cap
+and no cap), drive-cache-limit, drive-device-lost, UI drives (upload and appmode each failed once on the live URL and passed on rerun:
+a file-picker click that timed out, one net::ERR_CONNECTION_RESET console line; not explained).** `ml-local-5827` is merged: the model cache
+limit (Settings > Models, default 24 GB), recovery when the browser clears the stored models. After it: the limit also trims a store
+that is already over it at the start of the next run (the library only evicts for a new download; the live profile stayed at 42 GB
+under the 24 GB default): Pages run 45462410630, live pass _scratch/live-pages-trim.log to read (expect the store near 24 GB after it).
+Chrome made the live origin's storage persistent in the test profile (persisted: true). Still to merge: `codecs-115-local` when Codecs
+1.1.5 is on nuget.org (Geordi's release sweep), then redeploy and run drive-webp-parity against a server from main.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

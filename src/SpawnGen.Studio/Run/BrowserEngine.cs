@@ -92,16 +92,24 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         try { _perOp = _js.Get<string>("location.search")?.Contains("perop=1") == true; } catch (Exception) { }
         try { _nodeTimes = _js.Get<string>("location.search")?.Contains("nodetimes=1") == true; } catch (Exception) { }
         // Test switch: ?testhooks=1 adds window.spawngenLoseGpu(), which destroys the engine's WebGPU device (a real device loss, as a GPU reset
-        // gives), for tools/studio-browser-test/drive-device-lost.js.
+        // gives), and window.spawngenRefuseDevices(n), which makes the next n attempts to open a device fail (as the browser does for some
+        // seconds after a driver reset), for tools/studio-browser-test/drive-device-lost.js.
         try
         {
             if (_js.Get<string>("location.search")?.Contains("testhooks=1") == true)
+            {
                 _js.Set("spawngenLoseGpu", new ActionCallback(LoseDeviceForTest));
+                _js.Set("spawngenRefuseDevices", new ActionCallback<int>(n => _refuseDevicesForTest = n));
+            }
         }
         catch (Exception) { }
     }
 
     bool _deviceLost;
+    /// <summary>Set when a lost device is being replaced: until a new one opens, opening is retried (<see cref="CreateRuntimeAsync"/>).</summary>
+    bool _reopening;
+    int _refuseDevicesForTest;
+    const int ReopenTries = 8, ReopenWaitMs = 2000;
 
     /// <summary>
     /// A run that failed because the device was lost (the browser's own words: "device was lost" / "device has been lost") marks it, whether or
@@ -236,7 +244,13 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     GpuPictureDecoder? _pictureDecoder;
 
     /// <summary>Opens the GPU on first use (the first ML node to run asks for it) and keeps it.</summary>
-    public Task<MlRuntime> GetAsync() => _runtime ??= CreateRuntimeAsync();
+    public Task<MlRuntime> GetAsync()
+    {
+        // A failed open is not kept: the next run tries again. Found 2026-11-23 (RX 590): a driver reset lost the device, the next run's
+        // requestDevice was refused (DXGI_ERROR_DEVICE_REMOVED, the driver still resetting), and that failure answered every later run.
+        if (_runtime is { IsFaulted: true } or { IsCanceled: true }) _runtime = null;
+        return _runtime ??= CreateRuntimeAsync();
+    }
 
     /// <summary>
     /// Before each prompt: when the WebGPU device was lost (a GPU reset, a driver timeout, the GPU out of memory), every later dispatch throws, so
@@ -250,6 +264,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         if (!lost) return;
         _deviceLost = false;
         _runtime = null;
+        _reopening = true;
         Console.WriteLine("[gpu] the WebGPU device was lost: opening a new one for this run");
         try { task.Result.Dispose(); } catch (Exception ex) { Console.WriteLine("[gpu] releasing the lost device: " + ex.Message); }
         _queue.ClearResults();
@@ -258,11 +273,29 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     async Task<MlRuntime> CreateRuntimeAsync()
     {
-        var builder = MLContext.Create();
-        await builder.AllAcceleratorsAsync();
-        var context = builder.ToContext();
-        var accelerator = await context.CreatePreferredAcceleratorAsync()
-            ?? throw new InvalidOperationException("This browser has no GPU the engine can use (it needs WebGPU).");
+        // After a device loss the browser can refuse a new device for some seconds (the driver is still resetting): wait and try again
+        // before failing the run. A first open is tried once, so a browser without WebGPU says so at once.
+        int tries = _reopening ? ReopenTries : 1;
+        ILGPU.Runtime.Accelerator accelerator;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (_refuseDevicesForTest > 0) { _refuseDevicesForTest--; throw new InvalidOperationException("test hook: the browser refused a new GPU device"); }
+                var builder = MLContext.Create();
+                await builder.AllAcceleratorsAsync();
+                var context = builder.ToContext();
+                accelerator = await context.CreatePreferredAcceleratorAsync()
+                    ?? throw new InvalidOperationException("This browser has no GPU the engine can use (it needs WebGPU).");
+                break;
+            }
+            catch (Exception ex) when (attempt < tries)
+            {
+                Console.WriteLine($"[gpu] no new device yet ({ex.Message.Split((char)10)[0]}); trying again in {ReopenWaitMs / 1000} s (attempt {attempt} of {tries})");
+                await Task.Delay(ReopenWaitMs);
+            }
+        }
+        _reopening = false;
         // Model files stream into the origin-private file system and are reused on the next visit, never held whole in memory.
         // Every model, whatever its size: cached in the browser when there is room, streamed from the model host when not (StreamingModelSource).
         var source = new StreamingModelSource(Hub);

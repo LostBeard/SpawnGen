@@ -21,7 +21,7 @@ async function phase(limitGb, labels, fresh) {
   const logs = [];
   page.on('console', m => logs.push(m.text()));
   // the setting as the Settings panel stores it, in place before the Studio starts
-  await page.addInitScript(gb => { try { localStorage.setItem('spawngen.settings', JSON.stringify({ ModelCacheGb: gb })); } catch (e) { } }, limitGb);
+  await page.addInitScript(gb => { try { localStorage.setItem('spawngen.settings', JSON.stringify({ ModelCacheLimitGb: gb })); } catch (e) { } }, limitGb);
   await page.goto(BASE + '?nodetimes=1'); await page.waitForSelector('canvas'); await page.waitForTimeout(3500);
   const read = async sel => (await page.locator(sel).first().textContent({ timeout: 60000 }).catch(() => '')) || '';
   const runs = async () => parseInt(((await read('.toolbar')).match(/History \((\d+)\)/) || [])[1] || '0', 10);
@@ -57,9 +57,9 @@ async function phase(limitGb, labels, fresh) {
     const s = await stored();
     console.log(`limit ${limitGb} GB, ${label}: ${outcome}; stored ${(s.total / 1e6).toFixed(1)} MB in ${s.files} files (largest ${(s.largest / 1e6).toFixed(1)} MB)`);
     check(outcome === 'ran', `${label} runs under a ${limitGb} GB limit`);
-    check(s.total <= limit, `and the stored models stay within the limit (${(s.total / 1e6).toFixed(1)} of ${(limit / 1e6).toFixed(0)} MB)`);
+    if (limit > 0) check(s.total <= limit, `and the stored models stay within the limit (${(s.total / 1e6).toFixed(1)} of ${(limit / 1e6).toFixed(0)} MB)`);
   }
-  const said = logs.filter(l => /^\[models\] (cache limit|streaming|the browser refused)/.test(l));
+  const said = logs.filter(l => /^\[models\] (cache limit|no cache limit|streaming|the browser refused)/.test(l));
   console.log('console: ' + said.slice(0, 8).join(' || ').slice(0, 700));
   await ctx.close();
   return { logs, said };
@@ -72,6 +72,11 @@ async function phase(limitGb, labels, fresh) {
   // is already stored (a cache hit downloads nothing), so only the engine's own trim at the start of the run can bring the store down.
   const c = await phase(0.05, ['Pose and object detection'], false);
   check(c.logs.some(l => /^\[models\] removed .* of stored models/.test(l)), 'a store already over a lowered limit is trimmed when the next run starts');
+  // Phase D, the Studio's default (0 = no limit) on the store phase C left: models are added and none is removed, however much is stored
+  // (TJ, 2026-11-24: downloading gigabytes again is worse than using disk space; a limit is the user's choice, not the default).
+  const d = await phase(0, ['Remove the background', 'Depth map'], false);
+  check(d.said.some(l => /no cache limit/.test(l)), 'with the default the engine has no cache limit');
+  check(!d.logs.some(l => /^\[models\] removed /.test(l)), 'and it removes no stored model');
   const b = await phase(0.02, ['Depth map'], true);
   check(b.said.some(l => /^\[models\] streaming/.test(l)), 'a model larger than the limit streams instead of being stored');
   console.log(failed ? `${failed} FAILED` : 'ALL PASS');

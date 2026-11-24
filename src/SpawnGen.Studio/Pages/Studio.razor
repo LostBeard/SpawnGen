@@ -403,8 +403,8 @@
                     </select>
                 </label>
                 <h4>Models</h4>
-                <label title="This browser's engine only: how many GB of downloaded models the browser keeps. When a new model needs room, the ones used longest ago are removed (they download again when used); a model larger than the limit is streamed on every load. 0 = no limit: the browser may then clear every model at once when it decides the site stores too much.">Model cache limit (GB)
-                    <input type="number" min="0" max="4096" step="1" value="@_settings.ModelCacheGb" @onchange="OnModelCacheChosen" />
+                <label title="This browser's engine only. 0 (the default) keeps every downloaded model until you remove it in the Models panel. Set a number of GB to cap what is kept: when a new model needs room, the ones used longest ago are removed and download again when used; a model larger than the limit is streamed on every load.">Model cache limit (GB, 0 = keep all)
+                    <input type="number" min="0" max="4096" step="1" value="@_settings.ModelCacheLimitGb" @onchange="OnModelCacheChosen" />
                 </label>
                 <label class="row" title="On: a LoRA on LTX-2's 8-bit weights is rounded back to 8 bits the way ComfyUI rounds it, so the video matches ComfyUI's. Off: the exact sum, the LoRA's full effect (about 7e-3 away from ComfyUI's result on one block).">
                     <input type="checkbox" checked="@_settings.Ltx2ComfyFp8Lora" @onchange="e => { _settings.Ltx2ComfyFp8Lora = (bool)(e.Value ?? false); ApplySettings(); }" /> LTX-2 LoRAs on 8-bit weights: round like ComfyUI</label>
@@ -2282,7 +2282,7 @@
     void OnModelCacheChosen(ChangeEventArgs e)
     {
         if (double.TryParse(e.Value as string, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var gb) && gb is >= 0 and <= 4096)
-            _settings.ModelCacheGb = gb;
+            _settings.ModelCacheLimitGb = gb;
         ApplySettings();
     }
 

@@ -32,18 +32,17 @@ public sealed class StudioSettings
     public double Ltx2ReadAheadGb { get; set; }
 
     /// <summary>
-    /// The in-browser engine: how many GB of downloaded models the browser keeps (the least recently used go first; a model that does not fit
-    /// streams from its host on every load). 0 = no limit. The browser cannot see the drive's free space and reports its own quota as
-    /// "what is used + 10 GB", so without a limit the cache grew past any quota (42 GB stored against a reported 3.6 of 14.3 GB, 2026-11-24)
-    /// until the browser cleared the whole site's storage in the middle of a session.
+    /// The in-browser engine: an optional limit, in GB, on the downloaded models the browser keeps. 0 (the default) = no limit: every model
+    /// stays until the user removes it in the Models panel, as in other model apps (TJ, 2026-11-24: downloading gigabytes again is worse for
+    /// most people than using disk space they have). With a limit, the models used longest ago go first when a new one needs room, and a
+    /// model larger than the limit streams from its host on every load. What protects the kept models from the browser itself is persistent
+    /// storage (the engine asks for it): a browser under disk pressure clears whole sites that are not persistent, least recently used first.
+    /// Saved as ModelCacheLimitGb; the first version's ModelCacheGb (which wrote its default of 24 into saved settings) is not read.
     /// </summary>
-    public double ModelCacheGb { get; set; } = DefaultModelCacheGb;
+    public double ModelCacheLimitGb { get; set; }
 
-    /// <summary>Room for the largest single workflow the examples have (LTX-Video, FLUX 3 Klein or TRELLIS.2 with what they load beside them), not for all of them at once.</summary>
-    public const double DefaultModelCacheGb = 24;
-
-    /// <summary><see cref="ModelCacheGb"/> in bytes, null for no limit.</summary>
-    public long? ModelCacheBytes => ModelCacheGb > 0 ? (long)(ModelCacheGb * 1e9) : null;
+    /// <summary><see cref="ModelCacheLimitGb"/> in bytes, null for no limit.</summary>
+    public long? ModelCacheBytes => ModelCacheLimitGb > 0 ? (long)(ModelCacheLimitGb * 1e9) : null;
 
     /// <summary>The run settings sent with each prompt (extra_data.spawngen_settings).</summary>
     public IReadOnlyDictionary<string, string> RunSettings() => new Dictionary<string, string>
@@ -85,7 +84,7 @@ public sealed class StudioSettings
                 s.Ltx2Precision = lp.GetString()!;
             if (root.TryGetProperty(nameof(Ltx2HostCacheGb), out var hc) && hc.ValueKind == JsonValueKind.Number && hc.GetDouble() is >= 0 and <= 1024 and var cache) s.Ltx2HostCacheGb = cache;
             if (root.TryGetProperty(nameof(Ltx2ReadAheadGb), out var ra) && ra.ValueKind == JsonValueKind.Number && ra.GetDouble() is >= 0 and <= 1024 and var ahead) s.Ltx2ReadAheadGb = ahead;
-            if (root.TryGetProperty(nameof(ModelCacheGb), out var mc) && mc.ValueKind == JsonValueKind.Number && mc.GetDouble() is >= 0 and <= 4096 and var modelCache) s.ModelCacheGb = modelCache;
+            if (root.TryGetProperty(nameof(ModelCacheLimitGb), out var mc) && mc.ValueKind == JsonValueKind.Number && mc.GetDouble() is >= 0 and <= 4096 and var modelCache) s.ModelCacheLimitGb = modelCache;
         }
         catch (JsonException) { }
         return s;

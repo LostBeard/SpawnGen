@@ -340,7 +340,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     bool _askedForPersistence;
     StreamingModelSource? _modelSource;
-    long? _maxCacheBytes = (long)(SpawnGen.Editor.StudioSettings.DefaultModelCacheGb * 1e9);
+    long? _maxCacheBytes;
 
     /// <summary>The model cache limit in bytes (null: none), from the Studio's settings; applies to the next model the engine loads.</summary>
     public long? MaxCacheBytes

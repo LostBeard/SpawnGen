@@ -115,6 +115,7 @@ public sealed class MlRuntime : IDisposable
         {
             Console.WriteLine($"[models] freed {k} (not used by this prompt) before loading {key}");
             model.Dispose();
+            await ReportHeapAsync($"after unloading {k}");
         }
         try { return (T)await task; }
         catch
@@ -126,8 +127,22 @@ public sealed class MlRuntime : IDisposable
 
     bool _loadedSinceWarmUp;
 
-    /// <summary>Measuring switch (the browser's ?nodetimes=1): print the .NET heap, collected, before and after each warm-up release.</summary>
+    /// <summary>Measuring switch (the browser's ?nodetimes=1): print each warm-up release and the .NET heap at the points <see cref="ReportHeapAsync"/> is called.</summary>
     public static bool ReportWarmUps { get; set; }
+
+    /// <summary>
+    /// Prints the collected .NET heap and the library's compiler-cache release count (only with <see cref="ReportWarmUps"/>). Measured the way
+    /// SpawnDev.ILGPU.ML's tests do: from its own async method after a short wait, so no caller's locals or stack keep freed objects reachable
+    /// (the browser runtime scans the stack conservatively: a collect right beside the release showed no change), then collect, run
+    /// finalizers, collect.
+    /// </summary>
+    public static async Task ReportHeapAsync(string label)
+    {
+        if (!ReportWarmUps) return;
+        await Task.Delay(50);
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        Console.WriteLine($"[heap] {label}: {GC.GetTotalMemory(false) / 1048576.0:F1} MiB; library releases {CompilerCachePolicy.ReleaseCount}");
+    }
 
     /// <summary>How many times <see cref="PromptSucceeded"/> has told the library that newly loaded models are warm (the tests read it).</summary>
     public int WarmUps { get; private set; }
@@ -149,10 +164,8 @@ public sealed class MlRuntime : IDisposable
             _loadedSinceWarmUp = false;
             WarmUps++;
         }
-        if (!ReportWarmUps) { CompilerCachePolicy.ModelWarmedUp(Accelerator); return true; }
-        double before = GC.GetTotalMemory(true) / 1048576.0;
         bool released = CompilerCachePolicy.ModelWarmedUp(Accelerator);
-        Console.WriteLine($"[warmup] released {released}; .NET heap {before:F1} -> {GC.GetTotalMemory(true) / 1048576.0:F1} MiB");
+        if (ReportWarmUps) Console.WriteLine($"[warmup] released {released}; library releases so far {CompilerCachePolicy.ReleaseCount}");
         return true;
     }
 

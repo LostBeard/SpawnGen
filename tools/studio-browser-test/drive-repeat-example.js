@@ -24,7 +24,7 @@ const RUNS = parseInt(process.env.RUNS || '5', 10);
   page.on('console', m => { if (m.type() === 'error' && !/powerPreference/.test(m.text())) problems.push(m.text().slice(0, 200)); });
   page.on('pageerror', e => problems.push('PAGEERROR ' + e.message.slice(0, 200)));
   let timing = [];
-  page.on('console', m => { const t = m.text(); if (/^\[(nodetimes|perop|warmup)\]/.test(t)) timing.push(t); });
+  page.on('console', m => { const t = m.text(); if (/^\[(nodetimes|perop|warmup|heap|models)\]/.test(t)) timing.push(t); });
   await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(4000);
   if (process.env.PROMPT_FILE) {
     // A fixed prompt (API JSON) instead of an Examples entry: with a fixed seed its upstream nodes are cached after run 1, so the warm runs
@@ -40,7 +40,7 @@ const RUNS = parseInt(process.env.RUNS || '5', 10);
   const pageSeconds = [], wall = []; let failed = 0;
   for (let r = 0; r < RUNS; r++) {
     const t0 = Date.now();
-    timing = timing.filter(t => t.startsWith("[warmup]")); // warm-up lines come once, after the first run: keep them
+    timing = timing.filter(t => /^\[(warmup|heap|models)\]/.test(t)); // warm-up lines come once, after the first run: keep them
     await page.click('button:has-text("Queue")');
     await page.waitForTimeout(300);
     let toast = '';

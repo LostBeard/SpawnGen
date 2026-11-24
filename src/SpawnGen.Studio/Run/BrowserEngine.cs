@@ -64,7 +64,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         };
         _queue = new PromptQueue(registry, this, _bus) {
             BeforeRun = ReplaceLostDeviceAsync, RunFailed = NoteLostDevice,
-            RunSucceeded = () => { if (_runtime is { IsCompletedSuccessfully: true } task) task.Result.PromptSucceeded(); },
+            RunSucceeded = () => { if (_runtime is { IsCompletedSuccessfully: true } task) task.Result.PromptSucceeded(); _ = MlRuntime.ReportHeapAsync("after a prompt"); },
         };
         // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the
         // slowest ones to the console when a run ends. For finding the single op that overruns a GPU watchdog.

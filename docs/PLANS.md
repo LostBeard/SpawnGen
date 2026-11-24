@@ -71,6 +71,21 @@ still trip the RX 590's driver watchdog in Chrome (1 loss in 5 SD -> FLUX.2 pass
 estimated work instead of every 64 nodes; my 10-run count on 5.8.26 is the "before", rerun on his -local. **Next:** the deploy (Pages AOT +
 HF Space) and the full live check on both URLs; drive-appmode.js on the real GPU.
 
+**2026-11-23 night: deployed.** Pages run 45305247628 (40f1dfb, ML 5.8.26) and the Hugging Face Space (commit c65b306). Live Pages check
+on the RX 590: 17 / 17 examples ran, every screenshot looked at (TRELLIS's mesh not opened). The first pass after a deploy is slow (every
+shader compiled anew): Text to video 331 s, then 121 s warm. **Not yet run:** the Space's examples, the UI drives on both URLs.
+**Device losses on the RX 590 in Chrome (ML 5.8.26, also the live site):** FLUX.2 Klein lost the device in 4 of 27 first runs of a page
+(about 20 s in: the text encoder, one command buffer for the whole encoder) and FLUX 3 / FLUX.2 in the VAE decode (GraphExecutor, up to 64
+convs per command buffer). Tuvok's fixes are in ML 5.8.27-local.2 (branch `ml-local-5827`, worktree `_scratch/wt-ml5826`, with Codecs
+1.1.5-local.2): 0 losses in 20 FLUX.2 runs so far; 20 more fresh first runs and 10 of FLUX 3 decide his release (`drive-loss-count.js`,
+FRESH=1). After a real driver reset Chrome gives the page no device at all (plain JS refused for 46 s and more; a new browser works):
+SpawnGen's retry cannot recover that page, and its message ("Queue again") is wrong then: say "restart the browser" once the reload
+probe in drive-loss-count has shown whether a reload is enough.
+**Lossy WebP on AMD WebGPU is suspect (Geordi, 2026-11-23):** on the RX 590 in Chrome, repeated encodes of the same frame give different
+bytes (his probe; identical on a 4070). SpawnGen's clips decode and look right; the byte-parity test covers CPU and OpenCL only. Owed:
+his new probe + the libwebp-identity tests on the RX 590; then a browser parity check of Save Animated WEBP. Save Animated WEBP node, 25
+frames in Chrome: 58.7 s (1.1.3), 32.0 s (1.1.4), 28.1 s (1.1.5-local.2); a tiny dispatch costs 62 us here, so the time is not dispatch count.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

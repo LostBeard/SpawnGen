@@ -84,6 +84,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         {
             if (_perOp) ReportPerOpTimings(e.Type);
             if (_nodeTimes) ReportNodeTimes(e.Type, e.Data);
+            if (_nodeTimes && e.Type == "node_status") ReportStage(e.Data["message"]?.GetValue<string>());
             EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
         };
         _queue = new PromptQueue(registry, this, _bus) {
@@ -140,6 +141,18 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             Console.WriteLine("[gpu] test hook: destroying the WebGPU device");
             gpu.NativeAccelerator.NativeDevice?.Destroy();
         }
+    }
+
+    // With ?nodetimes=1: each new stage a node reports (its status text with the counters taken out: "FLUX.2 Klein: text encoder", "... transformer")
+    // is printed with the run's clock, so a run that dies (a lost GPU device) leaves the name of the stage it was in on the console.
+    string? _lastStage;
+    void ReportStage(string? message)
+    {
+        if (string.IsNullOrEmpty(message)) return;
+        string stage = System.Text.RegularExpressions.Regex.Replace(message, @"[\d.,/%]+", "#");
+        if (stage == _lastStage) return;
+        _lastStage = stage;
+        Console.WriteLine($"[stage] {_runClock.Elapsed.TotalSeconds:F1} s  {message}");
     }
 
     readonly bool _perOp;

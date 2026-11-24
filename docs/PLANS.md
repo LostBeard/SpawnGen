@@ -86,6 +86,13 @@ bytes (his probe; identical on a 4070). SpawnGen's clips decode and look right; 
 his new probe + the libwebp-identity tests on the RX 590; then a browser parity check of Save Animated WEBP. Save Animated WEBP node, 25
 frames in Chrome: 58.7 s (1.1.3), 32.0 s (1.1.4), 28.1 s (1.1.5-local.2); a tiny dispatch costs 62 us here, so the time is not dispatch count.
 
+**2026-11-24 00:50: main = ML 5.8.27 (released after the RX 590 counts: FLUX.2 Klein 0 losses in 30 first runs, 4 in 27 before; FLUX 3
+Klein 0 in 10); Pages run 45337313371 building it.** When it is green: tools/hf-space/publish.sh 45337313371, then on both URLs every
+example and the UI drives (not run on the 5.8.26 deploy either). The 5.8.26 Space check: 16 / 17, TRELLIS lost the device at 88 s as the
+17th example in one page and ran alone in 890 s; Tuvok asked for 5 fresh TRELLIS runs on 5.8.27 with stage names
+(_scratch/trellis-losscount-5827.log). Geordi's lossy WebP on AMD WebGPU: fails libwebp identity at every commit back to v1.1.3 (36 of
+222), so it never was right on this card in the browser; his garbage-buffer test result is owed (_scratch/codecs-garbage.log).
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

@@ -93,6 +93,16 @@ example and the UI drives (not run on the 5.8.26 deploy either). The 5.8.26 Spac
 (_scratch/trellis-losscount-5827.log). Geordi's lossy WebP on AMD WebGPU: fails libwebp identity at every commit back to v1.1.3 (36 of
 222), so it never was right on this card in the browser; his garbage-buffer test result is owed (_scratch/codecs-garbage.log).
 
+**2026-11-24 02:30: ML 5.8.27 is live on Pages (run 45339199113; the first dispatch failed, nuget.org had not listed 5.8.27 yet: check
+the index before pushing a bump).** The Hugging Face Space is still the 5.8.26 build (c65b306): `hf upload` is refused, "Storage limit
+reached for this space (Max: 1 GB)", 959 MB used. Asked TJ: squash the Space's history (irreversible) or another way; do NOT squash
+without his word. Running: every example on the live Pages 5.8.27 build (_scratch/live-pages-5827.log); then the UI drives on Pages.
+TRELLIS on 5.8.27, 5 fresh runs: no device loss; one run failed with "guide level 1 has 5341 voxels, decoder has 0" while a Codecs test
+shared the GPU (sent to Tuvok). Lossy WebP on AMD WebGPU: cause found by Geordi with the RX 590 stage hashes (the setup kernel's level-cost
+table stops after part of the first of 96 tables: a data-dependent while loop on this driver); his fixed-loop fix (Codecs 3c54c1c, local,
+a WORKAROUND awaiting TJ) passes libwebp identity here. When a Codecs release has it: bump, and add a browser byte-parity check of Save
+Animated WEBP to the drives.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

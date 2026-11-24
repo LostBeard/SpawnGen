@@ -154,6 +154,15 @@ Live pass under the 24 GB cache limit before this deploy: 17 / 17, store 42.25 -
 one-copy deploy (_scratch/live-pages-onecopy.log, live-space-onecopy.log: the Space's first run in .gz-only form with the AOT build).
 Still to merge: `codecs-115-local` when Codecs 1.1.5 is on nuget.org.
 
+**2026-11-24 17:30: the model cache limit is OFF by default (TJ), live on both sites (Pages run 45495259517, Space 11e9eab) and checked.**
+Downloaded models are kept until the user removes them in the Models panel (what WebLLM and Transformers.js do; the protection against
+the browser clearing a site is persistent storage, which the engine asks for). StudioSettings.ModelCacheLimitGb (0 = keep all) replaces
+ModelCacheGb, whose default the first version had written into saved settings. Live: drive-cache-limit (with the default-behaviour
+phase), drive-cache-cleared, history and upload drives pass on both URLs; SD-Turbo, Image to image, FLUX.2 Klein, Text to video pass on Pages.
+Running for Data: ILGPU 5.4.47 vs 5.4.48-local.1 (every kernel in its own IR context) in SpawnGen on the RX 590:
+`_scratch/ilgpu-measure.sh`, builds in worktrees `_scratch/wt-i5447` / `wt-i5448l1` served on :5310 / :5311, logs `_scratch/ilgpu-measure/`.
+Remaining for SpawnGen: merge `codecs-115-local` when Codecs 1.1.5 is on nuget.org. Open with TJ: model freeing on the desktop server.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

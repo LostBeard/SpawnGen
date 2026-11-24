@@ -202,6 +202,12 @@ public sealed class PromptQueue : IDisposable
     /// </summary>
     public Func<Task>? BeforeRun { get; set; }
 
+    /// <summary>
+    /// Runs at the start of a prompt that reuses no cached model (<see cref="PromptExecutor.UnrelatedPromptStarting"/>): an engine frees the
+    /// models of earlier workflows here, before this one loads its own.
+    /// </summary>
+    public Func<Task>? UnrelatedPromptStarting { get => _executor.UnrelatedPromptStarting; set => _executor.UnrelatedPromptStarting = value; }
+
     /// <summary>Runs after every prompt that ran to the end (the engines tell the ML runtime its newly loaded models are warm).</summary>
     public Action? RunSucceeded { get; set; }
 

@@ -15,6 +15,8 @@ public sealed class ResultCache(int capacity = 512)
     {
         public NodeOutputs Outputs { get; } = outputs;
         public long LastUsed;
+        /// <summary>Whether an output is something other than plain data (a number, text, a tensor, a list of those): a model handle or anything that may hold one.</summary>
+        public bool MayHoldModels { get; } = outputs.Values.Any(v => !IsPlainData(v));
     }
 
     readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
@@ -58,6 +60,32 @@ public sealed class ResultCache(int capacity = 512)
         if (_entries.Count <= capacity) return;
         foreach (var key in _entries.OrderBy(kv => kv.Value.LastUsed).Take(_entries.Count - capacity).Select(kv => kv.Key).ToList())
             if (_entries.Remove(key, out var e)) Release(e);
+    }
+
+    /// <summary>
+    /// Plain data keeps no model alive: null, text, numbers, booleans, enums, tensors and lists of those. Everything else (MODEL / CLIP / VAE
+    /// handles, conditioning, audio or 3D objects the engine does not know) counts as possibly holding a model: the cautious side.
+    /// </summary>
+    static bool IsPlainData(object? value) => value switch
+    {
+        null or string or HostTensor => true,
+        IReadOnlyList<object?> list => list.All(IsPlainData),
+        _ => value.GetType().IsPrimitive || value is decimal || value.GetType().IsEnum,
+    };
+
+    /// <summary>Whether the entry under <paramref name="signature"/> exists and may hold a model (see <see cref="DropModelEntries"/>).</summary>
+    internal bool MayHoldModels(string signature) => _entries.TryGetValue(signature, out var e) && e.MayHoldModels;
+
+    /// <summary>
+    /// Drops every entry that may hold a model; plain-data entries stay (a loaded picture is still reused). Called when a prompt reuses none
+    /// of them, so the ML layer can free the models of earlier workflows before this one loads its own. Returns how many were dropped.
+    /// </summary>
+    public int DropModelEntries()
+    {
+        var keys = _entries.Where(kv => kv.Value.MayHoldModels).Select(kv => kv.Key).ToList();
+        foreach (var key in keys)
+            if (_entries.Remove(key, out var e)) Release(e);
+        return keys.Count;
     }
 
     /// <summary>Drops every entry; device buffers of the tensors they held are freed (after a lost device, the buffers are gone anyway).</summary>

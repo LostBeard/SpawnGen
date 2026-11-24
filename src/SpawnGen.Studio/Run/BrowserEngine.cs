@@ -89,6 +89,9 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         };
         _queue = new PromptQueue(registry, this, _bus) {
             BeforeRun = ReplaceLostDeviceAsync, RunFailed = NoteLostDevice,
+            // A browser's GPU memory cannot be measured, and a page that keeps every workflow's models loses the device sooner or later:
+            // a workflow that reuses none of the earlier one's models frees them before it loads its own.
+            UnrelatedPromptStarting = async () => { if (_runtime is { IsCompletedSuccessfully: true } task && task.Result.FreeHandedOutModels() > 0) await MlRuntime.ReportHeapAsync("after freeing the earlier workflow's models"); },
             RunSucceeded = () => { if (_runtime is { IsCompletedSuccessfully: true } task) task.Result.PromptSucceeded(); _ = MlRuntime.ReportHeapAsync("after a prompt"); },
         };
         // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the

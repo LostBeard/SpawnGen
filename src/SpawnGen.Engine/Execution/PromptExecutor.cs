@@ -36,6 +36,13 @@ public sealed class PromptExecutor
 
     public ResultCache Cache { get; }
 
+    /// <summary>
+    /// Called at the start of a prompt none of whose needed nodes has a cached result that may hold a model, after those cache entries were
+    /// dropped and before any node runs: no node output refers to the models earlier prompts loaded, so the host may free them here. Not
+    /// called while a prompt still reuses such a result (the same workflow queued again keeps its models). Null: models are never freed this way.
+    /// </summary>
+    public Func<Task>? UnrelatedPromptStarting { get; set; }
+
     public ValidationResult Validate(PromptGraph graph, IReadOnlyList<string>? outputNodeIds = null) =>
         PromptValidator.Validate(_registry, graph, outputNodeIds);
 
@@ -59,6 +66,15 @@ public sealed class PromptExecutor
             observer?.OnStart(promptId, validation.Plan);
 
             var run = new Run(this, graph, options, observer, cancellationToken, validation.Loops);
+            // A prompt that reuses no cached model (a different workflow, or the same one with another checkpoint): nothing it will run needs
+            // the models earlier prompts left loaded, so their cache entries go and the ML layer is told it may free them, BEFORE this prompt
+            // loads its own. Without this a page that ran the Stable Diffusion examples kept both checkpoints on the GPU while FLUX.2 Klein
+            // loaded beside them (2026-11-24, RX 590: device lost in the first denoise step; alone it ran 30 of 30).
+            if (UnrelatedPromptStarting is { } unrelated && !run.ReusesModelEntries(validation.Plan))
+            {
+                Cache.DropModelEntries();
+                await unrelated().ConfigureAwait(false);
+            }
             observer?.OnCachedNodes(run.CachedUpFront(validation.Plan));
             // An output node inside a loop body runs once per iteration, through the loop (ComfyUI inhibits the original).
             var inLoops = validation.Loops.Values.SelectMany(l => l.Body).ToHashSet(StringComparer.Ordinal);
@@ -346,6 +362,17 @@ public sealed class PromptExecutor
                     && owner.Cache.TryGet(Signature(id), out _))
                     cached.Add(id);
             return cached;
+        }
+
+        /// <summary>Whether a needed node's cached result may hold a model (<see cref="ResultCache.MayHoldModels"/>): this prompt builds on an earlier one's models.</summary>
+        public bool ReusesModelEntries(IReadOnlyList<string> plan)
+        {
+            var needed = plan.ToHashSet(StringComparer.Ordinal);
+            foreach (var (id, node) in graph.Nodes)
+                if (needed.Contains(id) && owner._registry.TryGet(node.ClassType, out var reg) && !AlwaysRuns(node, reg.Schema)
+                    && owner.Cache.MayHoldModels(Signature(id)))
+                    return true;
+            return false;
         }
 
         static bool AlwaysRuns(PromptNode node, NodeSchema schema) =>

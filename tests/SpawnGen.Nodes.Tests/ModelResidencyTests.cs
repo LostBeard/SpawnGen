@@ -112,4 +112,70 @@ public class ModelResidencyTests
         Assert.That(runtime.PromptSucceeded(), Is.True, "a new pipeline is a new model");
         Assert.That(runtime.WarmUps, Is.EqualTo(2));
     }
+
+    /// <summary>
+    /// A workflow that reuses none of the earlier one's cached models (PromptExecutor.UnrelatedPromptStarting, wired as the browser engine
+    /// wires it) frees the models handed out as MODEL / CLIP / VAE before it loads its own; the same workflow queued again keeps them; a
+    /// per-node pipeline is not freed by this rule (its node's output is plain data, so its own workflow queued again must keep it).
+    /// Found 2026-11-24 on the RX 590: FLUX.2 Klein lost the WebGPU device in its first denoise step as the 6th example of a page that still
+    /// held both Stable Diffusion checkpoints; in a fresh page it ran 30 of 30.
+    /// </summary>
+    [Test]
+    public async Task An_unrelated_workflow_frees_the_handed_out_models_of_the_earlier_one()
+    {
+        lock (Counted.Log) Counted.Log.Clear();
+        using var context = ILGPU.Context.Create(b => b.CPU());
+        using var cpu = context.CreateCPUAccelerator(0);
+        using var runtime = new MlRuntime(new DesktopModelSource(Path.GetTempPath(), MlRuntime.RepoFolders), cpu);
+        var registry = new NodeRegistry().Add<UsesPipeline>().Add<UsesHandleModel>().Add<LoadsHandle>().Add<UsesHandle>();
+        var executor = new PromptExecutor(registry, new Services(runtime))
+        {
+            UnrelatedPromptStarting = () => { runtime.FreeHandedOutModels(); return Task.CompletedTask; },
+        };
+
+        async Task Sd(string name, long value)
+        {
+            var g = new PromptGraph();
+            g.Add("1", "LoadsHandle", ("name", name));
+            g.Add("2", "UsesHandle", ("model", PromptInput.Link("1", 0)), ("value", value));
+            await executor.ExecuteAsync(g);
+        }
+        async Task Pipe(string name)
+        {
+            var g = new PromptGraph();
+            g.Add("1", "UsesPipeline", ("name", name));
+            await executor.ExecuteAsync(g);
+        }
+
+        await Sd("m1", 1);
+        Assert.That(Of("handle:m1"), Is.EqualTo((1, 0)));
+        await Sd("m1", 2);
+        Assert.That(Of("handle:m1"), Is.EqualTo((1, 0)), "the same workflow queued again keeps its model");
+
+        await Pipe("p1");
+        Assert.That(Of("handle:m1"), Is.EqualTo((1, 1)), "a workflow that uses none of the earlier models frees them before loading its own");
+        Assert.That(Of("pipe:p1"), Is.EqualTo((1, 0)));
+        await Pipe("p1");
+        Assert.That(Of("pipe:p1"), Is.EqualTo((1, 0)), "the pipeline's own workflow queued again keeps the pipeline");
+
+        await Sd("m1", 3);
+        Assert.That(Of("handle:m1"), Is.EqualTo((2, 1)), "the freed model loads again on its next use");
+    }
+
+    /// <summary>A loader node: its output is the model object itself (as MODEL / CLIP / VAE handles are), so its cache entry holds a model.</summary>
+    [Node(Category = "test")]
+    public sealed class LoadsHandle
+    {
+        public async Task<Counted> ExecuteAsync(IServiceProvider services, string name = "h")
+        {
+            var runtime = (MlRuntime)services.GetService(typeof(MlRuntime))!;
+            return await runtime.GetOrLoadAsync("handle:" + name, () => Task.FromResult(Counted.Load("handle:" + name)));
+        }
+    }
+
+    [Node(Category = "test", IsOutput = true)]
+    public sealed class UsesHandle
+    {
+        public string Execute(Counted model, long value = 1) => model.Name + value;
+    }
 }

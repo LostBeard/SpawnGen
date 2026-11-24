@@ -125,6 +125,32 @@ public sealed class MlRuntime : IDisposable
         }
     }
 
+    /// <summary>
+    /// Frees every model handed out as MODEL / CLIP / VAE and the like (checkpoints, split files, the models of <see cref="GetOrLoadAsync{T}(string, Func{Task{T}})"/>);
+    /// the engine calls it at the start of a prompt that reuses none of their node outputs (PromptExecutor.UnrelatedPromptStarting), so
+    /// nothing refers to them any more. Each loads again on its next use. Per-node pipelines keep their own rule (freed before something
+    /// new loads once a prompt does not use them): a pipeline node's output is plain data, so the same workflow queued again must keep it.
+    /// Models still loading are left alone. Returns how many were freed.
+    /// </summary>
+    public int FreeHandedOutModels()
+    {
+        List<(string Key, IDisposable Model)> freed = [];
+        lock (_gate)
+        {
+            foreach (var (k, t) in _checkpoints.ToArray())
+                if (t.IsCompletedSuccessfully) { _checkpoints.Remove(k); freed.Add(("checkpoint:" + k, t.Result)); }
+                else if (t.IsFaulted || t.IsCanceled) _checkpoints.Remove(k);
+            foreach (var (k, e) in _loaded.ToArray())
+                if (!e.Pipeline && e.Task.IsCompletedSuccessfully) { _loaded.Remove(k); freed.Add((k, e.Task.Result)); }
+        }
+        foreach (var (k, model) in freed)
+        {
+            Console.WriteLine($"[models] freed {k}: the new workflow uses none of the earlier one's models");
+            try { model.Dispose(); } catch (Exception ex) { Console.WriteLine($"[models] freeing {k}: {ex.Message}"); }
+        }
+        return freed.Count;
+    }
+
     bool _loadedSinceWarmUp;
 
     /// <summary>Measuring switch (the browser's ?nodetimes=1): print each warm-up release and the .NET heap at the points <see cref="ReportHeapAsync"/> is called.</summary>

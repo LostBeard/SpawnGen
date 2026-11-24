@@ -103,6 +103,17 @@ table stops after part of the first of 96 tables: a data-dependent while loop on
 a WORKAROUND awaiting TJ) passes libwebp identity here. When a Codecs release has it: bump, and add a browser byte-parity check of Save
 Animated WEBP to the drives.
 
+**2026-11-24 07:05: a workflow that reuses none of the earlier one's models frees them first (browser engine).** Cause of the "every
+example in a row" device losses on the RX 590, found with stage capture on the live 5.8.27 build: FLUX.2 Klein lost the device in its
+first denoise step as the 6th example (both SD checkpoints still on the 8 GB card; D3D12 pages memory around each command buffer and the
+2 s watchdog fires), TRELLIS about 90 s in as the 17th (3 of 4 full passes), while both run alone every time. Fix:
+PromptExecutor.UnrelatedPromptStarting (ResultCache.MayHoldModels / DropModelEntries) -> MlRuntime.FreeHandedOutModels, wired in the
+browser engine; UnrelatedPromptTests + ModelResidencyTests, red-checked; suite 3484 / 0 / 3. Local publish, RX 590 Chrome: 17 / 17 in one
+page, no driver reset; drive-model-switch shows the SD checkpoint kept for its own workflow and freed before FLUX.2 Klein. One pass is not
+a rate: repeat the full pass on the live build after the deploy. Not done: the same rule on the desktop server (a desktop card has the
+same limit; decide with TJ, since it trades reloads for memory); freeing by measured need rather than by workflow. Also open: one
+"A requested file or directory could not be found" at the end of a TRELLIS run after the SD examples (1 in 2, live), unexplained.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

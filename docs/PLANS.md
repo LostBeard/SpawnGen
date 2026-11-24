@@ -114,6 +114,17 @@ a rate: repeat the full pass on the live build after the deploy. Not done: the s
 same limit; decide with TJ, since it trades reloads for memory); freeing by measured need rather than by workflow. Also open: one
 "A requested file or directory could not be found" at the end of a TRELLIS run after the SD examples (1 in 2, live), unexplained.
 
+**2026-11-24 08:30: the model-freeing fix is live and checked (Pages run 45389993898): 17 / 17 examples in one page on the RX 590, no
+driver reset, UI drives 10 / 10 on the live URL.** Found on the way: Chrome cleared the test profile's origin storage in the middle of a
+pass and every later model load failed ("A requested file or directory could not be found"): the library kept one OPFS directory handle
+for the page's life. Tuvok fixed it in ML 5.8.28-local.2; branch `ml-local-5827` (worktree `_scratch/wt-ml5826`) has that version and
+`drive-cache-cleared.js` (8 / 8 there, red on 5.8.27): merge when ML 5.8.28 is on nuget.org (check the index first), then redeploy. The
+browser engine now asks for persistent storage once (a headless test profile is refused; the console line says which). **Open, measured:**
+after a full pass the origin's OPFS holds 110 files, 42.25 GB, while navigator.storage.estimate reports usage 3.60 GB of a 14.3 GB quota:
+StreamingModelSource plans its caching against that estimate, so it keeps storing far past the quota (and the browser then clears
+everything). Next: plan against the bytes really stored (sum of the cached files), with Tuvok (PlanCacheAsync is the library's). The
+Hugging Face Space is still the 5.8.26 build (storage limit; TJ to decide). Desktop server: model freeing not wired (TJ to decide).
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

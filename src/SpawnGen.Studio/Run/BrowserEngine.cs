@@ -62,11 +62,17 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             if (_nodeTimes) ReportNodeTimes(e.Type, e.Data);
             EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
         };
-        _queue = new PromptQueue(registry, this, _bus) { BeforeRun = ReplaceLostDeviceAsync, RunFailed = NoteLostDevice };
+        _queue = new PromptQueue(registry, this, _bus) {
+            BeforeRun = ReplaceLostDeviceAsync, RunFailed = NoteLostDevice,
+            RunSucceeded = () => { if (_runtime is { IsCompletedSuccessfully: true } task) task.Result.PromptSucceeded(); },
+        };
         // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the
         // slowest ones to the console when a run ends. For finding the single op that overruns a GPU watchdog.
         try { _perOp = _js.Get<string>("location.search")?.Contains("perop=1") == true; } catch (Exception) { }
         try { _nodeTimes = _js.Get<string>("location.search")?.Contains("nodetimes=1") == true; } catch (Exception) { }
+        // With ?nodetimes=1 each warm-up release prints the .NET heap before and after; ?warmup=off turns SpawnDev.ILGPU.ML's releases off (to compare).
+        MlRuntime.ReportWarmUps = _nodeTimes;
+        try { if (_js.Get<string>("location.search")?.Contains("warmup=off") == true) SpawnDev.ILGPU.ML.CompilerCachePolicy.ReleaseAfterWarmup = false; } catch (Exception) { }
         // Test switch: ?testhooks=1 adds window.spawngenLoseGpu(), which destroys the engine's WebGPU device (a real device loss, as a GPU reset
         // gives), for tools/studio-browser-test/drive-device-lost.js.
         try

@@ -72,7 +72,10 @@ public sealed class MlRuntime : IDisposable
         {
             // A failed load (a missing file, the GPU out of memory) is not kept: the next run tries again.
             if (!_checkpoints.TryGetValue(name, out var task) || task.IsFaulted || task.IsCanceled)
+            {
                 _checkpoints[name] = task = Checkpoint.LoadAsync(this, name, repoId, CheckpointDetails[name], onProgress);
+                _loadedSinceWarmUp = true;
+            }
             return task;
         }
     }
@@ -105,6 +108,7 @@ public sealed class MlRuntime : IDisposable
                     foreach (var (k, e) in _loaded.ToArray())
                         if (e.Pipeline && e.Prompt != prompt && e.Task.IsCompletedSuccessfully) { _loaded.Remove(k); freed.Add((k, e.Task.Result)); }
                 _loaded[key] = new Loaded(task = Task.Run<IDisposable>(async () => await load()), pipeline);
+                _loadedSinceWarmUp = true;
             }
         }
         foreach (var (k, model) in freed)
@@ -118,6 +122,38 @@ public sealed class MlRuntime : IDisposable
             lock (_gate) { if (_loaded.TryGetValue(key, out var current) && ReferenceEquals(current.Task, task)) _loaded.Remove(key); }
             throw;
         }
+    }
+
+    bool _loadedSinceWarmUp;
+
+    /// <summary>Measuring switch (the browser's ?nodetimes=1): print the .NET heap, collected, before and after each warm-up release.</summary>
+    public static bool ReportWarmUps { get; set; }
+
+    /// <summary>How many times <see cref="PromptSucceeded"/> has told the library that newly loaded models are warm (the tests read it).</summary>
+    public int WarmUps { get; private set; }
+
+    /// <summary>
+    /// Called by the engine after every prompt that ran to the end. If the prompt (or a failed one before it) loaded a model, every model it
+    /// used has now completed a full run, so SpawnDev.ILGPU.ML is told once (<see cref="CompilerCachePolicy.ModelWarmedUp"/>): in the browser it
+    /// frees ILGPU's compiler caches (6.5-16 MiB of .NET heap per distinct model otherwise stays after the model is gone); on the desktop the
+    /// policy's default does nothing. The library does this itself for its whole pipelines and ONNX sessions, but the models SpawnGen builds
+    /// from components (SD checkpoints and split files, Z-Image, Qwen-Image, FLUX.1, ACE-Step) have no library entry that knows when the
+    /// whole model is warm. Not called per run: a kernel compiled for the first time after a release pays ~5-15 ms to re-import shared code,
+    /// so a prompt that loaded nothing new does nothing here. Returns whether the library was told.
+    /// </summary>
+    public bool PromptSucceeded()
+    {
+        lock (_gate)
+        {
+            if (!_loadedSinceWarmUp) return false;
+            _loadedSinceWarmUp = false;
+            WarmUps++;
+        }
+        if (!ReportWarmUps) { CompilerCachePolicy.ModelWarmedUp(Accelerator); return true; }
+        double before = GC.GetTotalMemory(true) / 1048576.0;
+        bool released = CompilerCachePolicy.ModelWarmedUp(Accelerator);
+        Console.WriteLine($"[warmup] released {released}; .NET heap {before:F1} -> {GC.GetTotalMemory(true) / 1048576.0:F1} MiB");
+        return true;
     }
 
     /// <summary>CUDA first, then OpenCL, then the CPU accelerator as a last resort (it is far too slow for diffusion).</summary>

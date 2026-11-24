@@ -38,7 +38,10 @@ public static class ServerApp
         builder.Services.AddSingleton(sp => new MlRuntime(sp.GetRequiredService<DesktopModelSource>()));
         builder.Services.AddSingleton<SpawnGen.Nodes.Core.IPictureEncoder>(sp => new SpawnGen.Nodes.ML.GpuPictureEncoder(sp)); // Save Image's PNG on the GPU
         builder.Services.AddSingleton<EventHub>();
-        builder.Services.AddSingleton(sp => new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>()));
+        builder.Services.AddSingleton(sp => new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>())
+        {
+            RunSucceeded = () => sp.GetRequiredService<MlRuntime>().PromptSucceeded(),
+        });
         configure?.Invoke(builder);
 
         var app = builder.Build();

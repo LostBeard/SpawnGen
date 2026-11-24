@@ -202,6 +202,9 @@ public sealed class PromptQueue : IDisposable
     /// </summary>
     public Func<Task>? BeforeRun { get; set; }
 
+    /// <summary>Runs after every prompt that ran to the end (the engines tell the ML runtime its newly loaded models are warm).</summary>
+    public Action? RunSucceeded { get; set; }
+
     /// <summary>Told of every failed prompt's error (the browser engine looks for a lost GPU device in it).</summary>
     public Action<Exception>? RunFailed { get; set; }
 
@@ -242,7 +245,11 @@ public sealed class PromptQueue : IDisposable
             // The engine's observer already published execution_error for failures inside a run.
         }
 
-        if (status == "success") observer.Record("execution_success", new JsonObject { ["prompt_id"] = item.Id });
+        if (status == "success")
+        {
+            RunSucceeded?.Invoke();
+            observer.Record("execution_success", new JsonObject { ["prompt_id"] = item.Id });
+        }
         var entry = new HistoryEntry
         {
             Number = item.Number, Id = item.Id, Graph = item.Graph, ExtraData = item.ExtraData, OutputNodes = item.Outputs, Messages = observer.Messages,

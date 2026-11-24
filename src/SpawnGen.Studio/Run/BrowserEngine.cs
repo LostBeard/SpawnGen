@@ -321,6 +321,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         // Model files stream into the origin-private file system and are reused on the next visit, never held whole in memory.
         // Every model, whatever its size: cached in the browser when there is room, streamed from the model host when not (StreamingModelSource).
         var source = new StreamingModelSource(Hub);
+        _ = AskForPersistentStorageAsync();
         // Which files stream (no room in the browser's storage) and how far: the run's status shows downloads, not streams.
         source.Streaming += (file, bytes) => Console.WriteLine($"[models] streaming {file} ({bytes / 1e9:F2} GB): no room to store it in this browser");
         source.CacheFallback += file => Console.WriteLine($"[models] the browser refused to store {file}: it streams from now on");
@@ -334,6 +335,31 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         // an open WebGPU accelerator has its device; watch it for loss
         if (accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator { NativeAccelerator.NativeDevice: { } device }) _ = WatchDeviceAsync(device, runtime);
         return runtime;
+    }
+
+    bool _askedForPersistence;
+
+    /// <summary>
+    /// Asks the browser, once, to keep this site's storage (the downloaded models) instead of clearing it when the disk runs low. A browser
+    /// may clear a site's storage that is not persistent at any time, a running page's included: on 2026-11-24 Chrome emptied the cache of a
+    /// page in the middle of a row of examples, and every later model load failed with "A requested file or directory could not be found".
+    /// The browser decides (Chrome grants it to sites the visitor uses often or has installed); the answer is printed either way.
+    /// </summary>
+    async Task AskForPersistentStorageAsync()
+    {
+        if (_askedForPersistence) return;
+        _askedForPersistence = true;
+        try
+        {
+            using var navigator = _js.Get<Navigator>("navigator");
+            using var storage = navigator.Storage;
+            if (storage is null) return;
+            bool persistent = await storage.Persisted() || await storage.Persist();
+            Console.WriteLine(persistent
+                ? "[models] this site's storage is persistent: the browser keeps downloaded models"
+                : "[models] the browser did not make this site's storage persistent: it may clear downloaded models when the disk runs low");
+        }
+        catch (Exception ex) { Console.WriteLine("[models] asking for persistent storage: " + ex.Message); }
     }
 
     /// <summary>The device's lost promise: once it resolves, the next run opens a new device (<see cref="ReplaceLostDeviceAsync"/>).</summary>

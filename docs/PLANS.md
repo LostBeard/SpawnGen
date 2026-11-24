@@ -145,6 +145,15 @@ under the 24 GB default): Pages run 45462410630, live pass _scratch/live-pages-t
 Chrome made the live origin's storage persistent in the test profile (persisted: true). Still to merge: `codecs-115-local` when Codecs
 1.1.5 is on nuget.org (Geordi's release sweep), then redeploy and run drive-webp-parity against a server from main.
 
+**2026-11-24 15:15: one copy of each published file, both sites deployed (Pages run 45474706459, Space commit f5bdce2).** TJ: one version of the
+app, raw or ONE compressed form; projects carry CompressionEnabled=false; the Space keeps only the current build. Pages: 121 MB of raw
+files (it gzips on the wire: the 90.7 MB AOT runtime arrives as 23.9 MB); the Space: runtime files as .gz only (43 MB in all; it sends
+files uncompressed), listed by gzboot.json, which index.html reads before Blazor.start (`tools/gzboot.sh`). `tools/hf-space/publish.sh` now
+ends with keep_only_current.py (squash + delete the unused LFS files; squashing alone freed nothing): the Space went 959 MB -> 42 MB.
+Live pass under the 24 GB cache limit before this deploy: 17 / 17, store 42.25 -> 22.04 GB. Running: live checks of both URLs after the
+one-copy deploy (_scratch/live-pages-onecopy.log, live-space-onecopy.log: the Space's first run in .gz-only form with the AOT build).
+Still to merge: `codecs-115-local` when Codecs 1.1.5 is on nuget.org.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

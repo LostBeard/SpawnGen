@@ -88,7 +88,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
         };
         _queue = new PromptQueue(registry, this, _bus) {
-            BeforeRun = ReplaceLostDeviceAsync, RunFailed = NoteLostDevice,
+            BeforeRun = async () => { await ReplaceLostDeviceAsync(); await TrimModelCacheAsync(); }, RunFailed = NoteLostDevice,
             // A browser's GPU memory cannot be measured, and a page that keeps every workflow's models loses the device sooner or later:
             // a workflow that reuses none of the earlier one's models frees them before it loads its own.
             UnrelatedPromptStarting = async () => { if (_runtime is { IsCompletedSuccessfully: true } task && task.Result.FreeHandedOutModels() > 0) await MlRuntime.ReportHeapAsync("after freeing the earlier workflow's models"); },
@@ -346,7 +346,29 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     public long? MaxCacheBytes
     {
         get => _maxCacheBytes;
-        set { _maxCacheBytes = value; if (_modelSource is { } source) source.MaxCacheBytes = value; }
+        set { _maxCacheBytes = value; _trimPending = true; if (_modelSource is { } source) source.MaxCacheBytes = value; }
+    }
+
+    bool _trimPending = true;
+
+    /// <summary>
+    /// Brings the stored models down to the limit, the ones used longest ago first, once after the page starts and after each change of the
+    /// limit. The library applies the limit only when a new download needs room, so a cache that was already over it (filled before the limit
+    /// existed, or under a higher one: 42 GB against 24 on 2026-11-24) stayed over it while every load was a cache hit. Runs at the start of a
+    /// prompt, before any node reads a model file, so nothing in use is removed.
+    /// </summary>
+    async Task TrimModelCacheAsync()
+    {
+        if (!_trimPending) return;
+        _trimPending = false;
+        if (_maxCacheBytes is not { } cap) return;
+        try
+        {
+            var (held, freed) = await Hub.Cache.TrimAsync(cap, []);
+            if (freed > 0)
+                Console.WriteLine($"[models] removed {freed / 1e9:0.##} GB of stored models, the ones used longest ago: {held / 1e9:0.##} GB kept (limit {cap / 1e9:0.##} GB)");
+        }
+        catch (Exception ex) { Console.WriteLine("[models] trimming the stored models: " + ex.Message); }
     }
 
     /// <summary>

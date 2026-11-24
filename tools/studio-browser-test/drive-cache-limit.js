@@ -3,7 +3,7 @@
 // row of examples stored 42 GB (the browser's own estimate said 3.6 of 14.3) and Chrome then cleared the whole site's storage mid-session.
 // Phase A, limit 0.25 GB: three small models in a row (Depth map, Remove the background, Pose and object detection); after each run the
 // bytes stored must be within the limit. Phase B, limit 0.02 GB (smaller than any of them): Depth map still runs, streamed, and nothing
-// above the limit is stored. STUDIO_URL (default http://localhost:5280/). Own profile (out/cache-limit-profile), emptied at the start.
+// above the limit is stored. Phase C (between them): a store already over a lowered limit is trimmed at the next run. STUDIO_URL (default http://localhost:5280/). Own profile (out/cache-limit-profile), emptied at the start.
 const { chromium } = require('playwright-core');
 const fs = require('fs');
 const path = require('path');
@@ -68,6 +68,10 @@ async function phase(limitGb, labels, fresh) {
 (async () => {
   const a = await phase(0.25, ['Depth map', 'Remove the background', 'Pose and object detection'], true);
   check(a.said.some(l => /cache limit 0\.[23]/.test(l)), 'the engine took the limit from the settings');
+  // Phase C, the profile phase A left (about 0.2 GB stored under its 0.25 GB limit) opened with a limit of 0.05 GB: every model this run needs
+  // is already stored (a cache hit downloads nothing), so only the engine's own trim at the start of the run can bring the store down.
+  const c = await phase(0.05, ['Pose and object detection'], false);
+  check(c.logs.some(l => /^\[models\] removed .* of stored models/.test(l)), 'a store already over a lowered limit is trimmed when the next run starts');
   const b = await phase(0.02, ['Depth map'], true);
   check(b.said.some(l => /^\[models\] streaming/.test(l)), 'a model larger than the limit streams instead of being stored');
   console.log(failed ? `${failed} FAILED` : 'ALL PASS');

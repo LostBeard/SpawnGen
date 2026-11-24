@@ -61,6 +61,16 @@ to Tuvok: the heap across a model switch (SD 1.5 safetensors -> FLUX.2 Klein -> 
 seconds (Codecs 1.1.3: over 2 min / driver watchdog), 11 corpus files exact in the browser, 42 / 42 on OpenCL; suite 3478 / 0 / 3. Owed to
 Geordi: lossy Save Animated WEBP per frame in Chrome, 1.1.4 against 1.1.3.
 
+**2026-11-23 evening: main = ML 5.8.26 + ILGPU 5.4.46 + Codecs 1.1.4 (76488c5), deploy-ready apart from the live check.** `ml-local-5826`
+is merged (MlRuntime.PromptSucceeded -> CompilerCachePolicy.ModelWarmedUp once after a prompt that loaded a model; in Chrome on the RX 590,
+SD 1.5 safetensors -> FLUX.2 Klein -> SD 1.5: 7.0 MiB less .NET heap with the release on, run times equal; `drive-model-switch.js`). Suite
+3479 / 0 / 3. Browser engine: after a lost device the open is retried and a failed open is not kept (a driver reset during FLUX.2 Klein's
+VAE decode had left the page failing every run; drive-device-lost.js 9 / 9, red-checked). Save Animated WEBP in Chrome: 32.0 s for 25
+frames on Codecs 1.1.4 (58.7 s on 1.1.3); Geordi is cutting the per-frame dispatch count next. **Open:** FLUX.2 Klein's VAE decode can
+still trip the RX 590's driver watchdog in Chrome (1 loss in 5 SD -> FLUX.2 passes on 5.8.26-local.2); Tuvok: GraphExecutor submits by
+estimated work instead of every 64 nodes; my 10-run count on 5.8.26 is the "before", rerun on his -local. **Next:** the deploy (Pages AOT +
+HF Space) and the full live check on both URLs; drive-appmode.js on the real GPU.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

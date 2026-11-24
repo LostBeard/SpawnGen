@@ -17,7 +17,7 @@
     <PackageReference Include="SpawnDev.ILGPU" Version="5.4.46" />
     <!-- platform H.264 (Media Foundation) for LTXV Preprocess: patent-encumbered codecs come from the platform, not SpawnDev.Codecs -->
     <PackageReference Include="SpawnDev.MultiMedia" Version="2.6.1" />
-    <PackageReference Include="SpawnDev.Codecs" Version="1.1.4" Condition="'$(CodecsProject)' == ''" />
+    <PackageReference Include="SpawnDev.Codecs" Version="1.1.5-local.3" Condition="'$(CodecsProject)' == ''" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SpawnGen.Glsl\SpawnGen.Glsl.csproj" />

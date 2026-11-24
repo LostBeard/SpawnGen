@@ -86,4 +86,30 @@ public class ModelResidencyTests
         Assert.That(Of("pipe:e"), Is.EqualTo((1, 0)));
         Assert.That(Of("pipe:b"), Is.EqualTo((1, 1)), "the earlier prompt's pipeline is freed");
     }
+
+    /// <summary>
+    /// The library is told "models are warm" once after a prompt that loaded a model ran to the end, and not again while nothing new loads
+    /// (SpawnDev.ILGPU.ML's CompilerCachePolicy: a release per run would make later first-time kernels re-import shared code).
+    /// </summary>
+    [Test]
+    public async Task The_library_is_told_models_are_warm_once_per_prompt_that_loaded_one()
+    {
+        lock (Counted.Log) Counted.Log.Clear();
+        using var context = ILGPU.Context.Create(b => b.CPU());
+        using var cpu = context.CreateCPUAccelerator(0);
+        using var runtime = new MlRuntime(new DesktopModelSource(Path.GetTempPath(), MlRuntime.RepoFolders), cpu);
+        var registry = new NodeRegistry().Add<UsesPipeline>().Add<UsesHandleModel>();
+        var executor = new PromptExecutor(registry, new Services(runtime));
+        async Task Run(string type, string name) { var g = new PromptGraph(); g.Add("1", type, ("name", name)); await executor.ExecuteAsync(g); }
+
+        Assert.That(runtime.PromptSucceeded(), Is.False, "nothing loaded yet");
+        await Run("UsesHandleModel", "w1");
+        Assert.That(runtime.PromptSucceeded(), Is.True, "the prompt loaded a model");
+        Assert.That(runtime.PromptSucceeded(), Is.False, "once per load, not per call");
+        await Run("UsesHandleModel", "w1");
+        Assert.That(runtime.PromptSucceeded(), Is.False, "a rerun loads nothing");
+        await Run("UsesPipeline", "w2");
+        Assert.That(runtime.PromptSucceeded(), Is.True, "a new pipeline is a new model");
+        Assert.That(runtime.WarmUps, Is.EqualTo(2));
+    }
 }

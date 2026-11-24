@@ -125,6 +125,17 @@ StreamingModelSource plans its caching against that estimate, so it keeps storin
 everything). Next: plan against the bytes really stored (sum of the cached files), with Tuvok (PlanCacheAsync is the library's). The
 Hugging Face Space is still the 5.8.26 build (storage limit; TJ to decide). Desktop server: model freeing not wired (TJ to decide).
 
+**2026-11-24 10:30: two branches wait on releases; main is ahead of the live site by small things.** The live site (run 45389993898) has had
+three clean full passes with the model-freeing fix (one local, two live: 17 / 17 each; before it 1 clean pass in 4). main since then:
+persistent-storage request, the restart-the-browser message after a refused device (RunFailureAdvice, failure messages stay 15 s). To merge:
+`ml-local-5827` (ML 5.8.28-local.4: cleared-storage recovery on every cache path, the model cache limit setting, default 24 GB;
+drive-cache-cleared 8 / 8 with the cap and without, drive-cache-limit 9 / 9) when ML 5.8.28 is on nuget.org; `codecs-115-local` (Codecs
+1.1.5-local.3: lossy WebP on AMD WebGPU fixed; drive-webp-parity.js, the browser engine's file = the server engine's, red on 1.1.4) when
+Codecs 1.1.5 is on nuget.org. Check the nuget index before each bump; then one deploy and the full live check (examples, UI drives, the
+three new drives against a local publish). A new Studio setting must be applied in the startup block AND in ApplySettings.
+Decisions waiting on TJ: the Hugging Face Space (storage limit, still the 5.8.26 build); model freeing on the desktop server; the
+default cache limit; Geordi's parallel-encode design for slow cards (RX 590: two encodes together only 1.10x).
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

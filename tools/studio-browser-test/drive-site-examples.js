@@ -7,7 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const OUT = path.join(__dirname, 'out');
 fs.mkdirSync(OUT, { recursive: true });
-const URL = process.env.STUDIO_URL || 'https://lostbeard.github.io/SpawnGen/';
+const BASE = process.env.STUDIO_URL || 'https://lostbeard.github.io/SpawnGen/';
+const URL = process.env.NODETIMES === '1' ? BASE + (BASE.includes('?') ? '&' : '?') + 'nodetimes=1' : BASE;
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
 
@@ -33,7 +34,10 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
     return bad;
   }, from);
   let problems = [];
-  page.on('console', m => { if (m.type() === 'error') problems.push(m.text().slice(0, 300)); });
+  // With NODETIMES=1 the page opens with ?nodetimes=1 and prints each stage a node reports: the last ones are shown after a failed example
+  // (which stage a lost device or a missing file hit), with the engine's [gpu] and [models] lines.
+  let trace = [];
+  page.on('console', m => { const t = m.text(); if (m.type() === 'error') problems.push(t.slice(0, 300)); if (/^\[(stage|gpu|models)\]/.test(t)) trace.push(t.slice(0, 220)); });
   page.on('pageerror', e => problems.push('PAGEERROR ' + e.message.slice(0, 300)));
   await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(4000);
   const adapter = await page.evaluate(async () => { const a = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' }); return a ? `${a.info.vendor} ${a.info.description} ${a.info.backend || ''}` : 'none'; });
@@ -46,7 +50,7 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
   const results = [];
   for (const [i, label] of labels.entries()) {
     if (process.env.ONLY && !process.env.ONLY.split('|').some(o => label.includes(o))) continue;
-    problems = [];
+    problems = []; trace = [];
     await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
     await page.locator('.menu li', { hasText: label }).first().click(); await page.waitForTimeout(2000);
     const before = await runs(), t0 = Date.now(), blobsBefore = await page.evaluate(() => window.__resultBlobs.length);
@@ -67,6 +71,7 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
     const errs = problems.filter(p => !/powerPreference/.test(p));
     results.push({ label, outcome, secs, detail, toasts: [...toasts].slice(0, 4), errors: errs.slice(0, 4), shot: path.basename(shot) });
     console.log(`${outcome === 'ran' && errs.length === 0 ? 'PASS' : 'FAIL'} ${label}: ${outcome} in ${secs} s${detail ? ' | ' + detail : ''}${errs.length ? ' | browser errors: ' + errs.join(' || ') : ''} (${path.basename(shot)})`);
+    if (outcome !== 'ran' || errs.length) for (const l of trace.slice(-14)) console.log('    ' + l);
   }
   fs.writeFileSync(path.join(OUT, 'site-examples.json'), JSON.stringify({ url: URL, adapter, results }, null, 1));
   await context.close();

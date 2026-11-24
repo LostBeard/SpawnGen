@@ -35,8 +35,14 @@ const probe = page => page.evaluate(async () => {
       args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-webgpu-developer-features'],
     });
     const page = context.pages()[0] || await context.newPage();
-    let gpuLines = [];
-    page.on('console', m => { const t = m.text(); if (/^\[(gpu|stage)\]/.test(t)) gpuLines.push(t.slice(0, 200)); });
+    let gpuLines = [], browserLines = [];
+    page.on('console', m => {
+      const t = m.text();
+      if (/^\[(gpu|stage)\]/.test(t)) gpuLines.push(t.slice(0, 200));
+      // Browser errors and warnings (a WebGPU validation error shows here, and a dropped submit leaves the device alive): kept per run.
+      if ((m.type() === 'error' || m.type() === 'warning') && !/powerPreference/.test(t)) browserLines.push(`${m.type()}: ${t.slice(0, 400)}`);
+    });
+    page.on('pageerror', e => browserLines.push('pageerror: ' + String(e.message).slice(0, 400)));
     await page.goto(URL); await page.waitForSelector('canvas'); await page.waitForTimeout(4000);
     if (launches === 1) console.log('ADAPTER ' + await page.evaluate(async () => { const a = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' }); return a ? `${a.info.vendor} ${a.info.description} ${a.info.backend || ''}` : 'none'; }) + ' | ' + URL);
     await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
@@ -47,7 +53,7 @@ const probe = page => page.evaluate(async () => {
     while (done < ATTEMPTS) {
       const t0 = Date.now();
       let toast = '';
-      gpuLines = [];
+      gpuLines = []; browserLines = [];
       await page.click('button:has-text("Queue")');
       await page.waitForTimeout(300);
       while (Date.now() - t0 < 30 * 60000) {
@@ -61,6 +67,7 @@ const probe = page => page.evaluate(async () => {
       done++; inPage++;
       const ok = /done/.test(title);
       console.log(`attempt ${done} (browser ${launches}, run ${inPage} in its page): ${ok ? 'ran' : 'FAILED'} in ${secs.toFixed(1)} s${ok ? '' : ' | ' + toast.trim().split('\n')[0]}`);
+      for (const l of browserLines.slice(0, 12)) console.log('  browser ' + l);
       if (ok) { times.push(secs); if (FRESH) break; continue; }
       failed++;
       for (const wait of [0, 15, 30]) {

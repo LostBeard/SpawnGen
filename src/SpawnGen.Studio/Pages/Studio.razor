@@ -2403,14 +2403,17 @@
         : _subgraphStack.Count > 0 ? () => ExitSubgraphTo(_subgraphStack.Count - 1)
         : null;
 
-    void ShowMessage(string text)
+    /// <summary>Shows a message for a few seconds; a failed run's message stays longer (it can carry advice worth reading to the end).</summary>
+    void ShowMessage(string text) => ShowMessage(text, 3500);
+
+    void ShowMessage(string text, int milliseconds)
     {
         _message = text;
         _toastTimer?.Cancel();
         _toastTimer = new CancellationTokenSource();
         var token = _toastTimer.Token;
         InvokeAsync(StateHasChanged);
-        _ = Task.Delay(3500, token).ContinueWith(t =>
+        _ = Task.Delay(milliseconds, token).ContinueWith(t =>
         {
             if (t.IsCanceled) return Task.CompletedTask;
             _message = null;
@@ -2873,8 +2876,7 @@
                 if (failedNode is { } badId) _visuals.Errors[badId] = (string?)data["exception_message"] ?? "failed";
                 FinishHistoryEntry("failed", (string?)data["exception_message"]);
                 var failure = (string?)data["exception_message"];
-                ShowMessage($"Run failed: {failure}" + (failure?.Contains("device has been lost", StringComparison.OrdinalIgnoreCase) == true
-                    ? " The GPU was reset (often a run that needed more GPU memory than was free). Queue again: SpawnGen opens the GPU anew." : ""));
+                ShowMessage($"Run failed: {failure}" + SpawnGen.Editor.RunFailureAdvice.For(failure), 15000);
                 _running = false;
                 _visuals.EndRun();
                 break;

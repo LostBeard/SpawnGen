@@ -58,7 +58,11 @@ const check = (ok, what) => { console.log((ok ? 'PASS ' : 'FAIL ') + what); if (
   const fourth = await queue();
   console.log('run with 8 refused opens: ' + fourth.slice(0, 200));
   check(/^failed/.test(fourth), 'a run fails when no device opens after every try');
+  check(/close the browser completely/.test(fourth) && !/Queue again/.test(fourth), 'and its message says to restart the browser, not to queue again');
+  // the failed run's message stays on screen for a while: wait for it to go, or queue() would read it as this run's failure
+  for (let i = 0; i < 60 && /Run failed/.test((await page.locator('.toast').first().textContent({ timeout: 200 }).catch(() => '')) || ''); i++) await page.waitForTimeout(1000);
   const fifth = await queue();
+  console.log('queue after the failed open: ' + fifth.slice(0, 200));
   check(fifth === 'ran', 'and the Queue after that failed open runs (the failure is not kept)');
   await page.screenshot({ path: path.join(__dirname, 'out', 'device-lost.png') });
   await ctx.close();

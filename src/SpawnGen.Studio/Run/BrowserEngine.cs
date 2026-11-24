@@ -320,7 +320,8 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _reopening = false;
         // Model files stream into the origin-private file system and are reused on the next visit, never held whole in memory.
         // Every model, whatever its size: cached in the browser when there is room, streamed from the model host when not (StreamingModelSource).
-        var source = new StreamingModelSource(Hub);
+        var source = _modelSource = new StreamingModelSource(Hub) { MaxCacheBytes = _maxCacheBytes };
+        Console.WriteLine(_maxCacheBytes is { } cap ? $"[models] cache limit {cap / 1e9:0.##} GB (Settings)" : "[models] no cache limit (Settings)");
         _ = AskForPersistentStorageAsync();
         // Which files stream (no room in the browser's storage) and how far: the run's status shows downloads, not streams.
         source.Streaming += (file, bytes) => Console.WriteLine($"[models] streaming {file} ({bytes / 1e9:F2} GB): no room to store it in this browser");
@@ -338,6 +339,15 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     }
 
     bool _askedForPersistence;
+    StreamingModelSource? _modelSource;
+    long? _maxCacheBytes = (long)(SpawnGen.Editor.StudioSettings.DefaultModelCacheGb * 1e9);
+
+    /// <summary>The model cache limit in bytes (null: none), from the Studio's settings; applies to the next model the engine loads.</summary>
+    public long? MaxCacheBytes
+    {
+        get => _maxCacheBytes;
+        set { _maxCacheBytes = value; if (_modelSource is { } source) source.MaxCacheBytes = value; }
+    }
 
     /// <summary>
     /// Asks the browser, once, to keep this site's storage (the downloaded models) instead of clearing it when the disk runs low. A browser

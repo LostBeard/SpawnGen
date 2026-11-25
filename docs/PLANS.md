@@ -221,11 +221,21 @@ what is missing is the editor. Measured black-box on the reference install (`too
   opacity 55 -> 0.55, X 10, W 300, H 100: W and H independently).
 - Clicking a row selects that layer (fields follow). Move layer up / down change the drawing order. The row toggle sets `visible`; the
   Background toggle sets background.visible. Restore returns the initial composition (apple back to 80%).
-- Not measured yet (the probe's clicks missed): the blend list, what Close and Restore write, reopening, the zoom menu, the Hand tool,
-  the background colour, the rotation handle, arrow keys / Delete, clicking empty canvas.
-**Next, in order:** (1) measure each action's effect on the widget's value and on the fields: moving, resizing by a corner and by an edge
-(is the aspect kept?), rotating, the alignment buttons, flips, opacity, the blend list, reordering, visibility, the background's colour and
-visibility, the canvas size, Undo / Redo, Restore, Close (when is the value written?), the zoom menu and the Hand tool; (2) the logic in
+**Second round (`probe-comfy-compositor-steps2.js`, controls clicked by their place on screen; out/comfy-compositor-steps2.json):**
+- Blend list, 26 in this order: Normal, Multiply, Screen, Overlay, Darken, Lighten, Color Dodge, Color Burn, Hard Light, Soft Light,
+  Difference, Exclusion, Linear Dodge, Linear Burn, Vivid Light, Pin Light, Linear Light, Hard Mix, Subtract, Divide, Grain Extract,
+  Grain Merge, Hue, Saturation, Color, Luminosity. Stored lower-case ("multiply"); the list line shows the first letter ("M 80%").
+- Resizing is exactly the drag over the zoom: the corner moved by (-90, -90), (-45, -45), (-9, -9) screen px at 90% gave 412, 462, 502
+  in the fields; the value keeps the unrounded size (w 412.4543, h 411.8987) and the top-left stays put.
+- The rotation handle turns the layer about its centre: dragged from above the top edge to the right side -> field 90, stored
+  1.5688117998196385 rad (the exact angle of the pointer; x, y, w, h unchanged).
+- Arrow keys and Delete do nothing. Escape closes the editor; so does Close; both keep every edit (the value is already written).
+- A click on empty space selects the Background: the right panel then shows only the canvas width and height (632, 572) as number
+  fields. The Hand tool pans the view and changes no value.
+- Restore: after open -> edit -> Restore the layer was back at its first values (round 1); after Close -> reopen -> Restore nothing
+  changed (round 2, value identical). Reading: Restore returns to the composition as it was when the editor was opened. To confirm.
+- Still unmeasured: the zoom menu's entries, the background colour picker, editing the canvas size, the `order` key's direction.
+**Next, in order:** (1) the few items still unmeasured above, as the logic reaches them; (2) the logic in
 SpawnGen.Editor (CompositorEditor: the document, the selection, the actions, undo) with tests from those measurements, writing the JSON the
 node already replays; (3) the dialog in the Studio (the picture comes from the node's ui: compositor_inputs / compositor_bboxes) and a
 browser drive that repeats the probe's actions; (4) Export PSD last (a writer for layered PSD: decide then).

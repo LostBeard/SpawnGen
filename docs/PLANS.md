@@ -244,6 +244,13 @@ set from the run's ui; every action writes the widget, one graph undo step each)
 browser engine (every measured action against ComfyUI's stored values through Export, close / reopen / Restore, and a second run that
 shows the edit). The zoom menu was read from the probe's screenshot: 25%, 50%, 100%, 200%, Fit; the editor opens at min(1, fit) x 0.9.
 Left: step 4, Export PSD (decide then), and the unmeasured corners named in CompositorEditor's remarks.
+**Step 4, Export PSD: measured 2026-11-25, waiting on where the writer lives.** `probe-comfy-compositor-psd.js` pressed the button and
+`psd-dump.py` printed the file: name comfyui-layers-YYYYMMDD-HHMMSS.psd; 8BPS version 1, RGB, 8 bit, canvas size; layer records bottom
+first: Background (full canvas, a solid fill, `SoCo`), then each layer already rasterised into the bounding box of its rotated shape (it
+may run past the canvas), blend key (`mul ` for Multiply), opacity 0..255 (204 for 80 %), a `luni` Unicode name, flags 0x08; the picture
+layers are also smart objects (`PlLd`, `SoLd`, the originals in `lnk2`); all channels RLE; an RLE composite. A file format writer is
+codec work, so Geordi was asked whether SpawnDev.Codecs takes a PSD writer (_DevComms 2026-11-25-0340-Lore-TO-Geordi-codecs-psd-writer-request.md);
+if not, it is written in SpawnGen. Either way the Studio side is: render each layer as the run does, call the writer, download.
 **Next, in order:** (1) the few items still unmeasured above, as the logic reaches them; (2) the logic in
 SpawnGen.Editor (CompositorEditor: the document, the selection, the actions, undo) with tests from those measurements, writing the JSON the
 node already replays; (3) the dialog in the Studio (the picture comes from the node's ui: compositor_inputs / compositor_bboxes) and a

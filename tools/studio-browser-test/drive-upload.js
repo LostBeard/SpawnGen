@@ -88,7 +88,18 @@ fs.copyFileSync(APPLE, PEAR);
   await page.screenshot({ path: path.join(OUT, 'upload-2-error.png') });
 
   // 2. The node's own upload button: pick a file, it is uploaded and chosen, and the node shows it.
-  const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 5000 }), page.mouse.click(...UPLOAD)]);
+  // The picker failed to open twice in about a dozen live runs (2026-11-24 / 25, here, never locally) and passed on every rerun. When it
+  // happens again this records what was under the click (a screenshot and the element at that point) before failing, so the cause is seen.
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser', { timeout: 5000 }).catch(async e => {
+      await page.screenshot({ path: path.join(OUT, 'upload-2-no-picker.png') }).catch(() => {});
+      const under = await page.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return el ? `${el.tagName}.${el.className} "${(el.textContent || '').trim().slice(0, 80)}"` : 'nothing'; }, UPLOAD).catch(() => '?');
+      const toastNow = await page.locator('.toast').first().textContent({ timeout: 200 }).catch(() => '');
+      console.log(`NO FILE PICKER after the click at ${UPLOAD}: element there: ${under}; message on screen: ${(toastNow || '').trim().slice(0, 160)}; see out/upload-2-no-picker.png`);
+      throw e;
+    }),
+    page.mouse.click(...UPLOAD),
+  ]);
   check('the upload button opens a file picker for pictures', !!chooser, '');
   await chooser.setFiles(APPLE);
   await page.waitForTimeout(1500);

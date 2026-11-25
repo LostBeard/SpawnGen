@@ -267,6 +267,20 @@ The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neithe
 /object_info/Painter (public schema; its source is not read): display name Painter, category image, inputs `mask` (STRING, widgetType
 PAINTER, image_upload, default "", no socket), `width` and `height` (INT, hidden, default 512, 64..4096 step 64, no socket), `bg_color`
 (COLOR, default #000000, no socket), optional `image` (IMAGE, "Optional base image to paint over"); outputs IMAGE, MASK.
+**Measured 2026-11-25 (`probe-comfy-painter.js`, out/comfy-painter.json, the node at its default size 450 x 550):** under the slots a
+square canvas (bitmap 512 x 512, shown 426 wide), then rows: Tool (Brush | Eraser), Cursor Size (slider, 20), Color Picker (a colour
+input #ffffff, its hex text, a percent number field 100), Hardness (slider, 100%), Width (slider, 512), Height (slider, 512),
+Background (colour input #000000 and its hex), and a Clear button across the node. A stroke changes no widget value and sends
+nothing; when the prompt is built the painting is uploaded (POST /api/upload/image) and `mask` becomes
+"painter-<node id>-<milliseconds>.png [input]"; width, height and bg_color go in the prompt as they are.
+**The node's outputs, measured 2026-11-25 (`probe-comfy-painter-run.js`, `png-stats.py`; files in out/painter-fixtures/):** the upload is
+an RGBA PNG of the canvas size, transparent where nothing is painted, straight alpha (a 50 % red stroke is (255, 0, 0, 128); the
+eraser leaves alpha 0). MASK is the painting's alpha (128 for that stroke). IMAGE is the painting over bg_color with that alpha
+((255, 0, 0, 128) over #336699 -> (153, 50, 76)), or over the linked image when there is one (the output then has the image's size:
+512 x 512 with width 256, height 384 set). Without an image, width x height other than the painting's size gives an output of
+width x height with the painting resized (256 x 384 from 512 x 512: which filter is still to settle, on pixels). With mask "" the
+IMAGE is bg_color at width x height and the MASK is zero. Still to measure: the resize filter; a base image of another size than
+the painting; a batch of base images; brush geometry (size, hardness falloff, spacing) for the editor's own strokes.
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

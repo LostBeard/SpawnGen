@@ -90,11 +90,22 @@ fs.copyFileSync(APPLE, PEAR);
   // 2. The node's own upload button: pick a file, it is uploaded and chosen, and the node shows it.
   // The picker failed to open twice in about a dozen live runs (2026-11-24 / 25, here, never locally) and passed on every rerun. When it
   // happens again this records what was under the click (a screenshot and the element at that point) before failing, so the cause is seen.
+  // what the page does with the click: every input.click() it makes is recorded (was the picker asked for, and was the page allowed to?)
+  await page.evaluate(() => {
+    window.__clicks = [];
+    const click = HTMLInputElement.prototype.click;
+    HTMLInputElement.prototype.click = function () {
+      window.__clicks.push(`${Math.round(performance.now())} ms: input.click type=${this.type} accept=${this.accept} connected=${this.isConnected} activation=${navigator.userActivation.isActive}`);
+      return click.call(this);
+    };
+    for (const type of ['pointerdown', 'pointerup']) window.addEventListener(type, e => window.__clicks.push(`${Math.round(performance.now())} ms: ${type} on ${e.target.tagName} at ${e.clientX},${e.clientY}`), true);
+  });
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser', { timeout: 5000 }).catch(async e => {
       await page.screenshot({ path: path.join(OUT, 'upload-2-no-picker.png') }).catch(() => {});
       const under = await page.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return el ? `${el.tagName}.${el.className} "${(el.textContent || '').trim().slice(0, 80)}"` : 'nothing'; }, UPLOAD).catch(() => '?');
       const toastNow = await page.locator('.toast').first().textContent({ timeout: 200 }).catch(() => '');
+      console.log('   page events: ' + (await page.evaluate(() => window.__clicks.join(' | ') + ' | now ' + Math.round(performance.now()) + ' ms').catch(() => '?')));
       console.log(`NO FILE PICKER after the click at ${UPLOAD}: element there: ${under}; message on screen: ${(toastNow || '').trim().slice(0, 160)}; see out/upload-2-no-picker.png`);
       throw e;
     }),

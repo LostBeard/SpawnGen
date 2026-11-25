@@ -203,6 +203,26 @@ what is missing is the editor. Measured black-box on the reference install (`too
   layer framed with eight handles and a rotation handle above the top edge.
 - Right, for the selected layer: Position X / Y, Dimensions W / H, Alignment (left, horizontal centre, right, top, vertical centre,
   bottom), Rotation in degrees, Flip horizontal / vertical, Opacity in percent, Blend mode (a combo, "Normal").
+**Measured 2026-11-25 (`probe-comfy-compositor-steps.js`, out/comfy-compositor-steps.json; 36 recorded steps):**
+- The value is `{}` until the first edit, then is rewritten after EVERY action (not on Close):
+  `{"version":1,"canvas":{"w":632,"h":572},"inputs":[<one fingerprint per layer, input order>],"background":{"color":"#ffffff",
+  "opacity":1,"visible":false},"layers":[{"name","visible","opacity" (0..1),"blend","transform":{"x","y","w","h","rotation" (RADIANS)},
+  "flipH","flipV"}, ...]}`; layers stay in INPUT order, and an `"order":[1,0]` key (top-most last? to settle) appears only while the
+  drawing order differs from the input order (Move layer down back to the start removes it).
+- Fields, in this order: X, Y, W, H, rotation (degrees), opacity (percent). The list line is the blend letter and the opacity ("N 55%").
+- Dragging the body moves by the drag divided by the zoom (+45, +27 screen px at "90%" -> x 170.00027, y 90.00018: the zoom is not
+  exactly 0.9, and positions are stored unrounded; the fields show them rounded).
+- A corner drag resizes freely (+54, +9 screen -> W +60, H +10: the aspect is NOT kept); with Shift it is kept (+45, +9 -> 542 x 542:
+  the drag projected on the diagonal). An edge handle changes one side (right edge +45 -> W 563, H unchanged). W came out 563 where
+  512 + 50 was expected, H 562: the rounding of sizes needs a finer measurement.
+- Undo / Redo: Ctrl+Z and the buttons, one action per step.
+- Alignment is to the CANVAS (632 x 572): left x 0, horizontal centre 60, right 120, top y 0, vertical centre 30, bottom 60.
+- Flips set flipH / flipV and leave the fields alone. Typed values are taken as they are (rotation 30 -> 0.5235987755982988 rad,
+  opacity 55 -> 0.55, X 10, W 300, H 100: W and H independently).
+- Clicking a row selects that layer (fields follow). Move layer up / down change the drawing order. The row toggle sets `visible`; the
+  Background toggle sets background.visible. Restore returns the initial composition (apple back to 80%).
+- Not measured yet (the probe's clicks missed): the blend list, what Close and Restore write, reopening, the zoom menu, the Hand tool,
+  the background colour, the rotation handle, arrow keys / Delete, clicking empty canvas.
 **Next, in order:** (1) measure each action's effect on the widget's value and on the fields: moving, resizing by a corner and by an edge
 (is the aspect kept?), rotating, the alignment buttons, flips, opacity, the blend list, reordering, visibility, the background's colour and
 visibility, the canvas size, Undo / Redo, Restore, Close (when is the value written?), the zoom menu and the Hand tool; (2) the logic in

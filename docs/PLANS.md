@@ -275,6 +275,29 @@ button in the dialog (`Studio.Compositor.cs`; it needs WebGPU in the browser, th
 included); psd-tools 1.27 and GIMP 2.10.30 read the file (`psd-readback.py`, `psd-gimp.scm`); Photoshop, Krita and Photopea not tried.
 **Merge it to main when Codecs 1.1.6 is on nuget.org**, then deploy and run the drive on the live sites.
 
+## Now: models in GPU memory, by the user's choice (TJ, 2026-11-25)
+
+TJ: a workflow whose tab is still open is probably still in use, so its models should stay loaded when the GPU has room (some users
+have 128 GB or more of unified memory); models go only when room is needed; and it must be user configurable.
+**What exists today (read from the code, 2026-11-25), which is NOT eviction on need:** (a) the browser engine frees every handed-out
+model when a prompt starts that reuses none of the earlier prompt's models (`PromptExecutor.UnrelatedPromptStarting` ->
+`MlRuntime.FreeHandedOutModels`; added 2026-11-24 because three workflows' models on the 8 GB RX 590 lost the device); (b) inside a
+workflow the big transformers take turns by fixed rules written for an 8 GB card (`ModelResidency.ReleaseTransformers`); (c) pipeline
+nodes' models are freed when another prompt loads something. Nothing measures memory: WebGPU gives a page no figure for free or
+total GPU memory, and running out shows as a lost device, not as an error to react to. The desktop server frees nothing between
+workflows. The engine does not know about tabs: one result cache per engine.
+**Plan:** (1) a setting, "Models in GPU memory": *One workflow at a time* (today's browser behaviour, the safe choice for small
+cards) or *Keep while they fit*, with a "GPU memory for models (GB)" budget the user sets (the desktop server can offer the
+device's own figure where ILGPU reports one; a browser cannot). (2) With a budget: every loaded model has a size (its weights on the
+device: from the ML library; ask Tuvok for a figure per model if none is exposed), models of every open tab stay loaded, and before a
+load that would pass the budget the least recently used models that the running prompt does not use are freed until it fits. (3) The
+Studio tells the engine which workflows are open; closing a tab frees the models only that tab used. (4) The fixed take-turns rules
+of (b) follow the same budget instead of assuming 8 GB. (5) Both engines (this also answers the open question about the desktop
+server). (6) Tests: unit tests of the keep / evict decisions with sizes; browser drives on the RX 590 for both choices (three
+workflows in three tabs: with a large budget nothing reloads, with a small one the oldest goes, one-at-a-time as today); the
+full example pass stays clean under the default. Default: *One workflow at a time* until the user sets a budget (Lore's choice:
+a page cannot know the card is large, and guessing wrong loses the device).
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

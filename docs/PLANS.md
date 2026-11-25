@@ -173,6 +173,15 @@ out/site-profile. Check `df -h /l` before a long browser pass. Remaining: merge 
 drive-webp-parity on the released pair (ILGPU 5.4.48 + Codecs 1.1.5; identical on the pre-release pair), deploy. Open with TJ: model
 freeing on the desktop server.
 
+**2026-11-25 00:45: main = ILGPU 5.4.48 / ML 5.8.28 / Codecs 1.1.5 (`codecs-115-local` merged), pushed; Pages run 45554502911 building.**
+Codecs 1.1.5 makes lossy WebP correct on AMD WebGPU (a shader loop stopped early on that driver; SpawnDev.Codecs issue #2). On the released
+pair, RX 590: `drive-webp-parity.js` (needs the SpawnGen server on :8188) passes, the browser engine's Save Animated WEBP = the server
+engine's chunk for chunk; suite 3491 / 0 / 3; GPU codec tests 53 / 53 (OpenCL); 17 / 17 examples and every drive against a local publish.
+After the build: tools/hf-space/publish.sh, then the live check of both URLs (_scratch/live-pages-c115.log, live-space-c115.log).
+Nothing else waits on a library now. NV1080 test rig: out/site-profile keeps a full model set per origin (105 GB with three); after a
+local full pass run `node _scratch/opfs-clear.js http://localhost:5300/`, and check `df -h /l` before long passes.
+Open with TJ: model freeing on the desktop server (browser only today).
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

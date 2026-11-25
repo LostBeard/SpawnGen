@@ -207,7 +207,7 @@ what is missing is the editor. Measured black-box on the reference install (`too
 - The value is `{}` until the first edit, then is rewritten after EVERY action (not on Close):
   `{"version":1,"canvas":{"w":632,"h":572},"inputs":[<one fingerprint per layer, input order>],"background":{"color":"#ffffff",
   "opacity":1,"visible":false},"layers":[{"name","visible","opacity" (0..1),"blend","transform":{"x","y","w","h","rotation" (RADIANS)},
-  "flipH","flipV"}, ...]}`; layers stay in INPUT order, and an `"order":[1,0]` key (top-most last? to settle) appears only while the
+  "flipH","flipV"}, ...]}`; layers stay in INPUT order, and an `"order":[1,0]` key (input indices, bottom first: settled, coat moved above apple gave [1,0]) appears only while the
   drawing order differs from the input order (Move layer down back to the start removes it).
 - Fields, in this order: X, Y, W, H, rotation (degrees), opacity (percent). The list line is the blend letter and the opacity ("N 55%").
 - Dragging the body moves by the drag divided by the zoom (+45, +27 screen px at "90%" -> x 170.00027, y 90.00018: the zoom is not
@@ -225,7 +225,7 @@ what is missing is the editor. Measured black-box on the reference install (`too
 - Blend list, 26 in this order: Normal, Multiply, Screen, Overlay, Darken, Lighten, Color Dodge, Color Burn, Hard Light, Soft Light,
   Difference, Exclusion, Linear Dodge, Linear Burn, Vivid Light, Pin Light, Linear Light, Hard Mix, Subtract, Divide, Grain Extract,
   Grain Merge, Hue, Saturation, Color, Luminosity. Stored lower-case ("multiply"); the list line shows the first letter ("M 80%").
-- Resizing is exactly the drag over the zoom: the corner moved by (-90, -90), (-45, -45), (-9, -9) screen px at 90% gave 412, 462, 502
+- Resizing puts the handle ON the pointer (a press 0.45 px off the corner is not kept as an offset: this is the 563 of round 1): the corner moved by (-90, -90), (-45, -45), (-9, -9) screen px at 90% gave 412, 462, 502
   in the fields; the value keeps the unrounded size (w 412.4543, h 411.8987) and the top-left stays put.
 - The rotation handle turns the layer about its centre: dragged from above the top edge to the right side -> field 90, stored
   1.5688117998196385 rad (the exact angle of the pointer; x, y, w, h unchanged).
@@ -235,6 +235,10 @@ what is missing is the editor. Measured black-box on the reference install (`too
 - Restore: after open -> edit -> Restore the layer was back at its first values (round 1); after Close -> reopen -> Restore nothing
   changed (round 2, value identical). Reading: Restore returns to the composition as it was when the editor was opened. To confirm.
 - Still unmeasured: the zoom menu's entries, the background colour picker, editing the canvas size, the `order` key's direction.
+**Done 2026-11-25: step 2, the logic.** `SpawnGen.Editor/CompositorEditor.cs` (the document, selection, every measured action, undo / redo,
+Restore, hit testing, the value) with `CompositorEditorTests` (16, from the measured values; red-checked). SpawnGen's own choices where nothing
+was measured are marked in the class remarks (resizing a rotated layer, a side under one pixel, typed sizes that are not positive).
+Next is step 3: the dialog in the Studio and its drive.
 **Next, in order:** (1) the few items still unmeasured above, as the logic reaches them; (2) the logic in
 SpawnGen.Editor (CompositorEditor: the document, the selection, the actions, undo) with tests from those measurements, writing the JSON the
 node already replays; (3) the dialog in the Studio (the picture comes from the node's ui: compositor_inputs / compositor_bboxes) and a

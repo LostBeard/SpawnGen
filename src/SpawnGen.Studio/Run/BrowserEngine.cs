@@ -318,6 +318,8 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             }
         }
         _reopening = false;
+        // Which backend the engine got: a browser without WebGPU runs on WebGL (or Wasm), and a report has to say which.
+        Console.WriteLine($"[gpu] backend {accelerator.AcceleratorType}: {accelerator.Name}");
         // Model files stream into the origin-private file system and are reused on the next visit, never held whole in memory.
         // Every model, whatever its size: cached in the browser when there is room, streamed from the model host when not (StreamingModelSource).
         var source = _modelSource = new StreamingModelSource(Hub) { MaxCacheBytes = _maxCacheBytes };

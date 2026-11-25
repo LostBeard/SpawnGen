@@ -162,9 +162,11 @@ public sealed class CompositorEditor
     /// The widget's value: an empty object while nothing was edited, otherwise the composition, keys in the editor's order
     /// (version, canvas, inputs, background, order only when it differs from the input order, layers in input order).
     /// </summary>
-    public DictValue Value()
+    public DictValue Value() => Edited ? Composition() : [];
+
+    /// <summary>The composition as it stands, edited or not (what Export PSD writes): the same object <see cref="Value"/> gives once edited.</summary>
+    public DictValue Composition()
     {
-        if (!Edited) return [];
         var d = new DictValue
         {
             ["version"] = 1L,

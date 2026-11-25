@@ -477,7 +477,7 @@
 
         @if (_compositor is { } compositor)
         {
-            <CompositorDialog Editor="compositor.Editor" LayerUrls="compositor.Urls" Changed="OnCompositorChanged" Close="CloseCompositor" />
+            <CompositorDialog Editor="compositor.Editor" LayerUrls="compositor.Urls" Changed="OnCompositorChanged" Close="CloseCompositor" ExportPsd="ExportCompositorPsdAsync" Exporting="_compositorExporting" />
         }
         @if (_shortcutsOpen)
         {

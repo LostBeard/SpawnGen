@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using SpawnGen.Editor;
+using Microsoft.JSInterop;
+using SpawnDev.SpawnJS.JSObjects;
 using SpawnGen.Engine.Types;
 
 namespace SpawnGen.Studio.Pages;
@@ -44,6 +46,58 @@ public partial class Studio
         _doc.SetWidget(open.NodeId, open.Widget, value);
         _doc.EndGesture();
         _view.Invalidate();
+    }
+
+    bool _compositorExporting;
+
+    /// <summary>
+    /// Export PSD: the layer pictures of the run are read back, drawn as a run draws them (ImageCompositor.Export) and written as a layered
+    /// PSD by SpawnDev.Codecs on this browser's GPU, then downloaded. The writer runs as GPU kernels, so it needs WebGPU in this browser
+    /// even when a SpawnGen server runs the graphs.
+    /// </summary>
+    async Task ExportCompositorPsdAsync()
+    {
+        if (_compositor is not { } open || _compositorExporting) return;
+        _compositorExporting = true;
+        StateHasChanged();
+        try
+        {
+            var pictures = new List<(byte[] Rgba, int Width, int Height)>();
+            foreach (var url in open.Urls)
+            {
+                using var response = await JS.Fetch(url);
+                if (!response.Ok) throw new InvalidOperationException("a layer picture could not be read");
+                using var buffer = await response.ArrayBuffer();
+                using var data = new Uint8Array(buffer);
+                var (image, alpha) = await SpawnGen.Nodes.Core.ImageDecoder.DecodeFirstAsync((byte[])data);
+                int n = image.Width * image.Height, c = image.Channels;
+                var rgba = new byte[n * 4];
+                static byte Q(float v) => (byte)Math.Clamp(MathF.Round(v * 255f, MidpointRounding.ToEven), 0, 255);
+                for (int i = 0; i < n; i++)
+                {
+                    for (int k = 0; k < 3; k++) rgba[i * 4 + k] = Q(image.Data[i * c + (c >= 3 ? k : 0)]);
+                    rgba[i * 4 + 3] = alpha is not null ? Q(alpha[i]) : c == 4 ? Q(image.Data[i * c + 3]) : (byte)255;
+                }
+                pictures.Add((rgba, image.Width, image.Height));
+            }
+            var export = SpawnGen.Nodes.Core.ImageCompositor.Export(pictures, open.Editor.Composition());
+            var runtime = await Browser.GetAsync();
+            var bytes = await SpawnGen.Nodes.ML.CompositorPsd.EncodeAsync(runtime.Accelerator, export);
+            using var blob = new Blob(new[] { bytes }, new BlobOptions { Type = "image/vnd.adobe.photoshop" });
+            var link = URL.CreateObjectURL(blob);
+            await Interop.InvokeVoidAsync("spawngenDownloadUrl", SpawnGen.Nodes.ML.CompositorPsd.FileName(DateTime.Now), link);
+            _ = Task.Delay(5000).ContinueWith(_ => URL.RevokeObjectURL(link));
+            ShowMessage($"Exported a PSD with {export.Layers.Count} layers ({bytes.Length / 1024.0:0} KB).");
+        }
+        catch (Exception ex)
+        {
+            ShowMessage("Export PSD failed: " + ex.Message.Split((char)10)[0], 10000);
+        }
+        finally
+        {
+            _compositorExporting = false;
+            StateHasChanged();
+        }
     }
 
     void CloseCompositor()

@@ -182,6 +182,12 @@ Nothing else waits on a library now. NV1080 test rig: out/site-profile keeps a f
 local full pass run `node _scratch/opfs-clear.js http://localhost:5300/`, and check `df -h /l` before long passes.
 Open with TJ: model freeing on the desktop server (browser only today).
 
+**2026-11-25 01:40: live and checked on both sites: ILGPU 5.4.48 / ML 5.8.28 / Codecs 1.1.5 (Pages run 45554502911).** Pages: 17 / 17 examples
+in one page, five UI drives. Space: five examples, UI drives (drive-upload's file picker did not open once and passed on four reruns: the
+second time at that step on a live URL; the drive now records what was under the click). No library merge is pending. Not taken yet:
+ILGPU 5.4.49 (a failed kernel compile no longer breaks later ones; same WGSL as 5.4.48 per Data): bump it with the next change. From here
+the work returns to the sections below (tensors on the GPU, parity).
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

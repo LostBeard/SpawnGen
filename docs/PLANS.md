@@ -249,6 +249,11 @@ SpawnGen.Editor (CompositorEditor: the document, the selection, the actions, und
 node already replays; (3) the dialog in the Studio (the picture comes from the node's ui: compositor_inputs / compositor_bboxes) and a
 browser drive that repeats the probe's actions; (4) Export PSD last (a writer for layered PSD: decide then).
 
+**2026-11-25 03:25: the compositor editor and ILGPU 5.4.49 are live and checked** (Pages run 45566462502, the Space published from it and
+squashed). On the RX 590: Pages 17/17 examples, drive-compositor 33/33 and the five UI drives; the Space drive-compositor 33/33, five
+examples and the five UI drives. Packages live: ILGPU 5.4.49, ML 5.8.28, Codecs 1.1.5. Next from the backlog: Export PSD for the
+compositor (decide the writer), then the next item of "SpawnGen work that needs no library".
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

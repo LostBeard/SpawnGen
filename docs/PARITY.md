@@ -240,7 +240,14 @@ Still missing, by kind:
    ComfyUI's crop editor too (measured the same way; CropWidgetTests, CropEditingTests, drive-crop.js): the input picture shown before any run
    (the linked node's last result, or Load Image's file), the rectangle moved and resized by its corners inside the picture with a 16-pixel
    least side, the Ratio choice (1:1, 3:4, 4:3, 16:9, 9:16, Custom) and the aspect lock, the X / Y / Width / Height fields. The compositor
-   editor still shows JSON text (todo).
+   editor of Create Layered Image is done too (2026-11-25, measured the same way: probe-comfy-compositor*.js; CompositorEditorTests,
+   drive-compositor.js 33/33 on the real GPU): the node's Open Compositor button opens it on the layers of the last run; Layers top-most
+   first with visibility toggles, Background and Move up / down; the canvas with Select, Hand, the zoom menu (25%, 50%, 100%, 200%, Fit),
+   Undo and Redo; the frame with eight handles (free resize, Shift keeps the aspect) and the rotation handle; Position, Dimensions,
+   Alignment (to the canvas), Rotation, Flip, Opacity and the 26 blend modes; Restore and Close; the composition is written after every
+   action in the JSON ComfyUI's editor writes. Differences: the editor's preview blends with the browser's CSS (the ten modes CSS does not
+   have show as Normal there, with a note; the run renders them all); the wheel zooms about the pointer; the background colour is the
+   browser's colour picker; Export PSD is not there yet (todo).
 
 ## 5. Platform
 

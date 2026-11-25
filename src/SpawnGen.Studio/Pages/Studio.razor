@@ -475,6 +475,10 @@
             </div>
         }
 
+        @if (_compositor is { } compositor)
+        {
+            <CompositorDialog Editor="compositor.Editor" LayerUrls="compositor.Urls" Changed="OnCompositorChanged" Close="CloseCompositor" />
+        }
         @if (_shortcutsOpen)
         {
             <div class="modal-back" @onclick="ToggleShortcuts">
@@ -1589,6 +1593,11 @@
         if (name == UploadWidget.Name && _view.Hits.Geometry(node).Widgets.FirstOrDefault(w => w.IsUpload) is { UploadFor: { } comboName })
         {
             OpenNodeUpload(node, comboName);
+            return;
+        }
+        if (_view.Hits.Geometry(node).Widgets.FirstOrDefault(w => w.Name == name) is { IsCompositor: true })
+        {
+            OpenCompositorFor(node, name);
             return;
         }
         // The node's own widget list: it includes widgets that are not in the schema (a dynamic combo's chosen inputs, Custom Combo's options).
@@ -2874,6 +2883,7 @@
                 break;
             }
             case "executed" when node is { } shownId && _doc.Graph.FindNode(shownId) is { } shown:
+                if (CompositorRunOf(data) is { } composed) shown.CompositorRun = composed; // Create Layered Image: what its editor opens on
                 if (data["output"]?["images"] is JsonArray images)
                 {
                     // ComfyUI's ui "animated": [true] (Save Animated WEBP / PNG, Save WEBM, ...): the canvas plays the picture

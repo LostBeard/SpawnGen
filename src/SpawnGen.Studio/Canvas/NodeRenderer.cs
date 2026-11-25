@@ -877,9 +877,9 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         ctx.Stroke();
 
         if (w.IsCurve) { DrawCurve(ctx, w, value, node.ResultHistogram); return; }
-        if (w.IsUpload)
+        if (w.IsUpload || w.IsCompositor)
         {
-            // A button: its label in the middle, as ComfyUI's "choose file to upload".
+            // A button: its label in the middle, as ComfyUI's "choose file to upload" and "Open Compositor".
             ctx.Font = Theme.Font;
             ctx.TextBaseline = "middle";
             ctx.FillStyle = Theme.ValueText;

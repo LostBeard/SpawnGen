@@ -320,6 +320,50 @@ public class CompositorEditorTests
     }
 
     [Test]
+    public void The_node_shows_the_composition_as_an_Open_Compositor_button()
+    {
+        var doc = new EditorDocument(Fixtures.Registry());
+        var node = doc.Graph.GetNode(doc.AddNode("ImageCompositor", 0, 0).Id);
+        var row = NodeLayout.Compute(node, doc.Registry.GetSchema("ImageCompositor")!, doc.Graph).Widgets.Single(w => w.Name == "compositor");
+        Assert.Multiple(() =>
+        {
+            Assert.That(row.IsCompositor, Is.True);
+            Assert.That(row.Label, Is.EqualTo("Open Compositor"));
+        });
+    }
+
+    [Test]
+    public void The_editor_opens_fitted_never_enlarged_at_nine_tenths()
+    {
+        Assert.Multiple(() =>
+        {
+            // measured in a view 1150 x 933: 632 x 572 opens at 90%, 1024 x 1024 at 82%
+            Assert.That(CompositorEditor.FitZoom(1150, 933, 632, 572), Is.EqualTo(0.9));
+            Assert.That(CompositorEditor.Round(CompositorEditor.FitZoom(1150, 933, 1024, 1024) * 100), Is.EqualTo(82d));
+            Assert.That(CompositorEditor.ZoomChoices, Is.EqualTo(new[] { "25%", "50%", "100%", "200%", "Fit" }));
+        });
+    }
+
+    [Test]
+    public void Handle_points_follow_the_layer_and_its_rotation()
+    {
+        var e = Open();
+        var l = e.Layers[1];
+        Assert.Multiple(() =>
+        {
+            Assert.That(CompositorEditor.HandlePoint(l, CompositorEditor.Handle.BottomRight), Is.EqualTo((632d, 572d)));
+            Assert.That(CompositorEditor.HandlePoint(l, CompositorEditor.Handle.Left), Is.EqualTo((120d, 316d)));
+            Assert.That(CompositorEditor.HandlePoint(l, CompositorEditor.Handle.Rotate, 24), Is.EqualTo((376d, 36d)));
+        });
+        e.SetRotationDegrees(90);
+        var (x, y) = CompositorEditor.HandlePoint(e.Layers[1], CompositorEditor.Handle.Top);
+        // a quarter turn clockwise: the top edge's middle is now on the right of the centre (376, 316)
+        Assert.That((x, y), Is.EqualTo((632d, 316d)).Within(1e-9));
+        // and the hit test finds the handle where it is drawn
+        Assert.That(e.HitTest(632, 316, 6, 24), Is.EqualTo(((int?)1, CompositorEditor.Handle.Top)));
+    }
+
+    [Test]
     public void Hit_testing_finds_handles_of_the_selection_then_the_top_layer_under_the_point()
     {
         var e = Open();

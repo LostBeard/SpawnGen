@@ -58,6 +58,8 @@ public sealed class EditorNode
     public IReadOnlyList<double>? ResultHistogram { get; set; }
     /// <summary>Create Bounding Boxes: the background picture of its last run (ui "background_images"), drawn under the boxes: view state like <see cref="Previews"/>.</summary>
     public NodePreview? BoxesBackground { get; set; }
+    /// <summary>Create Layered Image: what its last run reported for the compositor editor: view state like <see cref="Previews"/>.</summary>
+    public CompositorRun? CompositorRun { get; set; }
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
     /// <summary>ComfyUI's per-node <c>properties</c> object ("Node name for S&amp;R", cnr_id, ver, ...): kept as read so a saved workflow loses nothing.</summary>
@@ -197,4 +199,10 @@ public sealed class EditorGraph
 
 /// <summary>An image a node produced (a result shown inside the node). <see cref="Width"/> and <see cref="Height"/> are 0 until the picture has loaded.</summary>
 /// <summary>A node's result picture. <paramref name="Animated"/>: an animated picture (ComfyUI's ui "animated"), which the canvas plays.</summary>
+/// <summary>
+/// A run of Create Layered Image as its ui outputs report it: the layers' fingerprints (compositor_inputs), where the run placed them
+/// (compositor_bboxes; rotation in radians), the canvas (compositor_canvas) and a picture per layer (compositor_layers), all in input order.
+/// </summary>
+public sealed record CompositorRun(IReadOnlyList<string> Inputs, IReadOnlyList<SpawnGen.Engine.Types.DictValue> Boxes, double CanvasW, double CanvasH, IReadOnlyList<string> LayerUrls);
+
 public sealed record NodePreview(string Url, double Width = 0, double Height = 0, bool Animated = false);

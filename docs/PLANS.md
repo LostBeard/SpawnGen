@@ -238,7 +238,12 @@ what is missing is the editor. Measured black-box on the reference install (`too
 **Done 2026-11-25: step 2, the logic.** `SpawnGen.Editor/CompositorEditor.cs` (the document, selection, every measured action, undo / redo,
 Restore, hit testing, the value) with `CompositorEditorTests` (16, from the measured values; red-checked). SpawnGen's own choices where nothing
 was measured are marked in the class remarks (resizing a rotated layer, a side under one pixel, typed sizes that are not positive).
-Next is step 3: the dialog in the Studio and its drive.
+**Done 2026-11-25: step 3, the dialog.** `SpawnGen.Studio/Pages/CompositorDialog.razor` (drawn from CompositorEditor; the layer pictures are
+the run's ui compositor_layers placed with CSS) and `Studio.Compositor.cs` (the node's Open Compositor row opens it on `EditorNode.CompositorRun`,
+set from the run's ui; every action writes the widget, one graph undo step each). `drive-compositor.js`: 33/33 on the RX 590 through the
+browser engine (every measured action against ComfyUI's stored values through Export, close / reopen / Restore, and a second run that
+shows the edit). The zoom menu was read from the probe's screenshot: 25%, 50%, 100%, 200%, Fit; the editor opens at min(1, fit) x 0.9.
+Left: step 4, Export PSD (decide then), and the unmeasured corners named in CompositorEditor's remarks.
 **Next, in order:** (1) the few items still unmeasured above, as the logic reaches them; (2) the logic in
 SpawnGen.Editor (CompositorEditor: the document, the selection, the actions, undo) with tests from those measurements, writing the JSON the
 node already replays; (3) the dialog in the Studio (the picture comes from the node's ui: compositor_inputs / compositor_bboxes) and a
@@ -480,7 +485,7 @@ each, the library's exports), Wan 2.2 TI2V 5B (one node and the split graph), LT
 1. Save 3D (Advanced), Load 3D, Preview 3D: ComfyUI's 3D viewport widget (LOAD_3D: camera, model info, render size).
 2. ComfyUI's frontend editors SpawnGen still shows as JSON text (the curve editor is done): crop editor, bounding-box canvas, compositor
    editor; Painter (5 templates). **The bounding-box canvas is done** (Create Bounding Boxes, 11 templates; next: the crop editor, then the
-   compositor). **Crop editor done** (b8370f4 logic, then the Studio; next: the compositor). Its measurements: (probe-comfy-bboxes.js with NODE_TYPE=ImageCropV2, Node 2.0
+   compositor). **Crop editor done** (b8370f4 logic, then the Studio). **Compositor editor done 2026-11-25** (see "Now: the compositor editor" above; Export PSD left). Its measurements: (probe-comfy-bboxes.js with NODE_TYPE=ImageCropV2, Node 2.0
    view): the widget is the input picture with the crop rectangle on it ("No input image connected" without one), a Ratio dropdown (Custom and
    presets) with a lock, and X / Y / Width / Height fields (min 0 / 0 / 1 / 1, max 8192, step 1); the value {x, y, width, height}. With a picture
    (probe-comfy-crop.js, Load Image 768 x 768 -> Crop Image): the upstream picture shows at once (no run needed) with the rectangle and four

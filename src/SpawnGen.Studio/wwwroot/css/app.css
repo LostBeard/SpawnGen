@@ -333,3 +333,51 @@ body { background: var(--bg-2); color: var(--fg); font-family: system-ui, "Segoe
 .templates-manage .row { align-items: center; }
 .templates-manage .row .grow { flex: 1; }
 .save-dialog label.button { background: var(--ctl); color: var(--fg); border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 14px; cursor: pointer; font: inherit; }
+/* The compositor editor (Create Layered Image) */
+.cmp { position: fixed; inset: 8px; z-index: 40; display: flex; flex-direction: column; background: var(--bg-1); color: var(--fg); border: 1px solid var(--line-2); border-radius: 8px; outline: none; overflow: hidden; }
+.cmp button, .cmp select, .cmp input { font: inherit; color: var(--fg); background: var(--ctl); border: 1px solid var(--line-2); border-radius: 5px; }
+.cmp button { cursor: pointer; padding: 3px 9px; }
+.cmp button:hover:not(:disabled) { background: var(--ctl-hover); }
+.cmp button:disabled { opacity: 0.4; cursor: default; }
+.cmp button.on { background: var(--accent, #2f6fdb); color: #fff; border-color: transparent; }
+.cmp-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-2); }
+.cmp-title { font-weight: 600; color: var(--fg-strong); }
+.cmp-fill { flex: 1; }
+.cmp-body { flex: 1; min-height: 0; display: flex; }
+.cmp-layers { width: 208px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line-2); }
+.cmp-props { width: 224px; flex-shrink: 0; border-left: 1px solid var(--line-2); overflow-y: auto; }
+.cmp-h { padding: 8px 12px; font-weight: 600; color: var(--fg-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp-rows { flex: 1; min-height: 0; overflow-y: auto; }
+.cmp-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; }
+.cmp-row.on { background: var(--bg-4); box-shadow: inset 2px 0 0 var(--accent, #2f6fdb); }
+.cmp-row.cmp-bg { border-top: 1px solid var(--line-2); }
+.cmp .cmp-eye { width: 24px; padding: 0; border: none; background: none; }
+.cmp .cmp-eye.off { color: var(--fg-dim); }
+.cmp-thumb { width: 32px; height: 32px; flex-shrink: 0; object-fit: cover; border-radius: 3px; background: repeating-conic-gradient(#888 0 25%, #666 0 50%) 0 0 / 10px 10px; }
+.cmp-swatch { display: inline-block; border: 1px solid var(--line-2); }
+.cmp-name { display: flex; flex-direction: column; min-width: 0; }
+.cmp-name > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp-line { font-size: 12px; color: var(--fg-dim); }
+.cmp-order { display: flex; justify-content: flex-end; gap: 4px; padding: 6px 8px; border-top: 1px solid var(--line-2); }
+.cmp-view { position: relative; flex: 1; min-width: 0; overflow: hidden; background: var(--bg-0); }
+.cmp-canvas { position: absolute; overflow: hidden; isolation: isolate; box-shadow: 0 2px 12px #0008; background: repeating-conic-gradient(#555 0 25%, #444 0 50%) 0 0 / 16px 16px; }
+.cmp-fillbg { position: absolute; inset: 0; }
+.cmp-layer { position: absolute; max-width: none; user-select: none; }
+.cmp-frame { position: absolute; box-sizing: border-box; border: 1px solid #4f8fe8; pointer-events: none; }
+.cmp-knob { position: absolute; width: 8px; height: 8px; margin: -5px 0 0 -5px; background: #fff; border: 1px solid #4f8fe8; }
+.cmp-knob.cmp-rot { left: 50%; top: -22px; border-radius: 50%; }
+.cmp-stem { position: absolute; left: 50%; top: -22px; width: 1px; height: 22px; background: #4f8fe8; }
+.cmp-catch { position: absolute; inset: 0; touch-action: none; }
+.cmp-catch.hand { cursor: grab; }
+.cmp-tools { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; gap: 4px; padding: 5px 8px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 18px; }
+.cmp-sec { padding: 8px 12px; border-top: 1px solid var(--line-2); }
+.cmp-sec label { display: block; margin-bottom: 5px; font-size: 12px; color: var(--fg-mid); }
+.cmp-pair { display: flex; gap: 8px; }
+.cmp-pair > span { flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; color: var(--fg-dim); }
+.cmp-pair > span.cmp-col { flex-direction: column; align-items: stretch; gap: 0; }
+.cmp-col > span { display: flex; align-items: center; gap: 5px; }
+.cmp-props input:not([type=color]) { width: 100%; min-width: 0; box-sizing: border-box; padding: 3px 6px; }
+.cmp-props select { width: 100%; padding: 3px 4px; }
+.cmp-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+.cmp-btns button { padding: 2px 7px; }
+.cmp-note { padding: 8px 12px; font-size: 12px; color: var(--fg-dim); }

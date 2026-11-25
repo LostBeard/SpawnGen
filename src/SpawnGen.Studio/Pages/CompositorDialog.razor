@@ -1,0 +1,294 @@
+@using System.Globalization
+@using SpawnDev.SpawnJS
+@using SpawnDev.SpawnJS.JSObjects
+@using SpawnGen.Editor
+
+@* The compositor editor of Create Layered Image, drawn from a CompositorEditor (SpawnGen.Editor), which holds every rule. Laid out as ComfyUI's
+   editor was measured (docs/PLANS.md): Layers on the left (top-most first, Background and Move up / down at the bottom), the canvas with a
+   toolbar in the middle, the selected layer's fields on the right, Restore and Close in the header. The pictures are the run's layer
+   pictures placed with CSS, so the preview blends in the browser: the run itself is what renders the result. *@
+<div class="cmp" tabindex="0" @ref="_rootRef" @onkeydown="OnKey" @onkeydown:stopPropagation="true" data-testid="compositor">
+    <div class="cmp-head">
+        <span class="cmp-title">Compositor</span>
+        <span class="cmp-fill"></span>
+        <button title="Back to the composition as it was when the editor opened" @onclick="Restore" data-testid="compositor-restore">Restore</button>
+        <button title="Close (Esc)" @onclick="CloseAsync" data-testid="compositor-close">Close &times;</button>
+    </div>
+    <div class="cmp-body">
+        <div class="cmp-layers">
+            <div class="cmp-h">Layers</div>
+            <div class="cmp-rows">
+                @foreach (var row in Editor.Rows())
+                {
+                    var index = row.Index;
+                    <div class="cmp-row @(Editor.Selected == index ? "on" : "")" @onclick="() => Editor.Select(index)" data-testid="compositor-row">
+                        <button class="cmp-eye @(row.Visible ? "" : "off")" title="Toggle visibility" @onclick="() => Do(() => Editor.ToggleVisible(index))" @onclick:stopPropagation="true">@(row.Visible ? "◉" : "○")</button>
+                        @if (index < LayerUrls.Count)
+                        {
+                            <img class="cmp-thumb" src="@LayerUrls[index]" alt="" draggable="false" />
+                        }
+                        <span class="cmp-name"><span title="@row.Name">@row.Name</span><span class="cmp-line">@row.Line</span></span>
+                    </div>
+                }
+            </div>
+            <div class="cmp-row cmp-bg @(Editor.Selected is null ? "on" : "")" @onclick="() => Editor.Select(null)" data-testid="compositor-background">
+                <button class="cmp-eye @(Editor.BackgroundVisible ? "" : "off")" title="Toggle visibility" @onclick="() => Do(Editor.ToggleBackgroundVisible)" @onclick:stopPropagation="true">@(Editor.BackgroundVisible ? "◉" : "○")</button>
+                <span class="cmp-thumb cmp-swatch" style="background:@Editor.BackgroundColor"></span>
+                <span class="cmp-name"><span>Background</span><span class="cmp-line">@Editor.BackgroundLine</span></span>
+            </div>
+            <div class="cmp-order">
+                <button title="Move layer up" disabled="@(Editor.Selected is null)" @onclick="() => Do(() => Editor.MoveSelected(true))">▲</button>
+                <button title="Move layer down" disabled="@(Editor.Selected is null)" @onclick="() => Do(() => Editor.MoveSelected(false))">▼</button>
+            </div>
+        </div>
+
+        <div class="cmp-view" @ref="_viewRef">
+            <div class="cmp-canvas" style="left:@Px(_panX);top:@Px(_panY);width:@Px(Editor.CanvasW * _zoom);height:@Px(Editor.CanvasH * _zoom)">
+                @if (Editor.BackgroundVisible)
+                {
+                    <div class="cmp-fillbg" style="background:@Editor.BackgroundColor;opacity:@N(Editor.BackgroundOpacity)"></div>
+                }
+                @foreach (var i in Editor.Order)
+                {
+                    var l = Editor.Layers[i];
+                    if (l.Visible && i < LayerUrls.Count)
+                    {
+                        <img class="cmp-layer" src="@LayerUrls[i]" alt="" draggable="false" style="@LayerStyle(l)" />
+                    }
+                }
+            </div>
+            @if (Editor.Selected is { } sel)
+            {
+                var s = Editor.Layers[sel];
+                <div class="cmp-frame" style="@FrameStyle(s)">
+                    <span class="cmp-stem"></span><span class="cmp-knob cmp-rot"></span>
+                    <span class="cmp-knob" style="left:0;top:0"></span><span class="cmp-knob" style="left:50%;top:0"></span><span class="cmp-knob" style="left:100%;top:0"></span>
+                    <span class="cmp-knob" style="left:100%;top:50%"></span><span class="cmp-knob" style="left:100%;top:100%"></span><span class="cmp-knob" style="left:50%;top:100%"></span>
+                    <span class="cmp-knob" style="left:0;top:100%"></span><span class="cmp-knob" style="left:0;top:50%"></span>
+                </div>
+            }
+            <div class="cmp-catch @(_hand ? "hand" : "")" @ref="_catchRef" data-testid="compositor-canvas"
+                 @onpointerdown="Down" @onpointermove="Move" @onpointerup="Up" @onpointercancel="Up" @onwheel="Wheel"></div>
+            <div class="cmp-tools">
+                <button class="@(_hand ? "" : "on")" title="Select" @onclick="() => _hand = false">➤</button>
+                <button class="@(_hand ? "on" : "")" title="Hand" @onclick="() => _hand = true">✋</button>
+                <select title="Zoom" @onchange="e => PickZoom(e.Value?.ToString())" data-testid="compositor-zoom">
+                    <option selected>@(Math.Round(_zoom * 100).ToString(CultureInfo.InvariantCulture))%</option>
+                    @foreach (var z in CompositorEditor.ZoomChoices)
+                    {
+                        <option>@z</option>
+                    }
+                </select>
+                <button title="Undo" disabled="@(!Editor.CanUndo)" @onclick="() => Do(() => Editor.Undo())">↶</button>
+                <button title="Redo" disabled="@(!Editor.CanRedo)" @onclick="() => Do(() => Editor.Redo())">↷</button>
+            </div>
+        </div>
+
+        <div class="cmp-props">
+            @if (Editor.Fields() is { } f && Editor.Selected is { } current)
+            {
+                var layer = Editor.Layers[current];
+                <div class="cmp-h">@layer.Name</div>
+                <div class="cmp-sec"><label>Position</label>
+                    <div class="cmp-pair">
+                        <span>X<input value="@N(f.X)" @onchange="e => Typed(e, v => Editor.SetPosition(v, null))" data-testid="compositor-x" /></span>
+                        <span>Y<input value="@N(f.Y)" @onchange="e => Typed(e, v => Editor.SetPosition(null, v))" data-testid="compositor-y" /></span>
+                    </div></div>
+                <div class="cmp-sec"><label>Dimensions</label>
+                    <div class="cmp-pair">
+                        <span>W<input value="@N(f.W)" @onchange="e => Typed(e, v => Editor.SetSize(v, null))" data-testid="compositor-w" /></span>
+                        <span>H<input value="@N(f.H)" @onchange="e => Typed(e, v => Editor.SetSize(null, v))" data-testid="compositor-h" /></span>
+                    </div></div>
+                <div class="cmp-sec"><label>Alignment</label>
+                    <div class="cmp-btns">
+                        <button title="Align left" @onclick="() => Do(() => Editor.Align(CompositorEditor.Alignment.Left))">⇤</button>
+                        <button title="Align horizontal center" @onclick="() => Do(() => Editor.Align(CompositorEditor.Alignment.HorizontalCenter))">↔</button>
+                        <button title="Align right" @onclick="() => Do(() => Editor.Align(CompositorEditor.Alignment.Right))">⇥</button>
+                        <button title="Align top" @onclick="() => Do(() => Editor.Align(CompositorEditor.Alignment.Top))">⤒</button>
+                        <button title="Align vertical center" @onclick="() => Do(() => Editor.Align(CompositorEditor.Alignment.VerticalCenter))">↕</button>
+                        <button title="Align bottom" @onclick="() => Do(() => Editor.Align(CompositorEditor.Alignment.Bottom))">⤓</button>
+                    </div></div>
+                <div class="cmp-sec cmp-pair">
+                    <span class="cmp-col"><label>Rotation</label><span>°<input value="@N(f.Degrees)" @onchange="e => Typed(e, v => Editor.SetRotationDegrees(v))" data-testid="compositor-rotation" /></span></span>
+                    <span class="cmp-col"><label>Flip</label>
+                        <span class="cmp-btns">
+                            <button class="@(layer.FlipH ? "on" : "")" title="Flip horizontal" @onclick="() => Do(Editor.FlipHorizontal)">⇋</button>
+                            <button class="@(layer.FlipV ? "on" : "")" title="Flip vertical" @onclick="() => Do(Editor.FlipVertical)">⥮</button>
+                        </span></span>
+                </div>
+                <div class="cmp-sec cmp-pair">
+                    <span class="cmp-col"><label>Opacity</label><span>%<input value="@N(f.Percent)" @onchange="e => Typed(e, v => Editor.SetOpacityPercent(v))" data-testid="compositor-opacity" /></span></span>
+                    <span class="cmp-col"><label>Blend mode</label>
+                        <select @onchange="e => Do(() => Editor.SetBlend(e.Value?.ToString() ?? string.Empty))" data-testid="compositor-blend">
+                            @foreach (var m in CompositorEditor.BlendModes)
+                            {
+                                <option value="@m.Id" selected="@(m.Id == layer.Blend)">@m.Name</option>
+                            }
+                        </select></span>
+                </div>
+                @if (CssBlend(layer.Blend) is null)
+                {
+                    <div class="cmp-note">This preview shows @(CompositorEditor.BlendModes.First(m => m.Id == layer.Blend).Name) as Normal. The run renders it.</div>
+                }
+            }
+            else
+            {
+                <div class="cmp-h">Background</div>
+                <div class="cmp-sec"><label>Canvas</label>
+                    <div class="cmp-pair">
+                        <span>W<input type="number" min="1" value="@N(Editor.CanvasW)" @onchange="e => Typed(e, v => Editor.SetCanvasSize(v, null))" data-testid="compositor-canvas-w" /></span>
+                        <span>H<input type="number" min="1" value="@N(Editor.CanvasH)" @onchange="e => Typed(e, v => Editor.SetCanvasSize(null, v))" data-testid="compositor-canvas-h" /></span>
+                    </div></div>
+                <div class="cmp-sec"><label>Color</label>
+                    <input type="color" value="@Editor.BackgroundColor" @onchange="e => Do(() => Editor.SetBackgroundColor(e.Value?.ToString() ?? Editor.BackgroundColor))" data-testid="compositor-color" /></div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CompositorEditor Editor { get; set; } = default!;
+    /// <summary>One picture per layer, in input order.</summary>
+    [Parameter] public IReadOnlyList<string> LayerUrls { get; set; } = [];
+    /// <summary>After every action: the Studio writes <see cref="CompositorEditor.Value"/> to the node's widget.</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+
+    ElementReference _rootRef, _viewRef, _catchRef;
+    HTMLElement? _catch;
+    double _zoom = 1, _panX, _panY, _viewW, _viewH;
+    bool _hand;
+
+    sealed record Drag(CompositorEditor.Handle Handle, CompositorEditor.Layer? Start, double X, double Y, double HandleX, double HandleY, double PanX, double PanY, bool Pan);
+    Drag? _drag;
+
+    static readonly HashSet<string> CssBlends =
+    [
+        "normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion",
+        "hue", "saturation", "color", "luminosity",
+    ];
+
+    /// <summary>The CSS mix-blend-mode of a blend id, or null for the modes CSS does not have (the preview then shows Normal).</summary>
+    static string? CssBlend(string id) => CssBlends.Contains(id) ? id : null;
+
+    static string N(double v) => v.ToString("0.######", CultureInfo.InvariantCulture);
+    static string Px(double v) => v.ToString("0.###", CultureInfo.InvariantCulture) + "px";
+
+    string LayerStyle(CompositorEditor.Layer l) =>
+        $"left:{Px(l.X * _zoom)};top:{Px(l.Y * _zoom)};width:{Px(l.W * _zoom)};height:{Px(l.H * _zoom)};" +
+        $"transform:rotate({N(l.Rotation)}rad) scale({(l.FlipH ? -1 : 1)},{(l.FlipV ? -1 : 1)});opacity:{N(l.Opacity)};mix-blend-mode:{CssBlend(l.Blend) ?? "normal"}";
+
+    string FrameStyle(CompositorEditor.Layer l) =>
+        $"left:{Px(_panX + l.X * _zoom)};top:{Px(_panY + l.Y * _zoom)};width:{Px(l.W * _zoom)};height:{Px(l.H * _zoom)};transform:rotate({N(l.Rotation)}rad)";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _catch = _catchRef.As<HTMLElement>();
+        Fit();
+        StateHasChanged();
+        await _rootRef.FocusAsync();
+    }
+
+    void Fit()
+    {
+        if (_catch is null) return;
+        using var rect = _catch.GetBoundingClientRect();
+        (_viewW, _viewH) = (rect.Width, rect.Height);
+        _zoom = CompositorEditor.FitZoom(_viewW, _viewH, Editor.CanvasW, Editor.CanvasH);
+        Centre();
+    }
+
+    void Centre()
+    {
+        _panX = (_viewW - Editor.CanvasW * _zoom) / 2;
+        _panY = (_viewH - Editor.CanvasH * _zoom) / 2;
+    }
+
+    void PickZoom(string? choice)
+    {
+        if (choice == "Fit") { Fit(); return; }
+        if (choice is null || !double.TryParse(choice.TrimEnd('%'), NumberStyles.Float, CultureInfo.InvariantCulture, out var percent) || percent <= 0) return;
+        ZoomAbout(percent / 100, _viewW / 2, _viewH / 2);
+    }
+
+    /// <summary>Changes the zoom keeping the canvas point under a view point where it is.</summary>
+    void ZoomAbout(double zoom, double vx, double vy)
+    {
+        zoom = Math.Clamp(zoom, 0.05, 16);
+        double cx = (vx - _panX) / _zoom, cy = (vy - _panY) / _zoom;
+        _zoom = zoom;
+        (_panX, _panY) = (vx - cx * zoom, vy - cy * zoom);
+    }
+
+    // The wheel zooms about the pointer (SpawnGen's own: ComfyUI's wheel was not measured).
+    void Wheel(WheelEventArgs e) => ZoomAbout(_zoom * (e.DeltaY < 0 ? 1.1 : 1 / 1.1), e.OffsetX, e.OffsetY);
+
+    async Task Do(Action action)
+    {
+        action();
+        await Changed.InvokeAsync();
+    }
+
+    async Task Typed(ChangeEventArgs e, Action<double> set)
+    {
+        if (!double.TryParse(e.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || !double.IsFinite(v)) return;
+        set(v);
+        await Changed.InvokeAsync();
+    }
+
+    Task Restore() => Do(Editor.Restore);
+
+    Task CloseAsync() => Close.InvokeAsync();
+
+    async Task OnKey(KeyboardEventArgs e)
+    {
+        bool ctrl = e.CtrlKey || e.MetaKey;
+        if (e.Key == "Escape") await CloseAsync();
+        else if (ctrl && !e.ShiftKey && e.Key is "z" or "Z" && ctrl) await Do(() => Editor.Undo());
+        else if (ctrl && (e.Key is "y" or "Y" || (e.ShiftKey && e.Key is "z" or "Z"))) await Do(() => Editor.Redo());
+    }
+
+    void Down(PointerEventArgs e)
+    {
+        if (e.Button != 0 && e.Button != 1) return;
+        _catch?.SetPointerCapture((int)e.PointerId);
+        double x = (e.OffsetX - _panX) / _zoom, y = (e.OffsetY - _panY) / _zoom;
+        if (_hand || e.Button == 1)
+        {
+            _drag = new Drag(CompositorEditor.Handle.None, null, e.OffsetX, e.OffsetY, 0, 0, _panX, _panY, Pan: true);
+            return;
+        }
+        double offset = CompositorEditor.RotateHandleOffset / _zoom;
+        var hit = Editor.HitTest(x, y, 7 / _zoom, offset);
+        if (hit.Part == CompositorEditor.Handle.None) { Editor.Select(null); return; }
+        Editor.Select(hit.Layer);
+        var start = Editor.Layers[hit.Layer!.Value].Clone();
+        var (hx, hy) = hit.Part is CompositorEditor.Handle.Body ? (x, y) : CompositorEditor.HandlePoint(start, hit.Part, offset);
+        _drag = new Drag(hit.Part, start, x, y, hx, hy, 0, 0, Pan: false);
+        Editor.BeginGesture();
+    }
+
+    void Move(PointerEventArgs e)
+    {
+        if (_drag is not { } d) return;
+        if (d.Pan) { (_panX, _panY) = (d.PanX + e.OffsetX - d.X, d.PanY + e.OffsetY - d.Y); return; }
+        double x = (e.OffsetX - _panX) / _zoom, y = (e.OffsetY - _panY) / _zoom;
+        switch (d.Handle)
+        {
+            case CompositorEditor.Handle.Body: Editor.DragBody(d.Start!, x - d.X, y - d.Y); break;
+            case CompositorEditor.Handle.Rotate: Editor.DragRotate(d.Start!, x, y); break;
+            default: Editor.DragHandle(d.Start!, d.Handle, x - d.HandleX, y - d.HandleY, e.ShiftKey); break;
+        }
+    }
+
+    async Task Up(PointerEventArgs e)
+    {
+        if (_drag is not { } d) return;
+        _drag = null;
+        _catch?.ReleasePointerCapture((int)e.PointerId);
+        if (d.Pan) return;
+        Editor.EndGesture();
+        await Changed.InvokeAsync();
+    }
+}

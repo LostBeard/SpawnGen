@@ -22,6 +22,8 @@ namespace SpawnGen.Editor;
 public sealed class CompositorEditor
 {
     public const string TypeName = "COMPOSITOR";
+    /// <summary>The node's button, and what it says until a run has given the editor its layers (both as ComfyUI's node shows them).</summary>
+    public const string OpenLabel = "Open Compositor", NeedsRun = "Run the workflow to generate a composite";
 
     /// <summary>The blend modes in the editor's list order: the stored id and the name shown.</summary>
     public static readonly (string Id, string Name)[] BlendModes =
@@ -358,6 +360,24 @@ public sealed class CompositorEditor
 
     /// <summary>How far above the top edge the rotation handle sits, in screen pixels (the Studio divides by the zoom).</summary>
     public const double RotateHandleOffset = 22;
+
+    /// <summary>The zoom menu, as the editor offers it; Fit is <see cref="FitZoom"/>.</summary>
+    public static readonly string[] ZoomChoices = ["25%", "50%", "100%", "200%", "Fit"];
+
+    /// <summary>
+    /// The zoom the editor opens with and Fit returns to: the canvas fitted in the view, never enlarged, times 0.9 (measured: 632 x 572 opens
+    /// at 90%, 1024 x 1024 at 82% in a view 933 high), the canvas centred.
+    /// </summary>
+    public static double FitZoom(double viewW, double viewH, double canvasW, double canvasH) =>
+        canvasW > 0 && canvasH > 0 && viewW > 0 && viewH > 0 ? Math.Min(1, Math.Min(viewW / canvasW, viewH / canvasH)) * 0.9 : 1;
+
+    /// <summary>Where a handle of a layer is on the canvas (the rotation handle <paramref name="rotateOffset"/> above the top edge's middle).</summary>
+    public static (double X, double Y) HandlePoint(Layer l, Handle handle, double rotateOffset = 0)
+    {
+        int sx = handle is Handle.TopLeft or Handle.Left or Handle.BottomLeft ? -1 : handle is Handle.TopRight or Handle.Right or Handle.BottomRight ? 1 : 0;
+        int sy = handle is Handle.TopLeft or Handle.Top or Handle.TopRight or Handle.Rotate ? -1 : handle is Handle.BottomLeft or Handle.Bottom or Handle.BottomRight ? 1 : 0;
+        return ToCanvas(l.CenterX, l.CenterY, l.Rotation, sx * l.W / 2, sy * l.H / 2 - (handle == Handle.Rotate ? rotateOffset : 0));
+    }
 
     /// <summary>
     /// What is under a canvas point: a handle of the selected layer first (within <paramref name="reach"/> canvas pixels; the rotation

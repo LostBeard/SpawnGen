@@ -261,6 +261,20 @@ squashed). On the RX 590: Pages 17/17 examples, drive-compositor 33/33 and the f
 examples and the five UI drives. Packages live: ILGPU 5.4.49, ML 5.8.28, Codecs 1.1.5. Next from the backlog: Export PSD for the
 compositor (decide the writer), then the next item of "SpawnGen work that needs no library".
 
+**2026-11-25 13:05: ML 5.8.30 is live and checked; Export PSD is done on a branch.** Packages live on both sites: ILGPU 5.4.49, ML 5.8.30,
+Codecs 1.1.5 (Pages run 45651218126: its deploy step failed in GitHub's incident of that morning and passed on a rerun). On the RX 590:
+Pages 17/17 examples (the engine's new "[gpu] backend" line confirms the build), the Space five examples, drive-compositor 33/33 on
+both, the UI drives on both. **Open: drive-upload's file picker** did not open on the first Pages runs after the deploy (2 of 4, then 5
+of 5 passed); the drive now prints the page's pointer events and input.click calls when it happens: read them next time, the cause is
+not known. ML's WebGL background-removal bug (fixed in 5.8.30) could never be reached from SpawnGen: without WebGPU the Studio offers no
+browser engine (measured with navigator.gpu hidden).
+**Export PSD** (branch `codecs-psd-local`, Codecs 1.1.6-local.2, where TJ put the PSD writer: PsdEncoderGpu, kernels):
+`ImageCompositor.Export` (each layer as a run draws it, the Background record, the flattened picture), `CompositorPsd` (Nodes.ML), the PSD
+button in the dialog (`Studio.Compositor.cs`; it needs WebGPU in the browser, the writer runs on the GPU). Suite 3519; 
+`drive-compositor-psd.js` 11/11 on the real GPU (the records equal ComfyUI's measured export, the turned layer's box 12,19..528,613
+included); psd-tools 1.27 and GIMP 2.10.30 read the file (`psd-readback.py`, `psd-gimp.scm`); Photoshop, Krita and Photopea not tried.
+**Merge it to main when Codecs 1.1.6 is on nuget.org**, then deploy and run the drive on the live sites.
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

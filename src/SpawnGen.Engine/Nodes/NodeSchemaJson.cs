@@ -111,6 +111,9 @@ public static class NodeSchemaJson
             Default = Value(kind.Value, config["default"]),
             Min = (double?)config["min"], Max = (double?)config["max"], Step = (double?)config["step"],
             Multiline = (bool?)config["multiline"] ?? false,
+            Hidden = (bool?)config["hidden"] ?? false, HiddenStated = (bool?)config["hidden"] ?? false,
+            WidgetType = (string?)config["widgetType"],
+            Socketless = kind.Value != WidgetKind.Color && config["socketless"] is JsonValue stated && stated.TryGetValue<bool>(out var noSocket) ? noSocket : null,
         });
     }
 

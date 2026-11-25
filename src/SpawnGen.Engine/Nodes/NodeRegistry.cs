@@ -458,7 +458,7 @@ public sealed class NodeRegistry
             var valueType = element ?? p.ParameterType;
             var socket = ia?.Type is { } declared ? new SocketType(declared) : ia?.MatchType is not null ? SocketType.Any : ia?.Color == true ? new SocketType("COLOR") : SocketTypes.FromClr(valueType);
             inputs.Add(new InputSpec(name, socket, Required: !p.HasDefaultValue,
-                Widget: ia?.MatchType is not null || ia?.ForceInput == true ? null : BuildWidget(type, p, ia, valueType), Tooltip: ia?.Tooltip)
+                Widget: ia?.MatchType is not null || ia?.ForceInput == true ? null : Stated(BuildWidget(type, p, ia, valueType), ia), Tooltip: ia?.Tooltip)
             {
                 Aliases = ia?.Aliases ?? [], Lazy = ia?.Lazy ?? false, Optional = ia?.Optional ?? false, MatchTemplate = ia?.MatchType, ForceInput = ia?.ForceInput ?? false,
                 StatedDefault = ia is { ForceInput: true, Json: { } stated } ? Types.JsonLiteral.Parse(stated) : null,
@@ -579,6 +579,11 @@ public sealed class NodeRegistry
         if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IEnumerable<>)) return t.GetGenericArguments()[0];
         return t.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>))?.GetGenericArguments()[0];
     }
+
+    /// <summary>What the attribute states about the widget beyond its kind: hidden, the frontend widget type, socketless.</summary>
+    static WidgetSpec? Stated(WidgetSpec? widget, InputAttribute? ia) =>
+        widget is null || ia is null || (!ia.Hidden && ia.WidgetType is null && !ia.Socketless) ? widget
+        : widget with { Hidden = widget.Hidden || ia.Hidden, HiddenStated = ia.Hidden, WidgetType = ia.WidgetType, Socketless = ia.Socketless ? true : widget.Socketless };
 
     static WidgetSpec? BuildWidget(Type nodeType, ParameterInfo p, InputAttribute? ia, Type valueType)
     {

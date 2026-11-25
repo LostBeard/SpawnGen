@@ -328,6 +328,14 @@ eraser leaves alpha 0). MASK is the painting's alpha (128 for that stroke). IMAG
 width x height with the painting resized (256 x 384 from 512 x 512: which filter is still to settle, on pixels). With mask "" the
 IMAGE is bg_color at width x height and the MASK is zero. Still to measure: the resize filter; a base image of another size than
 the painting; a batch of base images; brush geometry (size, hardness falloff, spacing) for the editor's own strokes.
+**Settled 2026-11-25 (`painter-resize-check.py`):** the resize is Pillow's Lanczos on the painting's RGBA bytes (0 difference on mask
+and image; every other Pillow filter and torch interpolate mode differs); a linked picture of another size (300 x 200) gives an
+output of ITS size with the painting stretched to it; of a batch only the first picture is used (one output picture).
+**Done 2026-11-25: step 3, the node.** `SpawnGen.Nodes.Core/PainterNode.cs` and `PainterTests` (8) on Fixtures/painter (the measured
+files): every saved byte of IMAGE and MASK equal to ComfyUI's for both paintings, over black, over #336699, resized, and over a
+picture; red-checked. The schema gained `hidden`, `widgetType` and `socketless` on inputs (InputAttribute, WidgetSpec, object_info
+both ways). Until the widget exists the node shows `mask` as a text row. Next: step 4, the widget (strokes: brush geometry, hardness
+falloff and spacing still to measure), then the Studio and its drive, then the five templates.
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

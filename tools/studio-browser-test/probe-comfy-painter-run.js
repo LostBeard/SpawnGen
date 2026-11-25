@@ -70,6 +70,8 @@ const TAG = MIXED ? 'mixed' : 'white';
     ...(MIXED ? {} : { empty: { mask: '' }, emptybg: { mask: '', bg_color: '#336699', width: 128, height: 64 } }),
     image: { image: ['9', 0] },
     imagesize: { image: ['9', 0], width: 256, height: 384 },
+    imageother: { image: ['8', 0] },                       // a base picture of another size than the painting: 300 x 200
+    imagebatch: { image: ['7', 0] },                       // two base pictures
   };
   for (const [name, change] of Object.entries(variants)) {
     const prompt = {
@@ -79,6 +81,8 @@ const TAG = MIXED ? 'mixed' : 'white';
       '4': { class_type: 'SaveImage', inputs: { images: ['3', 0], filename_prefix: `painter-${TAG}-${name}-mask` } },
     };
     if (change.image) prompt['9'] = { class_type: 'LoadImage', inputs: { image: 'compositor-a.png' } };
+    if (change.image && change.image[0] !== '9') prompt['8'] = { class_type: 'ImageScale', inputs: { image: ['9', 0], upscale_method: 'nearest-exact', width: 300, height: 200, crop: 'disabled' } };
+    if (change.image && change.image[0] === '7') { prompt['6'] = { class_type: 'ImageInvert', inputs: { image: ['8', 0] } }; prompt['7'] = { class_type: 'ImageBatch', inputs: { image1: ['8', 0], image2: ['6', 0] } }; }
     const result = await page.evaluate(async prompt => {
       const r = await fetch('/prompt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) });
       const j = await r.json();
@@ -94,7 +98,9 @@ const TAG = MIXED ? 'mixed' : 'white';
     const msg = (result.status.messages || []).filter(m => m[0] === 'execution_error').map(m => m[1].exception_message).join(' ');
     console.log(`${name}: ${result.status.status_str} ${msg.slice(0, 300)}`);
     for (const [node, kind] of [['2', 'image'], ['4', 'mask']]) {
-      const f = result.outputs && result.outputs[node] && result.outputs[node].images && result.outputs[node].images[0];
+      const all = (result.outputs && result.outputs[node] && result.outputs[node].images) || [];
+      for (let k = 1; k < all.length; k++) await fetchTo(`/view?filename=${encodeURIComponent(all[k].filename)}&subfolder=${encodeURIComponent(all[k].subfolder)}&type=${all[k].type}`, `${TAG}-${name}-${kind}-${k}.png`);
+      const f = all[0];
       if (f) await fetchTo(`/view?filename=${encodeURIComponent(f.filename)}&subfolder=${encodeURIComponent(f.subfolder)}&type=${f.type}`, `${TAG}-${name}-${kind}.png`);
     }
   }

@@ -415,6 +415,8 @@ public static class ServerApp
         if (i.Widget is not { } w) return config.Count > 0 ? new JsonArray(i.Type.Name, config) : new JsonArray(i.Type.Name);
         if (w.Default is { } d)
             config["default"] = w.Kind == WidgetKind.Json ? JsonLiteral.ToNode(d) : JsonSerializer.SerializeToNode(w.Kind == WidgetKind.Combo && d is string text ? w.OptionValue(text) : d);
+        if (w.WidgetType is { } widgetType) config["widgetType"] = widgetType;
+        if (w.HiddenStated) config["hidden"] = true;
         if (w.Socketless is { } socketless) config["socketless"] = socketless;
         if (w.Min is { } min) config["min"] = min;
         if (w.Max is { } max) config["max"] = max;

@@ -22,6 +22,10 @@ public sealed record WidgetSpec(WidgetKind Kind)
     public bool? Socketless { get; init; }
     /// <summary>A widget the editor keeps, saves and sends but does not draw (ComfyUI's hidden widgets: Custom Combo's index).</summary>
     public bool Hidden { get; init; }
+    /// <summary>True when the node itself states <c>hidden</c> in its schema (object_info says so); <see cref="Hidden"/> alone is the editor's own.</summary>
+    public bool HiddenStated { get; init; }
+    /// <summary>ComfyUI's <c>widgetType</c> ("PAINTER"): the frontend widget that edits this input; null = the type's usual widget.</summary>
+    public string? WidgetType { get; init; }
 
     /// <summary>
     /// ComfyUI lists some combo options as numbers (Create Video's bit_depth: "auto", 8, 10). The editor keeps every option as text; with this set,

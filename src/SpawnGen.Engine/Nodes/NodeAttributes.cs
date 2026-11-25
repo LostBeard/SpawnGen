@@ -115,6 +115,15 @@ public sealed class InputAttribute : Attribute
     public string? Json { get; init; }
     /// <summary>For a <see cref="Json"/> widget: it can also be turned into a socket (ComfyUI's <c>socketless=False</c>); by default it cannot.</summary>
     public bool JsonSocket { get; init; }
+
+    /// <summary>ComfyUI's <c>hidden</c>: a widget the editor keeps, saves and sends but does not draw as a row (Painter's width and height, set from its own widget).</summary>
+    public bool Hidden { get; init; }
+
+    /// <summary>ComfyUI's <c>widgetType</c>: the frontend widget that edits this input when it is not the type's usual one (Painter's mask: a STRING edited by "PAINTER").</summary>
+    public string? WidgetType { get; init; }
+
+    /// <summary>ComfyUI's <c>socketless</c>: the widget cannot be turned into a socket.</summary>
+    public bool Socketless { get; init; }
 }
 
 /// <summary>

@@ -298,6 +298,16 @@ workflows in three tabs: with a large budget nothing reloads, with a small one t
 full example pass stays clean under the default. Default: *One workflow at a time* until the user sets a budget (Lore's choice:
 a page cannot know the card is large, and guessing wrong loses the device).
 
+**2026-11-25, after TJ pointed at the libraries ("all of our stuff has to take advantage of hardware we don't have"):** ILGPU has
+`MemoryPressure` (`IDeviceMemoryReclaimer`, `RegisterReclaimer`): allocations reclaim from registered holders, least recently used
+first. In ML only the buffer pools register (idle scratch, never weights); the proactive check needs `Accelerator.TryGetFreeMemory`,
+which only CUDA has, so in a browser nothing fires by itself and the budget must come from the app (Tuvok, from the code). Sizes
+exist per weight class but not uniformly. **So the eviction belongs in ML, not in SpawnGen:** Tuvok proposed, and I asked for, an
+ML interface (DeviceBytes, IsLoaded, LastUsed, Unload when idle, reload on use) on every model kind plus an LRU manager per
+accelerator with a byte budget (the device's own free memory where a backend reports it); SpawnGen then pins what the running
+prompt uses, releases a closed tab's models, shows evictions, offers the budget as a setting, and drops its fixed rules. Waiting
+on: TJ's yes for the ML feature, Tuvok's short design, Data's view for ILGPU. Until it exists SpawnGen's behaviour stays as it is.
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

@@ -188,6 +188,28 @@ second time at that step on a live URL; the drive now records what was under the
 ILGPU 5.4.49 (a failed kernel compile no longer breaks later ones; same WGSL as 5.4.48 per Data): bump it with the next change. From here
 the work returns to the sections below (tensors on the GPU, parity).
 
+## Now: the compositor editor (Create Layered Image), started 2026-11-25
+
+The last of ComfyUI's frontend editors SpawnGen still shows as JSON text. The node side is done (it replays a saved composition, PARITY.md);
+what is missing is the editor. Measured black-box on the reference install (`tools/studio-browser-test/probe-comfy-compositor.js`: Load Image
+-> Add Layer x2 -> Create Layered Image, run once, open the editor; out/comfy-compositor-2-editor.png, comfy-compositor-editor.json):
+- The node, before a run: "Run the workflow to generate a composite" and an Open Compositor button; the editor needs one run for the inputs.
+  The widget's value is still `{}` after a run (nothing saved until the editor is used).
+- The editor is a full-window dialog titled Compositor, with Restore and Close in its header.
+- Left: Layers, top-most first, each with a visibility toggle, a thumbnail, the name and a line "N 80%" (blend mode letter and opacity);
+  at the bottom Background (its own visibility toggle, off at first; a colour swatch; the canvas size, "632×572" for a 512 layer at
+  (0, 0) and one at (120, 60)) and Move layer up / down.
+- Centre: a toolbar (Select, Hand, Zoom with a percentage menu, Undo, Redo, Export PSD) and the canvas on a checkerboard, the selected
+  layer framed with eight handles and a rotation handle above the top edge.
+- Right, for the selected layer: Position X / Y, Dimensions W / H, Alignment (left, horizontal centre, right, top, vertical centre,
+  bottom), Rotation in degrees, Flip horizontal / vertical, Opacity in percent, Blend mode (a combo, "Normal").
+**Next, in order:** (1) measure each action's effect on the widget's value and on the fields: moving, resizing by a corner and by an edge
+(is the aspect kept?), rotating, the alignment buttons, flips, opacity, the blend list, reordering, visibility, the background's colour and
+visibility, the canvas size, Undo / Redo, Restore, Close (when is the value written?), the zoom menu and the Hand tool; (2) the logic in
+SpawnGen.Editor (CompositorEditor: the document, the selection, the actions, undo) with tests from those measurements, writing the JSON the
+node already replays; (3) the dialog in the Studio (the picture comes from the node's ui: compositor_inputs / compositor_bboxes) and a
+browser drive that repeats the probe's actions; (4) Export PSD last (a writer for layered PSD: decide then).
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

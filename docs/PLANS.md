@@ -261,6 +261,20 @@ squashed). On the RX 590: Pages 17/17 examples, drive-compositor 33/33 and the f
 examples and the five UI drives. Packages live: ILGPU 5.4.49, ML 5.8.28, Codecs 1.1.5. Next from the backlog: Export PSD for the
 compositor (decide the writer), then the next item of "SpawnGen work that needs no library".
 
+## Now: Painter (the node and its editor), started 2026-11-25
+
+The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's
+/object_info/Painter (public schema; its source is not read): display name Painter, category image, inputs `mask` (STRING, widgetType
+PAINTER, image_upload, default "", no socket), `width` and `height` (INT, hidden, default 512, 64..4096 step 64, no socket), `bg_color`
+(COLOR, default #000000, no socket), optional `image` (IMAGE, "Optional base image to paint over"); outputs IMAGE, MASK.
+**Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
+tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
+and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box
+runs through /prompt for the node's outputs: no painting, a painted file with and without `image`, sizes that differ from the
+painting, bg_color, what MASK is (the painting's alpha?); fixtures from those; (3) the node in SpawnGen.Nodes.Core with tests on the
+fixtures; (4) the widget's logic in SpawnGen.Editor with tests from the measurements; (5) the Studio side and a browser drive that
+paints, runs and checks the outputs; (6) the five templates open and run. The ComfyUI reference server runs on :8199 while measuring.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

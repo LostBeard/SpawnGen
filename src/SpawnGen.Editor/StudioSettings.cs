@@ -31,6 +31,19 @@ public sealed class StudioSettings
     /// <summary>LTX-2: host RAM (GB) the block reader may run ahead; 0 = one block (<see cref="SpawnGen.Engine.Execution.RunSettings.Ltx2ReadAheadGb"/>).</summary>
     public double Ltx2ReadAheadGb { get; set; }
 
+    /// <summary>
+    /// The in-browser engine: an optional limit, in GB, on the downloaded models the browser keeps. 0 (the default) = no limit: every model
+    /// stays until the user removes it in the Models panel, as in other model apps (TJ, 2026-11-24: downloading gigabytes again is worse for
+    /// most people than using disk space they have). With a limit, the models used longest ago go first when a new one needs room, and a
+    /// model larger than the limit streams from its host on every load. What protects the kept models from the browser itself is persistent
+    /// storage (the engine asks for it): a browser under disk pressure clears whole sites that are not persistent, least recently used first.
+    /// Saved as ModelCacheLimitGb; the first version's ModelCacheGb (which wrote its default of 24 into saved settings) is not read.
+    /// </summary>
+    public double ModelCacheLimitGb { get; set; }
+
+    /// <summary><see cref="ModelCacheLimitGb"/> in bytes, null for no limit.</summary>
+    public long? ModelCacheBytes => ModelCacheLimitGb > 0 ? (long)(ModelCacheLimitGb * 1e9) : null;
+
     /// <summary>The run settings sent with each prompt (extra_data.spawngen_settings).</summary>
     public IReadOnlyDictionary<string, string> RunSettings() => new Dictionary<string, string>
     {
@@ -71,6 +84,7 @@ public sealed class StudioSettings
                 s.Ltx2Precision = lp.GetString()!;
             if (root.TryGetProperty(nameof(Ltx2HostCacheGb), out var hc) && hc.ValueKind == JsonValueKind.Number && hc.GetDouble() is >= 0 and <= 1024 and var cache) s.Ltx2HostCacheGb = cache;
             if (root.TryGetProperty(nameof(Ltx2ReadAheadGb), out var ra) && ra.ValueKind == JsonValueKind.Number && ra.GetDouble() is >= 0 and <= 1024 and var ahead) s.Ltx2ReadAheadGb = ahead;
+            if (root.TryGetProperty(nameof(ModelCacheLimitGb), out var mc) && mc.ValueKind == JsonValueKind.Number && mc.GetDouble() is >= 0 and <= 4096 and var modelCache) s.ModelCacheLimitGb = modelCache;
         }
         catch (JsonException) { }
         return s;

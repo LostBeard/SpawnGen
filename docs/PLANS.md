@@ -125,6 +125,54 @@ StreamingModelSource plans its caching against that estimate, so it keeps storin
 everything). Next: plan against the bytes really stored (sum of the cached files), with Tuvok (PlanCacheAsync is the library's). The
 Hugging Face Space is still the 5.8.26 build (storage limit; TJ to decide). Desktop server: model freeing not wired (TJ to decide).
 
+**2026-11-24 10:30: two branches wait on releases; main is ahead of the live site by small things.** The live site (run 45389993898) has had
+three clean full passes with the model-freeing fix (one local, two live: 17 / 17 each; before it 1 clean pass in 4). main since then:
+persistent-storage request, the restart-the-browser message after a refused device (RunFailureAdvice, failure messages stay 15 s). To merge:
+`ml-local-5827` (ML 5.8.28-local.4: cleared-storage recovery on every cache path, the model cache limit setting, default 24 GB;
+drive-cache-cleared 8 / 8 with the cap and without, drive-cache-limit 9 / 9) when ML 5.8.28 is on nuget.org; `codecs-115-local` (Codecs
+1.1.5-local.3: lossy WebP on AMD WebGPU fixed; drive-webp-parity.js, the browser engine's file = the server engine's, red on 1.1.4) when
+Codecs 1.1.5 is on nuget.org. Check the nuget index before each bump; then one deploy and the full live check (examples, UI drives, the
+three new drives against a local publish). A new Studio setting must be applied in the startup block AND in ApplySettings.
+Decisions waiting on TJ: the Hugging Face Space (storage limit, still the 5.8.26 build); model freeing on the desktop server; the
+default cache limit; Geordi's parallel-encode design for slow cards (RX 590: two encodes together only 1.10x).
+
+**2026-11-24 13:50: main = ML 5.8.28, live (Pages run 45447954796), and checked: 17 / 17 examples in one page, drive-cache-cleared (cap
+and no cap), drive-cache-limit, drive-device-lost, UI drives (upload and appmode each failed once on the live URL and passed on rerun:
+a file-picker click that timed out, one net::ERR_CONNECTION_RESET console line; not explained).** `ml-local-5827` is merged: the model cache
+limit (Settings > Models, default 24 GB), recovery when the browser clears the stored models. After it: the limit also trims a store
+that is already over it at the start of the next run (the library only evicts for a new download; the live profile stayed at 42 GB
+under the 24 GB default): Pages run 45462410630, live pass _scratch/live-pages-trim.log to read (expect the store near 24 GB after it).
+Chrome made the live origin's storage persistent in the test profile (persisted: true). Still to merge: `codecs-115-local` when Codecs
+1.1.5 is on nuget.org (Geordi's release sweep), then redeploy and run drive-webp-parity against a server from main.
+
+**2026-11-24 15:15: one copy of each published file, both sites deployed (Pages run 45474706459, Space commit f5bdce2).** TJ: one version of the
+app, raw or ONE compressed form; projects carry CompressionEnabled=false; the Space keeps only the current build. Pages: 121 MB of raw
+files (it gzips on the wire: the 90.7 MB AOT runtime arrives as 23.9 MB); the Space: runtime files as .gz only (43 MB in all; it sends
+files uncompressed), listed by gzboot.json, which index.html reads before Blazor.start (`tools/gzboot.sh`). `tools/hf-space/publish.sh` now
+ends with keep_only_current.py (squash + delete the unused LFS files; squashing alone freed nothing): the Space went 959 MB -> 42 MB.
+Live pass under the 24 GB cache limit before this deploy: 17 / 17, store 42.25 -> 22.04 GB. Running: live checks of both URLs after the
+one-copy deploy (_scratch/live-pages-onecopy.log, live-space-onecopy.log: the Space's first run in .gz-only form with the AOT build).
+Still to merge: `codecs-115-local` when Codecs 1.1.5 is on nuget.org.
+
+**2026-11-24 17:30: the model cache limit is OFF by default (TJ), live on both sites (Pages run 45495259517, Space 11e9eab) and checked.**
+Downloaded models are kept until the user removes them in the Models panel (what WebLLM and Transformers.js do; the protection against
+the browser clearing a site is persistent storage, which the engine asks for). StudioSettings.ModelCacheLimitGb (0 = keep all) replaces
+ModelCacheGb, whose default the first version had written into saved settings. Live: drive-cache-limit (with the default-behaviour
+phase), drive-cache-cleared, history and upload drives pass on both URLs; SD-Turbo, Image to image, FLUX.2 Klein, Text to video pass on Pages.
+Running for Data: ILGPU 5.4.47 vs 5.4.48-local.1 (every kernel in its own IR context) in SpawnGen on the RX 590:
+`_scratch/ilgpu-measure.sh`, builds in worktrees `_scratch/wt-i5447` / `wt-i5448l1` served on :5310 / :5311, logs `_scratch/ilgpu-measure/`.
+Remaining for SpawnGen: merge `codecs-115-local` when Codecs 1.1.5 is on nuget.org. Open with TJ: model freeing on the desktop server.
+
+**2026-11-24 22:00: main = ILGPU 5.4.48 / ML 5.8.28 / Codecs 1.1.4, live on both sites (Pages run 45526929598) and checked.** 5.4.47 must be
+skipped: it emitted WGSL with an unfilled placeholder for 28 Codecs kernels (Save Image's PNG encoder, the WebP encoder), found here when
+measuring Data's builds; 5.4.48 is 5.4.47 with that fixed. Local: suite 3491 / 0 / 3, GPU codec tests 53 / 53 (OpenCL), 17 / 17 examples,
+cache / device-lost / ten UI drives. Live: Pages 17 / 17, five UI drives on each URL, five examples on the Space.
+NV1080's L: drive filled during the first local pass (the test browser profiles held about 118 GB of models; a FLUX 3 run then failed with
+"Failed to write data to data pipe"): old profiles removed, and `_scratch/opfs-clear.js <url>` empties one origin's stored models in
+out/site-profile. Check `df -h /l` before a long browser pass. Remaining: merge `codecs-115-local` when Codecs 1.1.5 is on nuget.org, run
+drive-webp-parity on the released pair (ILGPU 5.4.48 + Codecs 1.1.5; identical on the pre-release pair), deploy. Open with TJ: model
+freeing on the desktop server.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

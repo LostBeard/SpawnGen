@@ -41,8 +41,9 @@ jobs:
           cp index.html 404.html   # deep links come back to the app
           touch .nojekyll          # Jekyll would drop the _framework folder
           du -sh .
-          # The AOT runtime (dotnet.native.wasm, ~130 MB) ships as its .gz copy only; index.html fetches the .gz copies off localhost.
-          find . -type f -size +95M -print -delete
+          # GitHub Pages refuses files over 100 MB and gzips what it serves by itself: a file over 95 MB (the AOT runtime, some builds)
+          # ships as its .gz copy only and is listed in gzboot.json, which index.html reads; every other file ships once, as it is.
+          bash ../../tools/gzboot.sh . over 95
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out/wwwroot

@@ -18,6 +18,13 @@ public sealed class StreamingModelSource(HubModelSource hub) : IModelSource
     /// <summary>The hub source underneath (its cache, its downloads list).</summary>
     public HubModelSource Hub => hub;
 
+    /// <summary>
+    /// The most the cache may hold, in bytes (null: no limit). The library plans each download against it, counting the cache's own files
+    /// (not the browser's storage estimate, which understates them), and makes room by dropping the least recently used models that the
+    /// current load does not ask for; what cannot fit streams. The Studio's "model cache limit" setting.
+    /// </summary>
+    public long? MaxCacheBytes { get; set; }
+
     /// <summary>(bytes read, file length) while a file streams, for progress.</summary>
     public event Action<long, long>? OnProgress;
 
@@ -30,7 +37,7 @@ public sealed class StreamingModelSource(HubModelSource hub) : IModelSource
     public async Task<Stream> OpenAsync(string repoId, string filePath, CancellationToken cancellationToken = default)
     {
         if (await hub.Store.ExistsAsync(hub.CacheKey(repoId, filePath))) return await hub.OpenAsync(repoId, filePath, cancellationToken);
-        var ranged = new RangeStreamModelSource(hub);
+        var ranged = new RangeStreamModelSource(hub) { MaxCacheBytes = MaxCacheBytes };
         ranged.OnProgress += (read, length) => OnProgress?.Invoke(read, length);
         ranged.CacheFallback += key => CacheFallback?.Invoke(key);
         // One plan at a time (each reads the room left); the download or the stream itself runs outside the lock.

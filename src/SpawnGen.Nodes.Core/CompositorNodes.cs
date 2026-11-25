@@ -241,6 +241,8 @@ public sealed class ImageCompositor
         public bool Visible = true, FlipH, FlipV, Replay;
         public byte[] Rgba = [];
         public float[] Px = [];
+        /// <summary>The prepared picture before linear light: 8-bit sRGB RGBA, Pw x Ph (what a layered file stores).</summary>
+        public byte[] Px8 = [];
         public int Pw, Ph;
     }
 
@@ -318,6 +320,88 @@ public sealed class ImageCompositor
         return new ArrayValue(expanded.Select(l => (object?)Fingerprint(l)));
     }
 
+    /// <summary>One layer of an exported composition: its picture as drawn (display size, flips and rotation applied), 8-bit sRGB RGBA.</summary>
+    public sealed record ExportLayer(string Name, int Left, int Top, int Width, int Height, byte[] Rgba, string Blend, double Opacity, bool Visible);
+
+    /// <summary>A composition ready for a layered file: the canvas, the layers bottom first (the Background first of all) and the flattened picture.</summary>
+    public sealed record ExportDocument(int Width, int Height, IReadOnlyList<ExportLayer> Layers, byte[] Composite, bool HasAlpha);
+
+    /// <summary>
+    /// The compositor editor's composition as layers for a layered file (Export PSD): each layer's picture exactly as a run draws it (Pillow's
+    /// Lanczos resize to the display size, flips, the rotation expanded to the turned shape's bounding box, placed as a run places it), bottom
+    /// first under the editor's order, after a Background layer (the canvas filled with the background colour, shown or hidden as saved), and
+    /// the flattened picture a run of this composition outputs. <paramref name="pictures"/> are the layers' pictures at their native size
+    /// (RGBA8, input order: the run's ui compositor_layers); <paramref name="composition"/> is the editor's value (version 1).
+    /// </summary>
+    /// <remarks>
+    /// As ComfyUI's export was measured (2026-11-25, probe-comfy-compositor-psd*.js): a Background record covering the canvas, then one record
+    /// per layer in drawing order, a rotated layer already rasterised into its bounding box and allowed to run past the canvas.
+    /// </remarks>
+    public static ExportDocument Export(IReadOnlyList<(byte[] Rgba, int Width, int Height)> pictures, DictValue composition)
+    {
+        if (!PyValues.Equal(PyValues.Get(composition, "version"), 1L)) throw new PyException("ValueError", "The composition is not a version 1 compositor value");
+        if (PyValues.Get(composition, "layers") is not ArrayValue saved || saved.Count != pictures.Count)
+            throw new PyException("ValueError", "The composition does not have one entry per layer picture");
+        var cv = PyValues.Get(composition, "canvas") as DictValue ?? [];
+        double sw = PyValues.ToFloat(PyValues.Get(cv, "w")), sh = PyValues.ToFloat(PyValues.Get(cv, "h"));
+        if (!(sw > 0 && sh > 0 && double.IsFinite(sw) && double.IsFinite(sh))) throw new PyException("ValueError", "The composition has no canvas size");
+        long rw = PyValues.Round(sw), rh = PyValues.Round(sh);
+        if (rw > MaxCanvas || rh > MaxCanvas)
+            throw new PyException("ValueError", $"Compositor canvas {rw}x{rh} exceeds the maximum supported size of {MaxCanvas}x{MaxCanvas}");
+        int cw = (int)rw, ch = (int)rh;
+
+        var drawn = new List<Layer>();
+        for (int k = 0; k < pictures.Count; k++)
+        {
+            var (rgba, w, h) = pictures[k];
+            if (rgba.Length != w * h * 4) throw new PyException("ValueError", $"Layer picture {k} is not {w} x {h} RGBA");
+            var frame = new ImageBatch(1, h, w, 4, [.. rgba.Select(b => b / 255f)]);
+            var native = new Layer { Frame = frame, Item = new LayerItem(frame), NativeW = w, NativeH = h, Rgba = rgba, W = w, H = h, Wf = w, Hf = h };
+            drawn.Add(Replayed(native, saved[k]));
+        }
+        var names = saved.Select(s => PyValues.Get(s as DictValue ?? [], "name") as string ?? "").ToList();
+        var index = Enumerable.Range(0, drawn.Count).ToList();
+        if (PyValues.Get(composition, "order") is ArrayValue order && order.All(o => o is long or System.Numerics.BigInteger)
+            && order.Select(o => (long)PyValues.Int(o)).Order().SequenceEqual(Enumerable.Range(0, drawn.Count).Select(i => (long)i)))
+            index = [.. order.Select(o => (int)PyValues.Int(o))];
+        var ordered = index.Select(i => drawn[i]).ToList();
+
+        var layers = new List<ExportLayer>();
+        var bg = PyValues.Get(composition, "background") as DictValue ?? [];
+        // the Background record is always there (hidden unless the editor shows it); its colour as Background() reads it
+        var shown = new DictValue { ["color"] = PyValues.Get(bg, "color"), ["opacity"] = 1L, ["visible"] = true };
+        var solid = Background(shown)!;
+        var fill = new byte[cw * ch * 4];
+        byte[] colour = [Q8(CompositorBlend.LinearToSrgb(solid[0])), Q8(CompositorBlend.LinearToSrgb(solid[1])), Q8(CompositorBlend.LinearToSrgb(solid[2])), 255];
+        for (int i = 0; i < cw * ch; i++) colour.CopyTo(fill, i * 4);
+        double bgOpacity = Num(PyValues.Get(bg, "opacity", 1L)) ?? 1;
+        bgOpacity = double.IsNaN(bgOpacity) ? 1 : Math.Clamp(bgOpacity, 0, 1);
+        layers.Add(new ExportLayer("Background", 0, 0, cw, ch, fill, "normal", bgOpacity, PyValues.Truthy(PyValues.Get(bg, "visible", true))));
+        for (int k = 0; k < ordered.Count; k++)
+        {
+            var l = ordered[k];
+            var (x, y) = Place(l);
+            layers.Add(new ExportLayer(names[index[k]], x, y, l.Pw, l.Ph, l.Px8, l.Blend, l.Opacity, l.Visible));
+        }
+
+        var (image, _) = Render(ordered, cw, ch, Background(bg));
+        int c = image.Channels;
+        var composite = new byte[cw * ch * 4];
+        for (int i = 0; i < cw * ch; i++)
+        {
+            for (int k = 0; k < 3; k++) composite[i * 4 + k] = Q8(image.Data[i * c + k]);
+            composite[i * 4 + 3] = c == 4 ? Q8(image.Data[i * c + 3]) : (byte)255;
+        }
+        return new ExportDocument(cw, ch, layers, composite, c == 4);
+    }
+
+    /// <summary>A 0..1 value as a byte, rounded half to even (as the layer pictures are quantised).</summary>
+    static byte Q8(float v)
+    {
+        float r = MathF.Round(v * 255f, MidpointRounding.ToEven);
+        return (byte)(r < 0 ? 0 : r > 255 ? 255 : r);
+    }
+
     static List<Layer> Expand(LayerDocument? doc)
     {
         if (doc is null) return [];
@@ -383,7 +467,7 @@ public sealed class ImageCompositor
             float v = px[i] / 255f;
             lin[i] = i % 4 == 3 ? v : CompositorBlend.SrgbToLinear(v);
         }
-        (l.Px, l.Pw, l.Ph) = (lin, w, h);
+        (l.Px, l.Px8, l.Pw, l.Ph) = (lin, px, w, h);
     }
 
     /// <summary>Where the layer's picture goes: centred on its box; rotated, at the reach of its turned corners (a replay centres on the saved size).</summary>

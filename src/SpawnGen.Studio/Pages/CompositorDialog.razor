@@ -81,6 +81,7 @@
                 </select>
                 <button title="Undo" disabled="@(!Editor.CanUndo)" @onclick="() => Do(() => Editor.Undo())">↶</button>
                 <button title="Redo" disabled="@(!Editor.CanRedo)" @onclick="() => Do(() => Editor.Redo())">↷</button>
+                <button title="Export PSD" disabled="@Exporting" @onclick="() => ExportPsd.InvokeAsync()" data-testid="compositor-export-psd">@(Exporting ? "…" : "PSD")</button>
             </div>
         </div>
 
@@ -153,6 +154,9 @@
     /// <summary>After every action: the Studio writes <see cref="CompositorEditor.Value"/> to the node's widget.</summary>
     [Parameter] public EventCallback Changed { get; set; }
     [Parameter] public EventCallback Close { get; set; }
+    /// <summary>Export PSD: the Studio writes the composition as a layered PSD and downloads it.</summary>
+    [Parameter] public EventCallback ExportPsd { get; set; }
+    [Parameter] public bool Exporting { get; set; }
 
     ElementReference _rootRef, _viewRef, _catchRef;
     HTMLElement? _catch;

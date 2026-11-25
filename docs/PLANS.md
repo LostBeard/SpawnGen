@@ -163,6 +163,16 @@ Running for Data: ILGPU 5.4.47 vs 5.4.48-local.1 (every kernel in its own IR con
 `_scratch/ilgpu-measure.sh`, builds in worktrees `_scratch/wt-i5447` / `wt-i5448l1` served on :5310 / :5311, logs `_scratch/ilgpu-measure/`.
 Remaining for SpawnGen: merge `codecs-115-local` when Codecs 1.1.5 is on nuget.org. Open with TJ: model freeing on the desktop server.
 
+**2026-11-24 22:00: main = ILGPU 5.4.48 / ML 5.8.28 / Codecs 1.1.4, live on both sites (Pages run 45526929598) and checked.** 5.4.47 must be
+skipped: it emitted WGSL with an unfilled placeholder for 28 Codecs kernels (Save Image's PNG encoder, the WebP encoder), found here when
+measuring Data's builds; 5.4.48 is 5.4.47 with that fixed. Local: suite 3491 / 0 / 3, GPU codec tests 53 / 53 (OpenCL), 17 / 17 examples,
+cache / device-lost / ten UI drives. Live: Pages 17 / 17, five UI drives on each URL, five examples on the Space.
+NV1080's L: drive filled during the first local pass (the test browser profiles held about 118 GB of models; a FLUX 3 run then failed with
+"Failed to write data to data pipe"): old profiles removed, and `_scratch/opfs-clear.js <url>` empties one origin's stored models in
+out/site-profile. Check `df -h /l` before a long browser pass. Remaining: merge `codecs-115-local` when Codecs 1.1.5 is on nuget.org, run
+drive-webp-parity on the released pair (ILGPU 5.4.48 + Codecs 1.1.5; identical on the pre-release pair), deploy. Open with TJ: model
+freeing on the desktop server.
+
 ## Tensors stay on the GPU (2026-11-19, TJ: "the RIGHT WAY TO DO IT so WELL WORTH IT")
 
 **Why.** AGENTS.md rule 4 (zero-copy is law; browser bulk data stays in JS, never the .NET heap) binds SpawnGen's own types. Today IMAGE,

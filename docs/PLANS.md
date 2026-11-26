@@ -390,6 +390,16 @@ RandomNormalLike node and output `latent_sample` (the posterior sampled inside t
 operators (zeros, which gives the posterior mean; or a caller's seed); when it exists VAE Encode uses it and the test above
 becomes a normal one. Not checked yet: whether ComfyUI's encode is the mean or a fixed-seed sample (compare with the mean then).
 
+**2026-11-26 19:30: ML 5.8.33 is live and checked; the VAE Encode fix is ready on a branch.** Live on both sites: ILGPU 5.4.53, ML 5.8.33,
+Codecs 1.1.6, BootRecovery 1.0.1 (Pages run 45894398836). RX 590: Pages 17/17, the Space five, boot-retry 4/4, model-tabs 9/9,
+compositor 33/33, PSD 11/11 and the UI drives on both. 5.8.33 brings the desktop file store's sidecar fix and each model measured
+in its own window (Kokoro 0.32 GB, not 2.56); its new desktop convolution kernel was compared on the RX 590 under OpenCL against
+5.8.32: every deterministic output identical.
+**VAE Encode** (branch `ml-5834`, ML 5.8.34-local.1): the SD ONNX encoder session runs with `RandomAtMean`. `VaeEncodeRepeatTests`:
+0 differing latent values (was about 16363 of 16384); eight desktop-server examples run twice: all 9 pictures identical, image to
+image and inpainting included; suite 3540. Merge when ML 5.8.34 is on nuget.org. Still to measure: the latents against ComfyUI's
+for an SD VAE (the reference install has none).
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

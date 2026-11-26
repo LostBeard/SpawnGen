@@ -210,36 +210,40 @@
             try { const r = await fetch('gzboot.json', { cache: 'no-cache' }); if (r.ok) gz = await r.json(); } catch (e) { }
             const listed = name => !!gz && typeof DecompressionStream !== 'undefined'
                 && (gz.all ? !/\.(js|json)$/.test(name) : (gz.files || []).indexOf(name) >= 0);
-            // A runtime file that comes back wrong is asked for again, past the browser's cache. Found on the live site (2026-11-26): the
-            // host answered ONE framework file with a 503 error page, the browser kept that answer in its disk cache, and from then on
-            // the page could not start in that browser ("An unhandled error has occurred", the integrity check failing on the cached
-            // error page) although the host was serving the file again. The first try is the normal one (the HTTP cache allowed).
-            const sturdy = async function (uri, integrity) {
-                let last = null;
-                for (let attempt = 0; attempt < 4; attempt++) {
-                    try {
-                        const options = integrity ? { integrity: integrity } : {};
-                        if (attempt > 0) options.cache = 'reload';
-                        const r = await fetch(uri, options);
-                        if (r.ok || r.status === 404) return r;   // a missing file is an answer, not a failure to retry
-                        last = new Error(uri + ': HTTP ' + r.status);
-                    } catch (e) { last = e; }   // the network, or an integrity check that failed on a cached error page
-                    console.warn('[boot] ' + uri.split('/').pop() + ' did not load (' + (last && last.message) + '): asking again, past the cache');
-                    await new Promise(function (resolve) { setTimeout(resolve, 500 * (attempt + 1)); });
-                }
-                throw last;
-            };
             Blazor.start({
                 loadBootResource: function (type, name, defaultUri, integrity) {
-                    if (type === 'dotnetjs' || type === 'configuration' || type === 'manifest') return null;   // loaded as scripts: not ours to fetch
-                    if (!listed(name)) return sturdy(defaultUri, integrity);
+                    if (type === 'dotnetjs' || type === 'configuration' || type === 'manifest' || !listed(name)) return null;
+                    // Our own fetch of a <name>.gz copy, held to what the runtime's own loader gives the other files:
+                    // - cache: 'force-cache', the runtime's mode for its fingerprinted files. A wrong answer the browser stored for the
+                    //   URL (a host's 503 page during an outage) would otherwise be served again on every load; a failed force-cache
+                    //   request is sent once more past the cache by SpawnDev.Blazor.BootRecovery (dotnet/runtime#135090), which the
+                    //   Studio references: it covers the runtime's own fetches, and this one because it asks the same way.
+                    // - the integrity check, which the runtime's fetch does and a hand-made Response would skip: the inflated bytes
+                    //   must hash to the file's integrity value. Bytes that do not inflate or do not match (an error page answered
+                    //   with 200, a damaged upload) are asked for once more, past the cache, and then fail the start as they should.
                     return (async function () {
-                        const r = await sturdy(defaultUri + '.gz', null);
-                        if (!r.ok) return sturdy(defaultUri, integrity);            // no compressed copy after all: the original
                         const contentType = type === 'dotnetwasm' ? 'application/wasm' : 'application/octet-stream';
-                        // a server that already sent it with Content-Encoding: gzip had the browser inflate it
-                        const body = r.headers.get('content-encoding') ? r.body : r.body.pipeThrough(new DecompressionStream('gzip'));
-                        return new Response(body, { headers: { 'content-type': contentType } });
+                        const load = async function (cacheMode) {
+                            const r = await fetch(defaultUri + '.gz', { cache: cacheMode });
+                            if (r.status === 404) return null;               // no compressed copy after all
+                            if (!r.ok) throw new Error('HTTP ' + r.status);
+                            // a server that already sent it with Content-Encoding: gzip had the browser inflate it
+                            const body = r.headers.get('content-encoding') ? r.body : r.body.pipeThrough(new DecompressionStream('gzip'));
+                            const bytes = await new Response(body).arrayBuffer();
+                            if (integrity && integrity.indexOf('sha256-') === 0 && window.crypto && crypto.subtle) {
+                                const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+                                let text = ''; for (let i = 0; i < hash.length; i++) text += String.fromCharCode(hash[i]);
+                                if ('sha256-' + btoa(text) !== integrity) throw new Error('the file does not match its integrity value');
+                            }
+                            return new Response(bytes, { headers: { 'content-type': contentType } });
+                        };
+                        let response;
+                        try { response = await load('force-cache'); }
+                        catch (e) {
+                            console.warn('[boot] ' + name + '.gz did not load (' + (e && e.message) + '): asking again, past the cache');
+                            response = await load('reload');
+                        }
+                        return response || fetch(defaultUri, { cache: 'force-cache', integrity: integrity });   // the original
                     })();
                 }
             });

@@ -362,6 +362,24 @@ for engines that load themselves, `Evicted`, `Log`). **SpawnGen's steps:**
   measuring fix (saved sizes cleared first); a server run on this PC under OpenCL (the device's own figure is the budget there:
   not run yet, only the unit tests cover the server path); then the merge when ML 5.8.32 is on nuget.org.
 
+**2026-11-26 12:35: models in GPU memory by the user's budget is merged and LIVE, and the page recovers from a cached boot error.**
+Packages live on both sites: ILGPU 5.4.51, ML 5.8.32, Codecs 1.1.6, SpawnDev.Blazor.BootRecovery 1.0.1 (Pages run 45853326418, the
+Space published from it). On the RX 590: Pages 17/17 examples, the Space five; on both sites drive-boot-retry 4/4, drive-model-tabs
+9/9 (with a 6 GB budget), drive-compositor 33/33, drive-compositor-psd 11/11 and the five UI drives. Before the merge, on the
+released ML 5.8.32 locally: no budget 17/17, the 6 GB two-pass gate 34/34, suite 3540.
+- The setting defaults to 0 (one workflow at a time), so nothing changes for a user until they set a budget.
+- **The startup failure found by the live check:** GitHub's CDN answered one framework file with a 503 page and the browser kept
+  it in its cache (the .NET loader asks with force-cache): the page could not start in that browser. This is dotnet/runtime#135090,
+  which the team's SpawnDev.Blazor.BootRecovery package already fixes; I first wrote my own retry in index.html, TJ pointed at the
+  package, and the Studio now references it instead. SpawnGen's own loader of <name>.gz files (the Space) asks with force-cache
+  too, so the package covers it, checks the inflated bytes against the file's integrity value (it did not before) and retries
+  once past the cache. `drive-boot-retry.js` fails one file's first request three ways (503 page, wrong bytes, dropped
+  connection): without recovery 1/4 on both forms of the site, with it 4/4.
+- **Next on this topic:** ML 5.8.33 (a local build is out): the desktop file store's sidecar fix (a transient lock made a complete
+  model look missing: seen twice on the desktop server here, not reproduced since) and each model measured in its own window.
+  Branch for it: saved sizes cleared, the gate again, Kokoro's and the preview decoder's sizes read, a desktop server run.
+- Still only unit-tested: two large models kept side by side (no machine here can hold them).
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

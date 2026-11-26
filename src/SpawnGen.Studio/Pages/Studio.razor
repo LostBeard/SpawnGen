@@ -406,6 +406,9 @@
                 <label title="This browser's engine only. 0 (the default) keeps every downloaded model until you remove it in the Models panel. Set a number of GB to cap what is kept: when a new model needs room, the ones used longest ago are removed and download again when used; a model larger than the limit is streamed on every load.">Model cache limit (GB, 0 = keep all)
                     <input type="number" min="0" max="4096" step="1" value="@_settings.ModelCacheLimitGb" @onchange="OnModelCacheChosen" />
                 </label>
+                <label title="This browser's engine only. 0 (the default): one workflow's models are in GPU memory at a time (safe on small cards). Set the GB of GPU memory the loaded models may keep and the models of every workflow stay loaded while they fit; the one used longest ago is dropped when the next needs the room. A browser cannot see GPU memory, so the number is yours: leave room below the card's size for the browser, other tabs and a run's working memory.">GPU memory for models (GB, 0 = one workflow at a time)
+                    <input type="number" min="0" max="4096" step="1" value="@_settings.ModelMemoryGb" @onchange="OnModelMemoryChosen" data-testid="settings-model-memory" />
+                </label>
                 <label class="row" title="On: a LoRA on LTX-2's 8-bit weights is rounded back to 8 bits the way ComfyUI rounds it, so the video matches ComfyUI's. Off: the exact sum, the LoRA's full effect (about 7e-3 away from ComfyUI's result on one block).">
                     <input type="checkbox" checked="@_settings.Ltx2ComfyFp8Lora" @onchange="e => { _settings.Ltx2ComfyFp8Lora = (bool)(e.Value ?? false); ApplySettings(); }" /> LTX-2 LoRAs on 8-bit weights: round like ComfyUI</label>
                 <label title="NVIDIA (CUDA) only; other GPUs always compute in fp32. fp32: closest to ComfyUI's float32, slowest. exact tensor cores (default): the attentions on the tensor cores at near-fp32 accuracy, about 3x faster. fast: bf16 activations, about half the GPU work, a little further from ComfyUI.">LTX-2 precision (CUDA)
@@ -978,6 +981,7 @@
             _settings = await LoadSettingsAsync();
             _ = LoadNodeTemplatesAsync();
             Browser.MaxCacheBytes = _settings.ModelCacheBytes; // before the engine loads its first model
+            Browser.ModelMemoryBytes = _settings.ModelMemoryBytes;
             LinkGeometry.Style = _settings.LinkStyle;
             _view.SnapToGrid = _settings.SnapToGrid;
             _view.GridSize = _settings.GridSize;
@@ -2295,6 +2299,13 @@
         ApplySettings();
     }
 
+    void OnModelMemoryChosen(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value as string, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var gb) && gb is >= 0 and <= 4096)
+            _settings.ModelMemoryGb = gb;
+        ApplySettings();
+    }
+
     void OnPreviewMethodChosen(ChangeEventArgs e)
     {
         _settings.PreviewMethod = e.Value as string ?? "auto";
@@ -2305,6 +2316,7 @@
     {
         if (_studio is not null) _studio.Bindings = _bindings = KeyBindings.FromJson(_settings.Shortcuts);
         Browser.MaxCacheBytes = _settings.ModelCacheBytes;
+        Browser.ModelMemoryBytes = _settings.ModelMemoryBytes;
         LinkGeometry.Style = _settings.LinkStyle;
         _view.SnapToGrid = _settings.SnapToGrid;
         _view.GridSize = _settings.GridSize;

@@ -88,11 +88,15 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
         };
         _queue = new PromptQueue(registry, this, _bus) {
-            BeforeRun = async () => { await ReplaceLostDeviceAsync(); await TrimModelCacheAsync(); }, RunFailed = NoteLostDevice,
+            BeforeRun = async () => { await ReplaceLostDeviceAsync(); await ApplyModelMemoryAsync(); await TrimModelCacheAsync(); }, RunFailed = NoteLostDevice,
             // A browser's GPU memory cannot be measured, and a page that keeps every workflow's models loses the device sooner or later:
             // a workflow that reuses none of the earlier one's models frees them before it loads its own.
             UnrelatedPromptStarting = async () => { if (_runtime is { IsCompletedSuccessfully: true } task && task.Result.FreeHandedOutModels() > 0) await MlRuntime.ReportHeapAsync("after freeing the earlier workflow's models"); },
             RunSucceeded = () => { if (_runtime is { IsCompletedSuccessfully: true } task) task.Result.PromptSucceeded(); _ = MlRuntime.ReportHeapAsync("after a prompt"); },
+            // With a GPU memory budget (Settings) the models are kept by the library's manager: each prompt leases what it uses, and the
+            // leases end with the prompt, whatever its end.
+            ReacquireModels = () => _modelMemoryBytes is not null,
+            AfterRun = async () => { if (_runtime is { IsCompletedSuccessfully: true } task) await task.Result.EndPromptAsync(); },
         };
         // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the
         // slowest ones to the console when a run ends. For finding the single op that overruns a GPU watchdog.
@@ -288,7 +292,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _runtime = null;
         _reopening = true;
         Console.WriteLine("[gpu] the WebGPU device was lost: opening a new one for this run");
-        try { task.Result.Dispose(); } catch (Exception ex) { Console.WriteLine("[gpu] releasing the lost device: " + ex.Message); }
+        try { task.Result.DeviceLost(); task.Result.Dispose(); } catch (Exception ex) { Console.WriteLine("[gpu] releasing the lost device: " + ex.Message); }
         _queue.ClearResults();
         await Task.CompletedTask;
     }
@@ -334,7 +338,9 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             long step = Math.Max(length / 10, 1);
             if (read / step != lastLogged / step || read >= length) { lastLogged = read; Console.WriteLine($"[models] streamed {read / 1e9:F2} of {length / 1e9:F2} GB"); }
         };
-        var runtime = new MlRuntime(source, accelerator);
+        var runtime = new MlRuntime(source, accelerator) { ModelMemoryBytes = _modelMemoryBytes };
+        runtime.ModelDropped += _ => _queue.DropModelResults();   // no node output may hand a dropped model to a later prompt
+        Console.WriteLine(_modelMemoryBytes is { } budget ? $"[models] GPU memory for models: {budget / 1e9:0.##} GB (Settings): kept while they fit" : "[models] no GPU memory budget (Settings): one workflow's models at a time");
         // an open WebGPU accelerator has its device; watch it for loss
         if (accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator { NativeAccelerator.NativeDevice: { } device }) _ = WatchDeviceAsync(device, runtime);
         return runtime;
@@ -345,6 +351,32 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     long? _maxCacheBytes;
 
     /// <summary>The model cache limit in bytes (null: none), from the Studio's settings; applies to the next model the engine loads.</summary>
+    long? _modelMemoryBytes;
+
+    /// <summary>
+    /// GPU memory the loaded models may keep (Settings); null = none set: one workflow's models at a time. A change takes effect at the
+    /// start of the next prompt (<see cref="ApplyModelMemoryAsync"/>), never in the middle of a run.
+    /// </summary>
+    public long? ModelMemoryBytes { get => _modelMemoryBytes; set => _modelMemoryBytes = value; }
+
+    /// <summary>
+    /// Gives the runtime the budget of Settings before a prompt. Switching between "one workflow at a time" and a budget frees every
+    /// loaded model first (the two ways of keeping models do not mix), so each loads again on its next use.
+    /// </summary>
+    async Task ApplyModelMemoryAsync()
+    {
+        if (_runtime is not { IsCompletedSuccessfully: true } task || task.Result.ModelMemoryBytes == _modelMemoryBytes) return;
+        var runtime = task.Result;
+        if ((runtime.ModelMemoryBytes is null) != (_modelMemoryBytes is null))
+        {
+            _queue.ClearResults();
+            runtime.FreeHandedOutModels();
+            await runtime.Residency.ReleaseAllAsync();
+        }
+        runtime.ModelMemoryBytes = _modelMemoryBytes;
+        Console.WriteLine(_modelMemoryBytes is { } budget ? $"[models] GPU memory for models: {budget / 1e9:0.##} GB (Settings): kept while they fit" : "[models] no GPU memory budget (Settings): one workflow's models at a time");
+    }
+
     public long? MaxCacheBytes
     {
         get => _maxCacheBytes;

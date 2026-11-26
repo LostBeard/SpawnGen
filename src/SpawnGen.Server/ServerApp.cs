@@ -35,13 +35,30 @@ public static class ServerApp
         InputFiles.Directory = options.InputPath;
         // The GPU is only touched when the first ML node runs (resolving this singleton opens the accelerator).
         builder.Services.AddSingleton(_ => new DesktopModelSource(options.ModelsPath, MlRuntime.RepoFolders));
-        builder.Services.AddSingleton(sp => new MlRuntime(sp.GetRequiredService<DesktopModelSource>()));
+        builder.Services.AddSingleton(sp => new MlRuntime(sp.GetRequiredService<DesktopModelSource>())
+            { ModelMemoryBytes = options.ModelMemoryGb > 0 ? (long)(options.ModelMemoryGb * 1e9) : null });
         builder.Services.AddSingleton<SpawnGen.Nodes.Core.IPictureEncoder>(sp => new SpawnGen.Nodes.ML.GpuPictureEncoder(sp)); // Save Image's PNG on the GPU
         builder.Services.AddSingleton<SpawnGen.Nodes.Core.IPictureDecoder>(sp => new SpawnGen.Nodes.ML.GpuPictureDecoder(sp)); // Load Image's decode on the GPU
         builder.Services.AddSingleton<EventHub>();
-        builder.Services.AddSingleton(sp => new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>())
+        builder.Services.AddSingleton(sp =>
         {
-            RunSucceeded = () => sp.GetRequiredService<MlRuntime>().PromptSucceeded(),
+            // Models are kept by the library's manager when a budget is configured or the device reports its free memory: each prompt
+            // leases what it uses (loader nodes run again and get the kept model), the leases end with the prompt, and a dropped model
+            // takes the cached node outputs that may hold it with it.
+            PromptQueue? queue = null;
+            bool watching = false;
+            MlRuntime Runtime()
+            {
+                var runtime = sp.GetRequiredService<MlRuntime>();
+                if (!watching) { watching = true; runtime.ModelDropped += _ => queue?.DropModelResults(); }
+                return runtime;
+            }
+            return queue = new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>())
+            {
+                RunSucceeded = () => Runtime().PromptSucceeded(),
+                ReacquireModels = () => Runtime().KeepsModelsByBudget,
+                AfterRun = () => Runtime().EndPromptAsync(),
+            };
         });
         configure?.Invoke(builder);
 

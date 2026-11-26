@@ -84,7 +84,7 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
     results.push({ label, outcome, secs, detail, toasts: [...toasts].slice(0, 4), errors: errs.slice(0, 4), shot: path.basename(shot) });
     // the engine's own word on the backend it opened (printed when it opens one: the first example, and after a device loss)
     for (const l of trace.filter(t => t.startsWith('[gpu] backend'))) console.log('    ' + l);
-    if (process.env.MODEL_MEMORY_GB !== undefined) for (const l of trace.filter(t => /^\[models\] (dropped|room for|the loaded transformer|GPU memory|no GPU memory|freed|.* over the budget)/.test(t))) console.log('    ' + l);
+    if (process.env.MODEL_MEMORY_GB !== undefined) for (const l of trace.filter(t => t.startsWith('[models] ') && !/^\[models\] (cache limit|no cache limit|streaming|fetch|download)/.test(t))) console.log('    ' + l);
     console.log(`${outcome === 'ran' && errs.length === 0 ? 'PASS' : 'FAIL'} ${passes > 1 ? 'pass ' + pass + ' ' : ''}${label}: ${outcome} in ${secs} s${detail ? ' | ' + detail : ''}${errs.length ? ' | browser errors: ' + errs.join(' || ') : ''} (${path.basename(shot)})`);
     if (outcome !== 'ran' || errs.length) for (const l of trace.slice(-14)) console.log('    ' + l);
   }

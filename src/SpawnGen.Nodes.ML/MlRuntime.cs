@@ -71,7 +71,7 @@ public sealed class MlRuntime : IDisposable
     readonly List<IAsyncDisposable> _leases = [];
     readonly HashSet<string> _leased = new(StringComparer.Ordinal);
     /// <summary>The running prompt's leased models (by reference) and how each asks the manager for room before a lazy load.</summary>
-    readonly Dictionary<object, Func<long, Task>> _room = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<object, (string Key, Func<long, Task> Ensure)> _room = new(ReferenceEqualityComparer.Instance);
     long? _modelMemoryBytes;
 
     /// <summary>
@@ -160,11 +160,13 @@ public sealed class MlRuntime : IDisposable
         lock (_gate)
         {
             extra = !_leased.Add(key);
-            if (!extra) { _leases.Add(lease); _room[model] = lease.EnsureRoomAsync; }
+            if (!extra) { _leases.Add(lease); _room[model] = (key, lease.EnsureRoomAsync); }
             if (!kept) _loadedSinceWarmUp = true;
         }
         if (extra) { await lease.DisposeAsync(); return model; }   // this prompt already holds a lease on it
-        if (growsInUse) await lease.EnsureRoomAsync(Need(expectedBytes));
+        // no size given = room for what this key was measured at before, less what the model holds now: a kept, loaded pipeline asks
+        // for nothing, a never-measured one gets the manager's unknown-size rule
+        if (growsInUse) await lease.EnsureRoomAsync(expectedBytes);
         return model;
     }
 
@@ -180,27 +182,20 @@ public sealed class MlRuntime : IDisposable
     {
         if (!KeepsModelsByBudget) { TransformerTurns.ReleaseTransformers(); return; }
         var residency = Residency;
-        long need = Need(bytes);
-        Func<long, Task>? room = null;
+        (string Key, Func<long, Task> Ensure) room = default;
         if (requester is not null) lock (_gate) _room.TryGetValue(requester, out room);
-        if (room is not null) await room(need);
-        if (need <= 1 || !Accelerator.TryGetFreeMemory(out long free) || free < need)
+        if (room.Ensure is not null) await room.Ensure(bytes);   // 0 = the manager's own figure for this model
+        // what is about to load, as far as anyone knows: the caller's figure, the size this model measured before, else what the
+        // manager takes an unknown model to be
+        var known = residency.KnownSizes;
+        long need = bytes > 0 ? bytes
+            : room.Key is not null && known.TryGetValue(room.Key, out long measured) && measured > 0 ? measured
+            : residency.UnknownSizeBytes ?? known.Values.DefaultIfEmpty(0).Max();
+        if (need == 0 || !Accelerator.TryGetFreeMemory(out long free) || free < need)
         {
             if (TransformerTurns.ReleaseTransformers() > 0)
-                Console.WriteLine($"[models] the loaded transformer gave way: {(need <= 1 ? "the size of what loads next is unknown" : $"{need / 1e9:0.##} GB is needed")}");
+                Console.WriteLine($"[models] the loaded transformer gave way: {(need == 0 ? "the size of what loads next is unknown" : $"{need / 1e9:0.##} GB is needed")}");
         }
-    }
-
-    /// <summary>
-    /// The room to ask for before a load: the caller's figure, else what the manager takes an unknown model to be (the app's
-    /// UnknownSizeBytes, else the largest size measured so far), else 1 byte: nothing is known at all, and asking still starts the
-    /// manager's measuring of the model from this point.
-    /// </summary>
-    long Need(long bytes)
-    {
-        if (bytes > 0) return bytes;
-        var residency = Residency;
-        return Math.Max(1, residency.UnknownSizeBytes ?? residency.KnownSizes.Values.DefaultIfEmpty(0).Max());
     }
 
     /// <summary>Ends the running prompt's leases: its models stay on the device, and from now on may be dropped when another needs the room.</summary>

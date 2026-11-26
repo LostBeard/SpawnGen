@@ -3,7 +3,8 @@
 // screenshot out/site-ex-<n>.png to look at. Models download into a persistent profile (out/site-profile) so a second run is fast.
 // MODEL_MEMORY_GB: sets Settings' "GPU memory for models" before the page starts (0 = one workflow at a time; unset = whatever the profile has)
 // and prints the engine's [models] lines about kept, dropped and given-way models after each example. PASSES (default 1): run the list again in
-// the same page, which shows what a second visit to each workflow reuses.
+// the same page (the page opens with ?testhooks=1 and each later run first forgets the cached node results, keeping the models), which shows
+// what a second visit to each workflow still finds loaded.
 // STUDIO_URL (default https://lostbeard.github.io/SpawnGen/), ONLY (substrings separated by |: run only matching examples), MAX_MINUTES per example (30).
 const { chromium } = require('playwright-core');
 const fs = require('fs');
@@ -11,7 +12,8 @@ const path = require('path');
 const OUT = path.join(__dirname, 'out');
 fs.mkdirSync(OUT, { recursive: true });
 const BASE = process.env.STUDIO_URL || 'https://lostbeard.github.io/SpawnGen/';
-const URL = process.env.NODETIMES === '1' ? BASE + (BASE.includes('?') ? '&' : '?') + 'nodetimes=1' : BASE;
+const QUERY = [process.env.NODETIMES === '1' ? 'nodetimes=1' : '', parseInt(process.env.PASSES || '1', 10) > 1 ? 'testhooks=1' : ''].filter(Boolean).join('&');
+const URL = QUERY ? BASE + (BASE.includes('?') ? '&' : '?') + QUERY : BASE;
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
 
@@ -61,6 +63,8 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
     problems = []; trace = [];
     await page.click('button:has-text("Examples")'); await page.waitForSelector('.menu');
     await page.locator('.menu li', { hasText: label }).first().click(); await page.waitForTimeout(2000);
+    // a later pass: the cached node results go (the loaded models stay), so the workflow really runs again and shows what was still loaded
+    if (pass > 1) await page.evaluate(() => window.spawngenForgetResults && window.spawngenForgetResults());
     const before = await runs(), t0 = Date.now(), blobsBefore = await page.evaluate(() => window.__resultBlobs.length);
     await page.click('button:has-text("Queue")');
     let outcome = 'timed out', detail = '', toasts = new Set();

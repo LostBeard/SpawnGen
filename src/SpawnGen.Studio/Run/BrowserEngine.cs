@@ -114,6 +114,9 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             {
                 _js.Set("spawngenLoseGpu", new ActionCallback(LoseDeviceForTest));
                 _js.Set("spawngenRefuseDevices", new ActionCallback<int>(n => _refuseDevicesForTest = n));
+                // window.spawngenForgetResults(): every cached node output goes, the loaded models stay: the same workflow queued again
+                // then runs every node (drive-site-examples.js's second pass shows which models were still loaded).
+                _js.Set("spawngenForgetResults", new ActionCallback(() => _queue.ClearResults()));
             }
         }
         catch (Exception) { }

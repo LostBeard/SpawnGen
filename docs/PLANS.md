@@ -273,7 +273,15 @@ browser engine (measured with navigator.gpu hidden).
 button in the dialog (`Studio.Compositor.cs`; it needs WebGPU in the browser, the writer runs on the GPU). Suite 3519; 
 `drive-compositor-psd.js` 11/11 on the real GPU (the records equal ComfyUI's measured export, the turned layer's box 12,19..528,613
 included); psd-tools 1.27 and GIMP 2.10.30 read the file (`psd-readback.py`, `psd-gimp.scm`); Photoshop, Krita and Photopea not tried.
-**Merge it to main when Codecs 1.1.6 is on nuget.org**, then deploy and run the drive on the live sites.
+**Merged, deployed and checked 2026-11-25 19:35** (Codecs 1.1.6 on nuget.org at about 18:45; main also took ML 5.8.31; Pages run
+45722034653, the Space published from it). On the RX 590: Pages 17/17 examples, the Space five; on both sites drive-compositor-psd 11/11,
+drive-compositor 33/33 and the UI drives. Packages live: ILGPU 5.4.49, ML 5.8.31, Codecs 1.1.6. The Painter node is in this build too
+(its widget is not: `mask` shows as a text row).
+**The upload drive's lost file picker, read from the page's own events:** on the failing run the page HAD called input.click() on its
+connected file input, with user activation, 1 ms after the pointer-up, and still no chooser event reached the drive. So the page did
+its part. The drive now adds a chooser listener when the page is created (Playwright turns interception on with the first listener,
+a round trip that a click started at the same moment can beat); 6 of 6 passed after that, which is not proof for a failure seen about
+once in five runs: if it comes back with the listener in place, the race is not the cause.
 
 ## Now: models in GPU memory, by the user's choice (TJ, 2026-11-25)
 

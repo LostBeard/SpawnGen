@@ -247,7 +247,13 @@ Still missing, by kind:
    Alignment (to the canvas), Rotation, Flip, Opacity and the 26 blend modes; Restore and Close; the composition is written after every
    action in the JSON ComfyUI's editor writes. Differences: the editor's preview blends with the browser's CSS (the ten modes CSS does not
    have show as Normal there, with a note; the run renders them all); the wheel zooms about the pointer; the background colour is the
-   browser's colour picker; Export PSD is not there yet (todo).
+   browser's colour picker. Export PSD is there (2026-11-25, SpawnDev.Codecs 1.1.6's PSD writer; `drive-compositor-psd.js` 11/11 on both
+   live sites): the file's records equal what ComfyUI's export was measured to write (a Background record, then the layers in drawing
+   order, each rasterised as a run draws it into the bounding box of its turned shape, blend keys, opacity bytes, flags, Unicode names,
+   alpha-first channels, RLE, the flattened picture); psd-tools and GIMP 2.10 read it. Differences: the file is named
+   spawngen-layers-<date>-<time>.psd; layers are plain raster layers (ComfyUI also embeds the originals as smart objects); the writer
+   runs on the GPU, so the button needs WebGPU in the browser even when a SpawnGen server runs the graphs. Not tried: Photoshop, Krita,
+   Photopea.
 
 ## 5. Platform
 

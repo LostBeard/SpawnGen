@@ -18,6 +18,11 @@ fs.copyFileSync(APPLE, PEAR);
 (async () => {
   const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-webgpu-developer-features'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+  // A file chooser listener from the start. Playwright turns chooser interception on when the first listener is added, and that is a
+  // round trip to the browser; started together with the click it can lose the race, and then the picker opens unseen. Measured
+  // 2026-11-25 on a failing run: the page had called input.click() on its connected file input with user activation 1 ms after the
+  // pointer-up, yet no chooser event came. (Consistent with that race; the race itself was not observed.)
+  page.on('filechooser', () => {});
   const problems = [];
   page.on('console', m => { if (m.type() === 'error') problems.push(m.text()); });
   page.on('pageerror', e => problems.push('PAGEERROR ' + e.message));

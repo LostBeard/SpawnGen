@@ -380,6 +380,16 @@ released ML 5.8.32 locally: no budget 17/17, the 6 GB two-pass gate 34/34, suite
   Branch for it: saved sizes cleared, the gate again, Kokoro's and the preview decoder's sizes read, a desktop server run.
 - Still only unit-tested: two large models kept side by side (no machine here can hold them).
 
+**Bug found 2026-11-26: VAE Encode on the Stable Diffusion ONNX checkpoints is not deterministic.** Seen first as image to image and
+inpainting coming out 1/255 different in a few hundred pixels between two runs of one build on the desktop server, while every
+workflow without an encode was identical byte for byte. `VaeEncodeRepeatTests` (explicit, OpenCL on the RX 590): six encodes of one
+picture differ in nearly every latent value by up to 0.015 (sd_turbo and sd_v1-5). Cause: both encoder ONNX graphs contain a
+RandomNormalLike node and output `latent_sample` (the posterior sampled inside the graph). ComfyUI's VAE Encode, measured black box
+(`_scratch/comfy_encode_twice.py`: two encodes of one picture, Save Latent): 0 of 65536 values differ. So this is a parity bug
+(a fixed seed must give the same picture) on those two checkpoints. Asked Tuvok for a session option that fixes the random
+operators (zeros, which gives the posterior mean; or a caller's seed); when it exists VAE Encode uses it and the test above
+becomes a normal one. Not checked yet: whether ComfyUI's encode is the mean or a fixed-seed sample (compare with the mean then).
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

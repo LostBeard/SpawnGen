@@ -325,6 +325,46 @@ public class ModelBudgetTests
     }
 
     [Test]
+    public async Task A_closed_workflow_releases_the_models_only_it_used()
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var cpu = context.CreateCPUAccelerator(0);
+        using var runtime = Runtime(cpu, Mb(1000));
+        // two tabs: one uses a and the shared model, the other b and the shared model
+        runtime.PromptTag = "tab-1";
+        var a = await runtime.GetOrLoadAsync("model:a", () => Sized.Load("a", Mb(60)), Mb(60));
+        var shared = await runtime.GetOrLoadAsync("model:shared", () => Sized.Load("shared", Mb(60)), Mb(60));
+        await runtime.EndPromptAsync();
+        runtime.PromptTag = "tab-2";
+        var b = await runtime.GetOrLoadAsync("model:b", () => Sized.Load("b", Mb(60)), Mb(60));
+        await runtime.GetOrLoadAsync("model:shared", () => Sized.Load("shared", Mb(60)), Mb(60));
+        await runtime.EndPromptAsync();
+
+        Assert.That(await runtime.ReleaseWorkflowAsync("tab-1"), Is.EqualTo(1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.Disposed, Is.True, "only tab 1 used a");
+            Assert.That(shared.Disposed, Is.False, "tab 2 still uses the shared model");
+            Assert.That(b.Disposed, Is.False);
+        });
+        Assert.That(await runtime.ReleaseWorkflowAsync("tab-2"), Is.EqualTo(2));
+        Assert.That(shared.Disposed && b.Disposed, Is.True);
+        Assert.That(await runtime.ReleaseWorkflowAsync("never-seen"), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Without_a_budget_closing_a_workflow_frees_nothing_here()
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var cpu = context.CreateCPUAccelerator(0);
+        using var runtime = Runtime(cpu, null);
+        runtime.PromptTag = "tab-1";
+        var a = await runtime.GetOrLoadAsync("model:a", () => Sized.Load("a", Mb(60)));
+        Assert.That(await runtime.ReleaseWorkflowAsync("tab-1"), Is.EqualTo(0));
+        Assert.That(a.Disposed, Is.False, "the older rules free models, at the next unrelated workflow");
+    }
+
+    [Test]
     public async Task A_lost_device_forgets_the_models_without_touching_them()
     {
         using var context = Context.Create(b => b.CPU());

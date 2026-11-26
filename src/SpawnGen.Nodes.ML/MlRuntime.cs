@@ -138,6 +138,19 @@ public sealed class MlRuntime : IDisposable
         catch (System.Text.Json.JsonException) { return 0; }
     }
 
+    /// <summary>
+    /// Whose the running prompt's models are (the Studio's workflow tab): each model acquired while it is set carries this tag, and
+    /// <see cref="ReleaseWorkflowAsync"/> drops the idle models no other workflow uses. The engine sets it at the start of each prompt.
+    /// </summary>
+    public string? PromptTag { get; set; }
+
+    /// <summary>
+    /// A workflow was closed: its idle models that no other workflow used are dropped now (one still in use goes when its prompt
+    /// ends). Without a budget nothing is tagged and nothing happens here: the older rules free models. Returns how many were dropped.
+    /// </summary>
+    public async Task<int> ReleaseWorkflowAsync(string workflow) =>
+        KeepsModelsByBudget && _residency is { } residency && !string.IsNullOrEmpty(workflow) ? await residency.ReleaseAsync(workflow) : 0;
+
     /// <summary>A model the manager dropped (its key): node outputs that hold it must not be reused (the engine drops its cached model results).</summary>
     public event Action<string>? ModelDropped;
 
@@ -154,7 +167,7 @@ public sealed class MlRuntime : IDisposable
     {
         var residency = Residency;
         bool kept = residency.Resident.Any(m => m.Key == key);
-        var lease = await residency.AcquireAsync(key, load, expectedBytes);
+        var lease = await residency.AcquireAsync(key, load, expectedBytes, PromptTag);
         var model = lease.Model;
         bool extra;
         lock (_gate)

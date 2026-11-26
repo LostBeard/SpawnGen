@@ -21,8 +21,15 @@ public interface IEngineClient
     /// <param name="targets">Run only these output nodes (ComfyUI's partial_execution_targets: Queue Selected Output Nodes); null runs them all.</param>
     /// <remarks>A queued result can still carry <see cref="QueueResult.NodeErrors"/>: output nodes left out because what they need does not validate.</remarks>
     /// <param name="settings">SpawnGen's run settings (extra_data.spawngen_settings, see SpawnGen.Engine.Execution.RunSettings); null for the defaults.</param>
+    /// <param name="workflow">The Studio tab the prompt belongs to: the engine tags the models it loads with it (see <see cref="ReleaseWorkflowAsync"/>).</param>
     Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null,
-        IReadOnlyDictionary<string, string>? settings = null);
+        IReadOnlyDictionary<string, string>? settings = null, string? workflow = null);
+
+    /// <summary>
+    /// A workflow tab was closed: an engine that keeps models by a memory budget drops the idle models only that workflow used. Others
+    /// (no budget, a ComfyUI server) do nothing.
+    /// </summary>
+    Task ReleaseWorkflowAsync(string workflow) => Task.CompletedTask;
     Task InterruptAsync();
 
     /// <summary>Removes a run that is still waiting in the queue (not the one that is running: that is <see cref="InterruptAsync"/>).</summary>

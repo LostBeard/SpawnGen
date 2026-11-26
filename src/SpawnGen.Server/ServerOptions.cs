@@ -13,6 +13,9 @@ public sealed class ServerOptions
     /// dropped when the next needs the room; on a device that reports nothing, nothing is dropped until a number is set here.
     /// </summary>
     public double ModelMemoryGb { get; set; }
+
+    /// <summary>Where the measured sizes of loaded models are kept between runs of the server (next to the models folder).</summary>
+    public string ModelSizesFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(ModelsPath)) ?? ".", "model-sizes.json");
     public string OutputPath { get; set; } = Path.Combine(Home, "output");
     public string InputPath { get; set; } = Path.Combine(Home, "input");
     public string TempPath { get; set; } = Path.Combine(Home, "temp");

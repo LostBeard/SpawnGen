@@ -353,8 +353,14 @@ for engines that load themselves, `Evicted`, `Log`). **SpawnGen's steps:**
   build with the test profile's saved sizes cleared.
 - **What the gate cannot show:** two large models kept side by side (an 8 GB card cannot hold them); that is unit-tested with a
   large budget only. The first real evidence needs a larger machine.
-- **Left:** C (tabs: the Studio tags prompts, a closed tab releases its models), sizes kept in a file on the server, file sizes as
-  expected bytes for first loads (`IModelSource.GetSizeAsync`), then the merge when ML 5.8.32 is on nuget.org.
+- **Step C done 2026-11-26 (tabs):** a prompt carries its tab (`extra_data.spawngen_workflow`), the models it loads are tagged with
+  it (`MlRuntime.PromptTag`), and closing a tab calls `IEngineClient.ReleaseWorkflowAsync` (the browser engine directly; a SpawnGen
+  server through `POST /spawngen/release`): the idle models only that tab used are dropped. `drive-model-tabs.js` 9/9 on the RX 590
+  (6 GB: two tabs' models both stay, closing one drops only its model, the other reruns on its kept model; no budget: nothing
+  changes). The server keeps the measured sizes in `model-sizes.json` next to its models folder. Suite 3540.
+- **Left:** file sizes as expected bytes for first loads (`IModelSource.GetSizeAsync`); the gate again on the ML build with the
+  measuring fix (saved sizes cleared first); a server run on this PC under OpenCL (the device's own figure is the budget there:
+  not run yet, only the unit tests cover the server path); then the merge when ML 5.8.32 is on nuget.org.
 
 ## Now: Painter (the node and its editor), started 2026-11-25
 

@@ -211,6 +211,15 @@ public sealed class PromptQueue : IDisposable
     /// <summary><see cref="PromptExecutor.ReacquireModels"/>: true while the engine keeps models by per-prompt leases.</summary>
     public Func<bool>? ReacquireModels { get => _executor.ReacquireModels; set => _executor.ReacquireModels = value; }
 
+    /// <summary>The <c>extra_data</c> key of the workflow (the Studio's tab) a prompt belongs to: models are tagged with it, and a closed tab releases its own.</summary>
+    public const string WorkflowKey = "spawngen_workflow";
+
+    /// <summary>The workflow of the prompt that is running (<see cref="WorkflowKey"/>), or null.</summary>
+    public string? RunningWorkflow
+    {
+        get { lock (_gate) return _running?.ExtraData[WorkflowKey] is JsonValue v && v.TryGetValue<string>(out var text) && text.Length > 0 ? text : null; }
+    }
+
     /// <summary>Runs after every prompt, however it ended (the engines end the prompt's model leases here).</summary>
     public Func<Task>? AfterRun { get; set; }
 

@@ -1561,6 +1561,8 @@
 
     void CloseTab(string id)
     {
+        // the tab's models are no longer wanted: an engine that keeps models by a memory budget drops the idle ones only this tab used
+        if (_engine is { } engine) _ = ReleaseTabModelsAsync(engine, id);
         bool wasActive = id == _tabs.ActiveId;
         if (wasActive && _subgraphStack.Count > 0) ExitSubgraphTo(0);
         if (!_tabs.Close(id))
@@ -2299,6 +2301,12 @@
         ApplySettings();
     }
 
+    async Task ReleaseTabModelsAsync(IEngineClient engine, string tab)
+    {
+        try { await engine.ReleaseWorkflowAsync(tab); }
+        catch (Exception ex) { Console.WriteLine("[models] releasing a closed tab's models: " + ex.Message); }
+    }
+
     void OnModelMemoryChosen(ChangeEventArgs e)
     {
         if (double.TryParse(e.Value as string, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var gb) && gb is >= 0 and <= 4096)
@@ -2744,7 +2752,7 @@
         // The workflow travels with the prompt so Save Image can embed it: the picture can then be dropped back on the canvas.
         var workflow = ComfyWorkflow.Save(runDoc, _renderer.MeasureText);
         var result = await _engine!.QueueAsync(PromptJson.ToJson(compiled.Graph), workflow, front, _settings.PreviewMethod,
-            targets?.Select(id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToList(), _settings.RunSettings());
+            targets?.Select(id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToList(), _settings.RunSettings(), _tabs.ActiveId);
         if (!result.Queued)
         {
             foreach (var (node, message) in result.NodeErrors) _visuals.Errors[node] = message;

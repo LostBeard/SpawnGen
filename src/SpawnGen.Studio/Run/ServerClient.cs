@@ -100,8 +100,15 @@ public sealed class ServerClient(HttpClient http, SpawnJSRuntime js) : IEngineCl
         }
     }
 
+    /// <summary>A closed tab: a SpawnGen server drops the idle models only that workflow used (a ComfyUI server has no such route: the failure is ignored).</summary>
+    public async Task ReleaseWorkflowAsync(string workflow)
+    {
+        try { using var response = await http.PostAsync("spawngen/release?workflow=" + Uri.EscapeDataString(workflow), null, _stop.Token); }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { }
+    }
+
     public async Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null,
-        IReadOnlyDictionary<string, string>? settings = null)
+        IReadOnlyDictionary<string, string>? settings = null, string? workflow = null)
     {
         var body = new JsonObject { ["prompt"] = JsonNode.Parse(promptJson), ["client_id"] = ClientId };
         if (front) body["front"] = true;
@@ -117,6 +124,11 @@ public sealed class ServerClient(HttpClient http, SpawnJSRuntime js) : IEngineCl
         {
             if (body["extra_data"] is not JsonObject extra) body["extra_data"] = extra = new JsonObject();
             extra["spawngen_settings"] = BrowserEngine.SettingsJson(settings); // SpawnGen's own: a ComfyUI server ignores it
+        }
+        if (!string.IsNullOrEmpty(workflow))
+        {
+            if (body["extra_data"] is not JsonObject extra) body["extra_data"] = extra = new JsonObject();
+            extra[SpawnGen.Runtime.PromptQueue.WorkflowKey] = workflow; // SpawnGen's own too
         }
         try
         {

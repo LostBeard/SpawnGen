@@ -96,7 +96,12 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             // With a GPU memory budget (Settings) the models are kept by the library's manager: each prompt leases what it uses, and the
             // leases end with the prompt, whatever its end.
             ReacquireModels = () => _modelMemoryBytes is not null,
-            AfterRun = async () => { if (_runtime is { IsCompletedSuccessfully: true } task) await task.Result.EndPromptAsync(); },
+            AfterRun = async () =>
+            {
+                if (_runtime is not { IsCompletedSuccessfully: true } task) return;
+                await task.Result.EndPromptAsync();
+                SaveModelSizes(task.Result);
+            },
         };
         // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the
         // slowest ones to the console when a run ends. For finding the single op that overruns a GPU watchdog.
@@ -343,6 +348,14 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         };
         var runtime = new MlRuntime(source, accelerator) { ModelMemoryBytes = _modelMemoryBytes };
         runtime.ModelDropped += _ => _queue.DropModelResults();   // no node output may hand a dropped model to a later prompt
+        // the sizes measured in earlier sessions of this browser: a known model keeps the others loaded on its first load
+        try
+        {
+            using (var storage = _js.Get<SpawnDev.SpawnJS.JSObjects.Storage>("localStorage")) _savedModelSizes = storage.GetItem(ModelSizesKey);
+            int known = runtime.SeedModelSizes(_savedModelSizes);
+            if (known > 0 && _modelMemoryBytes is not null) Console.WriteLine($"[models] {known} model sizes known from earlier sessions");
+        }
+        catch (Exception ex) { Console.WriteLine("[models] reading the saved model sizes: " + ex.Message); }
         Console.WriteLine(_modelMemoryBytes is { } budget ? $"[models] GPU memory for models: {budget / 1e9:0.##} GB (Settings): kept while they fit" : "[models] no GPU memory budget (Settings): one workflow's models at a time");
         // an open WebGPU accelerator has its device; watch it for loss
         if (accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator { NativeAccelerator.NativeDevice: { } device }) _ = WatchDeviceAsync(device, runtime);
@@ -355,6 +368,22 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
 
     /// <summary>The model cache limit in bytes (null: none), from the Studio's settings; applies to the next model the engine loads.</summary>
     long? _modelMemoryBytes;
+    const string ModelSizesKey = "spawngen.modelsizes";
+    string? _savedModelSizes;
+
+    /// <summary>Keeps the measured model sizes in the browser's storage when they changed (only with a budget: without one nothing is measured).</summary>
+    void SaveModelSizes(MlRuntime runtime)
+    {
+        if (!runtime.KeepsModelsByBudget) return;
+        try
+        {
+            var json = runtime.ModelSizesJson();
+            if (json == _savedModelSizes || json == "{}") return;
+            using var storage = _js.Get<SpawnDev.SpawnJS.JSObjects.Storage>("localStorage");
+            storage.SetItem(ModelSizesKey, _savedModelSizes = json);
+        }
+        catch (Exception ex) { Console.WriteLine("[models] saving the model sizes: " + ex.Message); }
+    }
 
     /// <summary>
     /// GPU memory the loaded models may keep (Settings); null = none set: one workflow's models at a time. A change takes effect at the

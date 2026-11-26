@@ -117,6 +117,27 @@ public sealed class MlRuntime : IDisposable
     /// </summary>
     public bool KeepsModelsByBudget => _modelMemoryBytes is not null || _reportsFreeMemory.Value;
 
+    /// <summary>
+    /// The sizes the manager has measured (key -> the largest bytes seen), as JSON, for an engine to keep across sessions: a model whose
+    /// size is known keeps the others loaded on its first load in a new session, where an unknown one is taken to be as large as the
+    /// largest measured (or, with nothing measured, makes every idle model go first).
+    /// </summary>
+    public string ModelSizesJson() =>
+        System.Text.Json.JsonSerializer.Serialize(Residency.KnownSizes.OrderBy(kv => kv.Key, StringComparer.Ordinal).ToDictionary(kv => kv.Key, kv => kv.Value));
+
+    /// <summary>Gives the manager sizes kept from an earlier session (<see cref="ModelSizesJson"/>); text that is not such JSON is ignored.</summary>
+    public int SeedModelSizes(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return 0;
+        try
+        {
+            var sizes = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, long>>(json)?.Where(kv => kv.Value > 0).ToList() ?? [];
+            if (sizes.Count > 0) Residency.SeedKnownSizes(sizes);
+            return sizes.Count;
+        }
+        catch (System.Text.Json.JsonException) { return 0; }
+    }
+
     /// <summary>A model the manager dropped (its key): node outputs that hold it must not be reused (the engine drops its cached model results).</summary>
     public event Action<string>? ModelDropped;
 

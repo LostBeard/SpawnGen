@@ -266,6 +266,36 @@ public class ModelBudgetTests
     }
 
     [Test]
+    public async Task Measured_sizes_carry_over_to_the_next_session()
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var cpu = context.CreateCPUAccelerator(0);
+        string json;
+        using (var first = Runtime(cpu, Mb(150)))
+        {
+            await first.GetOrLoadAsync("model:a", () => Sized.Load("a", Mb(100)));   // size not given: measured
+            await first.GetOrLoadAsync("model:b", () => Sized.Load("b", Mb(40)));
+            await first.EndPromptAsync();
+            json = first.ModelSizesJson();
+        }
+        Assert.That(json, Is.EqualTo($"{{\"model:a\":{Mb(100)},\"model:b\":{Mb(40)}}}"));
+        using var second = Runtime(cpu, Mb(150));
+        Assert.Multiple(() =>
+        {
+            Assert.That(second.SeedModelSizes(json), Is.EqualTo(2));
+            Assert.That(second.SeedModelSizes("not json"), Is.EqualTo(0));
+            Assert.That(second.SeedModelSizes(null), Is.EqualTo(0));
+        });
+        // in the new session a (100) is loaded; b, never loaded here and given no size, is known to be 40: both fit 150, a stays.
+        // (unknown, b would be taken to be as large as the largest measured, 100, and a would go)
+        var a = await second.GetOrLoadAsync("model:a", () => Sized.Load("a", Mb(100)));
+        await second.EndPromptAsync();
+        await second.GetOrLoadAsync("model:b", () => Sized.Load("b", Mb(40)));
+        await second.EndPromptAsync();
+        Assert.That(a.Disposed, Is.False);
+    }
+
+    [Test]
     public async Task A_lost_device_forgets_the_models_without_touching_them()
     {
         using var context = Context.Create(b => b.CPU());

@@ -88,11 +88,26 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             EventReceived?.Invoke(new JsonObject { ["type"] = e.Type, ["data"] = e.Data.DeepClone() });
         };
         _queue = new PromptQueue(registry, this, _bus) {
-            BeforeRun = async () => { await ReplaceLostDeviceAsync(); await TrimModelCacheAsync(); }, RunFailed = NoteLostDevice,
+            BeforeRun = async () => { await ReplaceLostDeviceAsync(); await ApplyModelMemoryAsync(); await TrimModelCacheAsync(); }, RunFailed = NoteLostDevice,
             // A browser's GPU memory cannot be measured, and a page that keeps every workflow's models loses the device sooner or later:
             // a workflow that reuses none of the earlier one's models frees them before it loads its own.
             UnrelatedPromptStarting = async () => { if (_runtime is { IsCompletedSuccessfully: true } task && task.Result.FreeHandedOutModels() > 0) await MlRuntime.ReportHeapAsync("after freeing the earlier workflow's models"); },
             RunSucceeded = () => { if (_runtime is { IsCompletedSuccessfully: true } task) task.Result.PromptSucceeded(); _ = MlRuntime.ReportHeapAsync("after a prompt"); },
+            // With a GPU memory budget (Settings) the models are kept by the library's manager: each prompt leases what it uses, and the
+            // leases end with the prompt, whatever its end.
+            // asked at the start of every prompt: the models it loads are tagged with its workflow (tab)
+            ReacquireModels = () =>
+            {
+                _promptTag = _queue!.RunningWorkflow;
+                if (_runtime is { IsCompletedSuccessfully: true } task) task.Result.PromptTag = _promptTag;
+                return _modelMemoryBytes is not null;
+            },
+            AfterRun = async () =>
+            {
+                if (_runtime is not { IsCompletedSuccessfully: true } task) return;
+                await task.Result.EndPromptAsync();
+                SaveModelSizes(task.Result);
+            },
         };
         // Debug switch: open the page with ?perop=1 to make the library wait for every GPU op and record how long each took (slow), and print the
         // slowest ones to the console when a run ends. For finding the single op that overruns a GPU watchdog.
@@ -110,6 +125,9 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             {
                 _js.Set("spawngenLoseGpu", new ActionCallback(LoseDeviceForTest));
                 _js.Set("spawngenRefuseDevices", new ActionCallback<int>(n => _refuseDevicesForTest = n));
+                // window.spawngenForgetResults(): every cached node output goes, the loaded models stay: the same workflow queued again
+                // then runs every node (drive-site-examples.js's second pass shows which models were still loaded).
+                _js.Set("spawngenForgetResults", new ActionCallback(() => _queue.ClearResults()));
             }
         }
         catch (Exception) { }
@@ -288,7 +306,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         _runtime = null;
         _reopening = true;
         Console.WriteLine("[gpu] the WebGPU device was lost: opening a new one for this run");
-        try { task.Result.Dispose(); } catch (Exception ex) { Console.WriteLine("[gpu] releasing the lost device: " + ex.Message); }
+        try { task.Result.DeviceLost(); task.Result.Dispose(); } catch (Exception ex) { Console.WriteLine("[gpu] releasing the lost device: " + ex.Message); }
         _queue.ClearResults();
         await Task.CompletedTask;
     }
@@ -334,7 +352,17 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
             long step = Math.Max(length / 10, 1);
             if (read / step != lastLogged / step || read >= length) { lastLogged = read; Console.WriteLine($"[models] streamed {read / 1e9:F2} of {length / 1e9:F2} GB"); }
         };
-        var runtime = new MlRuntime(source, accelerator);
+        var runtime = new MlRuntime(source, accelerator) { ModelMemoryBytes = _modelMemoryBytes, PromptTag = _promptTag };
+        runtime.ModelDropped += _ => _queue.DropModelResults();   // no node output may hand a dropped model to a later prompt
+        // the sizes measured in earlier sessions of this browser: a known model keeps the others loaded on its first load
+        try
+        {
+            using (var storage = _js.Get<SpawnDev.SpawnJS.JSObjects.Storage>("localStorage")) _savedModelSizes = storage.GetItem(ModelSizesKey);
+            int known = runtime.SeedModelSizes(_savedModelSizes);
+            if (known > 0 && _modelMemoryBytes is not null) Console.WriteLine($"[models] {known} model sizes known from earlier sessions");
+        }
+        catch (Exception ex) { Console.WriteLine("[models] reading the saved model sizes: " + ex.Message); }
+        Console.WriteLine(_modelMemoryBytes is { } budget ? $"[models] GPU memory for models: {budget / 1e9:0.##} GB (Settings): kept while they fit" : "[models] no GPU memory budget (Settings): one workflow's models at a time");
         // an open WebGPU accelerator has its device; watch it for loss
         if (accelerator is SpawnDev.ILGPU.WebGPU.WebGPUAccelerator { NativeAccelerator.NativeDevice: { } device }) _ = WatchDeviceAsync(device, runtime);
         return runtime;
@@ -345,6 +373,49 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     long? _maxCacheBytes;
 
     /// <summary>The model cache limit in bytes (null: none), from the Studio's settings; applies to the next model the engine loads.</summary>
+    long? _modelMemoryBytes;
+    string? _promptTag;
+    const string ModelSizesKey = "spawngen.modelsizes";
+    string? _savedModelSizes;
+
+    /// <summary>Keeps the measured model sizes in the browser's storage when they changed (only with a budget: without one nothing is measured).</summary>
+    void SaveModelSizes(MlRuntime runtime)
+    {
+        if (!runtime.KeepsModelsByBudget) return;
+        try
+        {
+            var json = runtime.ModelSizesJson();
+            if (json == _savedModelSizes || json == "{}") return;
+            using var storage = _js.Get<SpawnDev.SpawnJS.JSObjects.Storage>("localStorage");
+            storage.SetItem(ModelSizesKey, _savedModelSizes = json);
+        }
+        catch (Exception ex) { Console.WriteLine("[models] saving the model sizes: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// GPU memory the loaded models may keep (Settings); null = none set: one workflow's models at a time. A change takes effect at the
+    /// start of the next prompt (<see cref="ApplyModelMemoryAsync"/>), never in the middle of a run.
+    /// </summary>
+    public long? ModelMemoryBytes { get => _modelMemoryBytes; set => _modelMemoryBytes = value; }
+
+    /// <summary>
+    /// Gives the runtime the budget of Settings before a prompt. Switching between "one workflow at a time" and a budget frees every
+    /// loaded model first (the two ways of keeping models do not mix), so each loads again on its next use.
+    /// </summary>
+    async Task ApplyModelMemoryAsync()
+    {
+        if (_runtime is not { IsCompletedSuccessfully: true } task || task.Result.ModelMemoryBytes == _modelMemoryBytes) return;
+        var runtime = task.Result;
+        if ((runtime.ModelMemoryBytes is null) != (_modelMemoryBytes is null))
+        {
+            _queue.ClearResults();
+            runtime.FreeHandedOutModels();
+            await runtime.Residency.ReleaseAllAsync();
+        }
+        runtime.ModelMemoryBytes = _modelMemoryBytes;
+        Console.WriteLine(_modelMemoryBytes is { } budget ? $"[models] GPU memory for models: {budget / 1e9:0.##} GB (Settings): kept while they fit" : "[models] no GPU memory budget (Settings): one workflow's models at a time");
+    }
+
     public long? MaxCacheBytes
     {
         get => _maxCacheBytes;
@@ -430,7 +501,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     // ---- IEngineClient ----
 
     public Task<QueueResult> QueueAsync(string promptJson, string? workflowJson = null, bool front = false, string? previewMethod = null, IReadOnlyList<string>? targets = null,
-        IReadOnlyDictionary<string, string>? settings = null)
+        IReadOnlyDictionary<string, string>? settings = null, string? workflow = null)
     {
         PromptGraph graph;
         try { graph = PromptJson.Parse(promptJson); }
@@ -441,7 +512,7 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
         try
         {
             var item = _queue.Enqueue(graph, "browser", workflowJson is null ? null : new Dictionary<string, string> { ["workflow"] = workflowJson }, front, previewMethod, targets,
-                settings is null ? null : new JsonObject { ["spawngen_settings"] = SettingsJson(settings) });
+                ExtraData(settings, workflow));
             // Output nodes left out (what they need does not validate) are reported while the rest runs, as on the server.
             return Task.FromResult(new QueueResult(true, item.Id, null, PerNode(item.Skipped.SelectMany(f => f.Result.Errors))));
         }
@@ -470,6 +541,22 @@ public sealed class BrowserEngine : IEngineClient, IMlRuntimeProvider, IServiceP
     {
         _queue.Remove(p => p.Id == promptId);
         return Task.CompletedTask;
+    }
+
+    /// <summary>A prompt's extra_data: the run settings and the workflow (tab) it belongs to; null when there is neither.</summary>
+    static JsonObject? ExtraData(IReadOnlyDictionary<string, string>? settings, string? workflow)
+    {
+        if (settings is null && string.IsNullOrEmpty(workflow)) return null;
+        var extra = new JsonObject();
+        if (settings is not null) extra["spawngen_settings"] = SettingsJson(settings);
+        if (!string.IsNullOrEmpty(workflow)) extra[PromptQueue.WorkflowKey] = workflow;
+        return extra;
+    }
+
+    /// <summary>A closed tab: with a GPU memory budget, the idle models only that workflow used are dropped.</summary>
+    public async Task ReleaseWorkflowAsync(string workflow)
+    {
+        if (_runtime is { IsCompletedSuccessfully: true } task) await task.Result.ReleaseWorkflowAsync(workflow);
     }
 
     /// <summary>Run settings as the spawngen_settings object of extra_data.</summary>

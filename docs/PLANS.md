@@ -336,6 +336,32 @@ for engines that load themselves, `Evicted`, `Log`). **SpawnGen's steps:**
   decisions on the CPU accelerator; what a large budget does is exercised by setting one larger than the card (models kept until
   the device itself gives out is NOT a pass: on 8 GB that case can only be shown with small models).
 
+**2026-11-26 02:50: steps A and B are done on branch `model-residency`, and the RX 590 gate passes.** (ML 5.8.32-local.6, ILGPU 5.4.50.)
+- `MlRuntime`: with a budget (or a device that reports free memory) every model is leased from the library's manager until
+  `EndPromptAsync` (`PromptQueue.AfterRun`); loader nodes run again each prompt (`PromptExecutor.ReacquireModels`) and get the kept
+  model; a dropped model takes the cached results that may hold it. `MakeRoomAsync` replaces the fixed take-turns rule at its 20
+  call sites (room by need; the old rule only when the device still lacks it, and always without a budget). A pipeline that loads in
+  its first run asks for room right after its acquire, which is where the manager measures it from. Sizes are the manager's (kept
+  in the browser's storage, `spawngen.modelsizes`). Setting: "GPU memory for models (GB, 0 = one workflow at a time)"; server:
+  `SpawnGen:ModelMemoryGb`, else the device's own figure. Tests: `ModelBudgetTests` (11) on the CPU accelerator.
+- **Gate (17 examples x 2 passes, 6 GB budget, local publish):** the first attempt lost the device in pass 2 (the FLUX pipelines were
+  measured when created, 0.2 GB each, and two were kept side by side; FLUX 3 took 1100 s first). After the fix: 34/34 on local.3 and
+  34/34 on local.5, no device loss, pass 2 times as pass 1. No budget: 17/17 on local.5 and on local.6, times unchanged.
+- **Known flaw, being fixed in the libraries:** a model measured over its run is recorded with the run's idle scratch included, so
+  kept models sum to more than is allocated and room is made earlier than needed (safe, not tight). ML master already takes free
+  memory from ILGPU's count alone; ILGPU 5.4.51 adds reclaimable bytes so the size is what the model holds. Rerun the gate on that
+  build with the test profile's saved sizes cleared.
+- **What the gate cannot show:** two large models kept side by side (an 8 GB card cannot hold them); that is unit-tested with a
+  large budget only. The first real evidence needs a larger machine.
+- **Step C done 2026-11-26 (tabs):** a prompt carries its tab (`extra_data.spawngen_workflow`), the models it loads are tagged with
+  it (`MlRuntime.PromptTag`), and closing a tab calls `IEngineClient.ReleaseWorkflowAsync` (the browser engine directly; a SpawnGen
+  server through `POST /spawngen/release`): the idle models only that tab used are dropped. `drive-model-tabs.js` 9/9 on the RX 590
+  (6 GB: two tabs' models both stay, closing one drops only its model, the other reruns on its kept model; no budget: nothing
+  changes). The server keeps the measured sizes in `model-sizes.json` next to its models folder. Suite 3540.
+- **Left:** file sizes as expected bytes for first loads (`IModelSource.GetSizeAsync`); the gate again on the ML build with the
+  measuring fix (saved sizes cleared first); a server run on this PC under OpenCL (the device's own figure is the budget there:
+  not run yet, only the unit tests cover the server path); then the merge when ML 5.8.32 is on nuget.org.
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

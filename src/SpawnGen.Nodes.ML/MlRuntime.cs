@@ -44,6 +44,7 @@ public sealed class MlRuntime : IDisposable
 
     public MlRuntime(IModelSource modelSource, Accelerator? accelerator = null)
     {
+        _reportsFreeMemory = new Lazy<bool>(() => Accelerator!.TryGetFreeMemory(out _));
         ModelSource = modelSource;
         if (accelerator != null)
         {
@@ -63,11 +64,178 @@ public sealed class MlRuntime : IDisposable
     public Accelerator Accelerator { get; }
     bool OwnsAccelerator { get; }
 
+    // ---- models in device memory: kept while they fit, dropped on need (SpawnDev.ILGPU.ML's ModelResidency) ----
+
+    SpawnDev.ILGPU.ML.ModelResidency? _residency;
+    readonly Lazy<bool> _reportsFreeMemory;
+    readonly List<IAsyncDisposable> _leases = [];
+    readonly HashSet<string> _leased = new(StringComparer.Ordinal);
+    /// <summary>The running prompt's leased models (by reference) and how each asks the manager for room before a lazy load.</summary>
+    readonly Dictionary<object, (string Key, Func<long, Task> Ensure)> _room = new(ReferenceEqualityComparer.Instance);
+    long? _modelMemoryBytes;
+
+    /// <summary>
+    /// The library's model memory manager for this runtime's accelerator: the models SpawnGen loads are kept on the device while they fit
+    /// the budget and the least recently used idle one is dropped when the next would not fit. Created on first use.
+    /// </summary>
+    public SpawnDev.ILGPU.ML.ModelResidency Residency
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_residency is not null) return _residency;
+                var residency = new SpawnDev.ILGPU.ML.ModelResidency(Accelerator) { BudgetBytes = _modelMemoryBytes, Log = line => Console.WriteLine("[models] " + line) };
+                residency.Evicted += e =>
+                {
+                    Console.WriteLine($"[models] dropped {e.Key} ({e.Bytes / 1e9:0.##} GB): {e.Reason}{(e.ForKey is { } f ? " for " + f : "")}");
+                    ModelDropped?.Invoke(e.Key);
+                };
+                return _residency = residency;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The most device memory the kept models may hold (the user's setting); null = none set. Where the device reports its free memory
+    /// (CUDA, AMD OpenCL) that limits too. In a browser nothing reports memory, so without this number the runtime keeps its old rule
+    /// (<see cref="KeepsModelsByBudget"/> false: one workflow's models at a time).
+    /// </summary>
+    public long? ModelMemoryBytes
+    {
+        get => _modelMemoryBytes;
+        set
+        {
+            lock (_gate) { _modelMemoryBytes = value; if (_residency is not null) _residency.BudgetBytes = value; }
+        }
+    }
+
+    /// <summary>
+    /// True when models are kept by the manager (a budget is set, or the device reports its free memory): every model is then acquired
+    /// with a lease that lasts until <see cref="EndPromptAsync"/>, and the engine must let loader nodes run again each prompt
+    /// (PromptExecutor.ReacquireModels). False: models are kept by the older rules (freed when an unrelated workflow starts).
+    /// </summary>
+    public bool KeepsModelsByBudget => _modelMemoryBytes is not null || _reportsFreeMemory.Value;
+
+    /// <summary>
+    /// The sizes the manager has measured (key -> the largest bytes seen), as JSON, for an engine to keep across sessions: a model whose
+    /// size is known keeps the others loaded on its first load in a new session, where an unknown one is taken to be as large as the
+    /// largest measured (or, with nothing measured, makes every idle model go first).
+    /// </summary>
+    public string ModelSizesJson() =>
+        System.Text.Json.JsonSerializer.Serialize(Residency.KnownSizes.OrderBy(kv => kv.Key, StringComparer.Ordinal).ToDictionary(kv => kv.Key, kv => kv.Value));
+
+    /// <summary>Gives the manager sizes kept from an earlier session (<see cref="ModelSizesJson"/>); text that is not such JSON is ignored.</summary>
+    public int SeedModelSizes(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return 0;
+        try
+        {
+            var sizes = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, long>>(json)?.Where(kv => kv.Value > 0).ToList() ?? [];
+            if (sizes.Count > 0) Residency.SeedKnownSizes(sizes);
+            return sizes.Count;
+        }
+        catch (System.Text.Json.JsonException) { return 0; }
+    }
+
+    /// <summary>
+    /// Whose the running prompt's models are (the Studio's workflow tab): each model acquired while it is set carries this tag, and
+    /// <see cref="ReleaseWorkflowAsync"/> drops the idle models no other workflow uses. The engine sets it at the start of each prompt.
+    /// </summary>
+    public string? PromptTag { get; set; }
+
+    /// <summary>
+    /// A workflow was closed: its idle models that no other workflow used are dropped now (one still in use goes when its prompt
+    /// ends). Without a budget nothing is tagged and nothing happens here: the older rules free models. Returns how many were dropped.
+    /// </summary>
+    public async Task<int> ReleaseWorkflowAsync(string workflow) =>
+        KeepsModelsByBudget && _residency is { } residency && !string.IsNullOrEmpty(workflow) ? await residency.ReleaseAsync(workflow) : 0;
+
+    /// <summary>A model the manager dropped (its key): node outputs that hold it must not be reused (the engine drops its cached model results).</summary>
+    public event Action<string>? ModelDropped;
+
+    /// <summary>
+    /// The model for <paramref name="key"/> from the manager, leased for the running prompt (one lease per key and prompt). The manager
+    /// measures what a model holds on the device by itself (its own size where the model states one, else what was allocated over its
+    /// load). <paramref name="growsInUse"/>: the model loads most of what it holds during its first run, not in <paramref name="load"/>
+    /// (every pipeline a node asks for when it runs: FLUX.2 and FLUX 3 Klein, LTX-Video, TRELLIS.2, ...): room is asked for right
+    /// after the acquire, which is also the point the manager measures such a model from, to the end of its lease. Found 2026-11-25 on
+    /// the RX 590: measured over their load only, the FLUX pipelines counted as 0.2 GB each, FLUX 3 was loaded beside a FLUX.2 that
+    /// really held several GB, and the device was lost.
+    /// </summary>
+    async Task<T> AcquireAsync<T>(string key, Func<Task<T>> load, long expectedBytes = 0, bool growsInUse = false) where T : class, IDisposable
+    {
+        var residency = Residency;
+        bool kept = residency.Resident.Any(m => m.Key == key);
+        var lease = await residency.AcquireAsync(key, load, expectedBytes, PromptTag);
+        var model = lease.Model;
+        bool extra;
+        lock (_gate)
+        {
+            extra = !_leased.Add(key);
+            if (!extra) { _leases.Add(lease); _room[model] = (key, lease.EnsureRoomAsync); }
+            if (!kept) _loadedSinceWarmUp = true;
+        }
+        if (extra) { await lease.DisposeAsync(); return model; }   // this prompt already holds a lease on it
+        // no size given = room for what this key was measured at before, less what the model holds now: a kept, loaded pipeline asks
+        // for nothing, a never-measured one gets the manager's unknown-size rule
+        if (growsInUse) await lease.EnsureRoomAsync(expectedBytes);
+        return model;
+    }
+
+    /// <summary>
+    /// Called right before a model loads weights the loader node did not load (the lazy MODEL / CLIP / VAE objects, and nodes that open a
+    /// model for one call). Without a memory budget this is the old fixed rule: the big transformers take turns (one on the device at a
+    /// time, sized for an 8 GB card). With a budget, room is made by need: the manager drops idle scratch and the least recently used
+    /// idle models for <paramref name="bytes"/> (unknown = as large as the largest model measured so far), and only if the device then
+    /// still lacks that room do the transformers give way as before. So a device with room keeps every transformer loaded.
+    /// </summary>
+    /// <param name="requester">The model object that is about to load (as handed out by <see cref="GetOrLoadAsync{T}(string, Func{Task{T}}, long)"/>), or null.</param>
+    public async Task MakeRoomAsync(object? requester = null, long bytes = 0)
+    {
+        if (!KeepsModelsByBudget) { TransformerTurns.ReleaseTransformers(); return; }
+        var residency = Residency;
+        (string Key, Func<long, Task> Ensure) room = default;
+        if (requester is not null) lock (_gate) _room.TryGetValue(requester, out room);
+        if (room.Ensure is not null) await room.Ensure(bytes);   // 0 = the manager's own figure for this model
+        // what is about to load, as far as anyone knows: the caller's figure, the size this model measured before, else what the
+        // manager takes an unknown model to be
+        var known = residency.KnownSizes;
+        long need = bytes > 0 ? bytes
+            : room.Key is not null && known.TryGetValue(room.Key, out long measured) && measured > 0 ? measured
+            : residency.UnknownSizeBytes ?? known.Values.DefaultIfEmpty(0).Max();
+        if (need == 0 || !Accelerator.TryGetFreeMemory(out long free) || free < need)
+        {
+            if (TransformerTurns.ReleaseTransformers() > 0)
+                Console.WriteLine($"[models] the loaded transformer gave way: {(need == 0 ? "the size of what loads next is unknown" : $"{need / 1e9:0.##} GB is needed")}");
+        }
+    }
+
+    /// <summary>Ends the running prompt's leases: its models stay on the device, and from now on may be dropped when another needs the room.</summary>
+    public async Task EndPromptAsync()
+    {
+        IAsyncDisposable[] leases;
+        lock (_gate) { leases = [.. _leases]; _leases.Clear(); _leased.Clear(); _room.Clear(); }
+        foreach (var lease in leases)
+        {
+            try { await lease.DisposeAsync(); }
+            catch (Exception ex) { Console.WriteLine("[models] ending a lease: " + ex.Message); }
+        }
+    }
+
+    /// <summary>The device is gone (a lost WebGPU device): the manager forgets its models without touching them.</summary>
+    public void DeviceLost()
+    {
+        lock (_gate) { _leases.Clear(); _leased.Clear(); _room.Clear(); }
+        _residency?.Invalidate();
+    }
+
     /// <summary>Loads (or returns the already loading/loaded) checkpoint registered under <paramref name="name"/>.</summary>
     public Task<Checkpoint> GetCheckpointAsync(string name, Action<string, int>? onProgress = null)
     {
         if (!KnownCheckpoints.TryGetValue(name, out var repoId))
             throw new ArgumentException($"Unknown checkpoint '{name}'. Known: {string.Join(", ", KnownCheckpoints.Keys)}.", nameof(name));
+        if (KeepsModelsByBudget) return AcquireAsync("checkpoint:" + name, () => Checkpoint.LoadAsync(this, name, repoId, CheckpointDetails[name], onProgress));
         lock (_gate)
         {
             // A failed load (a missing file, the GPU out of memory) is not kept: the next run tries again.
@@ -84,7 +252,11 @@ public sealed class MlRuntime : IDisposable
     /// A loaded model (a pipeline wrapping an inference session) shared by every node that asks for the same <paramref name="key"/>: it is created once,
     /// on first use, and disposed with the runtime. A failed load is forgotten so the next run tries again.
     /// </summary>
-    public Task<T> GetOrLoadAsync<T>(string key, Func<Task<T>> load) where T : class, IDisposable => GetOrLoadAsync(key, load, pipeline: false);
+    /// <param name="expectedBytes">What the model will hold on the device, when the caller knows (its weight files' size is a fair figure for
+    /// safetensors): with a memory budget the manager makes exactly that much room before the load. 0 = unknown: the size measured the
+    /// last time this key was loaded is used, and with none every idle model is dropped first (on a small card the load itself is the
+    /// over-allocation), so a known size is what lets other workflows' models stay.</param>
+    public Task<T> GetOrLoadAsync<T>(string key, Func<Task<T>> load, long expectedBytes = 0) where T : class, IDisposable => GetOrLoadAsync(key, load, pipeline: false, expectedBytes);
 
     /// <summary>
     /// <see cref="GetOrLoadAsync{T}(string, Func{Task{T}})"/> for a model only its own node uses during its run (a pipeline the node asks for every
@@ -92,10 +264,11 @@ public sealed class MlRuntime : IDisposable
     /// pipelines the current prompt has not used are freed: a page that ran FLUX.2 Klein, then opens FLUX 3 Klein, does not hold both on an 8 GB
     /// GPU (found 2026-11-19: running every example in a row lost the WebGPU device at FLUX 3 Klein, which runs alone).
     /// </summary>
-    public Task<T> GetOrLoadPipelineAsync<T>(string key, Func<Task<T>> load) where T : class, IDisposable => GetOrLoadAsync(key, load, pipeline: true);
+    public Task<T> GetOrLoadPipelineAsync<T>(string key, Func<Task<T>> load, long expectedBytes = 0) where T : class, IDisposable => GetOrLoadAsync(key, load, pipeline: true, expectedBytes);
 
-    async Task<T> GetOrLoadAsync<T>(string key, Func<Task<T>> load, bool pipeline) where T : class, IDisposable
+    async Task<T> GetOrLoadAsync<T>(string key, Func<Task<T>> load, bool pipeline, long expectedBytes) where T : class, IDisposable
     {
+        if (KeepsModelsByBudget) return await AcquireAsync(key, load, expectedBytes, growsInUse: pipeline);
         Task<IDisposable> task;
         List<(string Key, IDisposable Model)> freed = [];
         lock (_gate)
@@ -215,6 +388,14 @@ public sealed class MlRuntime : IDisposable
         lock (_gate) { models = [.. _loaded.Values.Select(e => e.Task)]; _loaded.Clear(); }
         foreach (var t in models)
             if (t.IsCompletedSuccessfully) t.Result.Dispose();
+        if (_residency is { } residency)
+        {
+            lock (_gate) { _leases.Clear(); _leased.Clear(); }
+            // The manager drains the device before it frees its models. A browser cannot wait for that here (no blocking on its one
+            // thread): there a runtime is only disposed for a lost device (DeviceLost was called) or as the page goes.
+            var dropping = residency.DisposeAsync();
+            if (!OperatingSystem.IsBrowser()) dropping.AsTask().GetAwaiter().GetResult();
+        }
         if (OwnsAccelerator)
         {
             Accelerator.Dispose();

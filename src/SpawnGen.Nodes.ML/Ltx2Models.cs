@@ -81,7 +81,7 @@ internal sealed class Ltx2TextModel(MlRuntime runtime, string name, (string Repo
     {
         var ids = await TokenizeAsync(text, cancellationToken);
         var acc = runtime.Accelerator;
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         float[] features;
         using (var encoder = await Gemma3TextEncoder.OpenAsync(acc, runtime.ModelSource, gemma.Repo, gemma.File, ResidentBytes, cancellationToken))
         {
@@ -183,7 +183,7 @@ internal sealed class Ltx2DiffusionModel(MlRuntime runtime, string name, string 
         if (_model is not null && _size == (F, H, W, Ta)) return _model;
         _model?.Dispose();
         _model = null;
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         // batch 2: a step's two CFG halves go through each block together, so the weights stream once a step (see Ltx2Run)
         _model = await Ltx2AvModel.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, 2, F, H, W, Ta, Ltx2TextConnectors.Tokens, ResidentBytes, ct);
         _size = (F, H, W, Ta);
@@ -327,7 +327,7 @@ internal static class Ltx2Residency
 {
     static Ltx2DiffusionModel? _resident;
     public static void Holding(Ltx2DiffusionModel model) => _resident = model;
-    public static void Release() { _resident?.Unload(); _resident = null; }
+    public static bool Release() { bool had = _resident is not null; _resident?.Unload(); _resident = null; return had; }
     public static void Forget(Ltx2DiffusionModel model) { if (ReferenceEquals(_resident, model)) _resident = null; }
 }
 
@@ -367,7 +367,7 @@ internal sealed class Ltx2VideoVaeModel(MlRuntime runtime, string name, string r
             for (int i = 0; i < plane; i++)
                 for (int c = 0; c < 3; c++)
                     video[(c * n + f) * plane + i] = frames.Data[(f * plane + i) * frames.Channels + c] * 2f - 1f;
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         using var encoder = await Ltx2VideoEncoder.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, cancellationToken);
         var z = await encoder.EncodeAsync(video, n, H, W);
         return new LatentBatch([1, LatentChannels, (n - 1) / 8 + 1, H / 32, W / 32], z);
@@ -377,7 +377,7 @@ internal sealed class Ltx2VideoVaeModel(MlRuntime runtime, string name, string r
     {
         if (!latent.IsVideo || latent.Channels != LatentChannels)
             throw new ArgumentException($"LTX-2's VAE decodes video latents [b, 128, F, h, w]; this one is [{string.Join(", ", latent.Shape)}].");
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         using var decoder = await Ltx2VideoDecoder.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, cancellationToken);
         int Fz = latent.Frames, h = latent.Height, w = latent.Width, frames = 8 * (Fz - 1) + 1, H = 32 * h, W = 32 * w, plane = H * W;
         var all = new float[latent.Batch * frames * plane * 3];

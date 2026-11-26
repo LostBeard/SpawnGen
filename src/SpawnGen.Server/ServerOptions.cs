@@ -7,6 +7,15 @@ public sealed class ServerOptions
 
     /// <summary>A folder with one sub-folder per checkpoint name (<c>sd_turbo/unet/model.onnx</c>).</summary>
     public string ModelsPath { get; set; } = Path.Combine(Home, "models");
+    /// <summary>
+    /// GPU memory the loaded models may keep, in GB (<c>SpawnGen:ModelMemoryGb</c>). 0 (the default) = the device's own figure where it
+    /// reports its free memory (CUDA, AMD OpenCL): models of every workflow stay loaded while they fit and the one used longest ago is
+    /// dropped when the next needs the room; on a device that reports nothing, nothing is dropped until a number is set here.
+    /// </summary>
+    public double ModelMemoryGb { get; set; }
+
+    /// <summary>Where the measured sizes of loaded models are kept between runs of the server (next to the models folder).</summary>
+    public string ModelSizesFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(ModelsPath)) ?? ".", "model-sizes.json");
     public string OutputPath { get; set; } = Path.Combine(Home, "output");
     public string InputPath { get; set; } = Path.Combine(Home, "input");
     public string TempPath { get; set; } = Path.Combine(Home, "temp");

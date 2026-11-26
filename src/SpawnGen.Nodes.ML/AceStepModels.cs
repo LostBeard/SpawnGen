@@ -31,7 +31,7 @@ internal static class AceStepResidency
 {
     static AceStepDiffusionModel? _resident;
     public static void Holding(AceStepDiffusionModel model) => _resident = model;
-    public static void Release() { _resident?.Unload(); _resident = null; }
+    public static bool Release() { bool had = _resident is not null; _resident?.Unload(); _resident = null; return had; }
     public static void Forget(AceStepDiffusionModel model) { if (ReferenceEquals(_resident, model)) _resident = null; }
 }
 
@@ -93,7 +93,7 @@ internal sealed class AceStepTextModel(MlRuntime runtime, string name, (string R
         var ct = context.CancellationToken;
         var (captionIds, lyricIds, lmPos, lmNeg) = await TokenizeAsync(s, ct);
         var acc = runtime.Accelerator;
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         int[]? codes = null;
         if (lmPos is not null)
         {
@@ -176,7 +176,7 @@ internal sealed class AceStepDiffusionModel(MlRuntime runtime, string name, stri
     public async Task<(AceStepDiT DiT, AceStepConditionEncoder Encoder, AceStepCodeDecoder Codes)> PartsAsync(int frames, int tokens, CancellationToken ct)
     {
         if (_dit is not null && _size.Frames >= frames && _size.Tokens >= tokens) return (_dit, _encoder!, _codes!);
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         var acc = runtime.Accelerator;
         _encoder = await AceStepConditionEncoder.LoadAsync(acc, runtime.ModelSource, repo, file, Math.Max(tokens, frames), ct);
         _dit = await AceStepDiT.LoadAsync(acc, runtime.ModelSource, repo, file, frames, tokens, ct);
@@ -301,7 +301,7 @@ internal sealed class AceStepVaeModel(MlRuntime runtime, string name, string rep
             throw new ArgumentException($"ACE-Step's VAE decodes audio latents [b, 64, frames]; this latent is [{string.Join(", ", latent.Shape)}].");
         if (latent.Batch != 1)
             throw new NotSupportedException($"A batch of {latent.Batch} audio latents: SpawnGen's AUDIO holds one clip so far, so VAE Decode Audio takes batch 1.");
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         _decoder ??= await OobleckDecoder.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file, ct: cancellationToken);
         int frames = latent.Width;
         var acc = runtime.Accelerator;

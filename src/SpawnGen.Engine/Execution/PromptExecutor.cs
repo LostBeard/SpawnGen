@@ -43,6 +43,13 @@ public sealed class PromptExecutor
     /// </summary>
     public Func<Task>? UnrelatedPromptStarting { get; set; }
 
+    /// <summary>
+    /// Asked at the start of every prompt. True: the host keeps models by leases that end with each prompt (a model memory manager), so
+    /// cached node outputs that may hold a model are dropped and the nodes that gave them run again, which leases each model for this
+    /// prompt (a kept model comes back at once). <see cref="UnrelatedPromptStarting"/> is then not called: the manager decides what goes.
+    /// </summary>
+    public Func<bool>? ReacquireModels { get; set; }
+
     public ValidationResult Validate(PromptGraph graph, IReadOnlyList<string>? outputNodeIds = null) =>
         PromptValidator.Validate(_registry, graph, outputNodeIds);
 
@@ -70,7 +77,8 @@ public sealed class PromptExecutor
             // the models earlier prompts left loaded, so their cache entries go and the ML layer is told it may free them, BEFORE this prompt
             // loads its own. Without this a page that ran the Stable Diffusion examples kept both checkpoints on the GPU while FLUX.2 Klein
             // loaded beside them (2026-11-24, RX 590: device lost in the first denoise step; alone it ran 30 of 30).
-            if (UnrelatedPromptStarting is { } unrelated && !run.ReusesModelEntries(validation.Plan))
+            if (ReacquireModels?.Invoke() == true) Cache.DropModelEntries();
+            else if (UnrelatedPromptStarting is { } unrelated && !run.ReusesModelEntries(validation.Plan))
             {
                 Cache.DropModelEntries();
                 await unrelated().ConfigureAwait(false);

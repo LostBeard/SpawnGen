@@ -84,7 +84,7 @@ internal sealed class QwenImageTextEncoderModel(MlRuntime runtime, string name, 
         var grids = pictures.Select(p => SpawnDev.ILGPU.ML.QwenImage.QwenVisionEncoder.Grid(p.Height, p.Width)).ToList();
         var (ids, starts) = await TokenizeEditAsync(text, grids, cancellationToken);
         var acc = runtime.Accelerator;
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         int patches = grids.Sum(g => g.Rows * g.Cols), merged = patches / 4;
         using var visionRows = acc.Allocate1D<float>(Math.Max(1, (long)merged * Width));
         if (pictures.Count > 0)
@@ -124,7 +124,7 @@ internal sealed class QwenImageTextEncoderModel(MlRuntime runtime, string name, 
         int rows = ids.Length - Dropped;
         var acc = runtime.Accelerator;
         // The 7B encoder and a loaded transformer do not fit one card together.
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, Layers, finalNorm: true, cancellationToken);
         // Sized for this prompt (any length, as ComfyUI); precise activations: the reference's fp32 (CUDA's tensor cores would round to bf16).
         using var encoder = new Flux2TextEncoder(acc, weights, [Layers], finalNorm: true, maxTokens: ids.Length) { PreciseActivations = true };
@@ -147,16 +147,19 @@ internal sealed class QwenImageTextEncoderModel(MlRuntime runtime, string name, 
 }
 
 /// <summary>The loaded image transformers give way to a text encoder or another transformer (an 8 GB card holds one big model at a time).</summary>
-internal static class ModelResidency
+internal static class TransformerTurns
 {
-    public static void ReleaseTransformers()
+    /// <summary>Unloads every loaded transformer (each loads again on its next use); returns how many were loaded.</summary>
+    public static int ReleaseTransformers()
     {
-        Flux2Residency.Release();
-        ZImageResidency.Release();
-        Flux1Residency.Release();
-        QwenImageResidency.Release();
-        AceStepResidency.Release();
-        Ltx2Residency.Release();
+        int released = 0;
+        if (Flux2Residency.Release()) released++;
+        if (ZImageResidency.Release()) released++;
+        if (Flux1Residency.Release()) released++;
+        if (QwenImageResidency.Release()) released++;
+        if (AceStepResidency.Release()) released++;
+        if (Ltx2Residency.Release()) released++;
+        return released;
     }
 }
 
@@ -167,10 +170,12 @@ internal static class QwenImageResidency
 
     public static void Holding(QwenImageDiffusionModel model) => _resident = model;
 
-    public static void Release()
+    public static bool Release()
     {
+        bool had = _resident is not null;
         _resident?.Unload();
         _resident = null;
+        return had;
     }
 
     public static void Forget(QwenImageDiffusionModel model)
@@ -234,7 +239,7 @@ internal sealed class QwenImageDiffusionModel(MlRuntime runtime, string name, st
     {
         var layout = $"{rows}x{cols}" + string.Concat(references.Select(r => $"|{r.Rows}x{r.Cols}"));
         if (_transformer is not null && _layout == layout) return _transformer;
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         _transformer = await QwenImageTransformer.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, MaxTextTokens, rows, cols, references, ResidentBytes, ct);
         _fileTimestepZero = _transformer.ReferencesAtTimestepZero;   // the library reads the file's marker
         _layout = layout;
@@ -349,7 +354,7 @@ internal sealed class WanComfyVaeModel(MlRuntime runtime, string name, string re
     async Task<WanVae> VaeAsync(CancellationToken ct)
     {
         if (_vae is not null) return _vae;
-        ModelResidency.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         // ComfyUI's layout is rewritten into the library's on the device as it loads (WanComfyFormat).
         _weights = await Wan22Pipeline.LoadWeightsAsync(runtime.Accelerator, runtime.ModelSource, repo, file, ct);
         _vae = new WanVae(runtime.Accelerator, _weights);

@@ -35,13 +35,49 @@ public static class ServerApp
         InputFiles.Directory = options.InputPath;
         // The GPU is only touched when the first ML node runs (resolving this singleton opens the accelerator).
         builder.Services.AddSingleton(_ => new DesktopModelSource(options.ModelsPath, MlRuntime.RepoFolders));
-        builder.Services.AddSingleton(sp => new MlRuntime(sp.GetRequiredService<DesktopModelSource>()));
+        builder.Services.AddSingleton(sp => new MlRuntime(sp.GetRequiredService<DesktopModelSource>())
+            { ModelMemoryBytes = options.ModelMemoryGb > 0 ? (long)(options.ModelMemoryGb * 1e9) : null });
         builder.Services.AddSingleton<SpawnGen.Nodes.Core.IPictureEncoder>(sp => new SpawnGen.Nodes.ML.GpuPictureEncoder(sp)); // Save Image's PNG on the GPU
         builder.Services.AddSingleton<SpawnGen.Nodes.Core.IPictureDecoder>(sp => new SpawnGen.Nodes.ML.GpuPictureDecoder(sp)); // Load Image's decode on the GPU
         builder.Services.AddSingleton<EventHub>();
-        builder.Services.AddSingleton(sp => new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>())
+        builder.Services.AddSingleton(sp =>
         {
-            RunSucceeded = () => sp.GetRequiredService<MlRuntime>().PromptSucceeded(),
+            // Models are kept by the library's manager when a budget is configured or the device reports its free memory: each prompt
+            // leases what it uses (loader nodes run again and get the kept model), the leases end with the prompt, and a dropped model
+            // takes the cached node outputs that may hold it with it.
+            PromptQueue? queue = null;
+            bool watching = false;
+            string? savedSizes = null;
+            MlRuntime Runtime()
+            {
+                var runtime = sp.GetRequiredService<MlRuntime>();
+                if (!watching)
+                {
+                    watching = true;
+                    runtime.ModelDropped += _ => queue?.DropModelResults();
+                    // the sizes measured in earlier runs of the server: a known model keeps the others loaded on its first load
+                    try { if (File.Exists(options.ModelSizesFile)) runtime.SeedModelSizes(savedSizes = File.ReadAllText(options.ModelSizesFile)); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Console.WriteLine("[models] reading " + options.ModelSizesFile + ": " + ex.Message); }
+                }
+                return runtime;
+            }
+            async Task EndPromptAsync()
+            {
+                var runtime = Runtime();
+                await runtime.EndPromptAsync();
+                if (!runtime.KeepsModelsByBudget) return;
+                var json = runtime.ModelSizesJson();
+                if (json == savedSizes || json == "{}") return;
+                try { await File.WriteAllTextAsync(options.ModelSizesFile, savedSizes = json); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Console.WriteLine("[models] writing " + options.ModelSizesFile + ": " + ex.Message); }
+            }
+            return queue = new PromptQueue(sp.GetRequiredService<NodeRegistry>(), sp, sp.GetRequiredService<EventHub>())
+            {
+                RunSucceeded = () => Runtime().PromptSucceeded(),
+                // asked at the start of every prompt: the models it loads are tagged with its workflow (the Studio's tab)
+                ReacquireModels = () => { var runtime = Runtime(); runtime.PromptTag = queue?.RunningWorkflow; return runtime.KeepsModelsByBudget; },
+                AfterRun = EndPromptAsync,
+            };
         });
         configure?.Invoke(builder);
 
@@ -127,6 +163,9 @@ public static class ServerApp
         });
         app.MapGet("/embeddings", () => Results.Json(Array.Empty<string>()));
         app.MapGet("/extensions", () => Results.Json(Array.Empty<string>()));
+        // SpawnGen's own: a workflow (tab) was closed; the idle models only it used are dropped (nothing without a memory budget).
+        app.MapPost("/spawngen/release", async (string workflow) =>
+            Results.Json(new { dropped = await app.Services.GetRequiredService<MlRuntime>().ReleaseWorkflowAsync(workflow) }));
         app.MapPost("/free", () => Results.Ok()); // models stay loaded: this server frees them when it stops
         app.MapGet("/system_stats", () => Results.Json(new
         {

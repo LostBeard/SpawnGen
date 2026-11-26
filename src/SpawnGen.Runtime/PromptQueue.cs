@@ -208,6 +208,24 @@ public sealed class PromptQueue : IDisposable
     /// </summary>
     public Func<Task>? UnrelatedPromptStarting { get => _executor.UnrelatedPromptStarting; set => _executor.UnrelatedPromptStarting = value; }
 
+    /// <summary><see cref="PromptExecutor.ReacquireModels"/>: true while the engine keeps models by per-prompt leases.</summary>
+    public Func<bool>? ReacquireModels { get => _executor.ReacquireModels; set => _executor.ReacquireModels = value; }
+
+    /// <summary>The <c>extra_data</c> key of the workflow (the Studio's tab) a prompt belongs to: models are tagged with it, and a closed tab releases its own.</summary>
+    public const string WorkflowKey = "spawngen_workflow";
+
+    /// <summary>The workflow of the prompt that is running (<see cref="WorkflowKey"/>), or null.</summary>
+    public string? RunningWorkflow
+    {
+        get { lock (_gate) return _running?.ExtraData[WorkflowKey] is JsonValue v && v.TryGetValue<string>(out var text) && text.Length > 0 ? text : null; }
+    }
+
+    /// <summary>Runs after every prompt, however it ended (the engines end the prompt's model leases here).</summary>
+    public Func<Task>? AfterRun { get; set; }
+
+    /// <summary>Forgets the cached node outputs that may hold a model (a model manager dropped one): the nodes that gave them run again.</summary>
+    public void DropModelResults() => _executor.Cache.DropModelEntries();
+
     /// <summary>Runs after every prompt that ran to the end (the engines tell the ML runtime its newly loaded models are warm).</summary>
     public Action? RunSucceeded { get; set; }
 
@@ -251,6 +269,11 @@ public sealed class PromptQueue : IDisposable
             // The engine's observer already published execution_error for failures inside a run.
         }
 
+        if (AfterRun is { } after)
+        {
+            try { await after(); }
+            catch (Exception ex) { Console.WriteLine("[queue] after the run: " + ex.Message); }
+        }
         if (status == "success")
         {
             RunSucceeded?.Invoke();

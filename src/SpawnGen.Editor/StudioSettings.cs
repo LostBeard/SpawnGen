@@ -44,6 +44,18 @@ public sealed class StudioSettings
     /// <summary><see cref="ModelCacheLimitGb"/> in bytes, null for no limit.</summary>
     public long? ModelCacheBytes => ModelCacheLimitGb > 0 ? (long)(ModelCacheLimitGb * 1e9) : null;
 
+    /// <summary>
+    /// GPU memory the loaded models may keep, in GB, for this browser's engine; 0 (the default) = one workflow's models at a time.
+    /// With a number, the models of every workflow stay loaded while they fit it, and the one used longest ago is dropped when the next
+    /// needs the room (TJ, 2026-11-25: an open workflow is probably still in use, and machines with far more memory than the test PC
+    /// must be able to use it). It has to be the user's number: a browser tells a page nothing about GPU memory. It counts what the engine
+    /// holds on the device, so leave room below the card's size for the browser, other tabs and a run's working memory.
+    /// </summary>
+    public double ModelMemoryGb { get; set; }
+
+    /// <summary><see cref="ModelMemoryGb"/> in bytes, null for none set.</summary>
+    public long? ModelMemoryBytes => ModelMemoryGb > 0 ? (long)(ModelMemoryGb * 1e9) : null;
+
     /// <summary>The run settings sent with each prompt (extra_data.spawngen_settings).</summary>
     public IReadOnlyDictionary<string, string> RunSettings() => new Dictionary<string, string>
     {
@@ -85,6 +97,7 @@ public sealed class StudioSettings
             if (root.TryGetProperty(nameof(Ltx2HostCacheGb), out var hc) && hc.ValueKind == JsonValueKind.Number && hc.GetDouble() is >= 0 and <= 1024 and var cache) s.Ltx2HostCacheGb = cache;
             if (root.TryGetProperty(nameof(Ltx2ReadAheadGb), out var ra) && ra.ValueKind == JsonValueKind.Number && ra.GetDouble() is >= 0 and <= 1024 and var ahead) s.Ltx2ReadAheadGb = ahead;
             if (root.TryGetProperty(nameof(ModelCacheLimitGb), out var mc) && mc.ValueKind == JsonValueKind.Number && mc.GetDouble() is >= 0 and <= 4096 and var modelCache) s.ModelCacheLimitGb = modelCache;
+            if (root.TryGetProperty(nameof(ModelMemoryGb), out var mm) && mm.ValueKind == JsonValueKind.Number && mm.GetDouble() is >= 0 and <= 4096 and var modelMemory) s.ModelMemoryGb = modelMemory;
         }
         catch (JsonException) { }
         return s;

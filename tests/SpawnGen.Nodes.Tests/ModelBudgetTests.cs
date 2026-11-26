@@ -17,13 +17,22 @@ namespace SpawnGen.Nodes.Tests;
 /// </summary>
 public class ModelBudgetTests
 {
-    public sealed class Sized(string name, long bytes) : IDisposable, IDeviceSized
+    /// <summary>
+    /// A stand-in model that really holds its bytes on the device: with a budget the manager decides from the device's own allocation
+    /// count (ILGPU's), not from what a model says, so a stand-in that only claimed a size would never need room.
+    /// </summary>
+    public sealed class Sized : IDisposable, IDeviceSized
     {
         public static readonly List<string> Events = [];
-        public string Name => name;
+        /// <summary>The accelerator the stand-ins allocate on (set by <see cref="Runtime"/>).</summary>
+        public static ILGPU.Runtime.Accelerator? Device;
+        readonly ILGPU.Runtime.MemoryBuffer1D<byte, Stride1D.Dense> _held;
+        readonly long _bytes;
+        Sized(string name, long bytes) { Name = name; _bytes = bytes; _held = Device!.Allocate1D<byte>(bytes); }
+        public string Name { get; }
         public bool Disposed { get; private set; }
-        public long DeviceBytes => Disposed ? 0 : bytes;
-        public void Dispose() { Disposed = true; lock (Events) Events.Add("dispose " + name); }
+        public long DeviceBytes => Disposed ? 0 : _bytes;
+        public void Dispose() { if (Disposed) return; Disposed = true; _held.Dispose(); lock (Events) Events.Add("dispose " + Name); }
         public static Task<Sized> Load(string name, long bytes) { lock (Events) Events.Add("load " + name); return Task.FromResult(new Sized(name, bytes)); }
     }
 
@@ -58,6 +67,7 @@ public class ModelBudgetTests
     static MlRuntime Runtime(ILGPU.Runtime.Accelerator cpu, long? budget)
     {
         lock (Sized.Events) Sized.Events.Clear();
+        Sized.Device = cpu;
         return new MlRuntime(new DesktopModelSource(Path.GetTempPath(), MlRuntime.RepoFolders), cpu) { ModelMemoryBytes = budget };
     }
 

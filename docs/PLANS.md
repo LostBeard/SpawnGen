@@ -428,6 +428,24 @@ files): every saved byte of IMAGE and MASK equal to ComfyUI's for both paintings
 picture; red-checked. The schema gained `hidden`, `widgetType` and `socketless` on inputs (InputAttribute, WidgetSpec, object_info
 both ways). Until the widget exists the node shows `mask` as a text row. Next: step 4, the widget (strokes: brush geometry, hardness
 falloff and spacing still to measure), then the Studio and its drive, then the five templates.
+**The brush, measured 2026-11-26 (`probe-comfy-painter-brush.js`, `painter-brush-read.py`; paintings in out/painter-brush/):**
+- Sliders: Cursor Size 1..200 (20), Hardness 0..100 (100), Width and Height 64..4096 (512). The node keeps nothing of them in
+  its properties: brush settings are the widget's own state.
+- Cursor Size is the DIAMETER in canvas pixels: a click at (256, 256) paints x 246..265 for size 20, 231..280 for 50, 156..355 for
+  200 (so the disc is centred on the pixel corner at 255.5 + 0.5). Size 1 paints 1 x 2 pixels at alpha 112. Edges are antialiased.
+- Hardness: 100 is a hard disc. Lower hardness both softens and WIDENS the stamp: size 50 at hardness 50 covers 62 pixels (alpha
+  rising 10, 24, 37, ... by about 13.6 a pixel to 255, then solid), at hardness 0 it covers 74 (rising about 6.8 a pixel to 250 at
+  the centre). Reading: alpha falls linearly from an inner radius r x hardness to an outer radius r x (1 + 0.48 (1 - hardness))
+  (31 and 37 for r = 25): the 0.48 comes from two points only, measure more hardness values before fixing the formula.
+- The percent field is the stroke's opacity: 50 gives alpha 128 everywhere in the stroke. WITHIN one stroke nothing accumulates
+  (back and forth over itself stays 128); SEPARATE strokes composite source-over (two overlapping dots or crossing lines: 192).
+- A stroke is a continuous line with round caps (from x 100 to 400 at size 50: 75..424), also when the pointer moves fast (straight
+  segments between pointer positions). The colour is stored as it is (#ff0000 -> 255, 0, 0), straight alpha.
+- The eraser removes alpha (a hard eraser dot through a line leaves 0, with an antialiased rim).
+- Not measured yet (the probe stopped at the eraser cases: after choosing Eraser the Brush button was off-screen): a soft
+  eraser, eraser opacity, a dot at the canvas edge, what Width / Height do to an existing painting, what a linked image shows.
+- SpawnGen will not match the antialiased rim pixel for pixel (the browser's own rasteriser draws it): the geometry, the falloff,
+  the opacity rule and the eraser are what its strokes must match, with a stated tolerance at the rim.
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

@@ -87,6 +87,7 @@ const MAX = parseInt(process.env.MAX_MINUTES || '30', 10) * 60000;
     if (process.env.MODEL_MEMORY_GB !== undefined) for (const l of trace.filter(t => t.startsWith('[models] ') && !/^\[models\] (cache limit|no cache limit|streaming|fetch|download)/.test(t))) console.log('    ' + l);
     console.log(`${outcome === 'ran' && errs.length === 0 ? 'PASS' : 'FAIL'} ${passes > 1 ? 'pass ' + pass + ' ' : ''}${label}: ${outcome} in ${secs} s${detail ? ' | ' + detail : ''}${errs.length ? ' | browser errors: ' + errs.join(' || ') : ''} (${path.basename(shot)})`);
     if (outcome !== 'ran' || errs.length) for (const l of trace.slice(-14)) console.log('    ' + l);
+    else if (process.env.TRACE === '1') for (const l of trace) console.log('    ' + l);   // every stage and node time of a good run
   }
   fs.writeFileSync(path.join(OUT, 'site-examples.json'), JSON.stringify({ url: URL, adapter, results }, null, 1));
   await context.close();

@@ -97,7 +97,7 @@ public sealed class TextGenerate
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var (repo, file) = qwen.Qwen3File;
         // The image models' transformers give way (an 8 GB card holds one big model at a time).
-        TransformerTurns.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         var model = await runtime.GetOrLoadAsync($"qwen3-lm:{repo}/{file}", async () =>
         {
             var tokenizerJson = System.Text.Encoding.UTF8.GetString(await runtime.ModelSource.FetchBytesAsync(TokenizerRepo, "tokenizer.json", context.CancellationToken));

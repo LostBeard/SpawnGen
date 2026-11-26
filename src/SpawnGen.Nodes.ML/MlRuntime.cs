@@ -70,6 +70,8 @@ public sealed class MlRuntime : IDisposable
     readonly Lazy<bool> _reportsFreeMemory;
     readonly List<IAsyncDisposable> _leases = [];
     readonly HashSet<string> _leased = new(StringComparer.Ordinal);
+    /// <summary>The running prompt's leased models (by reference) and how each asks the manager for room before a lazy load.</summary>
+    readonly Dictionary<object, Func<long, Task>> _room = new(ReferenceEqualityComparer.Instance);
     long? _modelMemoryBytes;
 
     /// <summary>
@@ -129,18 +131,41 @@ public sealed class MlRuntime : IDisposable
         lock (_gate)
         {
             extra = !_leased.Add(key);
-            if (!extra) _leases.Add(lease);
+            if (!extra) { _leases.Add(lease); _room[model] = lease.EnsureRoomAsync; }
             if (!kept) _loadedSinceWarmUp = true;
         }
         if (extra) await lease.DisposeAsync();   // this prompt already holds a lease on it
         return model;
     }
 
+    /// <summary>
+    /// Called right before a model loads weights the loader node did not load (the lazy MODEL / CLIP / VAE objects, and nodes that open a
+    /// model for one call). Without a memory budget this is the old fixed rule: the big transformers take turns (one on the device at a
+    /// time, sized for an 8 GB card). With a budget, room is made by need: the manager drops idle scratch and the least recently used
+    /// idle models for <paramref name="bytes"/> (unknown = as large as the largest model measured so far), and only if the device then
+    /// still lacks that room do the transformers give way as before. So a device with room keeps every transformer loaded.
+    /// </summary>
+    /// <param name="requester">The model object that is about to load (as handed out by <see cref="GetOrLoadAsync{T}(string, Func{Task{T}}, long)"/>), or null.</param>
+    public async Task MakeRoomAsync(object? requester = null, long bytes = 0)
+    {
+        if (!KeepsModelsByBudget) { TransformerTurns.ReleaseTransformers(); return; }
+        var residency = Residency;
+        long need = bytes > 0 ? bytes : residency.UnknownSizeBytes ?? residency.KnownSizes.Values.DefaultIfEmpty(0).Max();
+        Func<long, Task>? room = null;
+        if (requester is not null) lock (_gate) _room.TryGetValue(requester, out room);
+        if (room is not null && need > 0) await room(need);
+        if (need == 0 || !Accelerator.TryGetFreeMemory(out long free) || free < need)
+        {
+            if (TransformerTurns.ReleaseTransformers() > 0)
+                Console.WriteLine($"[models] the loaded transformer gave way: {(need == 0 ? "the size of what loads next is unknown" : $"{need / 1e9:0.##} GB is needed")}");
+        }
+    }
+
     /// <summary>Ends the running prompt's leases: its models stay on the device, and from now on may be dropped when another needs the room.</summary>
     public async Task EndPromptAsync()
     {
         IAsyncDisposable[] leases;
-        lock (_gate) { leases = [.. _leases]; _leases.Clear(); _leased.Clear(); }
+        lock (_gate) { leases = [.. _leases]; _leases.Clear(); _leased.Clear(); _room.Clear(); }
         foreach (var lease in leases)
         {
             try { await lease.DisposeAsync(); }
@@ -151,7 +176,7 @@ public sealed class MlRuntime : IDisposable
     /// <summary>The device is gone (a lost WebGPU device): the manager forgets its models without touching them.</summary>
     public void DeviceLost()
     {
-        lock (_gate) { _leases.Clear(); _leased.Clear(); }
+        lock (_gate) { _leases.Clear(); _leased.Clear(); _room.Clear(); }
         _residency?.Invalidate();
     }
 

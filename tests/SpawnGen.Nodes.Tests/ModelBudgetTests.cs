@@ -202,23 +202,67 @@ public class ModelBudgetTests
     }
 
     [Test]
-    public async Task A_model_of_unknown_size_makes_room_first_and_its_measured_size_is_remembered()
+    public async Task A_model_of_unknown_size_is_taken_to_be_as_large_as_the_largest_measured()
     {
         using var context = Context.Create(b => b.CPU());
         using var cpu = context.CreateCPUAccelerator(0);
-        using var runtime = Runtime(cpu, Mb(1_000_000));
+        using var runtime = Runtime(cpu, Mb(150));
         var a = await runtime.GetOrLoadAsync("model:a", () => Sized.Load("a", Mb(60)), Mb(60));
         await runtime.EndPromptAsync();
-        // b's size is not given and it never loaded before: the idle models go first, however large the budget (the library's rule, asked
-        // for by SpawnGen: on a small card the over-allocation would be the load itself)
+        // b's size is not given and it never loaded before: room is made for the largest size measured so far (a's 60), which fits
         var b = await runtime.GetOrLoadAsync("model:b", () => Sized.Load("b", Mb(60)));
         await runtime.EndPromptAsync();
-        Assert.That(a.Disposed, Is.True);
-        // b was measured (60): loading a again with its size given keeps b; and b, dropped and loaded again later, needs no size
-        await runtime.GetOrLoadAsync("model:a", () => Sized.Load("a", Mb(60)), Mb(60));
+        Assert.That(a.Disposed, Is.False, "150 holds a and a model taken to be as large as a");
+        Assert.That(runtime.Residency.KnownSizes["model:b"], Is.EqualTo(Mb(60)), "b's size was measured");
+        // c, also unknown, is taken to be 60 too: 180 would pass 150, so the least recently used (a) goes first
+        var c = await runtime.GetOrLoadAsync("model:c", () => Sized.Load("c", Mb(60)));
         await runtime.EndPromptAsync();
-        Assert.That(b.Disposed, Is.False);
-        Assert.That(runtime.Residency.Resident.Single(m => m.Key == "model:b").Bytes, Is.EqualTo(Mb(60)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.Disposed, Is.True);
+            Assert.That(b.Disposed || c.Disposed, Is.False);
+        });
+    }
+
+    /// <summary>A stand-in for the lazy MODEL / CLIP / VAE objects: nothing on the device until its first use, inside the prompt that leased it.</summary>
+    public sealed class Lazy(string name) : IDisposable, IDeviceSized
+    {
+        public long Held;
+        public bool Disposed { get; private set; }
+        public long DeviceBytes => Disposed ? 0 : Held;
+        public string Name => name;
+        public void Dispose() { Disposed = true; Held = 0; }
+    }
+
+    [Test]
+    public async Task A_lazy_model_asks_for_room_before_it_loads_and_its_size_is_learned_when_its_prompt_ends()
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var cpu = context.CreateCPUAccelerator(0);
+        using var runtime = Runtime(cpu, Mb(150));
+        var dropped = new List<string>();
+        runtime.ModelDropped += dropped.Add;
+        var a = await runtime.GetOrLoadAsync("model:a", () => Sized.Load("a", Mb(100)), Mb(100));
+        await runtime.EndPromptAsync();
+        // the lazy model is acquired empty (a stays: nothing is known to be needed yet beyond a model of a's size... which fits? no: 100 + 100 > 150)
+        var lazy = await runtime.GetOrLoadAsync("model:lazy", () => Task.FromResult(new Lazy("lazy")), Mb(1));
+        Assert.That(a.Disposed, Is.False, "an empty wrapper with a stated tiny size drops nothing");
+        // right before its weights load it asks for their room: the idle model goes
+        await runtime.MakeRoomAsync(lazy, Mb(100));
+        Assert.That(dropped, Is.EqualTo(new[] { "model:a" }));
+        lazy.Held = Mb(100);
+        await runtime.EndPromptAsync();
+        Assert.That(runtime.Residency.KnownSizes["model:lazy"], Is.EqualTo(Mb(100)), "read again from the model when its lease ended");
+    }
+
+    [Test]
+    public async Task Without_a_budget_making_room_is_the_old_take_turns_rule()
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var cpu = context.CreateCPUAccelerator(0);
+        using var runtime = Runtime(cpu, null);
+        await runtime.MakeRoomAsync();   // nothing loaded: nothing to do, and the manager is not touched
+        Assert.That(runtime.Residency.Resident, Is.Empty);
     }
 
     [Test]

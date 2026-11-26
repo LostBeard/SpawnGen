@@ -56,7 +56,7 @@ internal sealed class Flux1TextEncoderModel(MlRuntime runtime, string name, (str
     public async Task<TextEncoding> EncodePromptAsync(string text, CancellationToken cancellationToken)
     {
         var acc = runtime.Accelerator;
-        TransformerTurns.ReleaseTransformers(); // the encoders and a loaded transformer take turns on an 8 GB card
+        await runtime.MakeRoomAsync(this); // the encoders and a loaded transformer take turns on an 8 GB card
         if (_t5Tokenizer is null)
         {
             await using var json = await runtime.ModelSource.OpenAsync(LtxPipeline.DefaultRepo, LtxPaths.InRepo(LtxPaths.DitFile("q8")).Tokenizer, cancellationToken);
@@ -121,10 +121,12 @@ internal static class Flux1Residency
 
     public static void Holding(Flux1DiffusionModel model) => _resident = model;
 
-    public static void Release()
+    public static bool Release()
     {
+        bool had = _resident is not null;
         _resident?.Unload();
         _resident = null;
+        return had;
     }
 
     public static void Forget(Flux1DiffusionModel model)
@@ -162,7 +164,7 @@ internal sealed class Flux1DiffusionModel(MlRuntime runtime, string name, string
     public async Task<Flux1Weights> WeightsAsync(CancellationToken ct)
     {
         if (_weights is not null) return _weights;
-        TransformerTurns.ReleaseTransformers(); // one big transformer on the device at a time
+        await runtime.MakeRoomAsync(this); // one big transformer on the device at a time
         _weights = await Flux1Weights.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, ResidentBytes, ct);
         Flux1Residency.Holding(this);
         return _weights;

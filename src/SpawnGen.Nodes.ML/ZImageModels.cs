@@ -37,7 +37,7 @@ internal sealed class ZImageTextEncoderModel(MlRuntime runtime, string name, str
         var (ids, real) = _tokenizer.EncodePadded(text, Qwen2Tokenizer.ChatPromptNoThinking, Flux2TextEncoderModel.Length);
         var acc = runtime.Accelerator;
         // The encoder (35 layers, bf16) and a loaded transformer do not fit an 8 GB card together.
-        TransformerTurns.ReleaseTransformers();
+        await runtime.MakeRoomAsync(this);
         using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, Layer, cancellationToken);
         // Precise activations: the reference's fp32 (CUDA's tensor-core path would round them to bf16; OpenCL is fp32 already).
         using var encoder = new Flux2TextEncoder(acc, weights, [Layer]) { PreciseActivations = true };
@@ -66,10 +66,12 @@ internal static class ZImageResidency
 
     public static void Holding(ZImageDiffusionModel model) => _resident = model;
 
-    public static void Release()
+    public static bool Release()
     {
+        bool had = _resident is not null;
         _resident?.Unload();
         _resident = null;
+        return had;
     }
 
     public static void Forget(ZImageDiffusionModel model)
@@ -115,7 +117,7 @@ internal sealed class ZImageDiffusionModel(MlRuntime runtime, string name, strin
     public async Task<ZImageTransformer> TransformerAsync(int rows, int cols, CancellationToken ct)
     {
         if (_transformer is not null && _layout == (rows, cols)) return _transformer;
-        TransformerTurns.ReleaseTransformers(); // this one too, at its old size; one big transformer on the device at a time
+        await runtime.MakeRoomAsync(this); // this one too, at its old size; one big transformer on the device at a time
         _transformer = await ZImageTransformer.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, rows, cols, MaxCaptionTokens, ResidentBytes, ct);
         _layout = (rows, cols);
         ZImageResidency.Holding(this);

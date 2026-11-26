@@ -70,7 +70,7 @@ internal sealed class LtxAudioVaeModel(string name, LtxAudioLatentLayout layout,
             throw new ArgumentException($"LTX-2's audio VAE decodes audio latents [b, {layout.Channels}, frames, {layout.Bins}]; this one is [{string.Join(", ", latent.Shape)}].");
         if (latent.Batch != 1)
             throw new NotSupportedException($"A batch of {latent.Batch} audio latents: SpawnGen's AUDIO holds one clip so far, so LTXV Audio VAE Decode takes batch 1.");
-        ModelResidency.ReleaseTransformers();
+        TransformerTurns.ReleaseTransformers();
         using var decoder = await SpawnDev.ILGPU.ML.Ltx2.Ltx2AudioDecoder.OpenAsync(runtime.Accelerator, runtime.ModelSource, repo, file, cancellationToken);
         int ta = latent.Height;
         var wave = await decoder.DecodeAsync(latent.Data, ta);
@@ -468,7 +468,7 @@ public sealed class LTXVLatentUpsampler
             throw new ArgumentException($"LTXVLatentUpsampler takes LTX-2's video latent [b, 128, F, h, w]; this one is [{string.Join(", ", samples.Shape)}].");
         if (samples.NoiseMask is not null) throw new NotSupportedException("LTXVLatentUpsampler with a noise mask is not measured yet in SpawnGen.");
         var (runtime, repo, file) = ltxVae.Checkpoint;
-        ModelResidency.ReleaseTransformers();
+        TransformerTurns.ReleaseTransformers();
         using var up = await SpawnDev.ILGPU.ML.Ltx2.Ltx2LatentUpsampler.OpenAsync(runtime.Accelerator, runtime.ModelSource, upscaleModel.Repo, upscaleModel.File,
             runtime.ModelSource, repo, file);
         int F = samples.Frames, h = samples.Height, w = samples.Width, per = samples.ItemSize, outPer = per * 4;

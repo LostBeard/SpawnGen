@@ -100,7 +100,7 @@ internal sealed class Flux2TextEncoderModel(MlRuntime runtime, string name, stri
     {
         var (ids, real) = await TokenizeAsync(text, cancellationToken);
         var acc = runtime.Accelerator;
-        ModelResidency.ReleaseTransformers(); // the encoder's 6.2 GB and a loaded transformer do not fit an 8 GB card together
+        TransformerTurns.ReleaseTransformers(); // the encoder's 6.2 GB and a loaded transformer do not fit an 8 GB card together
         using var weights = await Flux2Weights.LoadAsync(acc, runtime.ModelSource, repo, file, cancellationToken);
         using var encoder = new Flux2TextEncoder(acc, weights);
         var rows = encoder.Encode(ids, real);
@@ -175,7 +175,7 @@ internal sealed class Flux2DiffusionModel(MlRuntime runtime, string name, string
     public async Task<Flux2Weights> WeightsAsync(CancellationToken ct)
     {
         if (_weights is not null) return _weights;
-        ModelResidency.ReleaseTransformers(); // one big transformer on the device at a time
+        TransformerTurns.ReleaseTransformers(); // one big transformer on the device at a time
         _weights = await Flux2Weights.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file, ct);
         Flux2Residency.Holding(this);
         return _weights;

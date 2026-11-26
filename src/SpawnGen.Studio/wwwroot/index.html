@@ -210,12 +210,32 @@
             try { const r = await fetch('gzboot.json', { cache: 'no-cache' }); if (r.ok) gz = await r.json(); } catch (e) { }
             const listed = name => !!gz && typeof DecompressionStream !== 'undefined'
                 && (gz.all ? !/\.(js|json)$/.test(name) : (gz.files || []).indexOf(name) >= 0);
+            // A runtime file that comes back wrong is asked for again, past the browser's cache. Found on the live site (2026-11-26): the
+            // host answered ONE framework file with a 503 error page, the browser kept that answer in its disk cache, and from then on
+            // the page could not start in that browser ("An unhandled error has occurred", the integrity check failing on the cached
+            // error page) although the host was serving the file again. The first try is the normal one (the HTTP cache allowed).
+            const sturdy = async function (uri, integrity) {
+                let last = null;
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    try {
+                        const options = integrity ? { integrity: integrity } : {};
+                        if (attempt > 0) options.cache = 'reload';
+                        const r = await fetch(uri, options);
+                        if (r.ok || r.status === 404) return r;   // a missing file is an answer, not a failure to retry
+                        last = new Error(uri + ': HTTP ' + r.status);
+                    } catch (e) { last = e; }   // the network, or an integrity check that failed on a cached error page
+                    console.warn('[boot] ' + uri.split('/').pop() + ' did not load (' + (last && last.message) + '): asking again, past the cache');
+                    await new Promise(function (resolve) { setTimeout(resolve, 500 * (attempt + 1)); });
+                }
+                throw last;
+            };
             Blazor.start({
                 loadBootResource: function (type, name, defaultUri, integrity) {
-                    if (type === 'dotnetjs' || type === 'configuration' || type === 'manifest' || !listed(name)) return null;
+                    if (type === 'dotnetjs' || type === 'configuration' || type === 'manifest') return null;   // loaded as scripts: not ours to fetch
+                    if (!listed(name)) return sturdy(defaultUri, integrity);
                     return (async function () {
-                        const r = await fetch(defaultUri + '.gz');
-                        if (!r.ok) return fetch(defaultUri);                       // no compressed copy after all: the original
+                        const r = await sturdy(defaultUri + '.gz', null);
+                        if (!r.ok) return sturdy(defaultUri, integrity);            // no compressed copy after all: the original
                         const contentType = type === 'dotnetwasm' ? 'application/wasm' : 'application/octet-stream';
                         // a server that already sent it with Content-Encoding: gzip had the browser inflate it
                         const body = r.headers.get('content-encoding') ? r.body : r.body.pipeThrough(new DecompressionStream('gzip'));

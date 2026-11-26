@@ -316,6 +316,26 @@ accelerator with a byte budget (the device's own free memory where a backend rep
 prompt uses, releases a closed tab's models, shows evictions, offers the budget as a setting, and drops its fixed rules. Waiting
 on: TJ's yes for the ML feature, Tuvok's short design, Data's view for ILGPU. Until it exists SpawnGen's behaviour stays as it is.
 
+**2026-11-25 evening: the library pieces exist; SpawnGen's migration starts (branch `model-residency`).** TJ approved the ML feature
+(a model over the budget loads with a warning). ILGPU 5.4.50: `Accelerator.DeviceMemoryBudgetBytes` and free memory on AMD OpenCL
+(checked on the RX 590: 8128 MiB free, minus exactly what is allocated). ML 5.8.32-local.1: `ModelResidency` (per accelerator:
+`AcquireAsync(key, load, expectedBytes, tag)` leases, `BudgetBytes`, `ReleaseAsync(tag)`, `ReleaseAllAsync`, `Invalidate`, `Register`
+for engines that load themselves, `Evicted`, `Log`). **SpawnGen's steps:**
+- **A, the generic paths:** `MlRuntime` owns a manager; with a budget set (or a backend that reports free memory), checkpoints and
+  every `GetOrLoadAsync` model are acquired from it, the lease held until the prompt ends (a new `PromptQueue.AfterRun`); the
+  result cache drops its model entries at each prompt start so loader nodes run again and lease (they return the kept model), and
+  on `Evicted`; without a budget everything stays as today ("one workflow at a time"). Setting: "GPU memory for models (GB, 0 =
+  one workflow at a time)" in the Studio; the server takes the device's own figure (CUDA, AMD OpenCL) or a configured one. My own
+  `ModelResidency` static class (the take-turns rules) is renamed `TransformerTurns`.
+- **B, the self-loading transformers** (FLUX.1 / FLUX.2 / Z-Image / Qwen-Image / ACE-Step / LTX-2 diffusion models, which load on
+  first use and unload by the fixed 8 GB rules): they join the manager with `Register` (their resident bytes, an evict, room
+  ensured before a load), and the fixed rules apply only without a budget. Until B they are not counted: say so in reports.
+- **C, tabs:** the Studio tags prompts with their tab; closing a tab calls `ReleaseAsync(tag)`.
+- **Gate (Tuvok's and mine), RX 590:** the 17 examples with a budget below the card's size, no device loss, and a second pass that
+  shows reuse in the log; the same pass with no budget unchanged from today; unit tests of the runtime's keep / lease / drop
+  decisions on the CPU accelerator; what a large budget does is exercised by setting one larger than the card (models kept until
+  the device itself gives out is NOT a pass: on 8 GB that case can only be shown with small models).
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

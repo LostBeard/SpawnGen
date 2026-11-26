@@ -71,7 +71,7 @@ public sealed class MlRuntime : IDisposable
     readonly List<IAsyncDisposable> _leases = [];
     readonly HashSet<string> _leased = new(StringComparer.Ordinal);
     /// <summary>The running prompt's leased models (by reference) and how each asks the manager for room before a lazy load.</summary>
-    readonly Dictionary<object, (Func<long, Task> Ensure, IKept Kept)> _room = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<object, Func<long, Task>> _room = new(ReferenceEqualityComparer.Instance);
     long? _modelMemoryBytes;
 
     /// <summary>
@@ -142,56 +142,30 @@ public sealed class MlRuntime : IDisposable
     public event Action<string>? ModelDropped;
 
     /// <summary>
-    /// What the manager keeps for a model: the model, and how much it holds on the device. A model that knows its own size says so
-    /// (IDeviceSized); for the others it is measured: what the device's free memory fell by while the model loaded, and for a lazy
-    /// model (nothing on the device until its first use) what it fell by from the moment it asked for room (<see cref="MakeRoomAsync"/>)
-    /// to the next such moment or the prompt's end. The lazy figure includes that run's working memory still held then, so it errs high.
+    /// The model for <paramref name="key"/> from the manager, leased for the running prompt (one lease per key and prompt). The manager
+    /// measures what a model holds on the device by itself (its own size where the model states one, else what was allocated over its
+    /// load). <paramref name="growsInUse"/>: the model loads most of what it holds during its first run, not in <paramref name="load"/>
+    /// (every pipeline a node asks for when it runs: FLUX.2 and FLUX 3 Klein, LTX-Video, TRELLIS.2, ...): room is asked for right
+    /// after the acquire, which is also the point the manager measures such a model from, to the end of its lease. Found 2026-11-25 on
+    /// the RX 590: measured over their load only, the FLUX pipelines counted as 0.2 GB each, FLUX 3 was loaded beside a FLUX.2 that
+    /// really held several GB, and the device was lost.
     /// </summary>
-    sealed class Kept<T>(T model, long loaded) : IKept, IDisposable, SpawnDev.ILGPU.ML.IDeviceSized where T : class, IDisposable
-    {
-        public T Model { get; } = model;
-        public long Lazy { get; set; }
-        bool _disposed;
-        public long DeviceBytes => _disposed ? 0 : Model is SpawnDev.ILGPU.ML.IDeviceSized sized ? sized.DeviceBytes : loaded + Lazy;
-        public void Dispose() { _disposed = true; Model.Dispose(); }
-    }
-
-    interface IKept { long Lazy { get; set; } }
-
-    /// <summary>Free device memory as the manager counts it (the budget less what is allocated), or null when the device gives no figure.</summary>
-    long? FreeNow() => Accelerator.TryGetFreeMemory(out long free) ? free : null;
-
-    /// <summary>The lazy model being measured: who asked for room last, and the free memory at that moment.</summary>
-    (IKept Kept, long Free)? _measuring;
-
-    void EndMeasuring()
-    {
-        if (_measuring is not { } m) return;
-        _measuring = null;
-        if (FreeNow() is { } now && m.Free - now > m.Kept.Lazy) m.Kept.Lazy = m.Free - now;
-    }
-
-    /// <summary>The model for <paramref name="key"/> from the manager, leased for the running prompt (one lease per key and prompt).</summary>
-    async Task<T> AcquireAsync<T>(string key, Func<Task<T>> load, long expectedBytes = 0) where T : class, IDisposable
+    async Task<T> AcquireAsync<T>(string key, Func<Task<T>> load, long expectedBytes = 0, bool growsInUse = false) where T : class, IDisposable
     {
         var residency = Residency;
         bool kept = residency.Resident.Any(m => m.Key == key);
-        var lease = await residency.AcquireAsync(key, async () =>
-        {
-            long? before = FreeNow();
-            var loaded = await load();
-            return new Kept<T>(loaded, before is { } b && FreeNow() is { } after ? Math.Max(0, b - after) : 0);
-        }, expectedBytes);
-        var holder = lease.Model;
+        var lease = await residency.AcquireAsync(key, load, expectedBytes);
+        var model = lease.Model;
         bool extra;
         lock (_gate)
         {
             extra = !_leased.Add(key);
-            if (!extra) { _leases.Add(lease); _room[holder.Model] = (lease.EnsureRoomAsync, holder); }
+            if (!extra) { _leases.Add(lease); _room[model] = lease.EnsureRoomAsync; }
             if (!kept) _loadedSinceWarmUp = true;
         }
-        if (extra) await lease.DisposeAsync();   // this prompt already holds a lease on it
-        return holder.Model;
+        if (extra) { await lease.DisposeAsync(); return model; }   // this prompt already holds a lease on it
+        if (growsInUse) await lease.EnsureRoomAsync(Need(expectedBytes));
+        return model;
     }
 
     /// <summary>
@@ -206,24 +180,33 @@ public sealed class MlRuntime : IDisposable
     {
         if (!KeepsModelsByBudget) { TransformerTurns.ReleaseTransformers(); return; }
         var residency = Residency;
-        long need = bytes > 0 ? bytes : residency.UnknownSizeBytes ?? residency.KnownSizes.Values.DefaultIfEmpty(0).Max();
-        EndMeasuring();   // the model that asked before this one has loaded by now
-        (Func<long, Task> Ensure, IKept Kept) room = default;
+        long need = Need(bytes);
+        Func<long, Task>? room = null;
         if (requester is not null) lock (_gate) _room.TryGetValue(requester, out room);
-        if (room.Ensure is not null && need > 0) await room.Ensure(need);
-        if (need == 0 || !Accelerator.TryGetFreeMemory(out long free) || free < need)
+        if (room is not null) await room(need);
+        if (need <= 1 || !Accelerator.TryGetFreeMemory(out long free) || free < need)
         {
             if (TransformerTurns.ReleaseTransformers() > 0)
-                Console.WriteLine($"[models] the loaded transformer gave way: {(need == 0 ? "the size of what loads next is unknown" : $"{need / 1e9:0.##} GB is needed")}");
+                Console.WriteLine($"[models] the loaded transformer gave way: {(need <= 1 ? "the size of what loads next is unknown" : $"{need / 1e9:0.##} GB is needed")}");
         }
-        if (room.Kept is not null && FreeNow() is { } freeNow) _measuring = (room.Kept, freeNow);
+    }
+
+    /// <summary>
+    /// The room to ask for before a load: the caller's figure, else what the manager takes an unknown model to be (the app's
+    /// UnknownSizeBytes, else the largest size measured so far), else 1 byte: nothing is known at all, and asking still starts the
+    /// manager's measuring of the model from this point.
+    /// </summary>
+    long Need(long bytes)
+    {
+        if (bytes > 0) return bytes;
+        var residency = Residency;
+        return Math.Max(1, residency.UnknownSizeBytes ?? residency.KnownSizes.Values.DefaultIfEmpty(0).Max());
     }
 
     /// <summary>Ends the running prompt's leases: its models stay on the device, and from now on may be dropped when another needs the room.</summary>
     public async Task EndPromptAsync()
     {
         IAsyncDisposable[] leases;
-        EndMeasuring();   // before the leases end: the manager reads each model's size as its lease ends
         lock (_gate) { leases = [.. _leases]; _leases.Clear(); _leased.Clear(); _room.Clear(); }
         foreach (var lease in leases)
         {
@@ -236,7 +219,6 @@ public sealed class MlRuntime : IDisposable
     public void DeviceLost()
     {
         lock (_gate) { _leases.Clear(); _leased.Clear(); _room.Clear(); }
-        _measuring = null;
         _residency?.Invalidate();
     }
 
@@ -278,7 +260,7 @@ public sealed class MlRuntime : IDisposable
 
     async Task<T> GetOrLoadAsync<T>(string key, Func<Task<T>> load, bool pipeline, long expectedBytes) where T : class, IDisposable
     {
-        if (KeepsModelsByBudget) return await AcquireAsync(key, load, expectedBytes);
+        if (KeepsModelsByBudget) return await AcquireAsync(key, load, expectedBytes, growsInUse: pipeline);
         Task<IDisposable> task;
         List<(string Key, IDisposable Model)> freed = [];
         lock (_gate)

@@ -295,6 +295,35 @@ public class ModelBudgetTests
         Assert.That(a.Disposed, Is.False);
     }
 
+    /// <summary>A stand-in pipeline: it states no size, loads nothing when created and really allocates on the device when it first runs.</summary>
+    public sealed class Grows(ILGPU.Runtime.Accelerator accelerator) : IDisposable
+    {
+        ILGPU.Runtime.MemoryBuffer1D<byte, Stride1D.Dense>? _weights;
+        public bool Disposed { get; private set; }
+        public void Run(long bytes) => _weights ??= accelerator.Allocate1D<byte>(bytes);
+        public void Dispose() { Disposed = true; _weights?.Dispose(); _weights = null; }
+    }
+
+    [Test]
+    public async Task A_pipeline_that_loads_in_its_first_run_is_measured_over_its_prompt_not_its_creation()
+    {
+        using var context = Context.Create(b => b.CPU());
+        using var cpu = context.CreateCPUAccelerator(0);
+        using var runtime = Runtime(cpu, Mb(150));
+        // found on the RX 590 (2026-11-25): pipelines measured only when created counted as almost nothing, two were kept side by side
+        // and the device was lost. A node's pipeline (GetOrLoadPipelineAsync) is measured from its acquire to the end of its prompt.
+        var first = await runtime.GetOrLoadPipelineAsync("pipe:first", () => Task.FromResult(new Grows(cpu)));
+        first.Run(Mb(100));
+        await runtime.EndPromptAsync();
+        Assert.That(runtime.Residency.KnownSizes.GetValueOrDefault("pipe:first"), Is.GreaterThanOrEqualTo(Mb(100)), "what it allocated in its run counts as its size");
+        // so the next pipeline, which will not fit beside it, makes it go BEFORE it loads
+        var second = await runtime.GetOrLoadPipelineAsync("pipe:second", () => Task.FromResult(new Grows(cpu)));
+        Assert.That(first.Disposed, Is.True, "the first was dropped to make room (the second's size is unknown: taken to be as large as the largest measured)");
+        second.Run(Mb(100));
+        await runtime.EndPromptAsync();
+        Assert.That(second.Disposed, Is.False);
+    }
+
     [Test]
     public async Task A_lost_device_forgets_the_models_without_touching_them()
     {

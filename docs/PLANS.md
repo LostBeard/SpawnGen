@@ -502,6 +502,17 @@ linked picture or the node's background; on queue each Painter with strokes is u
 in JS) and its `mask` set before the prompt is compiled; a loaded workflow's `mask` file is drawn back into the canvas.
 (d) The drive: paint dots and a line through real pointer events, run, compare IMAGE / MASK with ComfyUI's fixtures.
 Also owed: the older mask editor (index.html spawngenMaskEditor) is hand-written JS; port it onto the same C# surface after (c).
+**Done 2026-11-27: (a) a8d961d, (b) 9ae9423, (c) + (d) in the commit after.** (c) `SpawnGen.Studio/Canvas/PainterSurface.cs` keeps each
+painting in two OffscreenCanvases (painting, stroke) per scope (tab + subgraph path) and node, NodeRenderer draws the widget (the linked
+picture or bg_color under the painting, the brush ring, the rows), the colour / opacity / Background edit in place, Queue uploads every
+changed painting first (ConvertToBlob -> UploadFileAsync, the bytes never enter .NET) and sets `mask`; a workflow naming an uploaded
+painting draws it back from the engine's input folder. (d) `drive-painter.js` 10/10 on the RX 590 against a local publish (red-checked:
+without the upload 4 fail): real pointer strokes, the Eraser, IMAGE / MASK pixels, no new upload without new strokes, and a soft stamp
+(size 50, hardness 50, clicked on the pixel corner) equal to ComfyUI's own painting of the same click within 1 / 255 (Save Image's float
+floor), 3064 painted pixels on both.
+**Still open, in order:** (1) painters outside the open subgraph level are not uploaded on Queue (UploadPaintingsAsync walks the canvas's
+graph only; the other levels' scopes keep their strokes): upload every scope of the active tab, then compile; (2) step 6, the five
+templates that use Painter open and run; (3) the rule inside a soft stroke (above); (4) the mask editor port.
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

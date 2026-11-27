@@ -863,8 +863,151 @@ public sealed class NodeRenderer(EditorView view, SpawnGen.Studio.Run.RunVisuals
         }
     }
 
+    /// <summary>Painter nodes' paintings (the Studio sets it): drawn on their canvas.</summary>
+    public PainterSurface? Painter { get; set; }
+
+    /// <summary>The URL of an uploaded painting (a <c>mask</c> file in the engine's input folder), set by the Studio: a loaded workflow's painting is drawn back from it.</summary>
+    public Func<string, string?>? PainterFileUrl { get; set; }
+
+    /// <summary>
+    /// Painter's widget: the canvas (the linked picture, else the Background colour, under the painting), the size label while a picture is
+    /// linked, and the rows: Tool, Cursor Size, the colour and opacity, Hardness, Width, Height, Background, Clear (as ComfyUI's widget).
+    /// </summary>
+    void DrawPainter(CanvasRenderingContext2D ctx, EditorNode node, WidgetRow w)
+    {
+        // the linked picture's size first: the canvas takes it
+        bool linked = view.Document.Graph.LinkInto(node.Id, "image") is not null;
+        var url = linked ? CropPictureUrl?.Invoke(node) : null;
+        var picture = url is null ? null : images.Get(url, (pw, ph) => { PictureSizes[url] = (pw, ph); view.Invalidate(); });
+        node.PainterPicture = url is not null && PictureSizes.TryGetValue(url, out var ps) ? ((int)ps.W, (int)ps.H) : null;
+
+        // a workflow that names an uploaded painting and has none in the page yet: the file is drawn back into the canvas once it has loaded
+        if (Painter is not null && !Painter.Has(node.Id) && PainterWidget.MaskFile(node.Widgets.GetValueOrDefault(w.Name)) is { } file
+            && PainterFileUrl?.Invoke(file) is { } fileUrl && images.Get(fileUrl, (_, _) => view.Invalidate()) is { } saved)
+            Painter.Load(node.Id, saved);
+
+        var (lay, shown, cw, ch) = view.PainterGeometry(node, w);
+        Painter?.Fit(node.Id, (cw, ch));
+        var brush = node.PainterBrush;
+        ctx.Font = Theme.Font;
+        ctx.TextBaseline = "middle";
+
+        RoundRect(ctx, lay.CanvasBox, 5);
+        ctx.FillStyle = "#1c1c1c";
+        ctx.Fill();
+        if (picture is not null && node.PainterPicture is not null) ctx.DrawImage(picture, shown.X, shown.Y, shown.Width, shown.Height);
+        else
+        {
+            ctx.FillStyle = PainterWidget.NormalizeColor(node.Widgets.GetValueOrDefault(PainterWidget.BackgroundInput) as string) ?? "#000000";
+            ctx.FillRect(shown.X, shown.Y, shown.Width, shown.Height);
+        }
+        Painter?.Draw(ctx, node.Id, shown);
+        // the brush's ring under the pointer, as ComfyUI's widget shows it
+        if (view.PointerWorld is var p && shown.Contains(p))
+        {
+            ctx.StrokeStyle = "rgba(255,255,255,0.8)";
+            ctx.LineWidth = 1;
+            ctx.BeginPath();
+            ctx.Arc(p.X, p.Y, Math.Max(1, brush.Size / 2.0 * shown.Width / cw), 0, Math.PI * 2, false);
+            ctx.Stroke();
+        }
+        if (lay.SizeLabel is { } label)
+        {
+            ctx.FillStyle = Theme.LabelText;
+            ctx.TextAlign = "center";
+            ctx.FillText(PainterWidget.SizeLabel(cw, ch), label.Center.X, label.Center.Y);
+            ctx.TextAlign = "left";
+        }
+
+        foreach (var (row, b) in lay.Rows)
+        {
+            var c = PainterWidget.Control(b);
+            if (row == PainterWidget.Row.Clear)
+            {
+                ctx.FillStyle = Theme.ValueText;
+                ctx.TextAlign = "center";
+                ctx.FillText("↺ Clear", b.Center.X, b.Center.Y);
+                ctx.TextAlign = "left";
+                continue;
+            }
+            ctx.FillStyle = Theme.LabelText;
+            ctx.FillText(PainterWidget.RowLabel(row), b.X + 2, b.Center.Y);
+            RoundRect(ctx, c, 5);
+            ctx.FillStyle = Theme.WidgetFill;
+            ctx.Fill();
+            switch (row)
+            {
+                case PainterWidget.Row.Tool:
+                {
+                    var half = c.Width / 2;
+                    foreach (var (tool, x0, name) in new[] { (PainterWidget.Tool.Brush, c.X, "Brush"), (PainterWidget.Tool.Eraser, c.X + half, "Eraser") })
+                    {
+                        if (brush.Tool == tool)
+                        {
+                            RoundRect(ctx, new Rect(x0 + 2, c.Y + 2, half - 4, c.Height - 4), 4);
+                            ctx.FillStyle = Theme.Current.TextBoxFill;
+                            ctx.Fill();
+                        }
+                        ctx.FillStyle = brush.Tool == tool ? Theme.ValueText : Theme.LabelText;
+                        ctx.TextAlign = "center";
+                        ctx.FillText(name, x0 + half / 2, c.Center.Y);
+                        ctx.TextAlign = "left";
+                    }
+                    break;
+                }
+                case PainterWidget.Row.CursorSize or PainterWidget.Row.Hardness or PainterWidget.Row.Width or PainterWidget.Row.Height:
+                {
+                    var range = PainterWidget.Range(row)!.Value;
+                    int v = row switch
+                    {
+                        PainterWidget.Row.CursorSize => brush.Size,
+                        PainterWidget.Row.Hardness => brush.Hardness,
+                        PainterWidget.Row.Width => cw,
+                        _ => ch,
+                    };
+                    var track = PainterWidget.Track(b);
+                    double thumb = PainterWidget.ThumbX(track, v, range.Min, range.Max);
+                    ctx.FillStyle = Theme.Current.TextBoxFill;
+                    ctx.FillRect(track.X, track.Center.Y - 2, track.Width, 4);
+                    ctx.FillStyle = Theme.Accent;
+                    ctx.FillRect(track.X, track.Center.Y - 2, thumb - track.X, 4);
+                    ctx.BeginPath();
+                    ctx.Arc(thumb, track.Center.Y, 6, 0, Math.PI * 2, false);
+                    ctx.FillStyle = Theme.ValueText;
+                    ctx.Fill();
+                    ctx.FillStyle = Theme.ValueText;
+                    ctx.TextAlign = "right";
+                    ctx.FillText(row == PainterWidget.Row.Hardness ? $"{v}%" : v.ToString(System.Globalization.CultureInfo.InvariantCulture), c.Right - 6, c.Center.Y);
+                    ctx.TextAlign = "left";
+                    break;
+                }
+                case PainterWidget.Row.Color or PainterWidget.Row.Background:
+                {
+                    string hex = row == PainterWidget.Row.Color ? brush.Color
+                        : PainterWidget.NormalizeColor(node.Widgets.GetValueOrDefault(PainterWidget.BackgroundInput) as string) ?? "#000000";
+                    RoundRect(ctx, new Rect(c.X + 6, c.Center.Y - 7, 22, 14), 7);
+                    ctx.FillStyle = hex;
+                    ctx.Fill();
+                    ctx.StrokeStyle = Theme.WidgetBorder;
+                    ctx.Stroke();
+                    ctx.FillStyle = Theme.ValueText;
+                    ctx.FillText(hex, c.X + 36, c.Center.Y);
+                    if (row == PainterWidget.Row.Color)
+                    {
+                        ctx.TextAlign = "right";
+                        ctx.FillStyle = Theme.LabelText;
+                        ctx.FillText($"{brush.Opacity} %", PainterWidget.OpacityField(b).Right - 6, c.Center.Y);
+                        ctx.TextAlign = "left";
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     void DrawWidget(CanvasRenderingContext2D ctx, EditorNode node, WidgetRow w)
     {
+        if (w.IsPainter) { DrawPainter(ctx, node, w); return; }
         var r = w.Bounds;
         node.Widgets.TryGetValue(w.Name, out var value);
         value ??= w.Spec.Default;

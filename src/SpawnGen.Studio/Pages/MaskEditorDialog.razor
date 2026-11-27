@@ -1,0 +1,211 @@
+@using SpawnDev.SpawnJS
+@using SpawnDev.SpawnJS.JSObjects
+@implements IDisposable
+@inject SpawnJSRuntime JS
+
+@*
+    The mask editor (Load Image's "Open in Mask Editor"): paint over a picture and get it back as a PNG whose painted pixels are transparent
+    (what Load Image turns into its mask). Every pixel stays in the page (AGENTS.md rule 4): the picture, the paint and the result are canvases
+    driven from here through SpawnJS, and the over-half rules (an existing mask, Invert, Save) are canvas filters (the SVG filters below), not
+    pixel loops. Done gets the PNG as a JS Blob, or null when cancelled or the picture cannot be read.
+*@
+@* "maskeditor" (and visible) only once the picture is drawn and the pointer is listened to: a press before that would paint nothing *@
+<div class="@(_ready ? "maskeditor" : "maskeditor-loading")" style="@(_ready ? "" : "visibility:hidden; position:fixed; inset:0")">
+    <div class="me-bar">
+        <span>Mask editor</span>
+        <label>Brush <input class="me-size" type="range" min="2" max="200" @bind="_size" @bind:event="oninput" /></label>
+        <button class="me-mode @(_erase ? "" : "on")" @onclick="() => _erase = false">Paint</button>
+        <button class="me-mode @(_erase ? "on" : "")" @onclick="() => _erase = true">Erase</button>
+        <button class="me-clear" @onclick="Clear">Clear</button>
+        <button class="me-invert" @onclick="Invert">Invert</button>
+        <span class="me-spacer"></span>
+        <button class="me-cancel" @onclick="() => FinishAsync(null)">Cancel</button>
+        <button class="me-save" @onclick="SaveAsync">Save</button>
+    </div>
+    <div class="me-stage"><div class="me-stack"><canvas class="me-base" @ref="_baseRef"></canvas><canvas class="me-mask" @ref="_maskRef"></canvas></div></div>
+    <canvas @ref="_workRef" style="display:none"></canvas>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+        <defs>
+            @* alpha under one half -> the paint colour, else transparent: an existing mask on open, and Invert *@
+            <filter id="me-holes" color-interpolation-filters="sRGB">
+                <feComponentTransfer in="SourceGraphic" result="a"><feFuncA type="discrete" tableValues="1 0" /></feComponentTransfer>
+                <feFlood flood-color="#ff3b3b" result="paint" />
+                <feComposite in="paint" in2="a" operator="in" />
+            </filter>
+            @* alpha one half or more -> fully opaque, else transparent: what Save takes out of the picture *@
+            <filter id="me-solid" color-interpolation-filters="sRGB">
+                <feComponentTransfer><feFuncA type="discrete" tableValues="0 1" /></feComponentTransfer>
+            </filter>
+            @* every pixel opaque: the picture as it is shown under the paint *@
+            <filter id="me-opaque" color-interpolation-filters="sRGB">
+                <feComponentTransfer><feFuncA type="linear" slope="0" intercept="1" /></feComponentTransfer>
+            </filter>
+        </defs>
+    </svg>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string ImageUrl { get; set; } = "";
+    [Parameter, EditorRequired] public Func<Blob?, Task> Done { get; set; } = _ => Task.CompletedTask;
+
+    ElementReference _baseRef, _maskRef, _workRef;
+    HTMLCanvasElement? _base, _mask, _work;
+    CanvasRenderingContext2D? _bctx, _mctx, _wctx;
+    HTMLImageElement? _image;
+    Document? _document;
+    int _w, _h, _size = 40;
+    bool _erase, _drawing, _finished, _ready;
+    double _lastX, _lastY;
+    Action<PointerEvent>? _onDown, _onMove, _onUp;
+    Action<KeyboardEvent>? _onKey;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _image = new HTMLImageElement();
+        _image.Src = ImageUrl;
+        try { await _image.Decode(); }
+        catch (Exception) { await FinishAsync(null); return; }
+        (_w, _h) = (_image.NaturalWidth, _image.NaturalHeight);
+        if (_w <= 0 || _h <= 0) { await FinishAsync(null); return; }
+
+        _base = _baseRef.As<HTMLCanvasElement>();
+        _mask = _maskRef.As<HTMLCanvasElement>();
+        _work = _workRef.As<HTMLCanvasElement>();
+        foreach (var c in new[] { _base, _mask, _work }) { c.Width = _w; c.Height = _h; }
+        _bctx = _base.Get2DContext();
+        _mctx = _mask.Get2DContext();
+        _wctx = _work.Get2DContext();
+        // the picture shown opaque, and its transparent pixels (an existing mask) as paint
+        _bctx.Filter = "url(#me-opaque)";
+        _bctx.DrawImage(_image, 0, 0);
+        _bctx.Filter = "none";
+        _mctx.Filter = "url(#me-holes)";
+        _mctx.DrawImage(_image, 0, 0);
+        _mctx.Filter = "none";
+
+        _onDown = OnDown; _onMove = OnMove; _onUp = OnUp; _onKey = OnKey;
+        _mask.OnPointerDown += _onDown;
+        _mask.OnPointerMove += _onMove;
+        _mask.OnPointerUp += _onUp;
+        _mask.OnPointerCancel += _onUp;
+        _document = JS.Get<Document>("document");
+        _document.OnKeyDown += _onKey;
+        _ready = true;
+        StateHasChanged();
+    }
+
+    (double X, double Y) At(PointerEvent e)
+    {
+        using var r = _mask!.GetBoundingClientRect();
+        return ((e.ClientX - r.Left) * _w / r.Width, (e.ClientY - r.Top) * _h / r.Height);
+    }
+
+    void Stroke(double ax, double ay, double bx, double by)
+    {
+        var ctx = _mctx!;
+        ctx.GlobalCompositeOperation = _erase ? "destination-out" : "source-over";
+        ctx.StrokeStyle = "#ff3b3b";
+        ctx.LineWidth = _size;
+        ctx.LineCap = "round";
+        ctx.LineJoin = "round";
+        ctx.BeginPath();
+        ctx.MoveTo(ax, ay);
+        ctx.LineTo(bx + 0.01, by); // a press without a move still paints a dot
+        ctx.Stroke();
+        ctx.GlobalCompositeOperation = "source-over";
+    }
+
+    void OnDown(PointerEvent e)
+    {
+        try
+        {
+            _drawing = true;
+            _mask!.SetPointerCapture(e.PointerId);
+            (_lastX, _lastY) = At(e);
+            Stroke(_lastX, _lastY, _lastX, _lastY);
+        }
+        finally { e.Dispose(); }
+    }
+
+    void OnMove(PointerEvent e)
+    {
+        try
+        {
+            if (!_drawing) return;
+            var (x, y) = At(e);
+            Stroke(_lastX, _lastY, x, y);
+            (_lastX, _lastY) = (x, y);
+        }
+        finally { e.Dispose(); }
+    }
+
+    void OnUp(PointerEvent e) { _drawing = false; e.Dispose(); }
+
+    void OnKey(KeyboardEvent e)
+    {
+        try
+        {
+            if (e.Key != "Escape") return;
+            e.PreventDefault();
+            _ = InvokeAsync(() => FinishAsync(null));
+        }
+        finally { e.Dispose(); }
+    }
+
+    void Clear() => _mctx?.ClearRect(0, 0, _w, _h);
+
+    /// <summary>Painted (alpha over one half) becomes unpainted and the rest painted, all fully opaque: as the editor always did.</summary>
+    void Invert()
+    {
+        if (_mctx is null || _wctx is null || _mask is null || _work is null) return;
+        _wctx.ClearRect(0, 0, _w, _h);
+        _wctx.Filter = "url(#me-holes)";
+        _wctx.DrawImage(_mask, 0, 0);
+        _wctx.Filter = "none";
+        _mctx.ClearRect(0, 0, _w, _h);
+        _mctx.DrawImage(_work, 0, 0);
+    }
+
+    /// <summary>The picture with every pixel painted by more than half made transparent (the soft edge of a stroke is not a half-transparent hole).</summary>
+    async Task SaveAsync()
+    {
+        if (_wctx is null || _work is null || _base is null || _mask is null) { await FinishAsync(null); return; }
+        _wctx.ClearRect(0, 0, _w, _h);
+        _wctx.DrawImage(_base, 0, 0);
+        _wctx.GlobalCompositeOperation = "destination-out";
+        _wctx.Filter = "url(#me-solid)";
+        _wctx.DrawImage(_mask, 0, 0);
+        _wctx.Filter = "none";
+        _wctx.GlobalCompositeOperation = "source-over";
+        var png = await _work.ToBlobAsync("image/png");
+        await FinishAsync(png);
+    }
+
+    async Task FinishAsync(Blob? result)
+    {
+        if (_finished) { result?.Dispose(); return; }
+        _finished = true;
+        Detach();
+        await Done(result);
+    }
+
+    void Detach()
+    {
+        if (_mask is not null)
+        {
+            if (_onDown is not null) _mask.OnPointerDown -= _onDown;
+            if (_onMove is not null) _mask.OnPointerMove -= _onMove;
+            if (_onUp is not null) { _mask.OnPointerUp -= _onUp; _mask.OnPointerCancel -= _onUp; }
+        }
+        if (_document is not null && _onKey is not null) _document.OnKeyDown -= _onKey;
+    }
+
+    public void Dispose()
+    {
+        Detach();
+        _bctx?.Dispose(); _mctx?.Dispose(); _wctx?.Dispose();
+        _base?.Dispose(); _mask?.Dispose(); _work?.Dispose();
+        _image?.Dispose(); _document?.Dispose();
+    }
+}

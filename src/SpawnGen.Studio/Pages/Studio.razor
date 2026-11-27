@@ -613,6 +613,11 @@
             </div>
         }
 
+        @if (_maskEditor is { } maskEditor)
+        {
+            <MaskEditorDialog ImageUrl="@maskEditor.Url" Done="MaskEditorDoneAsync" />
+        }
+
         @if (_templatesOpen)
         {
             var groups = _templateIndex ?? [];
@@ -2250,15 +2255,31 @@
     // ---- mask editor ----
 
     /// <summary>Paints a mask over the picture of a Load Image node: the result is a new picture whose painted pixels are transparent, which the node turns into its mask.</summary>
+    /// <summary>The mask editor while it is open: the picture it edits and where its result goes.</summary>
+    (string Url, TaskCompletionSource<Blob?> Done)? _maskEditor;
+
+    Task MaskEditorDoneAsync(Blob? png)
+    {
+        var open = _maskEditor;
+        _maskEditor = null;
+        StateHasChanged();
+        _studio?.Focus();
+        if (open is { } o) o.Done.TrySetResult(png);
+        else png?.Dispose();
+        return Task.CompletedTask;
+    }
+
     async Task OpenMaskEditorAsync(EditorNode node)
     {
         if (_engine is null) { ShowMessage("There is no engine to keep the masked picture on."); return; }
         if (node.Widgets.GetValueOrDefault("image") as string is not { Length: > 0 } name) { ShowMessage("Pick a picture in the Load Image node first."); return; }
         try
         {
-            // the editor's PNG is a JS Blob, which goes to the engine as it is (index.html's spawngenMaskEditor)
-            using var editor = JS.Get<Function>("spawngenMaskEditor");
-            using var png = await editor.CallAsync<Blob?>(null, _engine.ViewUrl(name, "", "input"));
+            // the editor's PNG is a JS Blob, which goes to the engine as it is (MaskEditorDialog keeps every pixel in the page)
+            var done = new TaskCompletionSource<Blob?>();
+            _maskEditor = (_engine.ViewUrl(name, "", "input"), done);
+            StateHasChanged();
+            using var png = await done.Task;
             if (png is null) return;
             var stem = System.IO.Path.GetFileNameWithoutExtension(name);
             var stored = await _engine.UploadFileAsync(stem.StartsWith("mask-") ? stem + ".png" : $"mask-{stem}.png", png);

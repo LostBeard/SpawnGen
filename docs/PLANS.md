@@ -526,7 +526,12 @@ ModelPatchLoader; Wan 2.1 I2V 14B + wav2vec2). Ranked by what they unlock: (i) A
 Qwen-Image VAE, a Qwen3 encoder; ModelPatchLoader also serves InfiniteTalk), (ii) InfiniteTalk (Wan 2.1 14B is already parked on Y:;
 audio encoders open talking-head video), (iii) MOSS + MoGe (two new families). Each goes through the usual path: ComfyUI reference run,
 what the library lacks to Tuvok, nodes here, parity.
-**Still open on Painter itself:** (1) the rule inside a soft stroke (above); (2) the mask editor port.
+**Mask editor ported, 2026-11-27:** `Pages/MaskEditorDialog.razor` replaces index.html's hand-written spawngenMaskEditor (removed): the
+same tools and result, canvases driven through SpawnJS, and its three over-half rules (an existing mask on open, Invert, Save) are
+canvas filters (inline SVG feComponentTransfer, discrete) instead of pixel loops, so no pixel enters .NET. drive-maskeditor.js now runs
+on the real GPU (it had --disable-gpu = SwiftShader), reads the run's result from the page's blobs (the History panel lost its
+thumbnails, which had made it stale), and checks reopen + Invert: 8 / 8; red-checked (the open-time filter off: 4 fail).
+**Still open on Painter itself:** the rule inside a soft stroke (above).
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

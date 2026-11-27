@@ -210,9 +210,68 @@ public static class PainterWidget
         return new Rect(box.X + (box.Width - w * s) / 2, box.Y + (box.Height - h * s) / 2, w * s, h * s);
     }
 
+    /// <summary>What a press on the widget lands on.</summary>
+    public enum Part { None, Canvas, Brush, Eraser, SizeSlider, Color, Opacity, HardnessSlider, WidthSlider, HeightSlider, Background, Clear }
+
+    /// <summary>A row's control area: right of its label (the Clear row is all control).</summary>
+    public static Rect Control(Rect row) => new(row.X + row.Width * 0.3, row.Y, row.Width * 0.7, row.Height);
+
+    /// <summary>A slider row's track: the control less the value shown at its right.</summary>
+    public static Rect Track(Rect row) { var c = Control(row); return new Rect(c.X + 6, c.Y, Math.Max(10, c.Width - 58), c.Height); }
+
+    /// <summary>The colour row's opacity field (the percent at its right); the rest of the control is the colour.</summary>
+    public static Rect OpacityField(Rect row) { var c = Control(row); return new Rect(c.Right - 52, c.Y, 52, c.Height); }
+
+    /// <summary>A slider row's range and step (Cursor Size 1..200, Hardness 0..100, Width and Height 64..4096 by 64), or null.</summary>
+    public static (int Min, int Max, int Step)? Range(Row row) => row switch
+    {
+        Row.CursorSize => (MinSize, MaxSize, 1),
+        Row.Hardness => (0, 100, 1),
+        Row.Width or Row.Height => (64, 4096, 64),
+        _ => null,
+    };
+
+    /// <summary>The value a slider takes at world x: the track's fraction of the range, to the nearest step, clamped.</summary>
+    public static int SliderValue(Rect track, double x, int min, int max, int step)
+    {
+        double f = Math.Clamp((x - track.X) / track.Width, 0, 1);
+        return Math.Clamp(min + (int)Math.Round(f * (max - min) / step) * step, min, max);
+    }
+
+    /// <summary>Where a slider's thumb sits for a value.</summary>
+    public static double ThumbX(Rect track, int value, int min, int max) => track.X + track.Width * Math.Clamp((value - min) / (double)(max - min), 0, 1);
+
+    /// <summary>The part of the widget at a world point (<paramref name="shown"/> is the canvas as drawn, see <see cref="Fit"/>).</summary>
+    public static (Part Part, Row? Row, Rect Bounds) PartAt(Layout lay, Rect shown, Point world)
+    {
+        if (shown.Contains(world)) return (Part.Canvas, null, shown);
+        foreach (var (row, b) in lay.Rows)
+        {
+            if (!b.Contains(world)) continue;
+            var c = Control(b);
+            if (row == Row.Clear) return (Part.Clear, row, b);
+            if (!c.Contains(world)) return (Part.None, row, b);
+            return row switch
+            {
+                Row.Tool => (world.X < c.X + c.Width / 2 ? Part.Brush : Part.Eraser, row, b),
+                Row.CursorSize => (Part.SizeSlider, row, b),
+                Row.Hardness => (Part.HardnessSlider, row, b),
+                Row.Width => (Part.WidthSlider, row, b),
+                Row.Height => (Part.HeightSlider, row, b),
+                Row.Color => (OpacityField(b).Contains(world) ? Part.Opacity : Part.Color, row, b),
+                Row.Background => (Part.Background, row, b),
+                _ => (Part.None, row, b),
+            };
+        }
+        return (Part.None, null, default);
+    }
+
     /// <summary>A world point as a canvas position (fractional pixels: a stamp centre).</summary>
     public static (double X, double Y) ToCanvas(Rect shown, int w, int h, Point world) =>
         ((world.X - shown.X) / shown.Width * w, (world.Y - shown.Y) / shown.Height * h);
+
+    /// <summary>The widget names <see cref="EditorView.WidgetActivated"/> reports for the brush's colour and opacity (they are not inputs).</summary>
+    public const string ColorEdit = "painter:color", OpacityEdit = "painter:opacity";
 
     // ---- the upload ----
 

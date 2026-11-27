@@ -30,21 +30,35 @@ const X = 312, Y = 126, W = 426, K = W / 512;   // screen = X + bitmap * K
   });
   await page.waitForTimeout(1500);
 
-  const at = (bx, by) => [X + bx * K, Y + by * K];
-  const dot = async (bx, by) => { const [x, y] = at(bx, by); await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.up(); await page.waitForTimeout(250); };
+  // 2026-11-27: the canvas is located on every stroke (focusing a slider can scroll the page, which moved the canvas off X, Y and made the
+  // erase-soft case time out on 2026-11-26); a canvas that is not where the old constants say is reported, so earlier fixtures stay checkable
+  let R = { x: X, y: Y, k: K };
+  const locate = async () => {
+    const r = await page.evaluate(() => { const c = document.querySelector('[data-node-id] canvas'); if (!c) return null; const b = c.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, bw: c.width }; });
+    if (!r) throw new Error('no painter canvas');
+    R = { x: r.x, y: r.y, k: r.w / r.bw };
+    if (Math.abs(r.x - X) > 0.5 || Math.abs(r.y - Y) > 0.5 || Math.abs(R.k - K) > 1e-3) console.log(`  canvas at (${r.x.toFixed(1)}, ${r.y.toFixed(1)}) scale ${R.k.toFixed(4)}, not (${X}, ${Y}) ${K.toFixed(4)}`);
+  };
+  const at = (bx, by) => [R.x + bx * R.k, R.y + by * R.k];
+  const dot = async (bx, by) => { await locate(); const [x, y] = at(bx, by); await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.up(); await page.waitForTimeout(250); };
   const line = async (ax, ay, bx, by, steps = 16) => {
+    await locate();
     const [x0, y0] = at(ax, ay), [x1, y1] = at(bx, by);
     await page.mouse.move(x0, y0); await page.mouse.down(); await page.mouse.move(x1, y1, { steps }); await page.mouse.up(); await page.waitForTimeout(300);
   };
   // the sliders are role=slider thumbs: focused, then moved with the keyboard (Home = minimum, End = maximum, arrows = one step)
   const sliders = page.locator('[data-node-id] [role="slider"]');
   const slider = async (index, keys) => { await sliders.nth(index).focus(); for (const k of keys) await page.keyboard.press(k); await page.waitForTimeout(150); };
+  // set slider `index` (minimum `min`, step `step`) to `value`: Home, then one ArrowRight per step
+  const set = async (index, min, value, step = 1) => { await sliders.nth(index).focus(); await page.keyboard.press('Home'); for (let i = 0; i < (value - min) / step; i++) await page.keyboard.press('ArrowRight'); await page.waitForTimeout(150); };
   const texts = () => page.evaluate(() => [...document.querySelectorAll('[data-node-id] span')].filter(e => e.children.length === 0).map(e => e.textContent.trim()).filter(Boolean).join(' | '));
   const sliderInfo = () => page.evaluate(() => [...document.querySelectorAll('[data-node-id] [role="slider"]')].map(e => `${e.getAttribute('aria-valuemin')}..${e.getAttribute('aria-valuemax')} now ${e.getAttribute('aria-valuenow')}`).join(' | '));
   const opacity = async v => { const f = page.locator('[data-node-id] input[type=number]').first(); await f.click(); await f.fill(String(v)); await f.press('Enter'); await page.waitForTimeout(150); };
   const colour = async hex => { await page.evaluate(h => { const c = document.querySelector('[data-node-id] input[type=color]'); c.value = h; c.dispatchEvent(new Event('input', { bubbles: true })); c.dispatchEvent(new Event('change', { bubbles: true })); }, hex); await page.waitForTimeout(150); };
-  const tool = async name => { await page.locator(`[data-node-id] button:has-text("${name}")`).first().click(); await page.waitForTimeout(150); };
-  const clear = async () => { await page.locator('[data-node-id] button:has-text("Clear")').first().click(); await page.waitForTimeout(300); };
+  // buttons are clicked through the DOM: a scrolled page leaves them "outside of the viewport" for Playwright's pointer click
+  const button = async name => { const ok = await page.evaluate(n => { const b = [...document.querySelectorAll('[data-node-id] button')].find(e => e.textContent.trim().includes(n)); if (b) b.click(); return !!b; }, name); if (!ok) throw new Error(`no ${name} button`); };
+  const tool = async name => { await button(name); await page.waitForTimeout(150); };
+  const clear = async () => { await button('Clear'); await page.waitForTimeout(300); };
   const save = async name => {
     const out = JSON.parse(await page.evaluate(async () => JSON.stringify((await window.app.graphToPrompt()).output)));
     const node = Object.values(out)[0];
@@ -74,8 +88,39 @@ const X = 312, Y = 126, W = 426, K = W / 512;   // screen = X + bitmap * K
     'line-fast-hard100': async () => { await opacity(100); await line(60, 200, 460, 300, 2); },
     'line-red': async () => { await colour('#ff0000'); await line(100, 150, 400, 150); },
     'erase-through-line': async () => { await line(100, 256, 400, 256); await tool('Eraser'); await dot(256, 256); await tool('Brush'); },
-    'erase-soft': async () => { await colour('#ffffff'); await line(100, 256, 400, 256); await tool('Eraser'); await slider(1, ['Home']); await dot(256, 256); await tool('Brush'); await slider(1, ['End']); },
+    // (the old 'erase-soft' case focused slider 1 in Eraser mode, which is Width there, not Hardness: replaced by eraser-controls / erase-*-b)
     'edge-dot': async () => { await dot(2, 256); },
+    'eraser-controls': async () => {
+      console.log('  brush mode : sliders ' + await sliderInfo() + ' | ' + await texts());
+      await tool('Eraser');
+      console.log('  eraser mode: sliders ' + await sliderInfo() + ' | ' + await texts() + ' | number fields ' + await page.evaluate(() => document.querySelectorAll('[data-node-id] input[type=number]').length) + ' | colour inputs ' + await page.evaluate(() => document.querySelectorAll('[data-node-id] input[type=color]').length));
+      await tool('Brush'); },
+    // 2026-11-27: the cases below set every setting they rely on (set = Home then n steps right), so they do not depend on the cases above
+    ...Object.fromEntries([0, 10, 25, 50, 75, 90, 100].map(h => [`dot-size50-hard${String(h).padStart(3, '0')}-b`, async () => {
+      await tool('Brush'); await opacity(100); await set(0, 1, 50); await set(1, 0, h); await dot(256, 256); }])),
+    ...Object.fromEntries([0, 50].map(h => [`dot-size100-hard${String(h).padStart(3, '0')}-b`, async () => {
+      await tool('Brush'); await opacity(100); await set(0, 1, 100); await set(1, 0, h); await dot(256, 256); }])),
+    // every setting is changed in Brush mode (where slider 1 is Hardness), then the Eraser is used: does it take the brush's opacity / hardness?
+    'erase-opacity50': async () => {
+      await tool('Brush'); await opacity(100); await set(0, 1, 50); await set(1, 0, 100); await line(100, 256, 400, 256);
+      await opacity(50); await tool('Eraser'); await dot(256, 256); await tool('Brush'); await opacity(100); },
+    'erase-soft-b': async () => {
+      await tool('Brush'); await opacity(100); await set(0, 1, 50); await set(1, 0, 100); await line(100, 256, 400, 256);
+      await set(1, 0, 0); await tool('Eraser'); await dot(256, 256); await tool('Brush'); await set(1, 0, 100); },
+    'edge-dot-b': async () => { await tool('Brush'); await opacity(100); await set(0, 1, 50); await set(1, 0, 100); await dot(2, 256); },
+    // Width / Height changed AFTER painting: does the painting stay, scale, crop, or clear? (64 per step: 512 -> 256 is 4 steps left)
+    'size-change-after-paint': async () => {
+      await tool('Brush'); await opacity(100); await set(0, 1, 50); await set(1, 0, 100); await dot(128, 128); await dot(384, 384);
+      await slider(2, ['ArrowLeft', 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']); await slider(3, ['ArrowRight', 'ArrowRight']); await page.waitForTimeout(500);
+      console.log('  after the size change: ' + await sliderInfo() + ' | canvas ' + await page.evaluate(() => { const c = document.querySelector('[data-node-id] canvas'); return c ? `${c.width}x${c.height} shown ${c.getBoundingClientRect().width.toFixed(0)}x${c.getBoundingClientRect().height.toFixed(0)}` : 'none'; })); },
+    'paint-after-size-change': async () => { await dot(128, 128); },
+    // shrink then grow back without clearing: is the cropped part lost (the canvas keeps only what it shows) or kept?
+    'shrink-then-grow': async () => {
+      await tool('Brush'); await opacity(100); await set(0, 1, 50); await set(1, 0, 100); await set(2, 64, 512, 64); await set(3, 64, 512, 64);
+      // arrows from the current value (set() presses Home first, which passes through 64 and crops everything)
+      await dot(128, 128); await dot(384, 384); await slider(2, ['ArrowLeft', 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']); await page.waitForTimeout(400);
+      await slider(2, ['ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight']); await page.waitForTimeout(400); },
+    'size-restore': async () => { await set(2, 64, 512, 64); await set(3, 64, 512, 64); console.log('  restored: ' + await sliderInfo()); },
   };
   for (const [name, action] of Object.entries(cases)) {
     if (process.env.ONLY && !name.includes(process.env.ONLY)) continue;

@@ -451,8 +451,25 @@ falloff and spacing still to measure), then the Studio and its drive, then the f
 - A stroke is a continuous line with round caps (from x 100 to 400 at size 50: 75..424), also when the pointer moves fast (straight
   segments between pointer positions). The colour is stored as it is (#ff0000 -> 255, 0, 0), straight alpha.
 - The eraser removes alpha (a hard eraser dot through a line leaves 0, with an antialiased rim).
-- Not measured yet (the probe stopped at the eraser cases: after choosing Eraser the Brush button was off-screen): a soft
-  eraser, eraser opacity, a dot at the canvas edge, what Width / Height do to an existing painting, what a linked image shows.
+- **Settled 2026-11-27** (same probe, now locating the canvas on every stroke; out/painter-brush/*-b.png, erase-*, edge-dot-b,
+  size-change-*, shrink-then-grow):
+  - **Hardness falloff:** alpha = 255 x clamp((R_out - d) / (R_out - R_in), 0, 1), rounded, with R_in = r x hardness and
+    R_out = r x (1 + (1 - hardness) / 2), d = distance from the stamp centre (the pixel corner under the pointer) to the pixel
+    centre. Exact on every measured pixel of the ramp for r 25 at hardness 0, 10, 25, 50, 75, 90 and r 50 at 0 and 50 (e.g. r 25,
+    hardness 90: 51 119 187; hardness 0: centre 250, not 255). The 0.48 of 11-26 was this 0.5 read off whole pixels. At 100 it is the
+    hard antialiased disc. It reads as a radial gradient, opaque to r x hardness, transparent at R_out.
+  - **The Eraser has its own controls:** Cursor Size, Width, Height only (no colour row, no opacity field, no Hardness: in Eraser mode
+    slider 1 is Width, which is what broke the 11-26 probe). It ignores the brush's opacity (50 % set: erases to 0) and hardness (0
+    set: the same pixels as the hard eraser): a hard, full eraser of Cursor Size.
+  - **Edge:** a stamp at the canvas edge is clipped (x 0..26 for a 50 dot at x 2), nothing wraps.
+  - **Width / Height on a painting:** the canvas bitmap takes the new size at once (256 x 640, shown 426 wide), the painting stays
+    at its pixels from the top-left corner, NOT scaled; what falls outside is gone: shrinking to 256 and growing back to 512 keeps
+    only the dot inside 256. The uploaded file is the new size.
+  - **A linked image** (`probe-comfy-painter-linked.js`, out/painter-linked/): the widget shows the upstream Load Image's picture at
+    once (no run needed) as an `<img>` under the canvas; the canvas bitmap holds only the strokes (transparent elsewhere). The
+    Width, Height and Background rows are HIDDEN while an image is linked, a "W x H" label sits under the canvas, and the canvas
+    takes the picture's size (a 64 x 512 picture: canvas 64 x 512) with the painting cropped from the top-left as above. The
+    pointer is drawn as a ring of the brush size.
 - SpawnGen will not match the antialiased rim pixel for pixel (the browser's own rasteriser draws it): the geometry, the falloff,
   the opacity rule and the eraser are what its strokes must match, with a stated tolerance at the rim.
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its

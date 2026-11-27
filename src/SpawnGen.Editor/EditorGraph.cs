@@ -60,6 +60,10 @@ public sealed class EditorNode
     public NodePreview? BoxesBackground { get; set; }
     /// <summary>Create Layered Image: what its last run reported for the compositor editor: view state like <see cref="Previews"/>.</summary>
     public CompositorRun? CompositorRun { get; set; }
+    /// <summary>Painter: the brush its widget's controls set (view state: ComfyUI keeps it in the widget, not in the node, and never saves it).</summary>
+    public PainterWidget.Brush PainterBrush { get; set; } = new();
+    /// <summary>Painter: the size of the picture linked to its <c>image</c> input as the page has it (null while there is none or it is not loaded): the canvas takes it.</summary>
+    public (int W, int H)? PainterPicture { get; set; }
     /// <summary>Widget values by input name (long, double, bool or string).</summary>
     public Dictionary<string, object?> Widgets { get; init; } = new(StringComparer.Ordinal);
     /// <summary>ComfyUI's per-node <c>properties</c> object ("Node name for S&amp;R", cnr_id, ver, ...): kept as read so a saved workflow loses nothing.</summary>

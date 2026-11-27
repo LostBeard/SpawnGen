@@ -179,7 +179,7 @@
                 @for (int i = 0; i < _subgraphStack.Count; i++)
                 {
                     var level = i;
-                    <button @onclick="() => ExitSubgraphTo(level)">@(level == 0 ? _tabs.Active?.Name ?? "Workflow" : _subgraphStack[level].Name)</button>
+                    <button @onclick="() => ExitSubgraphToAsync(level)">@(level == 0 ? _tabs.Active?.Name ?? "Workflow" : _subgraphStack[level].Name)</button>
                     <span>›</span>
                 }
                 <b>@(SubgraphLibrary.Get(SubgraphEditing.EditedId(_doc) ?? "")?.Name ?? "Subgraph")</b>
@@ -613,6 +613,11 @@
             </div>
         }
 
+        @if (_maskEditor is { } maskEditor)
+        {
+            <MaskEditorDialog ImageUrl="@maskEditor.Url" Done="MaskEditorDoneAsync" />
+        }
+
         @if (_templatesOpen)
         {
             var groups = _templateIndex ?? [];
@@ -901,6 +906,103 @@
         public (int Index, string Field)? Box { get; init; }
         /// <summary>A crop region's field being edited (Crop Image): "x", "y", "width", "height" or "ratio".</summary>
         public string? Crop { get; init; }
+        /// <summary>A Painter brush setting being edited (not an input): <see cref="PainterWidget.ColorEdit"/> or <see cref="PainterWidget.OpacityEdit"/>.</summary>
+        public string? Painter { get; init; }
+    }
+
+    readonly SpawnGen.Studio.Canvas.PainterSurface _painter = new();
+
+    /// <summary>
+    /// Painter's colour, opacity and Background: an editor over that part of its widget. The colour and opacity are the brush's (view state),
+    /// the Background is the node's bg_color input.
+    /// </summary>
+    bool OpenPainterEdit(EditorNode node, string name)
+    {
+        if (name is not (PainterWidget.ColorEdit or PainterWidget.OpacityEdit or PainterWidget.BackgroundInput)) return false;
+        if (_view.Hits.Geometry(node).Widgets.FirstOrDefault(w => w.IsPainter) is not { } row) return false;
+        var (lay, _, _, _) = _view.PainterGeometry(node, row);
+        var at = name switch
+        {
+            PainterWidget.ColorEdit => PainterWidget.Control(lay.Rows.First(r => r.Row == PainterWidget.Row.Color).Bounds),
+            PainterWidget.OpacityEdit => PainterWidget.OpacityField(lay.Rows.First(r => r.Row == PainterWidget.Row.Color).Bounds),
+            _ => PainterWidget.Control(lay.Rows.First(r => r.Row == PainterWidget.Row.Background).Bounds),
+        };
+        var topLeft = _view.Viewport.WorldToScreen(new Point(at.X, at.Y));
+        var scale = _view.Viewport.Scale;
+        bool brushSetting = name != PainterWidget.BackgroundInput;
+        _edit = new EditState
+        {
+            NodeId = node.Id, Name = brushSetting ? null : name, Painter = brushSetting ? name : null,
+            Spec = name == PainterWidget.OpacityEdit ? new WidgetSpec(WidgetKind.Int) { Min = 0, Max = 100, Step = 1 } : new WidgetSpec(WidgetKind.Color),
+            Bounds = new Rect(topLeft.X, topLeft.Y, Math.Max(at.Width * scale, 40), Math.Max(at.Height * scale, 28)),
+            Text = name switch
+            {
+                PainterWidget.ColorEdit => node.PainterBrush.Color,
+                PainterWidget.OpacityEdit => node.PainterBrush.Opacity.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                _ => PainterWidget.NormalizeColor(node.Widgets.GetValueOrDefault(PainterWidget.BackgroundInput) as string) ?? "#000000",
+            },
+        };
+        _focusEdit = true;
+        StateHasChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// Before a prompt is built: every Painter on the canvas whose painting changed since its last upload sends it to the engine (the PNG Blob
+    /// goes from the page's canvas to the engine, never through .NET) and names it in <c>mask</c>, as ComfyUI's widget does. False when an
+    /// upload was refused (the run is not queued).
+    /// </summary>
+    async Task<bool> UploadPaintingsAsync()
+    {
+        // the level on the canvas
+        if (!await UploadLevelAsync(_doc, PainterScope(_subgraphStack.Count))) return false;
+        // the outer levels of an open subgraph (their graphs are JSON on the stack): their mask values are written into that JSON, which RootJson builds from
+        for (int i = 0; i < _subgraphStack.Count; i++)
+        {
+            var scope = PainterScope(i);
+            if (_painter.Pending(scope).Count == 0) continue;
+            var level = new EditorDocument(Registry);
+            ComfyWorkflow.Load(_subgraphStack[i].Json, level);
+            if (!await UploadLevelAsync(level, scope)) return false;
+            _subgraphStack[i] = _subgraphStack[i] with { Json = ComfyWorkflow.Save(level, _renderer.MeasureText) };
+        }
+        return true;
+    }
+
+    /// <summary>The painter scope of subgraph level <paramref name="depth"/> of the active tab (0 is the tab's workflow): as PainterSurface.Scope gives it there.</summary>
+    string PainterScope(int depth) => _tabs.ActiveId + "/" + string.Join("/", _subgraphStack.Take(depth).Select(l => l.Name));
+
+    async Task<bool> UploadLevelAsync(EditorDocument level, string scope)
+    {
+        foreach (var nodeId in _painter.Pending(scope))
+        {
+            if (level.Graph.FindNode(nodeId) is not { } node) continue;
+            using var png = await _painter.ToPngAsync(scope, nodeId);
+            if (png is null) continue;
+            var name = PainterWidget.UploadName(nodeId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            var stored = await _engine!.UploadFileAsync(name, png);
+            if (stored is null) { ShowMessage($"{node.Title ?? "Painter"}: the engine did not take the painting."); return false; }
+            _painter.Uploaded(scope, nodeId);
+            level.SetWidget(nodeId, "mask", PainterWidget.MaskValue(stored));
+            level.EndGesture();
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Leaving subgraph levels: the paintings of every level being left go to the engine first, so their mask values are in the definitions
+    /// the levels are written back into (once the canvas has left a level, Queue cannot reach its paintings any more). Without an engine
+    /// they stay in the page and go when the level is open and Queue is pressed.
+    /// </summary>
+    async Task ExitSubgraphToAsync(int level)
+    {
+        if (_engine is not null)
+            while (_subgraphStack.Count > level)
+            {
+                if (!await UploadLevelAsync(_doc, PainterScope(_subgraphStack.Count))) break;
+                ExitSubgraphTo(_subgraphStack.Count - 1);
+            }
+        ExitSubgraphTo(level);
     }
 
     sealed class SearchState
@@ -946,6 +1048,12 @@
         _images ??= new ImageCache(JS);
         _renderer = new NodeRenderer(_view, _visuals, _images);
         _renderer.CropPictureUrl = CropPictureUrl;
+        // Painter nodes: their paintings live in the page by tab and subgraph level; a saved one comes back from the engine's input folder
+        _painter.Scope = () => _tabs.ActiveId + "/" + string.Join("/", _subgraphStack.Select(l => l.Name));
+        _renderer.Painter = _painter;
+        _renderer.PainterFileUrl = file => _engine?.ViewUrl(file, "", "input");
+        _view.PainterCanvas = _painter;
+        _painter.Changed += () => _studio?.MarkDirty();
         _view.CropPictureSize = id => _doc.Graph.FindNode(id) is { } cropped && CropPictureUrl(cropped) is { } url && _renderer.PictureSizes.TryGetValue(url, out var size)
             ? size : null;
         Server.EventReceived += OnServerEvent;
@@ -1563,6 +1671,7 @@
     {
         // the tab's models are no longer wanted: an engine that keeps models by a memory budget drops the idle ones only this tab used
         if (_engine is { } engine) _ = ReleaseTabModelsAsync(engine, id);
+        _painter.RemoveTab(id); // its Painter nodes' paintings (uploaded ones come back from their files if the workflow is opened again)
         bool wasActive = id == _tabs.ActiveId;
         if (wasActive && _subgraphStack.Count > 0) ExitSubgraphTo(0);
         if (!_tabs.Close(id))
@@ -1596,6 +1705,7 @@
     void OnWidgetActivated(int nodeId, string name)
     {
         var node = _doc.Graph.GetNode(nodeId);
+        if (OpenPainterEdit(node, name)) return;
         if (name == UploadWidget.Name && _view.Hits.Geometry(node).Widgets.FirstOrDefault(w => w.IsUpload) is { UploadFor: { } comboName })
         {
             OpenNodeUpload(node, comboName);
@@ -1737,6 +1847,15 @@
         text ??= "";
         // The node (or group) can be gone by the time the editor closes: packed into a subgraph, deleted, another workflow opened.
         if (e.IsGroup ? _doc.Graph.Groups.All(g => g.Id != e.NodeId) : _doc.Graph.FindNode(e.NodeId) is null) return;
+        if (e.Painter is { } painterSetting && _doc.Graph.FindNode(e.NodeId) is { } painterNode)
+        {
+            var brush = painterNode.PainterBrush;
+            if (painterSetting == PainterWidget.ColorEdit && PainterWidget.NormalizeColor(text) is { } colour) _view.SetPainterBrush(e.NodeId, brush with { Color = colour });
+            else if (painterSetting == PainterWidget.OpacityEdit && int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var opacity))
+                _view.SetPainterBrush(e.NodeId, brush with { Opacity = opacity });
+            _studio?.Focus();
+            return;
+        }
         if (e.Crop is { } cropField && e.Name is { } cropName)
         {
             _view.SetCropField(e.NodeId, cropName, cropField, text);
@@ -2136,15 +2255,31 @@
     // ---- mask editor ----
 
     /// <summary>Paints a mask over the picture of a Load Image node: the result is a new picture whose painted pixels are transparent, which the node turns into its mask.</summary>
+    /// <summary>The mask editor while it is open: the picture it edits and where its result goes.</summary>
+    (string Url, TaskCompletionSource<Blob?> Done)? _maskEditor;
+
+    Task MaskEditorDoneAsync(Blob? png)
+    {
+        var open = _maskEditor;
+        _maskEditor = null;
+        StateHasChanged();
+        _studio?.Focus();
+        if (open is { } o) o.Done.TrySetResult(png);
+        else png?.Dispose();
+        return Task.CompletedTask;
+    }
+
     async Task OpenMaskEditorAsync(EditorNode node)
     {
         if (_engine is null) { ShowMessage("There is no engine to keep the masked picture on."); return; }
         if (node.Widgets.GetValueOrDefault("image") as string is not { Length: > 0 } name) { ShowMessage("Pick a picture in the Load Image node first."); return; }
         try
         {
-            // the editor's PNG is a JS Blob, which goes to the engine as it is (index.html's spawngenMaskEditor)
-            using var editor = JS.Get<Function>("spawngenMaskEditor");
-            using var png = await editor.CallAsync<Blob?>(null, _engine.ViewUrl(name, "", "input"));
+            // the editor's PNG is a JS Blob, which goes to the engine as it is (MaskEditorDialog keeps every pixel in the page)
+            var done = new TaskCompletionSource<Blob?>();
+            _maskEditor = (_engine.ViewUrl(name, "", "input"), done);
+            StateHasChanged();
+            using var png = await done.Task;
             if (png is null) return;
             var stem = System.IO.Path.GetFileNameWithoutExtension(name);
             var stored = await _engine.UploadFileAsync(stem.StartsWith("mask-") ? stem + ".png" : $"mask-{stem}.png", png);
@@ -2441,7 +2576,7 @@
         _lightbox is not null ? () => _lightbox = null
         : _shortcutsOpen ? () => _shortcutsOpen = false
         : _settingsOpen ? () => _settingsOpen = false
-        : _subgraphStack.Count > 0 ? () => ExitSubgraphTo(_subgraphStack.Count - 1)
+        : _subgraphStack.Count > 0 ? () => _ = ExitSubgraphToAsync(_subgraphStack.Count - 1)
         : null;
 
     /// <summary>Shows a message for a few seconds; a failed run's message stays longer (it can carry advice worth reading to the end).</summary>
@@ -2738,6 +2873,8 @@
     /// <summary>Sends the graph once and then moves every seed on by its control after generate, as ComfyUI does. False when the run could not be queued.</summary>
     async Task<bool> QueueOnceAsync(bool front = false, IReadOnlyList<int>? targets = null)
     {
+        // Painters' paintings go to the engine first and are named in their mask inputs (ComfyUI's widget uploads when the prompt is built).
+        if (!await UploadPaintingsAsync()) return false;
         // Inside a subgraph the canvas shows only its inside: run the tab's whole workflow, with the edit.
         var runDoc = _doc;
         if (_subgraphStack.Count > 0)

@@ -9,8 +9,15 @@ const URL = process.env.STUDIO_URL || 'http://localhost:5280/';
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--disable-gpu', '--enable-unsafe-webgpu'] });
+  // the real GPU (TJ 2026-11-20: never SwiftShader / --disable-gpu, it froze NV1080)
+  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-webgpu-developer-features'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+  // every result file the page turns into a blob URL is kept, so the run's picture can be read (the History panel no longer has thumbnails)
+  await page.addInitScript(() => {
+    window.__resultBlobs = [];
+    const make = URL.createObjectURL;
+    URL.createObjectURL = function (b) { const u = make.call(URL, b); if (b instanceof Blob) window.__resultBlobs.push(b); return u; };
+  });
   const problems = [];
   page.on('console', m => { if (m.type() === 'error') problems.push(m.text()); });
   page.on('pageerror', e => problems.push('PAGEERROR ' + e.message));
@@ -49,25 +56,54 @@ const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applic
   await page.waitForTimeout(500);
   check('saving closes the editor and tells where the picture went', /Saved as mask-apple/.test(await page.locator('.toast').first().textContent().catch(() => '')), await page.locator('.toast').first().textContent().catch(() => ''));
 
-  await page.click('button:has-text("History")');
+  const from = await page.evaluate(() => window.__resultBlobs.length);
   await page.locator('button:has-text("Queue")').click();
-  for (let i = 0; i < 40; i++) { await page.waitForTimeout(500); if (i > 2 && await page.locator('button:has-text("Queue")').isVisible()) break; }
-  await page.waitForTimeout(800);
-  const stats = await page.evaluate(async () => {
-    const img = document.querySelector('.hist-thumbs img');
-    if (!img) return null;
-    await img.decode();
-    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
-    const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+  const status = () => page.evaluate(() => (document.querySelector('.runbar .status') || {}).textContent || '');
+  const t0 = Date.now();
+  await page.waitForTimeout(3000);
+  while (Date.now() - t0 < 120000 && /Running|Queued|Loading|Starting/i.test(await status())) await page.waitForTimeout(500);
+  await page.waitForTimeout(2000);
+  const stats = await page.evaluate(async from => {
+    const png = window.__resultBlobs.slice(from).filter(b => b.type === 'image/png').pop();
+    if (!png) return null;
+    const bmp = await createImageBitmap(png);
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const g = c.getContext('2d'); g.drawImage(bmp, 0, 0);
     const d = g.getImageData(0, 0, c.width, c.height).data;
     let white = 0;
     for (let i = 0; i < d.length; i += 4) if (d[i] > 200) white++;
     const at = (fx, fy) => d[((Math.floor(fy * c.height)) * c.width + Math.floor(fx * c.width)) * 4];
     return { w: c.width, h: c.height, fraction: white / (c.width * c.height), onStroke: at(0.3, 0.5), farAway: at(0.9, 0.5) };
-  });
+  }, from);
   console.log(JSON.stringify(stats));
   check('the mask picture is white on the stroke and black away from it', stats && stats.onStroke > 200 && stats.farAway < 50, JSON.stringify(stats));
   check('the painted area is a part of the picture, not all of it', stats && stats.fraction > 0.02 && stats.fraction < 0.5, stats && stats.fraction.toFixed(3));
+
+  // Open the editor again on the masked picture: its transparent pixels come back as paint; Invert swaps paint and no paint; Cancel keeps the node.
+  const paintAt = () => page.evaluate(() => {
+    const c = document.querySelector('.me-mask'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    const a = (fx, fy) => d[((Math.floor(fy * c.height)) * c.width + Math.floor(fx * c.width)) * 4 + 3];
+    return { onStroke: a(0.3, 0.5), farAway: a(0.9, 0.5) };
+  });
+  let reopened = false;
+  for (let y = 380; y < 640 && !reopened; y += 16)
+    for (let x = 300; x < 700 && !reopened; x += 40) {
+      await page.mouse.click(x, y, { button: 'right' });
+      await page.waitForTimeout(140);
+      if (await page.locator('.menu li:has-text("Open in Mask Editor")').count()) { await page.click('.menu li:has-text("Open in Mask Editor")'); reopened = true; }
+      else if (await page.locator('.menu').count()) { await page.keyboard.press('Escape'); await page.mouse.click(5, 850); }
+    }
+  await page.waitForSelector('.maskeditor');
+  await page.waitForTimeout(800);
+  const again = await paintAt();
+  check('reopened: the saved mask comes back as paint, nothing elsewhere', again.onStroke === 255 && again.farAway === 0, JSON.stringify(again));
+  await page.click('.me-invert');
+  await page.waitForTimeout(200);
+  const inverted = await paintAt();
+  check('Invert: the stroke unpainted, the rest painted', inverted.onStroke === 0 && inverted.farAway === 255, JSON.stringify(inverted));
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.maskeditor', { state: 'detached' });
+  check('Escape closes the editor without saving', true);
   check('no browser errors', problems.length === 0, problems.join(' | '));
   await browser.close();
   process.exit(results.every(Boolean) ? 0 : 1);

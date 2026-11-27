@@ -35,7 +35,7 @@ public sealed class LinkDraft
 /// </summary>
 public sealed class EditorView
 {
-    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap, DraggingCurvePoint, DraggingBox, DraggingCrop }
+    enum Mode { Idle, Panning, DraggingNodes, Resizing, DraggingLink, BoxSelecting, PressedWidget, DraggingGroup, ResizingGroup, Minimap, DraggingCurvePoint, DraggingBox, DraggingCrop, Painting, DraggingPainterSlider }
 
     const double DragThresholdPixels = 3;
 
@@ -246,6 +246,114 @@ public sealed class EditorView
 
     sealed record CropDrag(int NodeId, string Name, Rect Picture, double PW, double PH, CropWidget.Corner Corner, Point Start, CropWidget.Region Before, (double W, double H)? Aspect);
     CropDrag? _cropDrag;
+
+    // ---- Painter (the PAINTER widget) ----
+
+    /// <summary>Where Painter nodes' paintings live (the Studio sets it); without one a stroke changes nothing but the editor still answers.</summary>
+    public IPainterCanvas? PainterCanvas { get; set; }
+
+    sealed record PainterDrag(int NodeId, string Name, Rect Shown, int W, int H, PainterWidget.Stroke? Stroke, PainterWidget.Row? Slider, Rect Track);
+    PainterDrag? _painterDrag;
+
+    WidgetRow? PainterRow(Hit hit) =>
+        Document.Graph.FindNode(hit.NodeId) is { } n ? Hits.Geometry(n).Widgets.FirstOrDefault(w => w.Name == hit.Name && w.IsPainter) : null;
+
+    /// <summary>A Painter's canvas size now: the linked picture's (as the page has it), else its Width x Height.</summary>
+    public (int W, int H) PainterSize(EditorNode node)
+    {
+        bool linked = Document.Graph.LinkInto(node.Id, "image") is not null;
+        return PainterWidget.CanvasSize(linked ? node.PainterPicture : null,
+            node.Widgets.GetValueOrDefault(PainterWidget.WidthInput), node.Widgets.GetValueOrDefault(PainterWidget.HeightInput));
+    }
+
+    /// <summary>The Painter widget's layout and the canvas as drawn in it, for a node's PAINTER row.</summary>
+    public (PainterWidget.Layout Layout, Rect Shown, int W, int H) PainterGeometry(EditorNode node, WidgetRow row)
+    {
+        bool linked = Document.Graph.LinkInto(node.Id, "image") is not null;
+        var lay = PainterWidget.Lay(row.Bounds, node.PainterBrush.Tool, linked);
+        var (w, h) = PainterSize(node);
+        return (lay, PainterWidget.Fit(lay.CanvasBox, w, h), w, h);
+    }
+
+    /// <summary>Changes a Painter's brush (the colour and opacity the UI edits in place, see <see cref="PainterWidget.ColorEdit"/>).</summary>
+    public void SetPainterBrush(int nodeId, PainterWidget.Brush brush)
+    {
+        if (Document.Graph.FindNode(nodeId) is not { } node) return;
+        node.PainterBrush = brush.Clamped(); // the geometry is computed on demand: the Eraser's shorter widget shows on the next draw
+        ViewChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// A press on a Painter: on the canvas it starts a stroke; on Brush / Eraser it picks the tool; on a slider it sets the value and drags it;
+    /// on the colour, opacity or Background it asks the UI to edit them (<see cref="WidgetActivated"/>); Clear empties the painting.
+    /// </summary>
+    void PressPainter(int nodeId, WidgetRow row, Point world)
+    {
+        var node = Document.Graph.GetNode(nodeId);
+        var (lay, shown, w, h) = PainterGeometry(node, row);
+        var (part, prow, bounds) = PainterWidget.PartAt(lay, shown, world);
+        var brush = node.PainterBrush;
+        switch (part)
+        {
+            case PainterWidget.Part.Canvas:
+            {
+                var (x, y) = PainterWidget.ToCanvas(shown, w, h, world);
+                var stroke = new PainterWidget.Stroke(x, y, brush.Size);
+                PainterCanvas?.BeginStroke(nodeId, (w, h), brush.Effective(), x, y);
+                _painterDrag = new PainterDrag(nodeId, row.Name, shown, w, h, stroke, null, default);
+                _mode = Mode.Painting;
+                SetCursor("crosshair");
+                break;
+            }
+            case PainterWidget.Part.Brush or PainterWidget.Part.Eraser:
+                SetPainterBrush(nodeId, brush with { Tool = part == PainterWidget.Part.Brush ? PainterWidget.Tool.Brush : PainterWidget.Tool.Eraser });
+                break;
+            case PainterWidget.Part.SizeSlider or PainterWidget.Part.HardnessSlider or PainterWidget.Part.WidthSlider or PainterWidget.Part.HeightSlider:
+                _painterDrag = new PainterDrag(nodeId, row.Name, shown, w, h, null, prow, PainterWidget.Track(bounds));
+                _mode = Mode.DraggingPainterSlider;
+                DragPainterSlider(_painterDrag, world);
+                break;
+            case PainterWidget.Part.Color:
+                WidgetActivated?.Invoke(nodeId, PainterWidget.ColorEdit);
+                break;
+            case PainterWidget.Part.Opacity:
+                WidgetActivated?.Invoke(nodeId, PainterWidget.OpacityEdit);
+                break;
+            case PainterWidget.Part.Background:
+                WidgetActivated?.Invoke(nodeId, PainterWidget.BackgroundInput);
+                break;
+            case PainterWidget.Part.Clear:
+                PainterCanvas?.Clear(nodeId);
+                ViewChanged?.Invoke();
+                break;
+        }
+    }
+
+    void DragPainterSlider(PainterDrag d, Point world)
+    {
+        if (d.Slider is not { } slider || PainterWidget.Range(slider) is not { } range || Document.Graph.FindNode(d.NodeId) is not { } node) return;
+        int v = PainterWidget.SliderValue(d.Track, world.X, range.Min, range.Max, range.Step);
+        switch (slider)
+        {
+            case PainterWidget.Row.CursorSize: if (node.PainterBrush.Size != v) SetPainterBrush(d.NodeId, node.PainterBrush with { Size = v }); break;
+            case PainterWidget.Row.Hardness: if (node.PainterBrush.Hardness != v) SetPainterBrush(d.NodeId, node.PainterBrush with { Hardness = v }); break;
+            // Width and Height are the node's inputs (saved, sent with the prompt): the canvas follows them, keeping its top-left
+            case PainterWidget.Row.Width or PainterWidget.Row.Height:
+            {
+                string input = slider == PainterWidget.Row.Width ? PainterWidget.WidthInput : PainterWidget.HeightInput;
+                if (!Equals(node.Widgets.GetValueOrDefault(input), (long)v)) Document.SetWidget(d.NodeId, input, (long)v);
+                break;
+            }
+        }
+    }
+
+    void MovePainter(PainterDrag d, Point world)
+    {
+        if (d.Stroke is not { } stroke) return;
+        var (x, y) = PainterWidget.ToCanvas(d.Shown, d.W, d.H, world);
+        var stamps = stroke.MoveTo(x, y);
+        if (stamps.Count > 0) { PainterCanvas?.Stamps(d.NodeId, stamps); ViewChanged?.Invoke(); }
+    }
 
     WidgetRow? CropRow(Hit hit) =>
         Document.Graph.FindNode(hit.NodeId) is { } n ? Hits.Geometry(n).Widgets.FirstOrDefault(w => w.Name == hit.Name && w.IsCrop) : null;
@@ -564,6 +672,11 @@ public sealed class EditorView
                 Document.EndGesture();
                 break;
 
+            case HitKind.Widget when PainterRow(hit) is { } painterRow:
+                SelectOnly(hit.NodeId);
+                PressPainter(hit.NodeId, painterRow, world);
+                break;
+
             case HitKind.Widget when CropRow(hit) is { } cropRow:
                 SelectOnly(hit.NodeId);
                 PressCrop(hit.NodeId, cropRow, world);
@@ -697,6 +810,14 @@ public sealed class EditorView
                 DragCrop(cropDrag, world);
                 break;
 
+            case Mode.Painting when _painterDrag is { } paint:
+                MovePainter(paint, world);
+                break;
+
+            case Mode.DraggingPainterSlider when _painterDrag is { } sliderDrag:
+                DragPainterSlider(sliderDrag, world);
+                break;
+
             case Mode.Panning:
                 Viewport.Pan(screen.X - _lastScreen.X, screen.Y - _lastScreen.Y);
                 ViewChanged?.Invoke();
@@ -799,6 +920,16 @@ public sealed class EditorView
             case Mode.DraggingCrop:
                 Document.EndGesture();
                 _cropDrag = null;
+                break;
+            case Mode.Painting when _painterDrag is { } paint:
+                PainterCanvas?.EndStroke(paint.NodeId);
+                _painterDrag = null;
+                SetCursor("default");
+                ViewChanged?.Invoke();
+                break;
+            case Mode.DraggingPainterSlider:
+                Document.EndGesture();
+                _painterDrag = null;
                 break;
             case Mode.PressedWidget:
                 if (_moved && _number is not null) Document.EndGesture();

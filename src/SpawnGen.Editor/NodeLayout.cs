@@ -26,6 +26,9 @@ public sealed record WidgetRow(string Name, WidgetSpec Spec, Rect Bounds)
     /// <summary>A BOUNDING_BOXES widget: the canvas the boxes are drawn on (<see cref="BoxesWidget"/>), with its toolbar and the selected box's panel.</summary>
     public bool IsBoxes { get; init; }
 
+    /// <summary>Painter's PAINTER widget: the painting canvas and its rows (<see cref="PainterWidget"/>).</summary>
+    public bool IsPainter { get; init; }
+
     /// <summary>The upload button under a file combo (<see cref="UploadWidget"/>): pressing it picks a file for <see cref="UploadFor"/>.</summary>
     public bool IsUpload => Name == UploadWidget.Name && UploadFor is not null;
 
@@ -111,8 +114,10 @@ public static class NodeLayout
         var slotInputs = visible.Where(i => IsSlotRow(i, node, graph)).ToList();
         // Compare Images' IMAGECOMPARE widget is the picture itself (drawn as the preview with its split), not a row.
         // Create Bounding Boxes' optional BOUNDING_BOXES input (last_incoming) is the canvas's internal state: ComfyUI's editor does not show it.
+        // Painter's bg_color is the Background row inside its PAINTER widget (ComfyUI shows no separate row for it).
+        bool painter = schema.Inputs.Any(i => i.Widget?.WidgetType == PainterWidget.TypeName);
         var widgetInputs = visible.Where(i => i.Widget is not null && !IsSlotRow(i, node, graph) && i.Type.Name != "IMAGECOMPARE" && !i.Widget!.Hidden
-            && !(i.Type.Name == BoxesWidget.TypeName && i.Optional)).ToList();
+            && !(i.Type.Name == BoxesWidget.TypeName && i.Optional) && !(painter && i.Name == PainterWidget.BackgroundInput)).ToList();
         int slotRows = Math.Max(slotInputs.Count, schema.Outputs.Count);
 
         double width = node.Width ?? Math.Max(MinWidth, Math.Max(titleWidth,
@@ -120,6 +125,8 @@ public static class NodeLayout
         width = Math.Max(width, 90);
         // A box canvas needs room to draw on (ComfyUI's node opens 420 wide).
         if (node.Width is null && widgetInputs.Any(i => i.Type.Name == BoxesWidget.TypeName)) width = Math.Max(width, 380);
+        // Painter opens 450 wide in ComfyUI (its canvas 426 across).
+        if (node.Width is null && painter) width = Math.Max(width, 450);
 
         double slotsTop = node.Y + TitleHeight;
         var inputs = new List<SlotGeometry>();
@@ -142,14 +149,16 @@ public static class NodeLayout
         foreach (var spec in widgetInputs)
         {
             bool curve = spec.Type.Name == CurveWidget.TypeName, boxes = spec.Type.Name == BoxesWidget.TypeName,
-                crop = spec.Type.Name == CropWidget.TypeName && spec.Widget!.Kind == WidgetKind.Json, compositor = spec.Type.Name == CompositorEditor.TypeName;
+                crop = spec.Type.Name == CropWidget.TypeName && spec.Widget!.Kind == WidgetKind.Json, compositor = spec.Type.Name == CompositorEditor.TypeName,
+                painterRow = spec.Widget!.WidgetType == PainterWidget.TypeName;
             var (canvasW, canvasH) = boxes ? BoxesWidget.CanvasSize(node.Widgets) : (1, 1);
             double h = curve ? Math.Clamp((width - 2 * Padding) * 0.8, 120, 320)
                 : boxes ? BoxesWidget.RowHeight(width - 2 * Padding, canvasW, canvasH) + 4
                 : crop ? CropWidget.Height(width - 2 * Padding) + 4
+                : painterRow ? PainterWidget.Height(width - 2 * Padding, node.PainterBrush.Tool, graph.LinkInto(node.Id, "image") is not null) + 4
                 : spec.Widget!.Multiline ? MultilineWidgetHeight : WidgetRowHeight;
             var bounds = new Rect(node.X + Padding, y, width - 2 * Padding, h - 4);
-            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, IsBoxes = boxes, IsCrop = crop, IsCompositor = compositor, Label = compositor ? CompositorEditor.OpenLabel : spec.Label ?? (spec.DynamicParent is null ? spec.Name : Label(spec.Name)) });
+            widgets.Add(new WidgetRow(spec.Name, spec.Widget!, bounds) { IsCurve = curve, IsBoxes = boxes, IsCrop = crop, IsCompositor = compositor, IsPainter = painterRow, Label = compositor ? CompositorEditor.OpenLabel : spec.Label ?? (spec.DynamicParent is null ? spec.Name : Label(spec.Name)) });
             // The drop target for linking a value into this widget: the left edge of its row.
             inputs.Add(new SlotGeometry(SlotKind.Input, spec.Name, inputs.Count, spec.Type, new Point(node.X, bounds.Center.Y), true, false));
             y += h;

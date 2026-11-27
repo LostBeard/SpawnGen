@@ -455,8 +455,10 @@ falloff and spacing still to measure), then the Studio and its drive, then the f
   size-change-*, shrink-then-grow):
   - **Hardness falloff:** alpha = 255 x clamp((R_out - d) / (R_out - R_in), 0, 1), rounded, with R_in = r x hardness and
     R_out = r x (1 + (1 - hardness) / 2), d = distance from the stamp centre (the pixel corner under the pointer) to the pixel
-    centre. Exact on every measured pixel of the ramp for r 25 at hardness 0, 10, 25, 50, 75, 90 and r 50 at 0 and 50 (e.g. r 25,
-    hardness 90: 51 119 187; hardness 0: centre 250, not 255). The 0.48 of 11-26 was this 0.5 read off whole pixels. At 100 it is the
+    centre. Exact along the centre row for r 25 at hardness 0, 10, 25, 50, 75, 90 and r 50 at 0 and 50 (e.g. r 25, hardness 90: 51
+    119 187; hardness 0: centre 250, not 255); over the whole stamp 2 to 7 % of the pixels are one step UNDER it in a symmetric
+    pattern (Chrome dithers gradients) and the last pixel before R_out loses up to 4 to the circle's antialiased edge, never over
+    (PainterWidgetTests, red-checked). SpawnGen draws the same canvas gradient, so the browser gives it the same dither. The 0.48 of 11-26 was this 0.5 read off whole pixels. At 100 it is the
     hard antialiased disc. It reads as a radial gradient, opaque to r x hardness, transparent at R_out.
   - **The Eraser has its own controls:** Cursor Size, Width, Height only (no colour row, no opacity field, no Hardness: in Eraser mode
     slider 1 is Width, which is what broke the 11-26 probe). It ignores the brush's opacity (50 % set: erases to 0) and hardness (0
@@ -483,6 +485,53 @@ falloff and spacing still to measure), then the Studio and its drive, then the f
     pointer is drawn as a ring of the brush size.
 - SpawnGen will not match the antialiased rim pixel for pixel (the browser's own rasteriser draws it): the geometry, the falloff,
   the opacity rule and the eraser are what its strokes must match, with a stated tolerance at the rim.
+**Step 4, the widget: how it is built (2026-11-27).** The Studio is the only UI (Desktop is a Photino window on it), so the painting
+lives in the page as JS canvases end to end (AGENTS rule 4) and is driven from C# through SpawnJS wrappers (no raw JS; SpawnJS already
+has CreateRadialGradient, OffscreenCanvas, ConvertToBlob, GlobalCompositeOperation, GlobalAlpha). Parts:
+(a) `SpawnGen.Editor/PainterWidget.cs`, pure logic with tests: brush settings (Tool, Cursor Size 1..200 = 20, colour #ffffff,
+opacity 0..100 = 100, Hardness 0..100 = 100; view state per node, as ComfyUI keeps them outside the node), the stamp (R_in, R_out,
+the gradient stops the canvas gets), stamp placement along the pointer path at a fixed spacing carried across events, the canvas size
+(the linked picture's, else Width x Height), resize keeping the top-left, which rows show (Eraser: no colour / Hardness; a linked
+image: no Width / Height / Background, a "W x H" label), the layout, the upload name `painter-<node id>-<ms>.png` and the `mask` value
+"<name> [input]". Tests: the stamp formula against ComfyUI's dot fixtures (every ramp pixel exact), the event-count independence,
+the soft-line model against synth-soft-seg001 within the measured tolerance.
+(b) EditorView: a press on the canvas paints (a stroke), the rows edit the settings, Clear clears.
+(c) Studio: a `PainterSurface` per node (the painting canvas + the stroke canvas; a stroke draws at full alpha on the stroke canvas,
+then lands on the painting at the opacity, source-over; the Eraser draws hard stamps destination-out), NodeRenderer draws it over the
+linked picture or the node's background; on queue each Painter with strokes is uploaded (ConvertToBlob -> UploadFileAsync, bytes stay
+in JS) and its `mask` set before the prompt is compiled; a loaded workflow's `mask` file is drawn back into the canvas.
+(d) The drive: paint dots and a line through real pointer events, run, compare IMAGE / MASK with ComfyUI's fixtures.
+Also owed: the older mask editor (index.html spawngenMaskEditor) is hand-written JS; port it onto the same C# surface after (c).
+**Done 2026-11-27: (a) a8d961d, (b) 9ae9423, (c) + (d) in the commit after.** (c) `SpawnGen.Studio/Canvas/PainterSurface.cs` keeps each
+painting in two OffscreenCanvases (painting, stroke) per scope (tab + subgraph path) and node, NodeRenderer draws the widget (the linked
+picture or bg_color under the painting, the brush ring, the rows), the colour / opacity / Background edit in place, Queue uploads every
+changed painting first (ConvertToBlob -> UploadFileAsync, the bytes never enter .NET) and sets `mask`; a workflow naming an uploaded
+painting draws it back from the engine's input folder. (d) `drive-painter.js` 10/10 on the RX 590 against a local publish (red-checked:
+without the upload 4 fail): real pointer strokes, the Eraser, IMAGE / MASK pixels, no new upload without new strokes, and a soft stamp
+(size 50, hardness 50, clicked on the pixel corner) equal to ComfyUI's own painting of the same click within 1 / 255 (Save Image's float
+floor), 3064 painted pixels on both.
+**Subgraph levels, done 2026-11-27:** Queue also uploads the paintings of the outer levels of an open subgraph and writes their mask
+values into those levels' JSON on the stack (RootJson is built from it); leaving a level (breadcrumb, Escape, App mode, the builder) first
+uploads that level's paintings, so they are in the definition it is written back into. `drive-painter-subgraph.js` 13/13 (red-checked:
+without both, its two upload checks fail). Left as it is: with NO engine at all, a level left with strokes keeps them in the page until
+it is opened again and Queue is pressed (nothing can run without an engine anyway).
+**Step 6, the templates (checked 2026-11-27 against template-needs.json, commit 2fbb6d07 of Comfy-Org/workflow_templates): SIX use
+Painter, and none can run yet for reasons outside Painter.** Three are paid cloud API nodes (api_bria_eraser, api_bria_genfill:
+BriaEraser / BriaGenFill; api_bytedance_seedream_5_0_pro_image_edit: ByteDanceSeedreamNodeV3): SpawnGen has no API nodes (a decision
+for TJ: they need the user's Comfy account and send pictures to a cloud). Three need model families SpawnGen does not have:
+image_anima_lllite_image_inpainting (AnimaLLLiteApply, ModelPatchLoader; Anima base + LLLite inpainting + Qwen3 0.6B + Qwen-Image VAE),
+image_moss_image_color_depth_control (MOSSImageControl, LoadMoGeModel / MoGeInference / MoGeRender, SkipLayerGuidanceDiTSimple; MOSS +
+MoGe 3 ViT-g + Qwen3.5 9B int8), video_wan2_1_infinitetalk (WanInfiniteTalkToVideo, AudioEncoderLoader / AudioEncoderEncode,
+ModelPatchLoader; Wan 2.1 I2V 14B + wav2vec2). Ranked by what they unlock: (i) Anima LLLite inpainting (one image model on known parts:
+Qwen-Image VAE, a Qwen3 encoder; ModelPatchLoader also serves InfiniteTalk), (ii) InfiniteTalk (Wan 2.1 14B is already parked on Y:;
+audio encoders open talking-head video), (iii) MOSS + MoGe (two new families). Each goes through the usual path: ComfyUI reference run,
+what the library lacks to Tuvok, nodes here, parity.
+**Mask editor ported, 2026-11-27:** `Pages/MaskEditorDialog.razor` replaces index.html's hand-written spawngenMaskEditor (removed): the
+same tools and result, canvases driven through SpawnJS, and its three over-half rules (an existing mask on open, Invert, Save) are
+canvas filters (inline SVG feComponentTransfer, discrete) instead of pixel loops, so no pixel enters .NET. drive-maskeditor.js now runs
+on the real GPU (it had --disable-gpu = SwiftShader), reads the run's result from the page's blobs (the History panel lost its
+thumbnails, which had made it stale), and checks reopen + Invert: 8 / 8; red-checked (the open-time filter off: 4 fail).
+**Still open on Painter itself:** the rule inside a soft stroke (above).
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

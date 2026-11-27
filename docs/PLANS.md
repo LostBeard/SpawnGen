@@ -400,6 +400,15 @@ in its own window (Kokoro 0.32 GB, not 2.56); its new desktop convolution kernel
 image and inpainting included; suite 3540. Merge when ML 5.8.34 is on nuget.org. Still to measure: the latents against ComfyUI's
 for an SD VAE (the reference install has none).
 
+**2026-11-26 23:55: ML 5.8.34 is live and checked; VAE Encode on the SD ONNX checkpoints is deterministic.** Live on both sites:
+ILGPU 5.4.54, ML 5.8.34, Codecs 1.1.6, BootRecovery 1.0.1 (Pages run 45928935715). RX 590: Pages 17/17, the Space five, boot-retry
+4/4, model-tabs 9/9, compositor 33/33, PSD 11/11 and the UI drives on both. Before the merge, locally: two visits of all 17 (17/17
+each), `VaeEncodeRepeatTests` 3/3 with 0 differing latent values, suite 3540. The encoder session runs with `RandomAtMean`
+(`OnnxCheckpointModels`), so image to image and inpainting repeat exactly for a fixed seed (eight desktop-server examples run
+twice: all 9 pictures identical). 5.8.34 also brings the browser shader cache: the first example of a visit (it includes the
+engine starting) took 51 s on a first visit and 30 s on the second. Open: the latents against ComfyUI's for an SD VAE were not
+measured (the reference install has none); by the encoder graph's arithmetic the result is the posterior mean.
+
 ## Now: Painter (the node and its editor), started 2026-11-25
 
 The last of ComfyUI's frontend editors (5 templates use it). SpawnGen has neither the node nor the editor. From the reference server's

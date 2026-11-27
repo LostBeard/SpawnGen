@@ -40,9 +40,16 @@ public partial class Studio
     }
 
     /// <summary>App mode; a workflow never set up as an app goes to the builder first (as in ComfyUI).</summary>
+    /// <summary>Leaves every open subgraph (uploading the paintings of the levels left, see ExitSubgraphToAsync), then goes on with <paramref name="then"/>.</summary>
+    async Task LeaveSubgraphsThenAsync(Action then)
+    {
+        await ExitSubgraphToAsync(0);
+        if (_subgraphStack.Count == 0) then();
+    }
+
     void EnterAppMode()
     {
-        if (_subgraphStack.Count > 0) ExitSubgraphTo(0); // the app runs the whole workflow
+        if (_subgraphStack.Count > 0) { _ = LeaveSubgraphsThenAsync(EnterAppMode); return; } // the app runs the whole workflow
         _app = AppModeConfig.Read(_doc.Extra);
         if (!_app.Configured) OpenBuilder();
         else { _appView = AppView.App; _view.ClearSelection(); ApplyPicking(); }
@@ -59,7 +66,7 @@ public partial class Studio
 
     void OpenBuilder()
     {
-        if (_subgraphStack.Count > 0) ExitSubgraphTo(0);
+        if (_subgraphStack.Count > 0) { _ = LeaveSubgraphsThenAsync(OpenBuilder); return; }
         _app = AppModeConfig.Read(_doc.Extra);
         _builderOpensAsApp = _app.OpensAsApp ?? true;
         _builderStep = 0;

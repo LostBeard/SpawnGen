@@ -181,17 +181,19 @@ public sealed class PainterSurface : IPainterCanvas, IDisposable
         }
     }
 
-    /// <summary>Whether the node's painting changed since it was last uploaded (a stroke, Clear, a resize, a loaded file).</summary>
-    public bool NeedsUpload(int nodeId) => _items.TryGetValue(nodeId, out var item) && item.Changed;
+    Dictionary<int, Item>? ItemsOf(string scope) => _scopes.GetValueOrDefault(scope);
+
+    /// <summary>The nodes of <paramref name="scope"/> whose paintings changed since they were last uploaded (a stroke, Clear, a resize).</summary>
+    public IReadOnlyList<int> Pending(string scope) => ItemsOf(scope) is { } items ? items.Where(p => p.Value.Changed).Select(p => p.Key).ToList() : [];
 
     /// <summary>The painting as a PNG Blob of the canvas size (straight alpha, as ComfyUI's widget uploads it): it stays a JS object.</summary>
-    public async Task<Blob?> ToPngAsync(int nodeId) =>
-        _items.TryGetValue(nodeId, out var item) ? await item.Painting.ConvertToBlob() : null;
+    public async Task<Blob?> ToPngAsync(string scope, int nodeId) =>
+        ItemsOf(scope) is { } items && items.TryGetValue(nodeId, out var item) ? await item.Painting.ConvertToBlob() : null;
 
     /// <summary>The upload took the current painting.</summary>
-    public void Uploaded(int nodeId)
+    public void Uploaded(string scope, int nodeId)
     {
-        if (_items.TryGetValue(nodeId, out var item)) item.Changed = false;
+        if (ItemsOf(scope) is { } items && items.TryGetValue(nodeId, out var item)) item.Changed = false;
     }
 
     /// <summary>A saved workflow's painting (the file its <c>mask</c> names) drawn into the node's canvas, the canvas taking the picture's size.</summary>

@@ -510,9 +510,13 @@ painting draws it back from the engine's input folder. (d) `drive-painter.js` 10
 without the upload 4 fail): real pointer strokes, the Eraser, IMAGE / MASK pixels, no new upload without new strokes, and a soft stamp
 (size 50, hardness 50, clicked on the pixel corner) equal to ComfyUI's own painting of the same click within 1 / 255 (Save Image's float
 floor), 3064 painted pixels on both.
-**Still open, in order:** (1) painters outside the open subgraph level are not uploaded on Queue (UploadPaintingsAsync walks the canvas's
-graph only; the other levels' scopes keep their strokes): upload every scope of the active tab, then compile; (2) step 6, the five
-templates that use Painter open and run; (3) the rule inside a soft stroke (above); (4) the mask editor port.
+**Subgraph levels, done 2026-11-27:** Queue also uploads the paintings of the outer levels of an open subgraph and writes their mask
+values into those levels' JSON on the stack (RootJson is built from it); leaving a level (breadcrumb, Escape, App mode, the builder) first
+uploads that level's paintings, so they are in the definition it is written back into. `drive-painter-subgraph.js` 13/13 (red-checked:
+without both, its two upload checks fail). Left as it is: with NO engine at all, a level left with strokes keeps them in the page until
+it is opened again and Queue is pressed (nothing can run without an engine anyway).
+**Still open, in order:** (1) step 6, the five templates that use Painter open and run; (2) the rule inside a soft stroke (above);
+(3) the mask editor port.
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

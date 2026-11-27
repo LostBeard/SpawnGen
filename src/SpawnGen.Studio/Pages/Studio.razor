@@ -179,7 +179,7 @@
                 @for (int i = 0; i < _subgraphStack.Count; i++)
                 {
                     var level = i;
-                    <button @onclick="() => ExitSubgraphTo(level)">@(level == 0 ? _tabs.Active?.Name ?? "Workflow" : _subgraphStack[level].Name)</button>
+                    <button @onclick="() => ExitSubgraphToAsync(level)">@(level == 0 ? _tabs.Active?.Name ?? "Workflow" : _subgraphStack[level].Name)</button>
                     <span>›</span>
                 }
                 <b>@(SubgraphLibrary.Get(SubgraphEditing.EditedId(_doc) ?? "")?.Name ?? "Subgraph")</b>
@@ -949,19 +949,55 @@
     /// </summary>
     async Task<bool> UploadPaintingsAsync()
     {
-        foreach (var node in _doc.Graph.Nodes.ToList())
+        // the level on the canvas
+        if (!await UploadLevelAsync(_doc, PainterScope(_subgraphStack.Count))) return false;
+        // the outer levels of an open subgraph (their graphs are JSON on the stack): their mask values are written into that JSON, which RootJson builds from
+        for (int i = 0; i < _subgraphStack.Count; i++)
         {
-            if (!_painter.NeedsUpload(node.Id)) continue;
-            using var png = await _painter.ToPngAsync(node.Id);
-            if (png is null) continue;
-            var name = PainterWidget.UploadName(node.Id, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            var stored = await _engine!.UploadFileAsync(name, png);
-            if (stored is null) { ShowMessage($"{node.Title ?? "Painter"}: the engine did not take the painting."); return false; }
-            _painter.Uploaded(node.Id);
-            _doc.SetWidget(node.Id, "mask", PainterWidget.MaskValue(stored));
-            _doc.EndGesture();
+            var scope = PainterScope(i);
+            if (_painter.Pending(scope).Count == 0) continue;
+            var level = new EditorDocument(Registry);
+            ComfyWorkflow.Load(_subgraphStack[i].Json, level);
+            if (!await UploadLevelAsync(level, scope)) return false;
+            _subgraphStack[i] = _subgraphStack[i] with { Json = ComfyWorkflow.Save(level, _renderer.MeasureText) };
         }
         return true;
+    }
+
+    /// <summary>The painter scope of subgraph level <paramref name="depth"/> of the active tab (0 is the tab's workflow): as PainterSurface.Scope gives it there.</summary>
+    string PainterScope(int depth) => _tabs.ActiveId + "/" + string.Join("/", _subgraphStack.Take(depth).Select(l => l.Name));
+
+    async Task<bool> UploadLevelAsync(EditorDocument level, string scope)
+    {
+        foreach (var nodeId in _painter.Pending(scope))
+        {
+            if (level.Graph.FindNode(nodeId) is not { } node) continue;
+            using var png = await _painter.ToPngAsync(scope, nodeId);
+            if (png is null) continue;
+            var name = PainterWidget.UploadName(nodeId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            var stored = await _engine!.UploadFileAsync(name, png);
+            if (stored is null) { ShowMessage($"{node.Title ?? "Painter"}: the engine did not take the painting."); return false; }
+            _painter.Uploaded(scope, nodeId);
+            level.SetWidget(nodeId, "mask", PainterWidget.MaskValue(stored));
+            level.EndGesture();
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Leaving subgraph levels: the paintings of every level being left go to the engine first, so their mask values are in the definitions
+    /// the levels are written back into (once the canvas has left a level, Queue cannot reach its paintings any more). Without an engine
+    /// they stay in the page and go when the level is open and Queue is pressed.
+    /// </summary>
+    async Task ExitSubgraphToAsync(int level)
+    {
+        if (_engine is not null)
+            while (_subgraphStack.Count > level)
+            {
+                if (!await UploadLevelAsync(_doc, PainterScope(_subgraphStack.Count))) break;
+                ExitSubgraphTo(_subgraphStack.Count - 1);
+            }
+        ExitSubgraphTo(level);
     }
 
     sealed class SearchState
@@ -2519,7 +2555,7 @@
         _lightbox is not null ? () => _lightbox = null
         : _shortcutsOpen ? () => _shortcutsOpen = false
         : _settingsOpen ? () => _settingsOpen = false
-        : _subgraphStack.Count > 0 ? () => ExitSubgraphTo(_subgraphStack.Count - 1)
+        : _subgraphStack.Count > 0 ? () => _ = ExitSubgraphToAsync(_subgraphStack.Count - 1)
         : null;
 
     /// <summary>Shows a message for a few seconds; a failed run's message stays longer (it can carry advice worth reading to the end).</summary>

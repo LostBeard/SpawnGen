@@ -515,8 +515,18 @@ values into those levels' JSON on the stack (RootJson is built from it); leaving
 uploads that level's paintings, so they are in the definition it is written back into. `drive-painter-subgraph.js` 13/13 (red-checked:
 without both, its two upload checks fail). Left as it is: with NO engine at all, a level left with strokes keeps them in the page until
 it is opened again and Queue is pressed (nothing can run without an engine anyway).
-**Still open, in order:** (1) step 6, the five templates that use Painter open and run; (2) the rule inside a soft stroke (above);
-(3) the mask editor port.
+**Step 6, the templates (checked 2026-11-27 against template-needs.json, commit 2fbb6d07 of Comfy-Org/workflow_templates): SIX use
+Painter, and none can run yet for reasons outside Painter.** Three are paid cloud API nodes (api_bria_eraser, api_bria_genfill:
+BriaEraser / BriaGenFill; api_bytedance_seedream_5_0_pro_image_edit: ByteDanceSeedreamNodeV3): SpawnGen has no API nodes (a decision
+for TJ: they need the user's Comfy account and send pictures to a cloud). Three need model families SpawnGen does not have:
+image_anima_lllite_image_inpainting (AnimaLLLiteApply, ModelPatchLoader; Anima base + LLLite inpainting + Qwen3 0.6B + Qwen-Image VAE),
+image_moss_image_color_depth_control (MOSSImageControl, LoadMoGeModel / MoGeInference / MoGeRender, SkipLayerGuidanceDiTSimple; MOSS +
+MoGe 3 ViT-g + Qwen3.5 9B int8), video_wan2_1_infinitetalk (WanInfiniteTalkToVideo, AudioEncoderLoader / AudioEncoderEncode,
+ModelPatchLoader; Wan 2.1 I2V 14B + wav2vec2). Ranked by what they unlock: (i) Anima LLLite inpainting (one image model on known parts:
+Qwen-Image VAE, a Qwen3 encoder; ModelPatchLoader also serves InfiniteTalk), (ii) InfiniteTalk (Wan 2.1 14B is already parked on Y:;
+audio encoders open talking-head video), (iii) MOSS + MoGe (two new families). Each goes through the usual path: ComfyUI reference run,
+what the library lacks to Tuvok, nodes here, parity.
+**Still open on Painter itself:** (1) the rule inside a soft stroke (above); (2) the mask editor port.
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

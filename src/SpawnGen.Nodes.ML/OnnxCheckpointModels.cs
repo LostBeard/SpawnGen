@@ -144,6 +144,10 @@ internal sealed class OnnxCheckpointModels : ICheckpointModels
         var session = await InferenceSession.CreateFromOnnxStreamAsync(_runtime.Accelerator, m,
             inputShapes: new Dictionary<string, int[]> { ["sample"] = [1, 3, 512, 512] });
         session.CacheShapeReadbacks = false; // the encoder is run at whatever size the picture has
+        // These exports sample the posterior inside the graph (a RandomNormalLike node; the output is "latent_sample"), so two encodes
+        // of one picture differed in nearly every latent value by about 1e-2 and image to image was not repeatable for a fixed seed
+        // (found 2026-11-26; ComfyUI's VAE Encode gives the same latent every time). At the mean the encode is the posterior mean.
+        session.RandomAtMean = true;
         return session;
     }
 

@@ -114,6 +114,25 @@ const X = 312, Y = 126, W = 426, K = W / 512;   // screen = X + bitmap * K
       await slider(2, ['ArrowLeft', 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']); await slider(3, ['ArrowRight', 'ArrowRight']); await page.waitForTimeout(500);
       console.log('  after the size change: ' + await sliderInfo() + ' | canvas ' + await page.evaluate(() => { const c = document.querySelector('[data-node-id] canvas'); return c ? `${c.width}x${c.height} shown ${c.getBoundingClientRect().width.toFixed(0)}x${c.getBoundingClientRect().height.toFixed(0)}` : 'none'; })); },
     'paint-after-size-change': async () => { await dot(128, 128); },
+    // soft LINES: does a soft stroke build up along its path (stamps overlapping), and does the pointer speed (stamp spacing) change it?
+    ...Object.fromEntries([['line-soft-hard000', 0, 100, 16], ['line-soft-hard050', 50, 100, 16], ['line-soft-hard000-opacity50', 0, 50, 16],
+      ['line-soft-hard000-slow', 0, 100, 96], ['line-soft-hard000-fast', 0, 100, 2]].map(([name, h, o, steps]) => [name, async () => {
+      await tool('Brush'); await opacity(o); await set(0, 1, 50); await set(1, 0, h); await line(100, 256, 400, 256, steps); await opacity(100); await set(1, 0, 100); }])),
+    // exact pointer positions (synthetic PointerEvents at fractional client coordinates on the canvas): a soft 50 brush along y 256 from x 100
+    // to 400 in N equal segments, to separate the stamp spacing from the per-event stamps
+    ...Object.fromEntries([1, 2, 30, 300].map(n => [`synth-soft-seg${String(n).padStart(3, '0')}`, async () => {
+      await tool('Brush'); await opacity(100); await set(0, 1, 50); await set(1, 0, 0); await locate();
+      const info = await page.evaluate(([R, n]) => {
+        const c = document.querySelector('[data-node-id] canvas'); const seen = [];
+        for (const t of ['pointerdown', 'pointermove', 'pointerup']) c.addEventListener(t, () => seen.push(t[7]), { once: false });
+        const ev = (type, bx, by, buttons) => new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true,
+          button: 0, buttons, clientX: R.x + bx * R.k, clientY: R.y + by * R.k });
+        c.dispatchEvent(ev('pointerdown', 100, 256, 1));
+        for (let i = 1; i <= n; i++) c.dispatchEvent(ev('pointermove', 100 + 300 * i / n, 256, 1));
+        c.dispatchEvent(ev('pointerup', 400, 256, 0)); document.dispatchEvent(ev('pointerup', 400, 256, 0)); window.dispatchEvent(ev('pointerup', 400, 256, 0));
+        return seen.length;
+      }, [R, n]);
+      await page.waitForTimeout(300); await set(1, 0, 100); }])),
     // shrink then grow back without clearing: is the cropped part lost (the canvas keeps only what it shows) or kept?
     'shrink-then-grow': async () => {
       await tool('Brush'); await opacity(100); await set(0, 1, 50); await set(1, 0, 100); await set(2, 64, 512, 64); await set(3, 64, 512, 64);

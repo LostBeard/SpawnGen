@@ -465,6 +465,17 @@ falloff and spacing still to measure), then the Studio and its drive, then the f
   - **Width / Height on a painting:** the canvas bitmap takes the new size at once (256 x 640, shown 426 wide), the painting stays
     at its pixels from the top-left corner, NOT scaled; what falls outside is gone: shrinking to 256 and growing back to 512 keeps
     only the dot inside 256. The uploaded file is the new size.
+  - **Soft strokes** (line-soft-*, synth-soft-seg*): a soft line builds up along its path (centre 254-255 at hardness 0, the
+    cross-section wider and softer than one stamp) and the per-stroke opacity applies once to the whole stroke (opacity 50: every
+    value half, interior 127-128). With exact synthetic pointer events the painting does NOT depend on how the path is cut into
+    events (1, 2, 30 and 300 segments: byte-identical), and it repeats every 75 px along the line (r 25, hardness 0; columns x and
+    x + 75 identical). Real pointer input through Playwright gave stronger or weaker strokes with the pointer's speed, so ComfyUI's
+    result also depends on how the browser delivers the events (frames); a human stroke cannot be matched pixel for pixel anyway.
+    Model fitted (`fit_spacing.py` in this session's scratchpad, not kept): stamps of the falloff above at a fixed spacing,
+    composited source-over inside the stroke, then the stroke at its opacity: best spacing about r / 5 (5.36 or 5.0), mean error
+    0.25 / 255, max 31 at a few rim pixels. NOT exact: the rule inside a stroke is still open (try: max instead of source-over, a
+    spacing from R_out, positions on the event path's arc length). SpawnGen uses the r / 5 source-over model with that tolerance
+    stated in its tests until it is settled.
   - **A linked image** (`probe-comfy-painter-linked.js`, out/painter-linked/): the widget shows the upstream Load Image's picture at
     once (no run needed) as an `<img>` under the canvas; the canvas bitmap holds only the strokes (transparent elsewhere). The
     Width, Height and Background rows are HIDDEN while an image is linked, a "W x H" label sits under the canvas, and the canvas

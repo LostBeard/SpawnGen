@@ -154,7 +154,8 @@ public sealed class LoadLatent
         Decode(await InputFiles.Store.ReadAsync(latent));
 
     /// <summary>
-    /// The latent in a .latent file: a safetensors file whose "latent_tensor" is (batch, channels, height, width). A file that also has a
+    /// The latent in a .latent file: a safetensors file whose "latent_tensor" is (batch, channels, height, width), or (batch, channels, frames,
+    /// height, width) for a video-shaped latent (measured 2026-11-28: ComfyUI loads and saves a 5-D one as it is). A file that also has a
     /// "latent_format_version_0" entry holds the values as they are; an older file without it was stored multiplied by 0.18215 and is multiplied by
     /// float32(1 / 0.18215) here.
     /// </summary>
@@ -164,18 +165,18 @@ public sealed class LoadLatent
         if (!tensors.TryGetValue("latent_tensor", out var tensor))
             throw new InvalidDataException("This file has no latent_tensor, so it is not a latent file (Save Latent writes those).");
         var values = Safetensors.ToFloats(tensor);
-        if (tensor.Shape.Length != 4)
-            throw new InvalidDataException($"The latent_tensor has {values.Length} values in shape [{string.Join(", ", tensor.Shape)}]; a picture latent has 4 dimensions (batch, channels, height, width).");
+        if (tensor.Shape.Length is not (4 or 5))
+            throw new InvalidDataException($"The latent_tensor has {values.Length} values in shape [{string.Join(", ", tensor.Shape)}]; a latent has 4 dimensions (batch, channels, height, width) or 5 (with frames).");
         if (!tensors.ContainsKey("latent_format_version_0"))
         {
             float scale = (float)(1.0 / 0.18215);
             for (int i = 0; i < values.Length; i++) values[i] *= scale;
         }
-        return new LatentBatch(tensor.Shape[0], tensor.Shape[1], tensor.Shape[2], tensor.Shape[3], values);
+        return new LatentBatch([.. tensor.Shape], values);
     }
 }
 
-[Node(Category = "model/latent", DisplayName = "Save Latent", IsOutput = true, OutputNames = ["samples"])]
+[Node(Category = "model/latent", DisplayName = "Save Latent", IsOutput = true, OutputNames = ["samples"]), VideoLatents]
 public sealed class SaveLatent
 {
     /// <summary>
@@ -190,9 +191,10 @@ public sealed class SaveLatent
     }
 
     /// <summary>
-    /// The .latent file: "latent_tensor" (float32, the latent's own values) and an empty "latent_format_version_0" tensor that marks the values as
-    /// unscaled, with <paramref name="metadata"/> as the safetensors metadata.
+    /// The .latent file: "latent_tensor" (float32, the latent's own values, 4-D or 5-D as the latent is) and an empty "latent_format_version_0"
+    /// tensor that marks the values as unscaled, with <paramref name="metadata"/> as the safetensors metadata. Measured 2026-11-28 (ComfyUI with
+    /// safetensors 0.8.0): the header lists the tensors in name order, so the empty marker comes first at [0, 0].
     /// </summary>
     public static byte[] Encode(LatentBatch latent, IReadOnlyDictionary<string, string>? metadata = null) =>
-        Safetensors.Write([("latent_tensor", latent.Shape, latent.Data), ("latent_format_version_0", [0], [])], metadata);
+        Safetensors.Write([("latent_format_version_0", [0], []), ("latent_tensor", latent.Shape, latent.Data)], metadata);
 }

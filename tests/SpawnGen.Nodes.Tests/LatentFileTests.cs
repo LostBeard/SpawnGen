@@ -30,9 +30,46 @@ public class LatentFileTests
         ulong headerLength = BinaryPrimitives.ReadUInt64LittleEndian(file);
         Assert.That(headerLength % 8, Is.EqualTo(0UL), "the header is padded to a multiple of 8");
         var header = Encoding.UTF8.GetString(file, 8, (int)headerLength).TrimEnd();
-        Assert.That(header, Is.EqualTo("{\"latent_tensor\":{\"dtype\":\"F32\",\"shape\":[1,4,2,2],\"data_offsets\":[0,64]},\"latent_format_version_0\":{\"dtype\":\"F32\",\"shape\":[0],\"data_offsets\":[64,64]}}"));
+        // ComfyUI's order (safetensors 0.8.0, measured 2026-11-28): the tensors by name, the empty marker first.
+        Assert.That(header, Is.EqualTo("{\"latent_format_version_0\":{\"dtype\":\"F32\",\"shape\":[0],\"data_offsets\":[0,0]},\"latent_tensor\":{\"dtype\":\"F32\",\"shape\":[1,4,2,2],\"data_offsets\":[0,64]}}"));
         Assert.That(file.Length, Is.EqualTo(8 + (int)headerLength + 64));
         Assert.That(BinaryPrimitives.ReadSingleLittleEndian(file.AsSpan(8 + (int)headerLength + 4)), Is.EqualTo(1f), "stored as the LATENT holds it (the VAE's values), as ComfyUI stores it");
+    }
+
+    /// <summary>
+    /// A 5-D (video-shaped) latent as ComfyUI saved it (2026-11-28: Load Latent of Fixtures/latent5d/ramp5d_input.latent, a [1, 16, 3, 4, 5] ramp,
+    /// then Save Latent): Load Latent reads it unchanged, and Save Latent of the same latent with the same metadata writes the same bytes.
+    /// </summary>
+    [Test]
+    public void A_video_shaped_latent_loads_and_saves_as_ComfyUIs_file()
+    {
+        var dir = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "latent5d");
+        var theirs = File.ReadAllBytes(Path.Combine(dir, "comfyui_ramp5d.latent"));
+        var latent = LoadLatent.Decode(theirs);
+        Assert.That(latent.Shape, Is.EqualTo(new[] { 1, 16, 3, 4, 5 }));
+        Assert.That(latent.IsVideo, Is.True);
+        Assert.That(latent.Data, Is.EqualTo(Enumerable.Range(0, 960).Select(i => i * 0.01f - 3f).ToArray()), "the ramp as numpy wrote it (float32 arithmetic)");
+        Assert.That(LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, "ramp5d_input.latent"))).Data, Is.EqualTo(latent.Data));
+        Safetensors.Read(theirs, out var metadata);
+        Assert.That(SaveLatent.Encode(latent, metadata), Is.EqualTo(theirs), "byte for byte ComfyUI's file");
+    }
+
+    [Test]
+    public async Task Save_Latent_takes_a_video_shaped_latent()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "spawngen-latent5d-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var registry = new NodeRegistry().AddAssembly(typeof(SaveImage).Assembly);
+            var options = new OutputOptions { Directory = Path.Combine(dir, "output"), TempDirectory = Path.Combine(dir, "temp") };
+            var g = new PromptGraph();
+            g.Add("1", "EmptyHunyuanLatentVideo", ("width", 64), ("height", 48), ("length", 5), ("batch_size", 1));
+            g.Add("2", "SaveLatent", ("samples", PromptInput.Link("1")), ("filename_prefix", "latents/video"));
+            await new PromptExecutor(registry, new Services(options)).ExecuteAsync(g);
+            var back = LoadLatent.Decode(File.ReadAllBytes(Path.Combine(dir, "output", "latents", "video_00001_.latent")));
+            Assert.That(back.Shape, Is.EqualTo(new[] { 1, 16, 2, 6, 8 }), "ComfyUI's file for the same graph has latent_tensor [1, 16, 2, 6, 8]");
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
 
     [Test]

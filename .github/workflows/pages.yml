@@ -32,8 +32,27 @@ jobs:
       - name: Install .NET WASM Build Tools
         if: ${{ inputs.aot }}
         run: dotnet workload install wasm-tools
+      # The AOT publish can outgrow the runner's 16 GB at its peak (parallel clang -O2 on the big .bc files, wasm-opt). 2026-11-27: three of
+      # four SpawnDev.ILGPU.ML demo deploys died there with "MSB4166: Child node exited prematurely" (OOM kill, no log kept; Tuvok's fix in
+      # ML 7cdf50c8). Extra swap lets the peak through at full optimization; the sampler prints memory every 30 s so the peak is on record.
+      - name: Add swap for the AOT peak
+        if: ${{ inputs.aot }}
+        run: |
+          free -m
+          sudo fallocate -l 16G /mnt/aot.swap
+          sudo chmod 600 /mnt/aot.swap
+          sudo mkswap /mnt/aot.swap
+          sudo swapon /mnt/aot.swap
+          free -m
+          df -h /mnt .
       - name: Publish the Studio
-        run: dotnet publish src/SpawnGen.Studio -c Release --nologo -p:StudioAot=${{ inputs.aot }} --output out
+        run: |
+          ( while sleep 30; do echo "[mem] $(date +%T) $(free -m | awk '/Mem:/{printf "used %d/%d MB", $3, $2} /Swap:/{printf ", swap %d MB", $3}')  top: $(ps -eo rss=,comm= --sort=-rss | head -3 | awk '{printf "%s %d MB; ", $2, $1/1024}')"; done ) &
+          sampler=$!
+          dotnet publish src/SpawnGen.Studio -c Release --nologo -p:StudioAot=${{ inputs.aot }} --output out
+          status=$?
+          kill $sampler
+          exit $status
       - name: Make the build work under /SpawnGen/
         run: |
           cd out/wwwroot

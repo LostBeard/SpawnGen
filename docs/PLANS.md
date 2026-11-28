@@ -599,6 +599,11 @@ Apache-2.0, on qwen_3_06b_base.safetensors with Qwen/Qwen3-0.6B-Base's config, C
 pos cond; every other layer is off by 1 or more). That is the path SpawnGen already runs for ACE-Step's caption (Qwen3-Embedding-0.6B,
 final norm): Anima's text encoder = that encoder on the Anima file, the Qwen3-0.6B-Base tokenizer without special tokens, plus the T5
 ids for the adapter.
+**Waiting on Tuvok's API before the encoder node:** CLIPLoader type stable_diffusion must send a Qwen3 language-model file (the header
+test Qwen3TextModel.Is) to an Anima encoder instead of SdTextEncoder; its CONDITIONING has to carry the T5 ids as well as the Qwen3 states
+(SpawnGen's TextEncoding holds one tensor + pooled today: add the ids as a CondEntry option, as ComfyUI's t5xxl_ids, unless the library
+takes the adapter's output directly, in which case the encoder runs the adapter and the cond is c_crossattn [N, 1024] + zero rows to
+512). Decide with the library's shape of the adapter (inside the DiT call or its own module).
 **Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
 --cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
 base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for

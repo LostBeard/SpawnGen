@@ -541,6 +541,26 @@ canvas filters (inline SVG feComponentTransfer, discrete) instead of pixel loops
 on the real GPU (it had --disable-gpu = SwiftShader), reads the run's result from the page's blobs (the History panel lost its
 thumbnails, which had made it stale), and checks reopen + Invert: 8 / 8; red-checked (the open-time filter off: 4 fail).
 **Still open on Painter itself:** the rule inside a soft stroke (above).
+
+## Next: the Anima family (planned 2026-11-27)
+
+Five templates (template-needs.json): image_anima_preview, image_anima_base_v1 (t2i, turbo LoRA), image_anima_lllite_image_inpainting
+(the Painter template), _any_control_to_image (Canny), _depth_control_to_image (Depth Anything 3). What Anima is (public model cards, not
+ComfyUI's GPL source): a Cosmos-Predict2-2B text-to-image DiT (CosmosTransformer3DModel, 2B, 28 layers) with Qwen3 0.6B in place of
+Cosmos's T5-11B, decoded by the Qwen-Image VAE. Licences: Anima's weights are CircleStone Labs Non-Commercial v1.2 (+ NVIDIA Open Model
+License as a Cosmos derivative): users download them, SpawnGen ships none; tell TJ before an Anima example goes on the site. Clean
+architecture reference: Diffusers' CosmosTransformer3DModel (Apache-2.0, portable with attribution like InvokeAI); ComfyUI only as a black
+box (its outputs, measured).
+SpawnGen already has: the Qwen-Image VAE (qwen_image_vae.safetensors), a Qwen3 0.6B encoder (ACE-Step's Qwen3-Embedding-0.6B path: check
+whether Anima's qwen_3_06b_base is the same architecture / which hidden layer it takes), KSampler, LoRA loading, ComfySwitchNode,
+ResizeImageMaskNode, MaskPreview, ImageCompare. Missing: the Cosmos DiT, CLIPLoader type for Anima, ResolutionSelector, ModelPatchLoader,
+AnimaLLLiteApply (ControlNet-LLLite patches), and for the depth template DA3 (Depth Anything 3) nodes.
+**Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
+--cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
+base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for
+the Cosmos DiT (ask Tuvok with the dumps; ranked: the DiT blocks first) and the Qwen3 hidden-state path; (4) SpawnGen nodes on the
+library parts, parity on the dumps; (5) ModelPatchLoader + AnimaLLLiteApply (the inpainting template first: it is the Painter one);
+(6) the templates open and run, then the browser.
 **Steps, in order:** (1) black-box probe of the node in ComfyUI's Node 2.0 view (`probe-comfy-painter.js`): what the widget shows, its
 tools (brush, eraser, sizes, colours, hardness, opacity, clear, undo), what a stroke stores in `mask` (an uploaded file name? where
 and when is it uploaded), how width / height / bg_color are set from the widget, what it shows with an image linked; (2) black-box

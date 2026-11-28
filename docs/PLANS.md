@@ -589,6 +589,10 @@ the adapter runs T5 ids -> embed -> in_proj -> 6 blocks (each cross-attending to
 out_proj -> norm (that order) = [1, M, 1024]; ComfyUI pads it with zero rows to 512 and batches [uncond, cond]; the DiT's patch
 embed takes the latent plus a 17th channel of zeros; RoPE is built as rotation matrices [1024, 64, 2, 2], no absolute position
 embedding. Asked of Tuvok 2026-11-27 (_DevComms 2215 + 2310): the DiT and the adapter in SpawnDev.ILGPU.ML; he starts after ML 5.8.38.
+**Tokenizers settled 2026-11-27:** ComfyUI's ids for both prompts are exactly Qwen/Qwen3-0.6B-Base's tokenizer.json with no special
+tokens (24 / 23 ids) and google-t5/t5-base's tokenizer.json (T5 v1.1 shares its SentencePiece vocabulary; EOS 1 appended, 26 ids);
+google/t5-v1_1-xxl has no tokenizer.json. SpawnGen side: Qwen2Tokenizer on the Qwen3 file, the T5 tokenizer SpawnGen / ML already use
+for LTX-Video, each checked against run 1's ids in a test when the encoder node is written.
 **Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
 --cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
 base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for

@@ -634,7 +634,10 @@ path is a stand-in for torchsde's tree (Apache-2.0: portable) -> port it, gate o
 flow model (ComfyUI does not); the cfg_pp ancestral variants and dpm_2_ancestral are not settled by run 9's replay (needs the uncond
 estimate / a later call).
 **Next on Anima:** (a) LLLite (Tuvok's 5.8.39-local.2: AnimaKernels.InpaintPicture -> AnimaLLLite.SetPictureAsync -> dit.LLLite) with
-ModelPatchLoader + AnimaLLLiteApply, gated on runs 4 / 5; (b) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly);
+ModelPatchLoader + AnimaLLLiteApply, gated on runs 4 / 5; (b) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):
+ML-side, applied at load from the LoRA file (agreed with Tuvok 2026-11-28; run 10 for his gate in `_DevComms/anima-run10-turbo-lora-2026-11-28`):
+the file is PEFT lora_A / lora_B rank 32 without alpha, blocks.* (896) + llm_adapter.blocks.* (120); in ComfyUI the adapter's output is
+UNCHANGED by it (0.0 at strength 1 and 0.5) while the DiT's call moves 1.01 / 0.236: apply it to the DiT blocks only;
 (c) when ML 5.8.39 is on nuget.org: merge, the browser (the 4.2 GB DiT on WebGPU), the five templates.
 **LLLite data ready ahead of time (2026-11-28, runs 4 and 5, `_DevComms/anima-run4-lllite-2026-11-28`):** anima-base-v1.0 +
 anima-lllite-inpainting-v2 on compositor-a.png with a Painter rectangle mask, cfg 1, 2 steps, seed 7, and the same graph WITHOUT

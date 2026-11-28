@@ -296,6 +296,7 @@ public class AnimaTests
     {
         var root = Root();
         string dir = Path.Combine(Dir, "inpaint"), lllite = Path.Combine(Dir, "lllite");
+        CheckpointCatalog.ScanLoraFiles(root!);   // the template lists the turbo LoRA (its branch is not taken)
         var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "anima_out", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(outDir);
         var store = new MemoryInputStore();
@@ -333,7 +334,7 @@ public class AnimaTests
                 ("steps", L("111")), ("cfg", L("113")), ("sampler_name", "euler"), ("scheduler", "simple"), ("denoise", 1.0));
             g.Add("105", "VAEDecode", ("samples", L("106")), ("vae", L("79")));
             g.Add("46", "SaveImage", ("images", L("105")), ("filename_prefix", "anima_run11"));
-            g.Add("77", "ImageCompare", ("image_a", L("91")), ("image_b", L("46")));
+            g.Add("77", "ImageCompare", ("compare_view", new DictValue()), ("image_a", L("91")), ("image_b", L("46")));   // ComfyUI refuses it missing too
             var capture = new Capture();
             var clock = System.Diagnostics.Stopwatch.StartNew();
             await executor.ExecuteAsync(g, null, capture);

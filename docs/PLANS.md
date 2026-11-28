@@ -640,8 +640,17 @@ and sets dit.LLLite per call. Against runs 4 / 5 on the RX 590: with the patch 6
 red-checked (the run not setting it: 0.90). Refused until measured: a picture of another size than the latent x 8, a second LLLite on one
 model, the 3-channel control LLLites (any-test / depth: their ComfyUI runs first), a start / end window other than the run's (the window
 logic is ControlNet's convention, not measured on LLLite).
-**Next on Anima:** (a) the Painter inpainting template end to end (it adds the turbo LoRA and img2img-style sampling: measure the graph);
-(b) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):
+**MERGED to main 2026-11-28 (714f68c, ML 5.8.39 from nuget.org; NOT deployed):** the Anima family + LLLite. The inpainting template
+(run 11: as the template wires it, turbo OFF, 512 x 512, 4 steps cfg 4) gives ComfyUI's latent to 2.2e-5 and the picture at 77.6 dB; the
+template is really txt2img with the LLLite (EmptyLatentImage, no img2img), the turbo toggle (ON by default) needs the LoRA below.
+**LoRA on branch `anima-lora` (f5383d6, ML 5.8.40-local.1; merge when 5.8.40 is on nuget.org):** UseWeightsAsync takes LoraUse steps,
+AnimaLora per file (strength x B A unmerged, DiT blocks only; the same file twice adds strengths), the run sets exactly its handle's LoRAs.
+Run 10 through KSampler 8 steps: final latent 1.0e-3 (1.0), 8.3e-4 (0.5), 3.5e-5 without; red check 0.90 / 0.66. The with-LoRA latent
+is ~30x further from ComfyUI's than the control: asked Tuvok (his per-call figures are 3e-5). Gaps seen on the way: Save Latent refuses a
+video-shaped (5-D) latent (ComfyUI saves it); a null literal counts as a missing input in SpawnGen (ComfyUI accepts "compare_view": null).
+Before a deploy: a Studio browser pass on main (the drives) and the Anima nodes listed in the browser's object_info.
+**Then on Anima:** the turbo-ON templates end to end once anima-lora merges; LLLite control-picture patches; Anima in the browser (4.2 GB DiT).
+(b, done above) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):
 ML-side, applied at load from the LoRA file (agreed with Tuvok 2026-11-28; run 10 for his gate in `_DevComms/anima-run10-turbo-lora-2026-11-28`):
 the file is PEFT lora_A / lora_B rank 32 without alpha, blocks.* (896) + llm_adapter.blocks.* (120); in ComfyUI the adapter's output is
 UNCHANGED by it (0.0 at strength 1 and 0.5) while the DiT's call moves 1.01 / 0.236: apply it to the DiT blocks only;

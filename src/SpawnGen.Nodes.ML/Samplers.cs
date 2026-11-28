@@ -186,6 +186,11 @@ public static partial class Samplers
         x = (float[])x.Clone();
         if (sigmas.Length < 2) return x;
         var s = sigmas.Select(v => (double)v).ToArray();
+        // A flow model's schedule starting at sigma 1 (where the log-SNR these samplers step in is infinite): they take their first step from the
+        // model's sigma at percent 1e-4 instead, x staying as noised at 1. Measured with ComfyUI (2026-11-28, Anima runs 7 and 8, every sampler on
+        // sigmas 1, 0.5, 0): exactly these 15 moved the first model call to 0.99996668 (shift 3), 0.9999 (shift 1) and 0.99998333 (shift 6); the
+        // other 30 called the model at 1.
+        if (OffsetsFirstSigma.Contains(sampler) && run.Sampling.IsConst && s[0] >= 1) s[0] = run.Sampling.PercentToSigma(1e-4);
         return sampler switch
         {
             "euler" or "ddim" => await Euler(run, x, s),
@@ -210,6 +215,13 @@ public static partial class Samplers
     }
 
     static readonly Lazy<ModelSampling> DefaultSampling = new(() => new ModelSampling(ModelSigmas.LinearSchedule(), PredictionType.Eps));
+
+    /// <summary>The samplers that run a flow model's first step from the sigma at percent 1e-4 when the schedule starts at 1 (see <see cref="RunAsync"/>).</summary>
+    public static readonly IReadOnlySet<string> OffsetsFirstSigma = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "dpmpp_sde", "dpmpp_sde_gpu", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu", "dpmpp_2m_sde_heun", "dpmpp_2m_sde_heun_gpu", "dpmpp_3m_sde", "dpmpp_3m_sde_gpu",
+        "er_sde", "exp_heun_2_x0", "exp_heun_2_x0_sde", "sa_solver", "sa_solver_pece", "seeds_2", "seeds_3",
+    };
 
     // ---- array helpers (float32 like the tensors they stand for) ----
 

@@ -159,6 +159,7 @@ internal static class TransformerTurns
         if (QwenImageResidency.Release()) released++;
         if (AceStepResidency.Release()) released++;
         if (Ltx2Residency.Release()) released++;
+        if (AnimaResidency.Release()) released++;
         return released;
     }
 }

@@ -1,0 +1,42 @@
+[
+ {
+  "cond": {
+   "file": "pos_0_cond_f32_1x24x1024.raw",
+   "shape": [
+    1,
+    24,
+    1024
+   ],
+   "dtype": "torch.float32"
+  },
+  "options": {
+   "pooled_output": {
+    "repr": "None",
+    "type": "NoneType",
+    "tensors": {}
+   },
+   "attention_mask": {
+    "file": "pos_0_attention_mask_f32_1x24.raw",
+    "shape": [
+     1,
+     24
+    ],
+    "dtype": "torch.int64"
+   },
+   "t5xxl_ids": {
+    "file": "pos_0_t5xxl_ids_f32_26.raw",
+    "shape": [
+     26
+    ],
+    "dtype": "torch.int32"
+   },
+   "t5xxl_weights": {
+    "file": "pos_0_t5xxl_weights_f32_26.raw",
+    "shape": [
+     26
+    ],
+    "dtype": "torch.float32"
+   }
+  }
+ }
+]

@@ -101,11 +101,13 @@ const prompt = {
   let from = await blobs();
   let st = await run();
   check('(A) Queue from inside runs', !/fail|error/i.test(st), st.trim().slice(0, 120));
+  // the result pictures are read after going back to the root: inside the subgraph the root's Save Image previews are not drawn, so the page
+  // may not fetch them at all (2026-11-27: on the live AOT sites no picture had been fetched yet while the canvas showed the inside)
+  await page.click('.crumbs button');
+  await page.waitForTimeout(2500);
+  check('(A) back at the root', await page.locator('.crumbs').count() === 0);
   let m = await maskAt(from, [[128, 128], [384, 384], [450, 50]]);
   check('(A) the root painting was uploaded from inside the subgraph (MASK: dot 255, elsewhere 0)', !!m && m[0] === 255 && m[1] === 0 && m[2] === 0, JSON.stringify(m));
-  await page.click('.crumbs button');
-  await page.waitForTimeout(800);
-  check('(A) back at the root', await page.locator('.crumbs').count() === 0);
 
   // (B) the Painter packed into a subgraph and opened: Clear, a dot at (384, 384), out by the breadcrumb, Queue at the root
   await page.mouse.click(320, 177); // the Painter's title

@@ -22,7 +22,10 @@ has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchd
 the Painter widget + the ported mask editor + pages.yml swap for the AOT peak.** Verified on the RX 590 against a local publish: suite
 3563 / 0 / 3, two visits of the 17 examples 17 / 17 (30m19s, 29m37s), drives green. Pages run 46093517557 dispatched; then the Space
 (`_scratch/deploy-wait-publish.sh`), then `_scratch/live-check.sh 5837` on both URLs (GPU: ask Riker for a window first; the painter,
-painter-subgraph and maskeditor drives are in it now).
+painter-subgraph and maskeditor drives are in it now). **LIVE and CHECKED 2026-11-27 21:40:** Pages 17 / 17 (sum 1720 s, -0.2 % on
+the last live record), Space 5 / 5, every drive on both sites (painter-subgraph after a drive fix: it read results while the canvas
+showed the subgraph's inside, where the root's previews are not fetched). The AOT build took 13 min (not an hour); RAM peaked at
+15.6 / 16 GB (three clang 5.3 + 4.8 + 3.2 GB, wasm-opt 10.4 GB) and the swap stayed unused: keep it, the margin is thin.
 
 **2026-11-23: main = SpawnDev.ILGPU 5.4.46 + SpawnDev.Codecs 1.1.4 + SpawnDev.ILGPU.ML 5.8.25 (811749f).** Suite 3394 / 0 / 3; the explicit
 GPU codec tests 12 / 12 on the RX 590 (OpenCL); in Chrome on the RX 590 (D3D12) against a local non-AOT publish: SD-Turbo 63 s, Image to

@@ -1,5 +1,5 @@
 # Publishes the Studio (Blazor WebAssembly, WebGPU engine in the page) to GitHub Pages: https://lostbeard.github.io/SpawnGen/
-# Run it by hand (Actions > Deploy Studio to GitHub Pages > Run workflow). The default is the AOT build, which takes an hour or more
+# Run it by hand (Actions > Deploy Studio to GitHub Pages > Run workflow). The default is the AOT build (13 min on 2026-11-27)
 # but runs the host maths much faster; untick "aot" for a quick interpreter build.
 name: Deploy Studio to GitHub Pages
 

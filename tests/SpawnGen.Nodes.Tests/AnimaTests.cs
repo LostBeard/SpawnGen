@@ -296,6 +296,7 @@ public class AnimaTests
     {
         var root = Root();
         string dir = Path.Combine(Dir, "inpaint"), lllite = Path.Combine(Dir, "lllite");
+        CheckpointCatalog.ScanLoraFiles(root!);   // the template lists the turbo LoRA (its branch is not taken)
         var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "anima_out", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(outDir);
         var store = new MemoryInputStore();
@@ -333,7 +334,7 @@ public class AnimaTests
                 ("steps", L("111")), ("cfg", L("113")), ("sampler_name", "euler"), ("scheduler", "simple"), ("denoise", 1.0));
             g.Add("105", "VAEDecode", ("samples", L("106")), ("vae", L("79")));
             g.Add("46", "SaveImage", ("images", L("105")), ("filename_prefix", "anima_run11"));
-            g.Add("77", "ImageCompare", ("image_a", L("91")), ("image_b", L("46")));
+            g.Add("77", "ImageCompare", ("compare_view", new DictValue()), ("image_a", L("91")), ("image_b", L("46")));   // ComfyUI refuses it missing too
             var capture = new Capture();
             var clock = System.Diagnostics.Stopwatch.StartNew();
             await executor.ExecuteAsync(g, null, capture);
@@ -352,6 +353,59 @@ public class AnimaTests
             Assert.That(psnr, Is.GreaterThan(35));
         }
         finally { InputFiles.Store = saved; }
+    }
+
+    const string NeedsLora = "Needs SPAWNGEN_MODELS_ROOT with diffusion_models/anima-base-v1.0.safetensors, loras/anima-turbo-lora-v0.2.safetensors and a GPU.";
+
+    /// <summary>
+    /// Load LoRA (model only) on Anima against ComfyUI (run 10: Fixtures/anima/lora, queue_run10.py): anima-base-v1.0 + anima-turbo-lora-v0.2 at
+    /// strength 1.0 and 0.5, and the base model without it (the control), 512 x 512, KSampler 8 steps euler / simple cfg 1 seed 42: the final
+    /// latents, all three from one loaded model (the handles share it, so each run must put on or take off the LoRA it asks for).
+    /// </summary>
+    [Test, Explicit(NeedsLora)]
+    public async Task Load_LoRA_on_Anima_gives_ComfyUIs_final_latents()
+    {
+        var root = Root();
+        CheckpointCatalog.ScanLoraFiles(root!);
+        string dir = Path.Combine(Dir, "lora");
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "anima_out", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outDir);
+        var executor = new PromptExecutor(Registry(), new Services(runtime, new OutputOptions { Directory = outDir, TempDirectory = outDir }));
+        var g = new PromptGraph();
+        g.Add("unet", "UNETLoader", ("unet_name", "anima-base-v1.0.safetensors"), ("weight_dtype", "default"));
+        g.Add("clip", "CLIPLoader", ("clip_name", "qwen_3_06b_base.safetensors"), ("type", "stable_diffusion"), ("device", "default"));
+        g.Add("pos", "CLIPTextEncode", ("clip", PromptInput.Link("clip")), ("text", Positive));
+        g.Add("latent", "EmptyLatentImage", ("width", 512L), ("height", 512L), ("batch_size", 1L));
+        // the order a stale LoRA would show in: with, half, without
+        foreach (var (tag, strength) in new[] { ("lora100", 1.0), ("lora050", 0.5), ("nolora", 0.0) })
+        {
+            string model = "unet";
+            if (strength != 0)
+            {
+                g.Add($"l_{tag}", "LoraLoaderModelOnly", ("model", PromptInput.Link("unet")), ("lora_name", "anima-turbo-lora-v0.2.safetensors"), ("strength_model", strength));
+                model = $"l_{tag}";
+            }
+            g.Add($"k_{tag}", "KSampler", ("model", PromptInput.Link(model)), ("positive", PromptInput.Link("pos")), ("negative", PromptInput.Link("pos")),
+                ("latent_image", PromptInput.Link("latent")), ("seed", 42L), ("steps", 8L), ("cfg", 1.0), ("sampler_name", "euler"), ("scheduler", "simple"), ("denoise", 1.0));
+            g.Add($"s_{tag}", "PreviewAny", ("source", PromptInput.Link($"k_{tag}")));   // an output node (Save Latent refuses a video-shaped latent yet)
+        }
+        var capture = new Capture();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await executor.ExecuteAsync(g, null, capture);
+        var report = new List<string>();
+        var errs = new Dictionary<string, double>();
+        foreach (var tag in (string[])["lora100", "lora050", "nolora"])
+        {
+            var latent = (LatentBatch)capture.Outputs[$"k_{tag}"].Values[0]!;
+            var b = File.ReadAllBytes(Directory.GetFiles(dir, $"{tag}_out_samples_*.raw").Single());
+            var theirs = new float[b.Length / 4];
+            Buffer.BlockCopy(b, 0, theirs, 0, b.Length);
+            errs[tag] = RelRms(latent.Data, theirs);
+            report.Add($"{tag} {errs[tag]:E2}");
+        }
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: {clock.Elapsed.TotalSeconds:F1} s; final latent vs ComfyUI's: " + string.Join("; ", report));
+        foreach (var (tag, err) in errs) Assert.That(err, Is.LessThan(1e-2), tag);
     }
 
     /// <summary>The preview template graph (its 1024 x 1024 and 30 steps cut to 512 x 512 and 4) as ComfyUI ran it: the final latent and the picture.</summary>

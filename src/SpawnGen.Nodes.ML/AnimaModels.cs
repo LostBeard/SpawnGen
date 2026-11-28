@@ -133,8 +133,41 @@ internal sealed class AnimaDiffusionModel(MlRuntime runtime, string name, string
     public ModelSampling Sampling { get; } = new(ModelSigmas.Flow(ModelSigmas.Sd3Shift(3.0), 1), PredictionType.Const);
     public SdUNet? UNet => null;
 
-    public Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken) =>
-        weights.Count == 0 ? Task.CompletedTask : throw new NotSupportedException("LoRAs and model merges on Anima are not available yet.");
+    // The LoRAs the next run uses (Load LoRA on this model's handle), and the ones loaded so far, by file (kept on the device with the DiT).
+    IReadOnlyList<LoraUse> _wantedLoras = [];
+    readonly Dictionary<(string Repo, string File), AnimaLora> _loras = [];
+
+    /// <summary>
+    /// The model's LoRAs for the next run (Load LoRA). The library's AnimaLora applies strength x B A unmerged to the DiT blocks' Linears, which
+    /// gives ComfyUI's model calls (run 10: anima-turbo-lora-v0.2 at strength 1 and 0.5); the same file twice adds its strengths (the patch is
+    /// linear in strength). Model merges are refused until measured.
+    /// </summary>
+    public async Task UseWeightsAsync(IReadOnlyList<WeightStep> weights, CancellationToken cancellationToken)
+    {
+        if (weights.FirstOrDefault(w => w is not LoraUse) is { } other)
+            throw new NotSupportedException($"Model merges on Anima are not available yet (LoRAs are); this model has a {other.GetType().Name}.");
+        _wantedLoras = [.. weights.Cast<LoraUse>()];
+        if (_dit is not null) await ApplyLorasAsync(_dit, cancellationToken);
+    }
+
+    async Task ApplyLorasAsync(AnimaDiT dit, CancellationToken ct)
+    {
+        foreach (var lora in dit.Loras.ToArray()) dit.RemoveLora(lora);
+        foreach (var group in _wantedLoras.GroupBy(u => (u.Repo, u.File)))
+        {
+            if (!_loras.TryGetValue(group.Key, out var lora))
+            {
+                GpuWeights weights;
+                await using (var stream = await runtime.ModelSource.OpenAsync(group.Key.Repo, group.Key.File, ct))
+                    weights = await GpuWeights.LoadAsync(runtime.Accelerator, stream, JsonDocument.Parse("{}").RootElement, group.Key.File, cancellationToken: ct);
+                try { lora = new AnimaLora(runtime.Accelerator, weights); }
+                catch { weights.Dispose(); throw; }
+                _loras[group.Key] = lora;
+            }
+            lora.Strength = group.Sum(u => u.Strength);
+            dit.AddLora(lora);
+        }
+    }
 
     public UNetRun BeginRun(Accelerator accelerator) => new AnimaRun(this, accelerator);
 
@@ -151,6 +184,7 @@ internal sealed class AnimaDiffusionModel(MlRuntime runtime, string name, string
         _dit = new AnimaDiT(acc, _kernels, _weights) { PreciseActivations = true };
         _adapter = new AnimaLlmAdapter(acc, new DiTKernels(acc), _weights) { PreciseActivations = true };
         AnimaResidency.Holding(this);
+        await ApplyLorasAsync(_dit, ct);
         return (_dit, _adapter);
     }
 
@@ -204,6 +238,8 @@ internal sealed class AnimaDiffusionModel(MlRuntime runtime, string name, string
         // the classes do not own the weights: models first, then the weights
         foreach (var (w, net, _) in _lllite.Values) { net.Dispose(); w.Dispose(); }
         _lllite.Clear();
+        foreach (var lora in _loras.Values) lora.Dispose();   // owns its weights
+        _loras.Clear();
         _pictureKey.Clear();
         _dit?.Dispose(); _dit = null;
         _adapter?.Dispose(); _adapter = null;

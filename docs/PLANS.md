@@ -656,7 +656,7 @@ the RX 590); 3 of 3 quiet runs (124 s) green. If it shows on a quiet machine, lo
 Browser pass on main DONE (10ff22d): Painter 10/10, Painter subgraph 13/13, mask editor, template status, and the new
 drive-anima-templates (4 Anima templates without missing nodes, depth names only DA3; red-checked on the live site). ANIMA IN THE BROWSER (2026-11-28, drive-browser-anima.js): the preview graph
 (512 x 512, 4 steps er_sde cfg 4) on WebGPU gives ComfyUI's picture at 62.3 dB (desktop 62.7), ~8 s a step on the RX 590, ~3 min with
-the first-use downloads (6 GB at ~50 MB/s from circlestone-labs/Anima). Deploy unblocked. Not yet run in the browser: the LLLite
+the first-use downloads (6 GB at ~50 MB/s from circlestone-labs/Anima). DEPLOYED 2026-11-28 (Pages run 46148945676 from 155f2aa, AOT; Space published); live checks pending (GPU). Not yet run in the browser: the LLLite
 inpainting template (same engine path; its turbo default refuses until the LoRA merges).
 **Then on Anima:** the turbo-ON templates end to end once anima-lora merges; LLLite control-picture patches; Anima in the browser (4.2 GB DiT).
 (b, done above) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):

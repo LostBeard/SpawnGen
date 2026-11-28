@@ -609,6 +609,11 @@ context [M, 1024]) and the DiT takes the context UNPADDED (it pads to 512 with z
 [neg, pos]). The adapter's weights are `net.llm_adapter.*` in the DiT file (UNETLoader's), not in the Qwen3 file (CLIPLoader's), so in
 SpawnGen: CLIPTextEncode on the Anima Qwen3 gives a CONDITIONING of the Qwen3 states + the T5 ids (a CondEntry option, as ComfyUI's
 t5xxl_ids); the Anima model (UNETLoader) runs the adapter once per conditioning entry (cached across steps) and feeds the DiT.
+**LLLite data ready ahead of time (2026-11-28, runs 4 and 5, `_DevComms/anima-run4-lllite-2026-11-28`):** anima-base-v1.0 +
+anima-lllite-inpainting-v2 on compositor-a.png with a Painter rectangle mask, cfg 1, 2 steps, seed 7, and the same graph WITHOUT
+AnimaLLLiteApply as the control; model calls, block 0 / 27 taps, final latents. In ComfyUI the patch is transformer_options patches
+(`post_input` among them), not DiT modules. Effect: blocks.0 out 27 %, call output 123 % off the control; with LLLite the 2-step
+picture already follows the input picture. Given to Tuvok for after the DiT.
 **Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
 --cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
 base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for

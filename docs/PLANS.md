@@ -654,9 +654,10 @@ KNOWN FLAKE (2026-11-28): Server.Tests A_node_that_throws_is_reported_with_its_m
 wait for the good prompt's execution_success) when the suite runs slow (148 s / 198 s runs, the Server and Nodes test processes sharing
 the RX 590); 3 of 3 quiet runs (124 s) green. If it shows on a quiet machine, look at the GPU picture save under contention first. a null literal counts as a missing input in SpawnGen (ComfyUI accepts "compare_view": null).
 Browser pass on main DONE (10ff22d): Painter 10/10, Painter subgraph 13/13, mask editor, template status, and the new
-drive-anima-templates (4 Anima templates without missing nodes, depth names only DA3; red-checked on the live site). DEPLOY HELD: nobody
-has run Anima in the browser yet (a 4.2 GB bf16 DiT on WebGPU, the hosted files); the live site already lists the preview / base cards
-as having their nodes, so a deploy would mostly add LLLite cards that are equally unproven there. Run one Anima picture in the browser first.
+drive-anima-templates (4 Anima templates without missing nodes, depth names only DA3; red-checked on the live site). ANIMA IN THE BROWSER (2026-11-28, drive-browser-anima.js): the preview graph
+(512 x 512, 4 steps er_sde cfg 4) on WebGPU gives ComfyUI's picture at 62.3 dB (desktop 62.7), ~8 s a step on the RX 590, ~3 min with
+the first-use downloads (6 GB at ~50 MB/s from circlestone-labs/Anima). Deploy unblocked. Not yet run in the browser: the LLLite
+inpainting template (same engine path; its turbo default refuses until the LoRA merges).
 **Then on Anima:** the turbo-ON templates end to end once anima-lora merges; LLLite control-picture patches; Anima in the browser (4.2 GB DiT).
 (b, done above) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):
 ML-side, applied at load from the LoRA file (agreed with Tuvok 2026-11-28; run 10 for his gate in `_DevComms/anima-run10-turbo-lora-2026-11-28`):

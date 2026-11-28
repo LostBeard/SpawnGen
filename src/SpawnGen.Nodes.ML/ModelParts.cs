@@ -12,7 +12,11 @@ namespace SpawnGen.Nodes.ML;
 // semantics are LoraNodeTests'.
 
 /// <summary>A prompt's text conditioning: the context rows ([1, rows, width]) and, for SDXL, the pooled embedding.</summary>
-public sealed record TextEncoding(float[] Context, int[] Shape, float[]? Pooled);
+public sealed record TextEncoding(float[] Context, int[] Shape, float[]? Pooled)
+{
+    /// <summary>Anima: the prompt's T5 token ids (EOS last), which the model's LLM adapter reads beside the Qwen3 rows (ComfyUI's t5xxl_ids).</summary>
+    public int[]? T5Ids { get; init; }
+}
 
 /// <summary>One sampling run on a model's UNet: predictions for a conditioning entry at a timestep. Holds per-run GPU buffers until disposed.</summary>
 public abstract class UNetRun : IDisposable

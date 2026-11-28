@@ -616,6 +616,36 @@ sigma itself as its timestep (not sigma x 1000): SpawnGen's Anima model object c
 models); (2) the context is padded to exactly 512 zero rows, NOT masked (unpadded is 150 % off): the library's DiT does it; (3) the
 adapter's cross-attention ropes both sides (T5 positions on q, Qwen3 positions on k); its in_proj is identity. Next on his side: the
 C# port on ML's GPU kernels, gated on call_0 / call_1 and pos / neg.
+**ANIMA RUNS IN SPAWNGEN (2026-11-28, branch `anima-local` on ML 5.8.39-local.1):** `AnimaModels.cs` (CLIPLoader stable_diffusion on a
+Qwen3-0.6B file -> AnimaTextEncoderModel: final-norm Qwen3 rows + T5 ids in the CONDITIONING; UNETLoader on a file with
+net.llm_adapter.* -> AnimaDiffusionModel: the adapter once per conditioning entry, the DiT per step returning v; Wan 2.1 latent format,
+shift-3 flow). AnimaTests on the RX 590 (OpenCL): conditioning 3.2e-6 / 5.0e-6, model calls 7.5e-6..1.8e-5 (3.3 s a call at 512 x 512),
+the preview template graph (512 x 512, 4 steps, er_sde, cfg 4, seed 42) final latent 2.2e-4, picture 62.7 dB, 46 s.
+The tokenizers: Qwen3-0.6B-Base's plain; T5 v1.1's tokenizer.json from LostBeard's LTX repo (t5-base's old-format file made the library's
+reader throw: Tuvok fixed that in 5.8.39).
+**Two sampler gaps found on the way, fixed for every model (measured, runs 6 to 9):** (1) 15 samplers (dpmpp_sde / 2m_sde / 2m_sde_heun /
+3m_sde and their _gpu, er_sde, exp_heun_2_x0 (+ _sde), sa_solver (+ pece), seeds_2 / 3) take a FLOW model's first step from the model's
+sigma at percent 1e-4 when the schedule starts at 1 (0.99996668 at shift 3, 0.9999 at shift 1, 0.99998333 at shift 6), x staying as noised
+at 1; the other 30 call the model at 1 (`Samplers.OffsetsFirstSigma`). (2) The noise the samplers add on the way comes from the SEED + 1
+stream (the initial noise is the seed's): ddpm, er_sde, euler_ancestral, exp_heun_2_x0_sde, lcm, res_multistep_ancestral, sa_solver (+ pece),
+seeds_2 / 3 land on ComfyUI's next input to ~1.5e-7 with it (SamplingCore). Before both, the Anima graph was 0.73 / 13.2 dB off.
+**Still open from run 9:** the Brownian-tree samplers (dpmpp_sde, dpmpp_2m_sde, dpmpp_3m_sde) match neither stream: SpawnGen's Brownian
+path is a stand-in for torchsde's tree (Apache-2.0: portable) -> port it, gate on run 9; dpmpp_2s_ancestral gives NaN from sigma 1 on a
+flow model (ComfyUI does not); the cfg_pp ancestral variants and dpm_2_ancestral are not settled by run 9's replay (needs the uncond
+estimate / a later call).
+**LLLite DONE (2026-11-28, ML 5.8.39-local.2):** `AnimaLLLiteNodes.cs`: Load Model Patch (model_patches folder, MODEL_PATCH) and Apply
+Anima LLLite (UNetOptions.AnimaLLLite, in force inside its sigma window like Deep Shrink); the Anima run loads the patch once, gives it the
+picture once (the IMAGE goes to the device as [H, W, C] and is reordered there by the library's transpose; InpaintPicture with the mask),
+and sets dit.LLLite per call. Against runs 4 / 5 on the RX 590: with the patch 6.4e-6 / 5.0e-6, without (the control) 2.6e-5 / 8.3e-6;
+red-checked (the run not setting it: 0.90). Refused until measured: a picture of another size than the latent x 8, a second LLLite on one
+model, the 3-channel control LLLites (any-test / depth: their ComfyUI runs first), a start / end window other than the run's (the window
+logic is ControlNet's convention, not measured on LLLite).
+**Next on Anima:** (a) the Painter inpainting template end to end (it adds the turbo LoRA and img2img-style sampling: measure the graph);
+(b) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):
+ML-side, applied at load from the LoRA file (agreed with Tuvok 2026-11-28; run 10 for his gate in `_DevComms/anima-run10-turbo-lora-2026-11-28`):
+the file is PEFT lora_A / lora_B rank 32 without alpha, blocks.* (896) + llm_adapter.blocks.* (120); in ComfyUI the adapter's output is
+UNCHANGED by it (0.0 at strength 1 and 0.5) while the DiT's call moves 1.01 / 0.236: apply it to the DiT blocks only;
+(c) when ML 5.8.39 is on nuget.org: merge, the browser (the 4.2 GB DiT on WebGPU), the five templates.
 **LLLite data ready ahead of time (2026-11-28, runs 4 and 5, `_DevComms/anima-run4-lllite-2026-11-28`):** anima-base-v1.0 +
 anima-lllite-inpainting-v2 on compositor-a.png with a Painter rectangle mask, cfg 1, 2 steps, seed 7, and the same graph WITHOUT
 AnimaLLLiteApply as the control; model calls, block 0 / 27 taps, final latents. In ComfyUI the patch is transformer_options patches

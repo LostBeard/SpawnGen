@@ -22,9 +22,11 @@ public static class ModelFolders
     public const string ControlNet = "controlnet";
     public const string VaeApprox = "vae_approx";
     public const string LatentUpscaleModels = "latent_upscale_models";
+    public const string ModelPatches = "model_patches";
 
     static readonly Dictionary<string, string[]> Folders = new()
     {
+        [ModelPatches] = ["model_patches"],
         [DiffusionModels] = ["diffusion_models", "unet"],
         [Vae] = ["vae"],
         [TextEncoders] = ["text_encoders", "clip"],
@@ -211,6 +213,8 @@ public sealed class UNETLoader
             return new ModelHandle(await runtime.GetOrLoadAsync($"flux1:{repo}/{file}", () => Task.FromResult(new Flux1DiffusionModel(runtime, unetName, repo, file))));
         if (names.Contains(ZImageDiffusionModel.MarkerTensor))
             return new ModelHandle(await runtime.GetOrLoadAsync($"zimage:{repo}/{file}", () => Task.FromResult(new ZImageDiffusionModel(runtime, unetName, repo, file))));
+        if (AnimaDiffusionModel.Is(names))
+            return new ModelHandle(await runtime.GetOrLoadAsync($"anima:{repo}/{file}", () => Task.FromResult(new AnimaDiffusionModel(runtime, unetName, repo, file))));
         if (WanFiles.IsOriginalLayoutDit(names))
             throw new NotSupportedException($"'{unetName}' is a Wan transformer in its original layout (as ComfyUI's repackaged files ship it), which SpawnGen cannot load yet; pick {WanFiles.DiffusionModels[0]} (downloads on first use).");
         var model = await runtime.GetOrLoadAsync($"unet:{repo}/{file}", () => StandaloneDiffusionModel.LoadAsync(runtime, unetName, repo, file));
@@ -280,9 +284,13 @@ public sealed class CLIPLoader
                 return new ClipHandle(new Qwen3TextModel(clipName, type, lmRepo, lmFile));
         }
         if (type != "stable_diffusion")
-            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders, Wan's umT5, FLUX.2's Qwen3, Z-Image's Qwen3 and Qwen-Image's Qwen2.5-VL; choose 'stable_diffusion', 'wan', 'flux2', 'lumina2' or 'qwen_image'.");
+            throw new NotSupportedException($"CLIP type '{type}' is not available: SpawnGen runs the Stable Diffusion text encoders, Wan's umT5, FLUX.2's Qwen3, Z-Image's Qwen3, Qwen-Image's Qwen2.5-VL and Anima's Qwen3-0.6B; choose 'stable_diffusion', 'wan', 'flux2', 'lumina2' or 'qwen_image'.");
         var runtime = await GpuHelpers.RuntimeAsync(services);
         var (repo, file) = ModelFolders.Locate(ModelFolders.TextEncoders, clipName);
+        // Anima's encoder (ComfyUI's Anima templates load qwen_3_06b_base with type stable_diffusion; ComfyUI recognises it from the file)
+        if (ModelFolders.Names(ModelFolders.TextEncoders).Contains(clipName)
+            && await AnimaTextEncoderModel.IsAsync(runtime.ModelSource, repo, file, await SafetensorsHeader.NamesAsync(runtime.ModelSource, repo, file)))
+            return new ClipHandle(await runtime.GetOrLoadAsync($"anima-qwen:{repo}/{file}", () => Task.FromResult(new AnimaTextEncoderModel(runtime, clipName, repo, file))));
         var model = await runtime.GetOrLoadAsync($"clip:{repo}/{file}", async () =>
         {
             var encoder = await SdTextEncoder.LoadAsync(runtime.Accelerator, runtime.ModelSource, repo, file);

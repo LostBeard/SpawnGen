@@ -55,7 +55,7 @@ public sealed class CLIPTextEncode
     public async Task<Conditioning> ExecuteAsync([Input(Multiline = true)] string text, ClipHandle clip, NodeContext context)
     {
         var e = await EncodeAsync(clip, text, text, context.CancellationToken);
-        return new Conditioning([new CondEntry(e.Context, e.Shape) { Pooled = e.Pooled }]);
+        return new Conditioning([new CondEntry(e.Context, e.Shape) { Pooled = e.Pooled, T5Ids = e.T5Ids }]);
     }
 
     /// <summary>A piece of prompt text as CLIP BPE ids (CLIP's own text cleaning and BPE), without the start, end and padding tokens.</summary>

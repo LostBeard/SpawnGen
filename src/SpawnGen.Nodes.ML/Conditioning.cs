@@ -47,6 +47,8 @@ public sealed record CondEntry(float[] Embeddings, int[] Shape)
     public HostTensor? Lyrics { get; init; }
     /// <summary>ComfyUI's "audio_codes" (ACE-Step 1.5): the code LM's 5 Hz audio codes (0 .. 63999), when the encode generated them.</summary>
     public int[]? AudioCodes { get; init; }
+    /// <summary>ComfyUI's "t5xxl_ids" (Anima's text encoder): the prompt's T5 ids, EOS last, that Anima's LLM adapter turns into the DiT's context.</summary>
+    public int[]? T5Ids { get; init; }
     /// <summary>ComfyUI's "frame_rate" (LTXVConditioning: the video's frames a second, which LTX models are told).</summary>
     public double? FrameRate { get; init; }
     /// <summary>

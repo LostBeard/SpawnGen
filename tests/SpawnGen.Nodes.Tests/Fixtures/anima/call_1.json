@@ -1,0 +1,83 @@
+{
+ "call": 1,
+ "input": {
+  "file": "call_1_input_f32_2x16x1x64x64.raw",
+  "shape": [
+   2,
+   16,
+   1,
+   64,
+   64
+  ],
+  "dtype": "torch.float32",
+  "min": -3.8155717849731445,
+  "max": 3.7324132919311523
+ },
+ "timestep": {
+  "file": "call_1_timestep_f32_2.raw",
+  "shape": [
+   2
+  ],
+  "dtype": "torch.float32",
+  "min": 0.8999999761581421,
+  "max": 0.8999999761581421
+ },
+ "timestep_values": [
+  0.8999999761581421,
+  0.8999999761581421
+ ],
+ "output": {
+  "file": "call_1_output_f32_2x16x1x64x64.raw",
+  "shape": [
+   2,
+   16,
+   1,
+   64,
+   64
+  ],
+  "dtype": "torch.float32",
+  "min": -1.2942631244659424,
+  "max": 1.158361792564392
+ },
+ "cond_or_uncond": [
+  1,
+  0
+ ],
+ "c": {
+  "c_crossattn": {
+   "file": "call_1_c_c_crossattn_f32_2x512x1024.raw",
+   "shape": [
+    2,
+    512,
+    1024
+   ],
+   "dtype": "torch.float32",
+   "min": -1.2011348009109497,
+   "max": 1.0273793935775757
+  },
+  "transformer_options": {
+   "wrappers": "{}",
+   "callbacks": "{}",
+   "sample_sigmas": {
+    "file": "call_1_c_transformer_options_sample_sigmas_f32_5.raw",
+    "shape": [
+     5
+    ],
+    "dtype": "torch.float32",
+    "min": 0.0,
+    "max": 1.0
+   },
+   "cond_or_uncond": "[1, 0]",
+   "uuids": "[UUID('e9e5e0a1-e659-4d65-90ca-31a16d9691fb'), UUID('2a6b7b45-b6d3-4d54-b871-6efc88dcfc0e')]",
+   "sigmas": {
+    "file": "call_1_c_transformer_options_sigmas_f32_1.raw",
+    "shape": [
+     1
+    ],
+    "dtype": "torch.float32",
+    "min": 0.8999999761581421,
+    "max": 0.8999999761581421
+   }
+  }
+ }
+}

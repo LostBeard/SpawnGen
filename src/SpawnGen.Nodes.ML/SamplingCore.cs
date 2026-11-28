@@ -82,7 +82,11 @@ internal static class SamplingCore
                     (cond, scheduled, options) => EvaluateAsync(unet, cond, input, sigma, scheduled, options, sampling, format, latent, original, item, ct),
                     (cond, at, options) => EvaluateAsync(unet, cond, at, sigma, true, options, sampling, format, latent, original, item, ct),
                     async () => await unet.ReadMiddleAttentionAsync() ?? throw new NotSupportedException("This model cannot record its middle attention.")));
-            var noiseSource = new Samplers.NoiseSource(settings.Seed, batch, b, ch, h, w);
+            // The noise the samplers add on the way (ancestral / SDE steps) comes from the seed + 1 stream; the initial noise is the seed's own.
+            // Measured with ComfyUI (2026-11-28, Anima run 9: SamplerCustom seed 7; run 1: KSampler seed 42): ddpm, er_sde, euler_ancestral,
+            // exp_heun_2_x0_sde, lcm, res_multistep_ancestral, sa_solver (+ pece) and seeds_2 / 3 land on ComfyUI's next model input to ~1.5e-7
+            // with seed + 1 and nowhere near it with the seed.
+            var noiseSource = new Samplers.NoiseSource(unchecked(settings.Seed + 1), batch, b, ch, h, w);
             float[]? last = null;
             var x = await Samplers.RunAsync(settings.Sampler, x0, sigmas, denoise, noiseSource,
                 onStep: _ => context.Progress(++done, total), ct: ct, uncond: () => run.Last, options: settings.Options, sampling: sampling,

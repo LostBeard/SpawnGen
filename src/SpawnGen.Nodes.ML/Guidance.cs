@@ -25,13 +25,20 @@ public sealed record UNetOptions
     public SdHyperTile? HyperTile { get; init; }
     public SdTokenMerge? TokenMerge { get; init; }
     public DeepShrinkWindow? DeepShrink { get; init; }
+    /// <summary>Anima's LLLite (Apply Anima LLLite): the patch, its picture and mask and strength, in force inside its sigma window.</summary>
+    public AnimaLLLiteUse? AnimaLLLite { get; init; }
 
     /// <summary>True when nothing is set (the plain UNet).</summary>
     public bool IsNone => this == None;
 
-    /// <summary>The options in force at <paramref name="sigma"/>: Deep Shrink only inside its window.</summary>
-    public UNetOptions At(double sigma) =>
-        DeepShrink is { } d && !(sigma <= d.SigmaStart && sigma >= d.SigmaEnd) ? this with { DeepShrink = null } : this;
+    /// <summary>The options in force at <paramref name="sigma"/>: Deep Shrink and Anima's LLLite only inside their windows.</summary>
+    public UNetOptions At(double sigma)
+    {
+        var o = this;
+        if (DeepShrink is { } d && !(sigma <= d.SigmaStart && sigma >= d.SigmaEnd)) o = o with { DeepShrink = null };
+        if (AnimaLLLite is { } l && !(sigma <= l.SigmaStart && sigma >= l.SigmaEnd)) o = o with { AnimaLLLite = null };
+        return o;
+    }
 }
 
 /// <summary>What a patch can see and ask of the run besides its arguments.</summary>

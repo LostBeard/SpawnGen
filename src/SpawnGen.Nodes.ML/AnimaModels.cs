@@ -120,6 +120,10 @@ internal sealed class AnimaDiffusionModel(MlRuntime runtime, string name, string
     GpuWeights? _weights;
     AnimaDiT? _dit;
     AnimaLlmAdapter? _adapter;
+    DiTKernels? _kernels;
+    // LLLite patches by file (weights stay on the device with the DiT); the picture each one was last given
+    readonly Dictionary<string, (GpuWeights Weights, AnimaLLLite Net, int Channels)> _lllite = new(StringComparer.Ordinal);
+    readonly Dictionary<AnimaLLLite, object> _pictureKey = new(ReferenceEqualityComparer.Instance);
 
     public static bool Is(IReadOnlyCollection<string> names) => AnimaFiles.IsDiT(names);
 
@@ -143,18 +147,68 @@ internal sealed class AnimaDiffusionModel(MlRuntime runtime, string name, string
         await using (var stream = await runtime.ModelSource.OpenAsync(repo, file, ct))
             _weights = await GpuWeights.LoadAsync(acc, stream, JsonDocument.Parse("{}").RootElement, name, cancellationToken: ct);
         // Precise activations: the reference's fp32 (the library's gate; CUDA's tensor-core path would round them to bf16).
-        _dit = new AnimaDiT(acc, new DiTKernels(acc), _weights) { PreciseActivations = true };
+        _kernels = new DiTKernels(acc);
+        _dit = new AnimaDiT(acc, _kernels, _weights) { PreciseActivations = true };
         _adapter = new AnimaLlmAdapter(acc, new DiTKernels(acc), _weights) { PreciseActivations = true };
         AnimaResidency.Holding(this);
         return (_dit, _adapter);
     }
 
+    /// <summary>
+    /// The LLLite of <paramref name="use"/> with its picture set for a latent of <paramref name="rows"/> x <paramref name="cols"/>: the patch file
+    /// loaded once, the picture (and mask) given to it again only when they change. The picture goes to the device as it is (ComfyUI's
+    /// [H, W, C] IMAGE) and is reordered there; no pixel passes through .NET.
+    /// </summary>
+    public async Task<AnimaLLLite> LLLiteAsync(AnimaLLLiteUse use, int rows, int cols, CancellationToken ct)
+    {
+        var acc = runtime.Accelerator;
+        if (!_lllite.TryGetValue(use.Patch.File, out var patch))
+        {
+            var shape = await SafetensorsHeader.ShapeAsync(runtime.ModelSource, use.Patch.Repo, use.Patch.File, "lllite_conditioning1.conv1.weight")
+                ?? throw new NotSupportedException($"'{use.Patch.Name}' is not an Anima LLLite patch (no lllite_conditioning1.conv1.weight).");
+            GpuWeights weights;
+            await using (var stream = await runtime.ModelSource.OpenAsync(use.Patch.Repo, use.Patch.File, ct))
+                weights = await GpuWeights.LoadAsync(acc, stream, JsonDocument.Parse("{}").RootElement, use.Patch.Name, cancellationToken: ct);
+            _lllite[use.Patch.File] = patch = (weights, new AnimaLLLite(acc, _kernels!, weights), (int)shape[1]);
+        }
+        var net = patch.Net;
+        net.Strength = use.Strength;
+        int H = rows * 8, W = cols * 8;
+        var key = (use.Image, use.Mask, H, W);
+        if (_pictureKey.TryGetValue(net, out var had) && had.Equals(key)) return net;
+        var image = use.Image;
+        if (image.Height != H || image.Width != W)
+            throw new NotSupportedException($"Apply Anima LLLite: the picture is {image.Width} x {image.Height} and the latent wants {W} x {H}; how ComfyUI fits another size is not measured yet, so give a picture of the latent's size (Resize Image / Mask).");
+        if (image.Channels < 3) throw new ArgumentException($"Apply Anima LLLite takes an RGB picture; this one has {image.Channels} channel(s).");
+        int plane = H * W;
+        var pixels = await image.ToDeviceAsync(acc);
+        using var chw = acc.Allocate1D<float>((long)image.Channels * plane);
+        _kernels!.Transpose(pixels.SubView(0, (long)plane * image.Channels), chw.View, plane, image.Channels);   // [H*W, C] -> [C, H*W]; the first picture of a batch
+        if (patch.Channels == 4)
+        {
+            var mask = use.Mask ?? throw new NotSupportedException($"'{use.Patch.Name}' is an inpainting LLLite: connect a mask (1 = repaint), as the Painter template does.");
+            if (mask.Height != H || mask.Width != W) throw new NotSupportedException($"Apply Anima LLLite: the mask is {mask.Width} x {mask.Height}; the picture is {W} x {H}. Give both the same size.");
+            var maskView = await mask.ToDeviceAsync(acc);
+            using var picture = acc.Allocate1D<float>(4L * plane);
+            new AnimaKernels(acc).InpaintPicture(chw.View.SubView(0, 3L * plane), maskView.SubView(0, plane), picture.View, H, W);
+            await net.SetPictureAsync(picture.View, H, W);
+        }
+        else throw new NotSupportedException($"'{use.Patch.Name}' takes a {patch.Channels}-channel picture: SpawnGen runs the 4-channel inpainting LLLite so far (the control-picture ones are next, with their ComfyUI runs).");
+        await acc.SynchronizeAsync();
+        _pictureKey[net] = key;
+        return net;
+    }
+
     public void Unload()
     {
         // the classes do not own the weights: models first, then the weights
+        foreach (var (w, net, _) in _lllite.Values) { net.Dispose(); w.Dispose(); }
+        _lllite.Clear();
+        _pictureKey.Clear();
         _dit?.Dispose(); _dit = null;
         _adapter?.Dispose(); _adapter = null;
         _weights?.Dispose(); _weights = null;
+        _kernels = null;
     }
 
     public void Dispose()
@@ -196,6 +250,8 @@ internal sealed class AnimaDiffusionModel(MlRuntime runtime, string name, string
                 _latent = acc.Allocate1D<float>(n);
                 _velocity = acc.Allocate1D<float>(n);
             }
+            // Apply Anima LLLite: in force inside its window (options.At has dropped it outside), for both CFG rows
+            dit.LLLite = options.AnimaLLLite is { } lllite ? await model.LLLiteAsync(lllite, rows, w, cancellationToken) : null;
             _latent.View.CopyFromCPU(input);
             dit.SetGrid(frames, rows, w);
             dit.SetContext(0, context.Rows.View, context.Count);

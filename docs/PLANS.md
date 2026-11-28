@@ -633,8 +633,15 @@ seeds_2 / 3 land on ComfyUI's next input to ~1.5e-7 with it (SamplingCore). Befo
 path is a stand-in for torchsde's tree (Apache-2.0: portable) -> port it, gate on run 9; dpmpp_2s_ancestral gives NaN from sigma 1 on a
 flow model (ComfyUI does not); the cfg_pp ancestral variants and dpm_2_ancestral are not settled by run 9's replay (needs the uncond
 estimate / a later call).
-**Next on Anima:** (a) LLLite (Tuvok's 5.8.39-local.2: AnimaKernels.InpaintPicture -> AnimaLLLite.SetPictureAsync -> dit.LLLite) with
-ModelPatchLoader + AnimaLLLiteApply, gated on runs 4 / 5; (b) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):
+**LLLite DONE (2026-11-28, ML 5.8.39-local.2):** `AnimaLLLiteNodes.cs`: Load Model Patch (model_patches folder, MODEL_PATCH) and Apply
+Anima LLLite (UNetOptions.AnimaLLLite, in force inside its sigma window like Deep Shrink); the Anima run loads the patch once, gives it the
+picture once (the IMAGE goes to the device as [H, W, C] and is reordered there by the library's transpose; InpaintPicture with the mask),
+and sets dit.LLLite per call. Against runs 4 / 5 on the RX 590: with the patch 6.4e-6 / 5.0e-6, without (the control) 2.6e-5 / 8.3e-6;
+red-checked (the run not setting it: 0.90). Refused until measured: a picture of another size than the latent x 8, a second LLLite on one
+model, the 3-channel control LLLites (any-test / depth: their ComfyUI runs first), a start / end window other than the run's (the window
+logic is ControlNet's convention, not measured on LLLite).
+**Next on Anima:** (a) the Painter inpainting template end to end (it adds the turbo LoRA and img2img-style sampling: measure the graph);
+(b) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):
 ML-side, applied at load from the LoRA file (agreed with Tuvok 2026-11-28; run 10 for his gate in `_DevComms/anima-run10-turbo-lora-2026-11-28`):
 the file is PEFT lora_A / lora_B rank 32 without alpha, blocks.* (896) + llm_adapter.blocks.* (120); in ComfyUI the adapter's output is
 UNCHANGED by it (0.0 at strength 1 and 0.5) while the DiT's call moves 1.01 / 0.236: apply it to the DiT blocks only;

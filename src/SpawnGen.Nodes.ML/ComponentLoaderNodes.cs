@@ -22,9 +22,11 @@ public static class ModelFolders
     public const string ControlNet = "controlnet";
     public const string VaeApprox = "vae_approx";
     public const string LatentUpscaleModels = "latent_upscale_models";
+    public const string ModelPatches = "model_patches";
 
     static readonly Dictionary<string, string[]> Folders = new()
     {
+        [ModelPatches] = ["model_patches"],
         [DiffusionModels] = ["diffusion_models", "unet"],
         [Vae] = ["vae"],
         [TextEncoders] = ["text_encoders", "clip"],

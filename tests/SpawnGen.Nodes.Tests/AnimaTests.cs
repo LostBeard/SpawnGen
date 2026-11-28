@@ -244,6 +244,47 @@ public class AnimaTests
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name} ({runtime.Accelerator.MemorySize >> 20} MB): " + string.Join("; ", report));
     }
 
+    const string NeedsLLLite = "Needs SPAWNGEN_MODELS_ROOT with diffusion_models/anima-base-v1.0.safetensors, model_patches/anima-lllite-inpainting-v2.safetensors and a GPU.";
+
+    /// <summary>
+    /// Apply Anima LLLite against ComfyUI (runs 4 / 5: Fixtures/anima/lllite, queue_run4.py / queue_run5.py): anima-base-v1.0 with
+    /// anima-lllite-inpainting-v2 on compositor-a.png and a Painter rectangle mask, cfg 1; both model calls through Load Model Patch -> Apply Anima
+    /// LLLite -> the Anima run, and the same calls WITHOUT the patch against run 5 (the control, which also shows the patch matters).
+    /// </summary>
+    [Test, Explicit(NeedsLLLite)]
+    public async Task Apply_Anima_LLLite_gives_ComfyUIs_model_calls()
+    {
+        var root = Root();
+        string dir = Path.Combine(Dir, "lllite");
+        float[] L(string pattern) { var b = File.ReadAllBytes(Directory.GetFiles(dir, pattern).Single()); var d = new float[b.Length / 4]; Buffer.BlockCopy(b, 0, d, 0, b.Length); return d; }
+        using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+        var services = new Services(runtime);
+        var context = (NodeContext)Activator.CreateInstance(typeof(NodeContext), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
+            ["1", "UNETLoader", services, CancellationToken.None, null, new Lazy<string>(() => "{}"), new Dictionary<string, string>(), null, null, 0], null)!;
+        var model = await new UNETLoader().ExecuteAsync("anima-base-v1.0.safetensors", "default", context, services);
+        var patch = new ModelPatchLoader().Execute("anima-lllite-inpainting-v2.safetensors");
+        var picture = ImageDecoder.Decode(File.ReadAllBytes(Path.Combine(dir, "compositor-a.png")));
+        ImageDecoder.Decode(File.ReadAllBytes(Path.Combine(dir, "painter-lllite-rect.png")), out var alpha);
+        var mask = new MaskBatch(1, 512, 512, alpha);   // Painter's MASK is the painting's alpha (PainterTests)
+        var patched = new AnimaLLLiteApply().Execute(model, patch, picture, 1.0, 0.0, 1.0, mask);
+        var entry = new CondEntry(L("with_pos_0_cond_*.raw"), [1, 4, 1024]) { T5Ids = L("with_pos_0_t5xxl_ids_*.raw").Select(v => (int)v).ToArray() };
+        using var run = model.Model.BeginRun(runtime.Accelerator);
+        var report = new List<string>();
+        foreach (var (tag, handle, limit) in new[] { ("with", patched, 1e-3), ("without", model, 1e-3) })
+            for (int call = 0; call < 2; call++)
+            {
+                var x = L($"{tag}_call_{call}_input_*.raw");
+                float sigma = L($"{tag}_call_{call}_timestep_*.raw")[0];
+                var options = (handle.Patches.UNet ?? UNetOptions.None).At(sigma);
+                var v = await run.PredictAsync(x, 64, 64, sigma, entry, null, options, null, CancellationToken.None);
+                var denoised = x.Select((xi, i) => xi - sigma * v[i]).ToArray();
+                double err = RelRms(denoised, L($"{tag}_call_{call}_output_*.raw"));
+                report.Add($"{tag} LLLite call {call} (sigma {sigma:F5}): {err:E2}");
+                Assert.That(err, Is.LessThan(limit), $"{tag} call {call}");
+            }
+        TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: " + string.Join("; ", report));
+    }
+
     /// <summary>The preview template graph (its 1024 x 1024 and 30 steps cut to 512 x 512 and 4) as ComfyUI ran it: the final latent and the picture.</summary>
     [Test, Explicit(Needs)]
     public async Task The_template_graph_matches_ComfyUI()

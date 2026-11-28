@@ -285,6 +285,75 @@ public class AnimaTests
         TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: " + string.Join("; ", report));
     }
 
+    /// <summary>
+    /// The image_anima_lllite_image_inpainting template graph as the template wires it (Load Image -> Painter -> Preview Mask -> Apply Anima LLLite;
+    /// the If/Else switches on its turbo toggle, OFF: the base branch, so the lazy switch never runs Load LoRA; Compare Images at the end), its
+    /// 1024 x 1024 and 30 steps cut to 512 x 512 and 4, as ComfyUI ran it (run 11, Fixtures/anima/inpaint, queue_run11.py): the final latent
+    /// and the picture.
+    /// </summary>
+    [Test, Explicit(NeedsLLLite)]
+    public async Task The_LLLite_inpainting_template_graph_matches_ComfyUI()
+    {
+        var root = Root();
+        string dir = Path.Combine(Dir, "inpaint"), lllite = Path.Combine(Dir, "lllite");
+        var outDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, "anima_out", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outDir);
+        var store = new MemoryInputStore();
+        foreach (var f in (string[])["compositor-a.png", "painter-lllite-rect.png"]) await store.SaveAsync(f, File.ReadAllBytes(Path.Combine(lllite, f)));
+        var saved = InputFiles.Store;
+        InputFiles.Store = store;
+        try
+        {
+            using var runtime = new MlRuntime(new DesktopModelSource(root!, MlRuntime.RepoFolders));
+            var executor = new PromptExecutor(Registry(), new Services(runtime, new OutputOptions { Directory = outDir, TempDirectory = outDir }));
+            var g = new PromptGraph();
+            PromptInput L(string id) => PromptInput.Link(id);
+            g.Add("91", "LoadImage", ("image", "compositor-a.png"));
+            g.Add("694", "Painter", ("mask", "painter-lllite-rect.png [input]"), ("width", 512L), ("height", 512L), ("bg_color", "#000000"), ("image", L("91")));
+            g.Add("695", "MaskPreview", ("mask", PromptInput.Link("694", 1)));
+            g.Add("78", "CLIPLoader", ("clip_name", "qwen_3_06b_base.safetensors"), ("type", "stable_diffusion"), ("device", "default"));
+            g.Add("79", "VAELoader", ("vae_name", "qwen_image_vae.safetensors"));
+            g.Add("81", "EmptyLatentImage", ("width", 512L), ("height", 512L), ("batch_size", 1L));
+            g.Add("82", "CLIPTextEncode", ("clip", L("78")), ("text", "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia"));
+            g.Add("84", "CLIPTextEncode", ("clip", L("78")), ("text", "girl with red eyes"));
+            g.Add("85", "UNETLoader", ("unet_name", "anima-base-v1.0.safetensors"), ("weight_dtype", "default"));
+            g.Add("86", "ModelPatchLoader", ("name", "anima-lllite-inpainting-v2.safetensors"));
+            g.Add("87", "AnimaLLLiteApply", ("model", L("85")), ("model_patch", L("86")), ("image", L("694")), ("mask", L("695")),
+                ("strength", 1.0), ("start_percent", 0.0), ("end_percent", 1.0));
+            g.Add("109", "LoraLoaderModelOnly", ("model", L("87")), ("lora_name", "anima-turbo-lora-v0.2.safetensors"), ("strength_model", 1.0));
+            g.Add("115", "PrimitiveBoolean", ("value", false));
+            g.Add("107", "PrimitiveInt", ("value", 4L));
+            g.Add("108", "PrimitiveInt", ("value", 8L));
+            g.Add("112", "PrimitiveFloat", ("value", 4.0));
+            g.Add("114", "PrimitiveFloat", ("value", 1.0));
+            g.Add("110", "ComfySwitchNode", ("switch", L("115")), ("on_false", L("87")), ("on_true", L("109")));
+            g.Add("111", "ComfySwitchNode", ("switch", L("115")), ("on_false", L("107")), ("on_true", L("108")));
+            g.Add("113", "ComfySwitchNode", ("switch", L("115")), ("on_false", L("112")), ("on_true", L("114")));
+            g.Add("106", "KSampler", ("model", L("110")), ("positive", L("84")), ("negative", L("82")), ("latent_image", L("81")), ("seed", 42L),
+                ("steps", L("111")), ("cfg", L("113")), ("sampler_name", "euler"), ("scheduler", "simple"), ("denoise", 1.0));
+            g.Add("105", "VAEDecode", ("samples", L("106")), ("vae", L("79")));
+            g.Add("46", "SaveImage", ("images", L("105")), ("filename_prefix", "anima_run11"));
+            g.Add("77", "ImageCompare", ("image_a", L("91")), ("image_b", L("46")));
+            var capture = new Capture();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await executor.ExecuteAsync(g, null, capture);
+            var seconds = clock.Elapsed.TotalSeconds;
+            Assert.That(capture.Outputs.ContainsKey("109"), Is.False, "the lazy switch ran Load LoRA on the branch it did not take");
+            var latent = (LatentBatch)capture.Outputs["106"].Values[0]!;
+            float[] R(string pattern) { var b = File.ReadAllBytes(Directory.GetFiles(dir, pattern).Single()); var d = new float[b.Length / 4]; Buffer.BlockCopy(b, 0, d, 0, b.Length); return d; }
+            double latentErr = RelRms(latent.Data, R("out_samples_*.raw"));
+            var ours = PngReader.Decode(File.ReadAllBytes(Directory.GetFiles(outDir, "anima_run11_*.png").Single()));
+            var theirs = PngReader.Decode(File.ReadAllBytes(Directory.GetFiles(dir, "anima_run11_*.png").Single()));
+            double mse = 0;
+            for (int i = 0; i < ours.Data.Length; i++) { double d = ours.Data[i] - theirs.Data[i]; mse += d * d; }
+            double psnr = 10 * Math.Log10(ours.Data.Length / mse);
+            TestContext.Out.WriteLine($"{runtime.Accelerator.Name}: {seconds:F1} s; final latent {latentErr:E2} relative RMS vs ComfyUI's; picture {psnr:F1} dB; {outDir}");
+            Assert.That(latentErr, Is.LessThan(1e-2));
+            Assert.That(psnr, Is.GreaterThan(35));
+        }
+        finally { InputFiles.Store = saved; }
+    }
+
     /// <summary>The preview template graph (its 1024 x 1024 and 30 steps cut to 512 x 512 and 4) as ComfyUI ran it: the final latent and the picture.</summary>
     [Test, Explicit(Needs)]
     public async Task The_template_graph_matches_ComfyUI()

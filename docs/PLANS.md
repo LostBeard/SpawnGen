@@ -604,6 +604,11 @@ test Qwen3TextModel.Is) to an Anima encoder instead of SdTextEncoder; its CONDIT
 (SpawnGen's TextEncoding holds one tensor + pooled today: add the ids as a CondEntry option, as ComfyUI's t5xxl_ids, unless the library
 takes the adapter's output directly, in which case the encoder runs the adapter and the cond is c_crossattn [N, 1024] + zero rows to
 512). Decide with the library's shape of the adapter (inside the DiT call or its own module).
+**Decided 2026-11-27 (Tuvok):** the library has `AnimaLlmAdapter` as its own module ((Qwen3 final-norm states [N, 1024], T5 ids [M]) ->
+context [M, 1024]) and the DiT takes the context UNPADDED (it pads to 512 with zero rows itself; one context per batch row, CFG rows
+[neg, pos]). The adapter's weights are `net.llm_adapter.*` in the DiT file (UNETLoader's), not in the Qwen3 file (CLIPLoader's), so in
+SpawnGen: CLIPTextEncode on the Anima Qwen3 gives a CONDITIONING of the Qwen3 states + the T5 ids (a CondEntry option, as ComfyUI's
+t5xxl_ids); the Anima model (UNETLoader) runs the adapter once per conditioning entry (cached across steps) and feeds the DiT.
 **Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
 --cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
 base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for

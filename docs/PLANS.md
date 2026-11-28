@@ -18,6 +18,12 @@ has the 3-submits-per-block fix; on 5.8.24 it tripped the RX 590's driver watchd
 
 ## Next deploy (TJ, 2026-11-20)
 
+**2026-11-27: main 2d0c2bb = SpawnDev.ILGPU.ML 5.8.37 (resumable browser downloads as OPFS part files; old entries read as they are) +
+the Painter widget + the ported mask editor + pages.yml swap for the AOT peak.** Verified on the RX 590 against a local publish: suite
+3563 / 0 / 3, two visits of the 17 examples 17 / 17 (30m19s, 29m37s), drives green. Pages run 46093517557 dispatched; then the Space
+(`_scratch/deploy-wait-publish.sh`), then `_scratch/live-check.sh 5837` on both URLs (GPU: ask Riker for a window first; the painter,
+painter-subgraph and maskeditor drives are in it now).
+
 **2026-11-23: main = SpawnDev.ILGPU 5.4.46 + SpawnDev.Codecs 1.1.4 + SpawnDev.ILGPU.ML 5.8.25 (811749f).** Suite 3394 / 0 / 3; the explicit
 GPU codec tests 12 / 12 on the RX 590 (OpenCL); in Chrome on the RX 590 (D3D12) against a local non-AOT publish: SD-Turbo 63 s, Image to
 image 16 s, Text to video 167 s (models already in OPFS), every result decodes and was looked at. Heavy runs go through

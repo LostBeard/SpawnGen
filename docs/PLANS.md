@@ -648,7 +648,10 @@ AnimaLora per file (strength x B A unmerged, DiT blocks only; the same file twic
 Run 10 through KSampler 8 steps: final latent 1.0e-3 (1.0), 8.3e-4 (0.5), 3.5e-5 without; red check 0.90 / 0.66. The with-LoRA latent
 is ~30x further from ComfyUI's than the control: asked Tuvok (his per-call figures are 3e-5). Gaps seen on the way: Save Latent refuses a
 video-shaped (5-D) latent (ComfyUI saves it); a null literal counts as a missing input in SpawnGen (ComfyUI accepts "compare_view": null).
-Before a deploy: a Studio browser pass on main (the drives) and the Anima nodes listed in the browser's object_info.
+Browser pass on main DONE (10ff22d): Painter 10/10, Painter subgraph 13/13, mask editor, template status, and the new
+drive-anima-templates (4 Anima templates without missing nodes, depth names only DA3; red-checked on the live site). DEPLOY HELD: nobody
+has run Anima in the browser yet (a 4.2 GB bf16 DiT on WebGPU, the hosted files); the live site already lists the preview / base cards
+as having their nodes, so a deploy would mostly add LLLite cards that are equally unproven there. Run one Anima picture in the browser first.
 **Then on Anima:** the turbo-ON templates end to end once anima-lora merges; LLLite control-picture patches; Anima in the browser (4.2 GB DiT).
 (b, done above) LoRA on the Anima DiT (the base template's turbo LoRA: LoraLoaderModelOnly):
 ML-side, applied at load from the LoRA file (agreed with Tuvok 2026-11-28; run 10 for his gate in `_DevComms/anima-run10-turbo-lora-2026-11-28`):

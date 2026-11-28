@@ -646,7 +646,9 @@ template is really txt2img with the LLLite (EmptyLatentImage, no img2img), the t
 **LoRA on branch `anima-lora` (f5383d6, ML 5.8.40-local.1; merge when 5.8.40 is on nuget.org):** UseWeightsAsync takes LoraUse steps,
 AnimaLora per file (strength x B A unmerged, DiT blocks only; the same file twice adds strengths), the run sets exactly its handle's LoRAs.
 Run 10 through KSampler 8 steps: final latent 1.0e-3 (1.0), 8.3e-4 (0.5), 3.5e-5 without; red check 0.90 / 0.66. The with-LoRA latent
-is ~30x further from ComfyUI's than the control: asked Tuvok (his per-call figures are 3e-5). Gaps seen on the way: Save Latent refuses a
+is ~30x further from ComfyUI's than the control: SETTLED by Tuvok (float64 replay of the 8 steps): the turbo trajectory
+amplifies any per-call difference ~50x (float64 itself lands 3.8e-4 from ComfyUI with the LoRA, 5.8e-6 without), the LoRA path adds
+nothing; the gap is the precise GPU kernels' fp32 error (~5x ComfyUI CPU's) amplified. Bound 1e-2 stays. Gaps seen on the way: Save Latent refuses a
 video-shaped (5-D) latent (ComfyUI saves it); a null literal counts as a missing input in SpawnGen (ComfyUI accepts "compare_view": null).
 Browser pass on main DONE (10ff22d): Painter 10/10, Painter subgraph 13/13, mask editor, template status, and the new
 drive-anima-templates (4 Anima templates without missing nodes, depth names only DA3; red-checked on the live site). DEPLOY HELD: nobody

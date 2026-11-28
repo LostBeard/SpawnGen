@@ -609,6 +609,13 @@ context [M, 1024]) and the DiT takes the context UNPADDED (it pads to 512 with z
 [neg, pos]). The adapter's weights are `net.llm_adapter.*` in the DiT file (UNETLoader's), not in the Qwen3 file (CLIPLoader's), so in
 SpawnGen: CLIPTextEncode on the Anima Qwen3 gives a CONDITIONING of the Qwen3 states + the T5 ids (a CondEntry option, as ComfyUI's
 t5xxl_ids); the Anima model (UNETLoader) runs the adapter once per conditioning entry (cached across steps) and feeds the DiT.
+**Tuvok's float64 reference matches every tap (2026-11-28; SpawnDev.ILGPU.ML tools/anima-ref/ANIMA-SPEC.md, ad2a4579: READ IT before
+wiring the sampler):** worst stage 6.4e-6 relRMS, call_0 / call_1 end to end 2.4e-6 / 1.2e-6, adapter pos / neg 1.2e-6 / 1.3e-6.
+Facts for SpawnGen's side: (1) the dumps' call "output" is ComfyUI's DENOISED x - sigma * v; the DiT returns the velocity v and takes
+sigma itself as its timestep (not sigma x 1000): SpawnGen's Anima model object converts (flow model, shift 3, like the other flow
+models); (2) the context is padded to exactly 512 zero rows, NOT masked (unpadded is 150 % off): the library's DiT does it; (3) the
+adapter's cross-attention ropes both sides (T5 positions on q, Qwen3 positions on k); its in_proj is identity. Next on his side: the
+C# port on ML's GPU kernels, gated on call_0 / call_1 and pos / neg.
 **LLLite data ready ahead of time (2026-11-28, runs 4 and 5, `_DevComms/anima-run4-lllite-2026-11-28`):** anima-base-v1.0 +
 anima-lllite-inpainting-v2 on compositor-a.png with a Painter rectangle mask, cfg 1, 2 steps, seed 7, and the same graph WITHOUT
 AnimaLLLiteApply as the control; model calls, block 0 / 27 taps, final latents. In ComfyUI the patch is transformer_options patches

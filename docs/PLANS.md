@@ -555,6 +555,24 @@ SpawnGen already has: the Qwen-Image VAE (qwen_image_vae.safetensors), a Qwen3 0
 whether Anima's qwen_3_06b_base is the same architecture / which hidden layer it takes), KSampler, LoRA loading, ComfySwitchNode,
 ResizeImageMaskNode, MaskPreview, ImageCompare. Missing: the Cosmos DiT, CLIPLoader type for Anima, ResolutionSelector, ModelPatchLoader,
 AnimaLLLiteApply (ControlNet-LLLite patches), and for the depth template DA3 (Depth Anything 3) nodes.
+**Step 1 done 2026-11-27: the files** (in _scratch/comfyui-ref/models, SHA-256 = HF's): anima-base-v1.0 (bd43b7cf..., 4.18 GB bf16),
+anima-preview3-base (14fffe8a..., 4.18 GB), qwen_3_06b_base (cd2a5120..., 1.19 GB), anima-turbo-lora-v0.2 (1b55e40b..., 149 MB),
+anima-lllite-inpainting-v2 (5242e677..., 66 MB); qwen_image_vae (a70580f0...) is byte-identical to the one SpawnGen already has.
+**What their headers say** (tensor names and shapes only):
+- The DiT (`net.*`, 685 tensors): 28 blocks, width 2048, 16 heads x 128 with q / k RMS norms, self-attention and cross-attention
+  (context width 1024), MLP 2048 -> 8192 -> 2048, adaLN-LoRA modulation (per block three pairs of [256, 2048] for self-attn, cross-attn
+  and MLP; t_embedder 2048 -> 6144; t_embedding_norm), patch embed 68 -> 2048 (= (16 latent channels + 1 mask channel) x 2 x 2), final
+  layer 2048 -> 64 (16 x 2 x 2). That is Cosmos-Predict2-2B's MiniTrainDIT.
+- PLUS `net.llm_adapter`: 6 transformer blocks at width 1024 (self-attn, cross-attn, MLP 4096 with bias, q / k norms of 64), an embedding
+  of 32128 rows (T5's vocabulary), out_proj 1024 -> 1024. Reading: the prompt also goes in as T5 token ids whose embeddings attend to the
+  Qwen3 hidden states, and the adapter's output is the DiT's 1024-wide context. So the text side needs Qwen3's tokenizer AND T5's
+  (to be confirmed on ComfyUI's black box: which ids, which Qwen3 layer, padding / length).
+- The encoder: plain Qwen3-0.6B (28 layers, 1024 wide, q 16 x 128, kv 8 x 128, MLP 3072, vocab 151936): the same shapes as the
+  Qwen3-Embedding-0.6B SpawnGen runs for ACE-Step (different weights).
+- The LLLite patch (metadata `anima-preview/control-net-lllite`, version 2, 1056 tensors): targets `self_attn_q_pre, self_attn_kv_pre,
+  mlp_fc1_pre` in the DiT blocks; a conditioning net on a 4-channel input (picture + mask, presumably) with 4 res blocks -> 64 features;
+  per target `down` 2048 -> 64, `mid` 128 -> 64, `up` 64 -> 2048, `cond_to_film` 64 -> 128 and a `depth_embed`. Kohya's ControlNet-LLLite
+  (sd-scripts, Apache-2.0) is the clean reference for the scheme.
 **Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
 --cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
 base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for

@@ -594,6 +594,11 @@ embedding. Asked of Tuvok 2026-11-27 (_DevComms 2215 + 2310): the DiT and the ad
 tokens (24 / 23 ids) and google-t5/t5-base's tokenizer.json (T5 v1.1 shares its SentencePiece vocabulary; EOS 1 appended, 26 ids);
 google/t5-v1_1-xxl has no tokenizer.json. SpawnGen side: Qwen2Tokenizer on the Qwen3 file, the T5 tokenizer SpawnGen / ML already use
 for LTX-Video, each checked against run 1's ids in a test when the encoder node is written.
+**The conditioning settled 2026-11-27:** cond = Qwen3-0.6B's last hidden state AFTER the final norm (Hugging Face transformers' Qwen3Model,
+Apache-2.0, on qwen_3_06b_base.safetensors with Qwen/Qwen3-0.6B-Base's config, CPU fp32, run 1's 24 ids: 6.9e-7 relative to ComfyUI's
+pos cond; every other layer is off by 1 or more). That is the path SpawnGen already runs for ACE-Step's caption (Qwen3-Embedding-0.6B,
+final norm): Anima's text encoder = that encoder on the Anima file, the Qwen3-0.6B-Base tokenizer without special tokens, plus the T5
+ids for the adapter.
 **Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
 --cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
 base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for

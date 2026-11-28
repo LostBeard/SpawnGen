@@ -649,7 +649,10 @@ Run 10 through KSampler 8 steps: final latent 1.0e-3 (1.0), 8.3e-4 (0.5), 3.5e-5
 is ~30x further from ComfyUI's than the control: SETTLED by Tuvok (float64 replay of the 8 steps): the turbo trajectory
 amplifies any per-call difference ~50x (float64 itself lands 3.8e-4 from ComfyUI with the LoRA, 5.8e-6 without), the LoRA path adds
 nothing; the gap is the precise GPU kernels' fp32 error (~5x ComfyUI CPU's) amplified. Bound 1e-2 stays. Gaps seen on the way: Save Latent refused a
-video-shaped (5-D) latent (FIXED ccb4e6c: byte for byte ComfyUI's file, which also corrected the header order); a null literal counts as a missing input in SpawnGen (ComfyUI accepts "compare_view": null).
+video-shaped (5-D) latent (FIXED ccb4e6c: byte for byte ComfyUI's file, which also corrected the header order);
+KNOWN FLAKE (2026-11-28): Server.Tests A_node_that_throws_is_reported_with_its_message_and_the_queue_carries_on can time out (its 15 s
+wait for the good prompt's execution_success) when the suite runs slow (148 s / 198 s runs, the Server and Nodes test processes sharing
+the RX 590); 3 of 3 quiet runs (124 s) green. If it shows on a quiet machine, look at the GPU picture save under contention first. a null literal counts as a missing input in SpawnGen (ComfyUI accepts "compare_view": null).
 Browser pass on main DONE (10ff22d): Painter 10/10, Painter subgraph 13/13, mask editor, template status, and the new
 drive-anima-templates (4 Anima templates without missing nodes, depth names only DA3; red-checked on the live site). DEPLOY HELD: nobody
 has run Anima in the browser yet (a 4.2 GB bf16 DiT on WebGPU, the hosted files); the live site already lists the preview / base cards

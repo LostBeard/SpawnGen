@@ -553,7 +553,8 @@ architecture reference: Diffusers' CosmosTransformer3DModel (Apache-2.0, portabl
 box (its outputs, measured).
 SpawnGen already has: the Qwen-Image VAE (qwen_image_vae.safetensors), a Qwen3 0.6B encoder (ACE-Step's Qwen3-Embedding-0.6B path: check
 whether Anima's qwen_3_06b_base is the same architecture / which hidden layer it takes), KSampler, LoRA loading, ComfySwitchNode,
-ResizeImageMaskNode, MaskPreview, ImageCompare. Missing: the Cosmos DiT, CLIPLoader type for Anima, ResolutionSelector, ModelPatchLoader,
+ResizeImageMaskNode, MaskPreview, ImageCompare, ResolutionSelector (already measured; a 280-point grid re-checked 2026-11-27: same
+rule). Missing: the Cosmos DiT, CLIPLoader recognising the Anima encoder file (type stable_diffusion), ModelPatchLoader,
 AnimaLLLiteApply (ControlNet-LLLite patches), and for the depth template DA3 (Depth Anything 3) nodes.
 **Step 1 done 2026-11-27: the files** (in _scratch/comfyui-ref/models, SHA-256 = HF's): anima-base-v1.0 (bd43b7cf..., 4.18 GB bf16),
 anima-preview3-base (14fffe8a..., 4.18 GB), qwen_3_06b_base (cd2a5120..., 1.19 GB), anima-turbo-lora-v0.2 (1b55e40b..., 149 MB),

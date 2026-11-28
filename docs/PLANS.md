@@ -584,6 +584,11 @@ Anima encoder from the file. Measured:
   channels, a 1-frame video shape, 512 / 8), timestep = sigma (first 0.9999667, not 1).
 - simple scheduler, 4 steps: sigmas 1, 0.9, 0.75, 0.5, 0 = flow matching with shift 3.
 - VAEDecode loads it as WanVAE (the Qwen-Image VAE SpawnGen has).
+**Run 3 (taps for Tuvok, `queue_run3.py`, `_scratch/probe/anima/run3-taps`, copied to `_DevComms/anima-run3-taps-2026-11-27`):**
+the adapter runs T5 ids -> embed -> in_proj -> 6 blocks (each cross-attending to the Qwen3 states, RoPE on both sides, no masks) ->
+out_proj -> norm (that order) = [1, M, 1024]; ComfyUI pads it with zero rows to 512 and batches [uncond, cond]; the DiT's patch
+embed takes the latent plus a 17th channel of zeros; RoPE is built as rotation matrices [1024, 64, 2, 2], no absolute position
+embedding. Asked of Tuvok 2026-11-27 (_DevComms 2215 + 2310): the DiT and the adapter in SpawnDev.ILGPU.ML; he starts after ML 5.8.38.
 **Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
 --cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
 base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for

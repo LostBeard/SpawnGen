@@ -573,6 +573,17 @@ anima-lllite-inpainting-v2 (5242e677..., 66 MB); qwen_image_vae (a70580f0...) is
   mlp_fc1_pre` in the DiT blocks; a conditioning net on a 4-channel input (picture + mask, presumably) with 4 res blocks -> 64 features;
   per target `down` 2048 -> 64, `mid` 128 -> 64, `up` 64 -> 2048, `cond_to_film` 64 -> 128 and a `depth_embed`. Kohya's ControlNet-LLLite
   (sd-scripts, Apache-2.0) is the clean reference for the scheme.
+**Step 2, run 1 done 2026-11-27 (`_scratch/probe/anima/queue_run1.py`, dumps in `_scratch/probe/anima/run1`, ComfyUI --cpu
+--cache-none with 6 threads: Riker's Chrome keeps 2):** the preview template at 512 x 512, 4 steps, cfg 4, er_sde / simple, seed 42 ->
+a clean picture (comfyui-ref/output/anima_run1_00001_.png); 47 s a step on the CPU. CLIPLoader type `stable_diffusion` detects the
+Anima encoder from the file. Measured:
+- CLIPTextEncode gives cond [1, N, 1024] = Qwen3 hidden states for the N Qwen token ids (no BOS / EOS: 24 ids for the positive, 23 for
+  the negative), attention_mask [1, N], pooled None, and **t5xxl_ids** [M] int32 (T5 vocabulary, ending with EOS 1) with t5xxl_weights
+  all 1.0 (M = 26 / 27): which Qwen layer / norm the cond is, is to be found against these dumps.
+- The model is called with c_crossattn [2, 512, 1024] (the adapter's output, padded to 512 rows), latents [2, 16, 1, 64, 64] (16
+  channels, a 1-frame video shape, 512 / 8), timestep = sigma (first 0.9999667, not 1).
+- simple scheduler, 4 steps: sigmas 1, 0.9, 0.75, 0.5, 0 = flow matching with shift 3.
+- VAEDecode loads it as WanVAE (the Qwen-Image VAE SpawnGen has).
 **Steps, in order:** (1) the model files (sizes, hashes) onto L: for the ComfyUI reference (CPU runs ~ RAM: one model at a time,
 --cache-none, the RAM / disk watchdog; nothing heavy while Riker runs live DayZ); (2) ComfyUI reference runs of image_anima_preview /
 base_v1 with dumps of the encoder output, one DiT call, the sampler's latents and the VAE decode; (3) what SpawnDev.ILGPU.ML lacks for
